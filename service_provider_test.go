@@ -6,10 +6,16 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"testing"
 	"time"
 
 	. "gopkg.in/check.v1"
+
+	"github.com/crewjam/saml/metadata"
 )
+
+// Hook up gocheck into the "go test" runner.
+func Test(t *testing.T) { TestingT(t) }
 
 type ServiceProviderTest struct {
 	AuthRequest  string
@@ -62,7 +68,7 @@ func (test *ServiceProviderTest) TestCanProduceMetadata(c *C) {
 		MetadataURL: "https://example.com/saml2/metadata",
 		LogoutURL:   "https://example.com/saml2/logout",
 		AcsURL:      "https://example.com/saml2/acs",
-		IDPMetadata: &Metadata{},
+		IDPMetadata: &metadata.Metadata{},
 	}
 	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
 	c.Assert(err, IsNil)
@@ -100,7 +106,7 @@ func (test *ServiceProviderTest) TestCanProduceRedirectRequest(c *C) {
 		MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
 		LogoutURL:   "https://15661444.ngrok.io/saml2/logout",
 		AcsURL:      "https://15661444.ngrok.io/saml2/acs",
-		IDPMetadata: &Metadata{},
+		IDPMetadata: &metadata.Metadata{},
 	}
 	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
 	c.Assert(err, IsNil)
@@ -121,7 +127,7 @@ func (test *ServiceProviderTest) TestCanProducePostRequest(c *C) {
 		MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
 		LogoutURL:   "https://15661444.ngrok.io/saml2/logout",
 		AcsURL:      "https://15661444.ngrok.io/saml2/acs",
-		IDPMetadata: &Metadata{},
+		IDPMetadata: &metadata.Metadata{},
 	}
 	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
 	c.Assert(err, IsNil)
@@ -143,7 +149,7 @@ func (test *ServiceProviderTest) TestCanParseResponse(c *C) {
 		MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
 		LogoutURL:   "https://15661444.ngrok.io/saml2/logout",
 		AcsURL:      "https://15661444.ngrok.io/saml2/acs",
-		IDPMetadata: &Metadata{},
+		IDPMetadata: &metadata.Metadata{},
 	}
 	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
 	c.Assert(err, IsNil)
@@ -179,7 +185,7 @@ func (test *ServiceProviderTest) TestInvalidResponses(c *C) {
 		MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
 		LogoutURL:   "https://15661444.ngrok.io/saml2/logout",
 		AcsURL:      "https://15661444.ngrok.io/saml2/acs",
-		IDPMetadata: &Metadata{},
+		IDPMetadata: &metadata.Metadata{},
 	}
 	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
 	c.Assert(err, IsNil)
@@ -247,7 +253,7 @@ func (test *ServiceProviderTest) TestInvalidAssertions(c *C) {
 		MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
 		LogoutURL:   "https://15661444.ngrok.io/saml2/logout",
 		AcsURL:      "https://15661444.ngrok.io/saml2/acs",
-		IDPMetadata: &Metadata{},
+		IDPMetadata: &metadata.Metadata{},
 	}
 	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
 	c.Assert(err, IsNil)

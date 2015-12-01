@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/metadata"
 	"github.com/dchest/uniuri"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/zenazn/goji"
@@ -234,7 +235,7 @@ OwJlNCASPZRH/JmF8tX0hoHuAQ==
 		panic(err)
 	}
 
-	r := saml.EntitiesDescriptor{}
+	r := metadata.EntitiesDescriptor{}
 	if err := xml.Unmarshal(buf, &r); err != nil {
 		panic(err)
 	}

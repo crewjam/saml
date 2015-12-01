@@ -1,4 +1,4 @@
-package saml
+package metadata
 
 import (
 	"encoding/xml"

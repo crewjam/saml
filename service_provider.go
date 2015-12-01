@@ -3,17 +3,12 @@ package saml
 import (
 	"bytes"
 	"compress/flate"
-	"crypto"
 	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha1"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
 	"encoding/xml"
 	"fmt"
 	"html/template"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -21,59 +16,87 @@ import (
 
 	"github.com/crewjam/go-xmlsec/xmldsig"
 	"github.com/crewjam/go-xmlsec/xmlenc"
+
+	"github.com/crewjam/saml/metadata"
 )
 
+// ServiceProvider implements SAML Service provider.
+//
+// In SAML, service providers delegate responsibility for identifying
+// clients to an identity provider. If you are writing an application
+// that uses passwords (or whatever) stored somewhere else, then you
+// are service provider.
+//
+// See the example directory for an example of a web application using
+// the service provider interface.
 type ServiceProvider struct {
-	Key         string
+	// Key is the RSA private key we use to sign requests.
+	Key string
+
+	// Certificate is the RSA public part of Key.
 	Certificate string
 
+	// MetadataURL is the full URL to the metadata endpoint on this host,
+	// i.e. https://example.com/saml/metadata
 	MetadataURL string
-	LogoutURL   string
-	AcsURL      string
 
-	IDPMetadata *Metadata
+	// LogoutURL is the full URL to the logout endpoint on this host,
+	// i.e. https://example.com/saml/logout
+	LogoutURL string
+
+	// AcsURL is the full URL to the SAML Assertion Customer Service endpoint
+	// on this host, i.e. https://example.com/saml/acs
+	AcsURL string
+
+	// IDPMetadata is the metadata from the identity provider.
+	IDPMetadata *metadata.Metadata
 }
 
-var timeNow = time.Now
-var randReader = rand.Reader
+var timeNow = time.Now       // thunk for testing
+var randReader = rand.Reader // thunk for testing
 
+// MaxIssueDelay is the longest allowed time between when a SAML assertion is
+// issued by the IDP and the time it is received by ParseResponse. (In practice
+// this is the maximum allowed clock drift between the SP and the IDP).
+const MaxIssueDelay = time.Second * 90
+
+// DefaultValidDuration is how long we assert that the SP metadata is valid.
 const DefaultValidDuration = time.Hour * 24 * 2
-const DefaultCacheDuration = time.Hour * 24 * 7
 
-type Assertion struct {
-	Email string /// XXX
-}
+// DefaultCacheDuration is how long we ask the IDP to cache the SP metadata.
+const DefaultCacheDuration = time.Hour * 24 * 1
 
-func (sp *ServiceProvider) Metadata() *Metadata {
+// Metadata returns the service provider metadata
+func (sp *ServiceProvider) Metadata() *metadata.Metadata {
 	if cert, _ := pem.Decode([]byte(sp.Certificate)); cert != nil {
 		sp.Certificate = base64.StdEncoding.EncodeToString(cert.Bytes)
 	}
 
-	return &Metadata{
+	return &metadata.Metadata{
 		EntityID:   sp.MetadataURL,
 		ValidUntil: timeNow().Add(DefaultValidDuration),
-		SPSSODescriptor: &SPSSODescriptor{
+		SPSSODescriptor: &metadata.SPSSODescriptor{
 			AuthnRequestsSigned:        false,
 			WantAssertionsSigned:       true,
 			ProtocolSupportEnumeration: "urn:oasis:names:tc:SAML:2.0:protocol",
-			KeyDescriptor: []KeyDescriptor{
-				KeyDescriptor{
-					KeyInfo: KeyInfo{
+			KeyDescriptor: []metadata.KeyDescriptor{
+				metadata.KeyDescriptor{
+					KeyInfo: metadata.KeyInfo{
 						Certificate: sp.Certificate,
 					},
-					EncryptionMethods: []EncryptionMethod{
-						EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
-						EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
-						EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
-						EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"},
+					EncryptionMethods: []metadata.EncryptionMethod{
+						metadata.EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
+						metadata.EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
+						metadata.EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
+						metadata.EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"},
 					},
 				},
 			},
-			SingleLogoutService: []Endpoint{{
+			SingleLogoutService: []metadata.Endpoint{{
 				Binding:  "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect",
 				Location: sp.LogoutURL,
 			}},
-			AssertionConsumerService: []IndexedEndpoint{{
+			AssertionConsumerService: []metadata.IndexedEndpoint{{
 				Binding:  "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
 				Location: sp.AcsURL,
 				Index:    1,
@@ -82,23 +105,11 @@ func (sp *ServiceProvider) Metadata() *Metadata {
 	}
 }
 
-func (sp *ServiceProvider) redirectSign(message string) (string, error) {
-	hash := sha1.Sum([]byte(message))
-
-	block, _ := pem.Decode([]byte(sp.Key))
-	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
-	if err != nil {
-		return "", err
-	}
-	sig, err := rsa.SignPKCS1v15(randReader, privateKey, crypto.SHA1, hash[:])
-	if err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(sig), nil
-}
-
+// MakeRedirectAuthenticationRequest creates a SAML authentication request using
+// the HTTP-Redirect binding. It returns a URL that we will redirect the user to
+// in order to start the auth process.
 func (sp *ServiceProvider) MakeRedirectAuthenticationRequest(relayState string) (*url.URL, error) {
-	idpURL, err := url.Parse(sp.IDPRedirectURL())
+	idpURL, err := url.Parse(sp.getIDPRedirectURL())
 	if err != nil {
 		return nil, fmt.Errorf("cannot parse IDP redirect url: %s", err)
 	}
@@ -122,25 +133,14 @@ func (sp *ServiceProvider) MakeRedirectAuthenticationRequest(relayState string) 
 	if relayState != "" {
 		query.Set("RelayState", relayState)
 	}
-
-	if false {
-		query.Set("SigAlg", "http://www.w3.org/2000/09/xmldsig#rsa-sha1")
-		idpURL.RawQuery = query.Encode()
-
-		signature, err := sp.redirectSign(idpURL.RawQuery)
-		if err != nil {
-			return nil, err
-		}
-		query.Set("Signature", signature)
-	}
 	idpURL.RawQuery = query.Encode()
-
-	ioutil.WriteFile("auth_request", []byte(idpURL.String()), 0644)
 
 	return idpURL, nil
 }
 
-func (sp *ServiceProvider) IDPRedirectURL() string {
+// getIDPRedirectURL returns URL for the IDP's HTTP-Redirect binding or an empty string
+// if one is not specified.
+func (sp *ServiceProvider) getIDPRedirectURL() string {
 	for _, singleSignOnService := range sp.IDPMetadata.IDPSSODescriptor.SingleSignOnService {
 		if singleSignOnService.Binding == "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" {
 			return singleSignOnService.Location
@@ -149,7 +149,9 @@ func (sp *ServiceProvider) IDPRedirectURL() string {
 	return ""
 }
 
-func (sp *ServiceProvider) IDPPostURL() string {
+// getIDPPostURL returns URL for the IDP's HTTP-POST binding or an empty string if one
+// is not specified.
+func (sp *ServiceProvider) getIDPPostURL() string {
 	for _, singleSignOnService := range sp.IDPMetadata.IDPSSODescriptor.SingleSignOnService {
 		if singleSignOnService.Binding == "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" {
 			return singleSignOnService.Location
@@ -158,6 +160,8 @@ func (sp *ServiceProvider) IDPPostURL() string {
 	return ""
 }
 
+// getIDPSigningCert returns the certificate which we can use to verify things
+// signed by the IDP in PEM format, or nil if no such certificate is found.
 func (sp *ServiceProvider) getIDPSigningCert() []byte {
 	cert := ""
 
@@ -192,6 +196,7 @@ func (sp *ServiceProvider) getIDPSigningCert() []byte {
 	return certBytes
 }
 
+// makeAuthenticationRequest produces a new spAuthRequest object for idpURL.
 func (sp *ServiceProvider) makeAuthenticationRequest(idpURL *url.URL) (*spAuthRequest, error) {
 	id := make([]byte, 16)
 	if _, err := randReader.Read(id); err != nil {
@@ -219,8 +224,11 @@ func (sp *ServiceProvider) makeAuthenticationRequest(idpURL *url.URL) (*spAuthRe
 	return &req, nil
 }
 
+// MakePostAuthenticationRequest creates a SAML authentication request using
+// the HTTP-POST binding. It returns HTML text representing an HTML form that
+// can be sent presented to a browser to initiate the login process.
 func (sp *ServiceProvider) MakePostAuthenticationRequest(relayState string) ([]byte, error) {
-	idpURL, err := url.Parse(sp.IDPPostURL())
+	idpURL, err := url.Parse(sp.getIDPPostURL())
 	if err != nil {
 		return nil, fmt.Errorf("cannot parse IDP post url: %s", err)
 	}
@@ -260,10 +268,11 @@ func (sp *ServiceProvider) MakePostAuthenticationRequest(relayState string) ([]b
 	return rv.Bytes(), nil
 }
 
-var MaxIssueDelay = time.Second * 90
-
+// AssertionAttributes is a list of AssertionAttribute
 type AssertionAttributes []AssertionAttribute
 
+// Get returns the assertion attribute whose Name or FriendlyName
+// matches name, or nil if no matching attribute is found.
 func (aa AssertionAttributes) Get(name string) *AssertionAttribute {
 	for _, attr := range aa {
 		if attr.Name == name {
@@ -276,12 +285,18 @@ func (aa AssertionAttributes) Get(name string) *AssertionAttribute {
 	return nil
 }
 
+// AssertionAttribute represents an attribute of the user extracted from
+// a SAML Assertion.
 type AssertionAttribute struct {
 	FriendlyName string
 	Name         string
 	Value        string
 }
 
+// InvalidResponseError is the error produced by ParseResponse when it fails.
+// The underlying error is in PrivateErr. Response is the response as it was
+// known at the time validation failed. Now is the time that was used to validate
+// time-dependent parts of the assertion.
 type InvalidResponseError struct {
 	PrivateErr error
 	Response   string
@@ -289,9 +304,20 @@ type InvalidResponseError struct {
 }
 
 func (ivr *InvalidResponseError) Error() string {
-	return fmt.Sprintf("Authentication failed: %s", ivr.PrivateErr) // XXX
+	return fmt.Sprintf("Authentication failed")
 }
 
+// ParseResponse extracts the SAML IDP response received in req, validates
+// it, and returns the verified attributes of the request.
+//
+// This function handles decrypting the message, verifying the digital
+// signature on the assertion, and verifying that the specified conditions
+// and properties are met.
+//
+// If the function fails it will return an InvalidResponseError whose
+// properties are useful in describing which part of the parsing process
+// failed. However, to discourage inadvertent disclosure the diagnostic
+// information, the Error() method returns a static string.
 func (sp *ServiceProvider) ParseResponse(req *http.Request, requestID string) (AssertionAttributes, error) {
 	now := timeNow()
 	retErr := &InvalidResponseError{
@@ -379,8 +405,11 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, requestID string) (A
 	return attributes, nil
 }
 
+// validateAssertion checks that the conditions specified in assertion match
+// the requirements to accept. If validation fails, it returns an error describing
+// the failure. (The digital signature on the assertion is not checked -- this
+// should be done before calling this function).
 func (sp *ServiceProvider) validateAssertion(assertion *spAssertion, requestID string, now time.Time) error {
-	// Validate the assertion
 	if assertion.IssueInstant.Add(MaxIssueDelay).Before(now) {
 		return fmt.Errorf("expired on %s", assertion.IssueInstant.Add(MaxIssueDelay))
 	}
