@@ -40,10 +40,6 @@ type ServiceProvider struct {
 	// i.e. https://example.com/saml/metadata
 	MetadataURL string
 
-	// LogoutURL is the full URL to the logout endpoint on this host,
-	// i.e. https://example.com/saml/logout
-	LogoutURL string
-
 	// AcsURL is the full URL to the SAML Assertion Customer Service endpoint
 	// on this host, i.e. https://example.com/saml/acs
 	AcsURL string
@@ -92,10 +88,6 @@ func (sp *ServiceProvider) Metadata() *metadata.Metadata {
 					},
 				},
 			},
-			SingleLogoutService: []metadata.Endpoint{{
-				Binding:  "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect",
-				Location: sp.LogoutURL,
-			}},
 			AssertionConsumerService: []metadata.IndexedEndpoint{{
 				Binding:  "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
 				Location: sp.AcsURL,

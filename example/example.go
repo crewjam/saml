@@ -197,7 +197,6 @@ func main() {
 	samlsp = &saml.ServiceProvider{
 		MetadataURL: baseURL + "/saml2/metadata",
 		AcsURL:      baseURL + "/saml2/acs",
-		LogoutURL:   baseURL + "/saml2/logout",
 	}
 	samlsp.Key = `-----BEGIN RSA PRIVATE KEY-----
 MIICXgIBAAKBgQDU8wdiaFmPfTyRYuFlVPi866WrH/2JubkHzp89bBQopDaLXYxi

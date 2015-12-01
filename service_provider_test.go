@@ -66,7 +66,6 @@ func (test *ServiceProviderTest) TestCanProduceMetadata(c *C) {
 		Key:         test.Key,
 		Certificate: test.Certificate,
 		MetadataURL: "https://example.com/saml2/metadata",
-		LogoutURL:   "https://example.com/saml2/logout",
 		AcsURL:      "https://example.com/saml2/acs",
 		IDPMetadata: &metadata.Metadata{},
 	}
@@ -89,7 +88,6 @@ func (test *ServiceProviderTest) TestCanProduceMetadata(c *C) {
 		"      <EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes256-cbc\"></EncryptionMethod>\n"+
 		"      <EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p\"></EncryptionMethod>\n"+
 		"    </KeyDescriptor>\n"+
-		"    <SingleLogoutService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect\" Location=\"https://example.com/saml2/logout\"></SingleLogoutService>\n"+
 		"    <AssertionConsumerService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Location=\"https://example.com/saml2/acs\" index=\"1\"></AssertionConsumerService>\n"+
 		"  </SPSSODescriptor>\n"+
 		"</EntityDescriptor>")
@@ -104,7 +102,6 @@ func (test *ServiceProviderTest) TestCanProduceRedirectRequest(c *C) {
 		Key:         test.Key,
 		Certificate: test.Certificate,
 		MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
-		LogoutURL:   "https://15661444.ngrok.io/saml2/logout",
 		AcsURL:      "https://15661444.ngrok.io/saml2/acs",
 		IDPMetadata: &metadata.Metadata{},
 	}
@@ -125,7 +122,6 @@ func (test *ServiceProviderTest) TestCanProducePostRequest(c *C) {
 		Key:         test.Key,
 		Certificate: test.Certificate,
 		MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
-		LogoutURL:   "https://15661444.ngrok.io/saml2/logout",
 		AcsURL:      "https://15661444.ngrok.io/saml2/acs",
 		IDPMetadata: &metadata.Metadata{},
 	}
@@ -147,7 +143,6 @@ func (test *ServiceProviderTest) TestCanParseResponse(c *C) {
 		Key:         test.Key,
 		Certificate: test.Certificate,
 		MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
-		LogoutURL:   "https://15661444.ngrok.io/saml2/logout",
 		AcsURL:      "https://15661444.ngrok.io/saml2/acs",
 		IDPMetadata: &metadata.Metadata{},
 	}
@@ -183,7 +178,6 @@ func (test *ServiceProviderTest) TestInvalidResponses(c *C) {
 		Key:         test.Key,
 		Certificate: test.Certificate,
 		MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
-		LogoutURL:   "https://15661444.ngrok.io/saml2/logout",
 		AcsURL:      "https://15661444.ngrok.io/saml2/acs",
 		IDPMetadata: &metadata.Metadata{},
 	}
@@ -251,7 +245,6 @@ func (test *ServiceProviderTest) TestInvalidAssertions(c *C) {
 		Key:         test.Key,
 		Certificate: test.Certificate,
 		MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
-		LogoutURL:   "https://15661444.ngrok.io/saml2/logout",
 		AcsURL:      "https://15661444.ngrok.io/saml2/acs",
 		IDPMetadata: &metadata.Metadata{},
 	}
