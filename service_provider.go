@@ -12,6 +12,7 @@ import (
 	"encoding/pem"
 	"encoding/xml"
 	"fmt"
+	"html/template"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -218,9 +219,45 @@ func (sp *ServiceProvider) makeAuthenticationRequest(idpURL *url.URL) (*spAuthRe
 	return &req, nil
 }
 
-func (sp *ServiceProvider) MakePostAuthenticationRequest(relayState string) (*http.Request, error) {
+func (sp *ServiceProvider) MakePostAuthenticationRequest(relayState string) ([]byte, error) {
+	idpURL, err := url.Parse(sp.IDPPostURL())
+	if err != nil {
+		return nil, fmt.Errorf("cannot parse IDP post url: %s", err)
+	}
 
-	panic("not implemented")
+	req, err := sp.makeAuthenticationRequest(idpURL)
+	if err != nil {
+		return nil, err
+	}
+
+	reqBuf, err := xml.Marshal(req)
+	if err != nil {
+		panic(err)
+	}
+	encodedReqBuf := base64.StdEncoding.EncodeToString(reqBuf)
+
+	tmpl := template.Must(template.New("saml-post-form").Parse(`` +
+		`<form method="post" action="{{.URL}}">` +
+		`<input type="hidden" name="SAMLRequest" value="{{.SAMLRequest}}" />` +
+		`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
+		`<input type="submit" value="Submit" />` +
+		`</form>`))
+	data := struct {
+		URL         string
+		SAMLRequest string
+		RelayState  string
+	}{
+		URL:         idpURL.String(),
+		SAMLRequest: encodedReqBuf,
+		RelayState:  relayState,
+	}
+
+	rv := bytes.Buffer{}
+	if err := tmpl.Execute(&rv, data); err != nil {
+		panic(err)
+	}
+
+	return rv.Bytes(), nil
 }
 
 var MaxIssueDelay = time.Second * 90

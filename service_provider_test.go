@@ -19,6 +19,14 @@ type ServiceProviderTest struct {
 	IDPMetadata  string
 }
 
+// Helper to decode SAML redirect binding requests
+// http://play.golang.org/p/sTlV0pCS2y
+//     x1 := "lJJBj9MwEIX%2FSuR7Y4%2FJRisriVS2Qqq0QNUAB27GmbYWiV08E6D%2FHqeA6AnKdfz85nvPbtYzn8Iev8xIXHyfxkCtmFMw0ZInE%2ByEZNiZfv362ehSmXOKHF0cRbEmwsQ%2BhqcYaJ4w9Zi%2Beofv98%2BtODGfyUgJD3UNVVWV4Zji59JHSXYatbSORLHJO32wi8efG344l5wP6OQ%2FlTEdl4HMWw9%2BRLlgaLnHwSd0LPv%2BrSi2m1b4YaWU0qpStXpUVjmFoEBDBTU8ggUHmIVEM24DsQ3cCq3gYQV6peCdAvMCjIaPotj9ivfSh8GHYytE8QETXQlzfNE1V5d0T1X2d0GieBXTZPnv8mWScxyuUoOBPV9E968iJ2Q7WLaN%2FAnWNW%2Byz3azi6N3l%2F980XGM354SWsZWcJpRdPcDc7KBfMZu5C1B18jbL9b9CAAA%2F%2F8%3D"
+//     x2, _ := url.QueryUnescape(x1)
+//     x3, _ := base64.StdEncoding.DecodeString(x2)
+//     x4, _ := ioutil.ReadAll(flate.NewReader(bytes.NewReader(x3)))
+//     fmt.Printf("%s\n", x4)
+
 var _ = Suite(&ServiceProviderTest{})
 
 type testRandomReader struct {
@@ -100,6 +108,32 @@ func (test *ServiceProviderTest) TestCanProduceRedirectRequest(c *C) {
 	redirectURL, err := s.MakeRedirectAuthenticationRequest("relayState")
 	c.Assert(err, IsNil)
 	c.Assert(redirectURL.String(), Equals, "https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=relayState&SAMLRequest=lJJBj9MwEIX%2FSuR7Y4%2FJRisriVS2Qqq0QNUAB27GmbYWiV08E6D%2FHqeA6AnKdfz85nvPbtYzn8Iev8xIXHyfxkCtmFMw0ZInE%2ByEZNiZfv362ehSmXOKHF0cRbEmwsQ%2BhqcYaJ4w9Zi%2Beofv98%2BtODGfyUgJD3UNVVWV4Zji59JHSXYatbSORLHJO32wi8efG344l5wP6OQ%2FlTEdl4HMWw9%2BRLlgaLnHwSd0LPv%2BrSi2m1b4YaWU0qpStXpUVjmFoEBDBTU8ggUHmIVEM24DsQ3cCq3gYQV6peCdAvMCjIaPotj9ivfSh8GHYytE8QETXQlzfNE1V5d0T1X2d0GieBXTZPnv8mWScxyuUoOBPV9E968iJ2Q7WLaN%2FAnWNW%2Byz3azi6N3l%2F980XGM354SWsZWcJpRdPcDc7KBfMZu5C1B18jbL9b9CAAA%2F%2F8%3D")
+}
+
+func (test *ServiceProviderTest) TestCanProducePostRequest(c *C) {
+	timeNow = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05 UTC 2006", "Mon Dec 1 01:31:21 UTC 2015")
+		return rv
+	}
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
+		LogoutURL:   "https://15661444.ngrok.io/saml2/logout",
+		AcsURL:      "https://15661444.ngrok.io/saml2/acs",
+		IDPMetadata: &Metadata{},
+	}
+	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	c.Assert(err, IsNil)
+
+	form, err := s.MakePostAuthenticationRequest("relayState")
+	c.Assert(err, IsNil)
+
+	c.Assert(string(form), Equals, ``+
+		`<form method="post" action="https://idp.testshib.org/idp/profile/SAML2/POST/SSO">`+
+		`<input type="hidden" name="SAMLRequest" value="PEF1dGhuUmVxdWVzdCB4bWxucz0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOnByb3RvY29sIiBBc3NlcnRpb25Db25zdW1lclNlcnZpY2VVUkw9Imh0dHBzOi8vMTU2NjE0NDQubmdyb2suaW8vc2FtbDIvYWNzIiBEZXN0aW5hdGlvbj0iaHR0cHM6Ly9pZHAudGVzdHNoaWIub3JnL2lkcC9wcm9maWxlL1NBTUwyL1BPU1QvU1NPIiBJRD0iaWQtMDAwMjA0MDYwODBhMGMwZTEwMTIxNDE2MTgxYTFjMWUiIElzc3VlSW5zdGFudD0iMjAxNS0xMi0wMVQwMTozMToyMVoiIFByb3RvY29sQmluZGluZz0iIiBWZXJzaW9uPSIyLjAiPjxJc3N1ZXIgeG1sbnM9InVybjpvYXNpczpuYW1lczp0YzpTQU1MOjIuMDphc3NlcnRpb24iIEZvcm1hdD0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOm5hbWVpZC1mb3JtYXQ6ZW50aXR5Ij5odHRwczovLzE1NjYxNDQ0Lm5ncm9rLmlvL3NhbWwyL21ldGFkYXRhPC9Jc3N1ZXI&#43;PE5hbWVJRFBvbGljeSB4bWxucz0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOnByb3RvY29sIiBBbGxvd0NyZWF0ZT0idHJ1ZSI&#43;dXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOm5hbWVpZC1mb3JtYXQ6dHJhbnNpZW50PC9OYW1lSURQb2xpY3k&#43;PC9BdXRoblJlcXVlc3Q&#43;" />`+
+		`<input type="hidden" name="RelayState" value="relayState" />`+
+		`<input type="submit" value="Submit" /></form>`)
 }
 
 func (test *ServiceProviderTest) TestCanParseResponse(c *C) {

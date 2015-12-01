@@ -97,6 +97,8 @@ func PostACS(c web.C, w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "<a href=\"%s\">Continue</a>", redirectURI)
 }
 
+var samlBinding = "post"
+
 // RequireAccount is middleware that requires the request contain a valid token
 func RequireAccount(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
@@ -117,15 +119,29 @@ func RequireAccount(c *web.C, h http.Handler) http.Handler {
 			return
 		}
 
-		u, err := samlsp.MakeRedirectAuthenticationRequest(signedRelayState)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+		switch samlBinding {
+		case "redirect":
+			u, err := samlsp.MakeRedirectAuthenticationRequest(signedRelayState)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 
-		// redirect to the SAML login URL
-		http.Redirect(w, r, u.String(), http.StatusTemporaryRedirect)
-		return
+			// redirect to the SAML login URL
+			http.Redirect(w, r, u.String(), http.StatusTemporaryRedirect)
+			return
+		case "post":
+			formBuf, err := samlsp.MakePostAuthenticationRequest(signedRelayState)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			fmt.Fprintf(w, "<!DOCTYPE html><html><body>%s</body></html>", formBuf)
+			return
+
+		default:
+			log.Panicf("unknown saml binding %s", samlBinding)
+		}
 	}
 	return http.HandlerFunc(fn)
 }
