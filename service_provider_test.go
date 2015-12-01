@@ -35,7 +35,7 @@ func (tr *testRandomReader) Read(p []byte) (n int, err error) {
 
 func (test *ServiceProviderTest) SetUpTest(c *C) {
 	timeNow = func() time.Time {
-		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Nov 30 20:57:09 EST 2015")
+		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Dec 1 01:57:09 UTC 2015")
 		return rv
 	}
 	randReader = &testRandomReader{}
@@ -62,7 +62,7 @@ func (test *ServiceProviderTest) TestCanProduceMetadata(c *C) {
 	spMetadata, err := xml.MarshalIndent(s.Metadata(), "", "  ")
 	c.Assert(err, IsNil)
 	c.Assert(string(spMetadata), DeepEquals, ""+
-		"<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2015-12-02T20:57:09-05:00\" entityID=\"https://example.com/saml2/metadata\">\n"+
+		"<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2015-12-03T01:57:09Z\" entityID=\"https://example.com/saml2/metadata\">\n"+
 		"  <SPSSODescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" AuthnRequestsSigned=\"false\" WantAssertionsSigned=\"true\" protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\">\n"+
 		"    <KeyDescriptor use=\"\">\n"+
 		"      <KeyInfo xmlns=\"http://www.w3.org/2000/09/xmldsig#\">\n"+
@@ -83,7 +83,7 @@ func (test *ServiceProviderTest) TestCanProduceMetadata(c *C) {
 
 func (test *ServiceProviderTest) TestCanProduceRedirectRequest(c *C) {
 	timeNow = func() time.Time {
-		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Nov 30 21:31:21 EST 2015")
+		rv, _ := time.Parse("Mon Jan 2 15:04:05 UTC 2006", "Mon Dec 1 01:31:21 UTC 2015")
 		return rv
 	}
 	s := ServiceProvider{
@@ -99,7 +99,7 @@ func (test *ServiceProviderTest) TestCanProduceRedirectRequest(c *C) {
 
 	redirectURL, err := s.MakeRedirectAuthenticationRequest("relayState")
 	c.Assert(err, IsNil)
-	c.Assert(redirectURL.String(), Equals, "https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=relayState&SAMLRequest=lJJBj9MwEIX%2FSuR74xlvWq2sJFLZCqnSAqsWuBtntrVI7OKZAPvvcQqIPcFyHT%2B%2F%2Bd6z2%2B0s53igLzOxVN%2BnMXKn5hxtchzYRjcRW%2FH2uH1zb00N9pKTJJ9GVW2ZKUtI8S5FnifKR8pfg6cPh%2FtOnUUubLXG9WaDTdPU8ZTT5zokzW4ajXaeVbUrO0N0i8efG2G41FIO%2BBw%2B1SmfloEuWx%2FDSHrBMPpAQ8jkRR%2BP71S133UqDCsAMNDABm7BgQdCQIMNbvAWHXqkImSeaR9ZXJROGcD1CnF1A%2B8N2hu0BlewtgCqeviV8VWIQ4inTqnqI2W%2BYpYOVN9erfJL%2BnK%2FW1LV65QnJ3%2BXL5MS5vEqtRQlyJPq%2F9XmROIGJ67VP8H69m3x2e8e0hj8038%2B6zimb3eZnFCnJM%2Bk%2BpcDS3aRQ8Fu9XOCvtXP%2F1n%2FIwAA%2F%2F8%3D")
+	c.Assert(redirectURL.String(), Equals, "https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=relayState&SAMLRequest=lJJBj9MwEIX%2FSuR7Y4%2FJRisriVS2Qqq0QNUAB27GmbYWiV08E6D%2FHqeA6AnKdfz85nvPbtYzn8Iev8xIXHyfxkCtmFMw0ZInE%2ByEZNiZfv362ehSmXOKHF0cRbEmwsQ%2BhqcYaJ4w9Zi%2Beofv98%2BtODGfyUgJD3UNVVWV4Zji59JHSXYatbSORLHJO32wi8efG344l5wP6OQ%2FlTEdl4HMWw9%2BRLlgaLnHwSd0LPv%2BrSi2m1b4YaWU0qpStXpUVjmFoEBDBTU8ggUHmIVEM24DsQ3cCq3gYQV6peCdAvMCjIaPotj9ivfSh8GHYytE8QETXQlzfNE1V5d0T1X2d0GieBXTZPnv8mWScxyuUoOBPV9E968iJ2Q7WLaN%2FAnWNW%2Byz3azi6N3l%2F980XGM354SWsZWcJpRdPcDc7KBfMZu5C1B18jbL9b9CAAA%2F%2F8%3D")
 }
 
 func (test *ServiceProviderTest) TestCanParseResponse(c *C) {
@@ -170,14 +170,14 @@ func (test *ServiceProviderTest) TestInvalidResponses(c *C) {
 	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "`InResponseTo` does not match requestID (expected \"wrongRequestID\")")
 
 	timeNow = func() time.Time {
-		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Nov 30 20:57:09 EST 2016")
+		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Nov 30 20:57:09 UTC 2016")
 		return rv
 	}
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
 	_, err = s.ParseResponse(&req, "")
 	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "IssueInstant expired at 2015-12-01 01:57:51.375 +0000 UTC")
 	timeNow = func() time.Time {
-		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Nov 30 20:57:09 EST 2015")
+		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Dec 1 01:57:09 UTC 2015")
 		return rv
 	}
 
