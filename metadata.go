@@ -23,9 +23,9 @@ type Metadata struct {
 }
 
 type KeyDescriptor struct {
-	Use              string             `xml:"use,attr"`
-	KeyInfo          KeyInfo            `xml:"http://www.w3.org/2000/09/xmldsig# KeyInfo"`
-	EncryptionMethod []EncryptionMethod `xml:"EncryptionMethod"`
+	Use               string             `xml:"use,attr"`
+	KeyInfo           KeyInfo            `xml:"http://www.w3.org/2000/09/xmldsig# KeyInfo"`
+	EncryptionMethods []EncryptionMethod `xml:"EncryptionMethod"`
 }
 
 type EncryptionMethod struct {

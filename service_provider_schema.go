@@ -61,7 +61,7 @@ type spStatusCode struct {
 	Value   string   `xml:",attr"`
 }
 
-const spStatusSuccess = "urn:oasis:names:tc:SAML:2.0:status:Success"
+var spStatusSuccess = "urn:oasis:names:tc:SAML:2.0:status:Success"
 
 type spEncryptedAssertion struct {
 	Assertion *spAssertion
