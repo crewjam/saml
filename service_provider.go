@@ -77,6 +77,13 @@ func (sp *ServiceProvider) Metadata() *metadata.Metadata {
 			ProtocolSupportEnumeration: "urn:oasis:names:tc:SAML:2.0:protocol",
 			KeyDescriptor: []metadata.KeyDescriptor{
 				metadata.KeyDescriptor{
+					Use: "signing",
+					KeyInfo: metadata.KeyInfo{
+						Certificate: sp.Certificate,
+					},
+				},
+				metadata.KeyDescriptor{
+					Use: "encryption",
 					KeyInfo: metadata.KeyInfo{
 						Certificate: sp.Certificate,
 					},
