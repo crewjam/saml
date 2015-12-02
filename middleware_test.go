@@ -1,56 +1,38 @@
 package saml
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/xml"
+	"io/ioutil"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
-	"testing"
 	"time"
 
 	. "gopkg.in/check.v1"
 
 	"github.com/crewjam/saml/metadata"
+	"github.com/dgrijalva/jwt-go"
 )
 
-// Hook up gocheck into the "go test" runner.
-func Test(t *testing.T) { TestingT(t) }
-
-type ServiceProviderTest struct {
+type ServiceProviderMiddlewareTest struct {
 	AuthRequest  string
 	SamlResponse string
 	Key          string
 	Certificate  string
 	IDPMetadata  string
+	Middleware   ServiceProviderMiddleware
 }
 
-// Helper to decode SAML redirect binding requests
-// http://play.golang.org/p/sTlV0pCS2y
-//     x1 := "lJJBj9MwEIX%2FSuR7Y4%2FJRisriVS2Qqq0QNUAB27GmbYWiV08E6D%2FHqeA6AnKdfz85nvPbtYzn8Iev8xIXHyfxkCtmFMw0ZInE%2ByEZNiZfv362ehSmXOKHF0cRbEmwsQ%2BhqcYaJ4w9Zi%2Beofv98%2BtODGfyUgJD3UNVVWV4Zji59JHSXYatbSORLHJO32wi8efG344l5wP6OQ%2FlTEdl4HMWw9%2BRLlgaLnHwSd0LPv%2BrSi2m1b4YaWU0qpStXpUVjmFoEBDBTU8ggUHmIVEM24DsQ3cCq3gYQV6peCdAvMCjIaPotj9ivfSh8GHYytE8QETXQlzfNE1V5d0T1X2d0GieBXTZPnv8mWScxyuUoOBPV9E968iJ2Q7WLaN%2FAnWNW%2Byz3azi6N3l%2F980XGM354SWsZWcJpRdPcDc7KBfMZu5C1B18jbL9b9CAAA%2F%2F8%3D"
-//     x2, _ := url.QueryUnescape(x1)
-//     x3, _ := base64.StdEncoding.DecodeString(x2)
-//     x4, _ := ioutil.ReadAll(flate.NewReader(bytes.NewReader(x3)))
-//     fmt.Printf("%s\n", x4)
+var _ = Suite(&ServiceProviderMiddlewareTest{})
 
-var _ = Suite(&ServiceProviderTest{})
-
-type testRandomReader struct {
-	Next byte
-}
-
-func (tr *testRandomReader) Read(p []byte) (n int, err error) {
-	for i := 0; i < len(p); i++ {
-		p[i] = tr.Next
-		tr.Next += 2
-	}
-	return len(p), nil
-}
-
-func (test *ServiceProviderTest) SetUpTest(c *C) {
+func (test *ServiceProviderMiddlewareTest) SetUpTest(c *C) {
 	timeNow = func() time.Time {
 		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Dec 1 01:57:09 UTC 2015")
 		return rv
 	}
+	jwt.TimeFunc = timeNow
 	randReader = &testRandomReader{}
 
 	test.AuthRequest = `https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmkiOiIvIn0.eoUmy2fQduAz--6N82xIOmufY1ZZeRi5x--B7m1pNIY&SAMLRequest=lJJBj9MwEIX%2FSuR7Yzt10sZKIpWtkCotsGqB%2B5BMW4vELp4JsP8et4DYE5Tr%2BPnN957dbGY%2B%2Bz1%2BmZE4%2Bz6NnloxR28DkCPrYUKy3NvD5s2jLXJlLzFw6MMosg0RRnbBPwRP84TxgPGr6%2FHD%2FrEVZ%2BYLWSl1WVXaGJP7UwyfcxckwTQWEnoS2TbtdB6uHn9uuOGSczqgs%2FuUh3i6DmTaenQjyitGIfc4uIg9y8Phnch221a4YVFjpVflcqgM1sUajiWsYGk01KujKVRfJyHRjDtPDJ5bUShdLrReLNX7QtmysrrMK6Pqem3MeqFKq5TInn6lfeX84PypFSL7iJFuwKkN0TU303hPc%2FC7L5G9DnEC%2Frv8OkmxjjepRc%2BOn0X3r14nZBiAoZE%2FwbrmbfLZbZ%2FC6Prn%2F3zgcQzfHiICYys4zii6%2B4E5gieXsBv5kqBr5Msf1%2F0IAAD%2F%2Fw%3D%3D`
@@ -58,23 +40,28 @@ func (test *ServiceProviderTest) SetUpTest(c *C) {
 	test.Key = "-----BEGIN RSA PRIVATE KEY-----\nMIICXgIBAAKBgQDU8wdiaFmPfTyRYuFlVPi866WrH/2JubkHzp89bBQopDaLXYxi\n3PTu3O6Q/KaKxMOFBqrInwqpv/omOGZ4ycQ51O9I+Yc7ybVlW94lTo2gpGf+Y/8E\nPsVbnZaFutRctJ4dVIp9aQ2TpLiGT0xX1OzBO/JEgq9GzDRf+B+eqSuglwIDAQAB\nAoGBAMuy1eN6cgFiCOgBsB3gVDdTKpww87Qk5ivjqEt28SmXO13A1KNVPS6oQ8SJ\nCT5Azc6X/BIAoJCURVL+LHdqebogKljhH/3yIel1kH19vr4E2kTM/tYH+qj8afUS\nJEmArUzsmmK8ccuNqBcllqdwCZjxL4CHDUmyRudFcHVX9oyhAkEA/OV1OkjM3CLU\nN3sqELdMmHq5QZCUihBmk3/N5OvGdqAFGBlEeewlepEVxkh7JnaNXAXrKHRVu/f/\nfbCQxH+qrwJBANeQERF97b9Sibp9xgolb749UWNlAdqmEpmlvmS202TdcaaT1msU\n4rRLiQN3X9O9mq4LZMSVethrQAdX1whawpkCQQDk1yGf7xZpMJ8F4U5sN+F4rLyM\nRq8Sy8p2OBTwzCUXXK+fYeXjybsUUMr6VMYTRP2fQr/LKJIX+E5ZxvcIyFmDAkEA\nyfjNVUNVaIbQTzEbRlRvT6MqR+PTCefC072NF9aJWR93JimspGZMR7viY6IM4lrr\nvBkm0F5yXKaYtoiiDMzlOQJADqmEwXl0D72ZG/2KDg8b4QZEmC9i5gidpQwJXUc6\nhU+IVQoLxRq0fBib/36K9tcrrO5Ba4iEvDcNY+D8yGbUtA==\n-----END RSA PRIVATE KEY-----\n"
 	test.Certificate = "-----BEGIN CERTIFICATE-----\nMIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJV\nUzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0\nMB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMx\nCzAJBgNVBAgMAkdBMQwwCgYDVQQKDANmb28xEjAQBgNVBAMMCWxvY2FsaG9zdDCB\nnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA1PMHYmhZj308kWLhZVT4vOulqx/9\nibm5B86fPWwUKKQ2i12MYtz07tzukPymisTDhQaqyJ8Kqb/6JjhmeMnEOdTvSPmH\nO8m1ZVveJU6NoKRn/mP/BD7FW52WhbrUXLSeHVSKfWkNk6S4hk9MV9TswTvyRIKv\nRsw0X/gfnqkroJcCAwEAATANBgkqhkiG9w0BAQUFAAOBgQCMMlIO+GNcGekevKgk\nakpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeT\nQLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvn\nOwJlNCASPZRH/JmF8tX0hoHuAQ==\n-----END CERTIFICATE-----\n"
 	test.IDPMetadata = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\" xmlns:mdalg=\"urn:oasis:names:tc:SAML:metadata:algsupport\" xmlns:mdui=\"urn:oasis:names:tc:SAML:metadata:ui\" xmlns:shibmd=\"urn:mace:shibboleth:metadata:1.0\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" Name=\"urn:mace:shibboleth:testshib:two\" entityID=\"https://idp.testshib.org/idp/shibboleth\">\n\t<Extensions>\n\t\t<mdalg:DigestMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#sha512\" />\n\t\t<mdalg:DigestMethod Algorithm=\"http://www.w3.org/2001/04/xmldsig-more#sha384\" />\n\t\t<mdalg:DigestMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#sha256\" />\n\t\t<mdalg:DigestMethod Algorithm=\"http://www.w3.org/2000/09/xmldsig#sha1\" />\n\t\t<mdalg:SigningMethod Algorithm=\"http://www.w3.org/2001/04/xmldsig-more#rsa-sha512\" />\n\t\t<mdalg:SigningMethod Algorithm=\"http://www.w3.org/2001/04/xmldsig-more#rsa-sha384\" />\n\t\t<mdalg:SigningMethod Algorithm=\"http://www.w3.org/2001/04/xmldsig-more#rsa-sha256\" />\n\t\t<mdalg:SigningMethod Algorithm=\"http://www.w3.org/2000/09/xmldsig#rsa-sha1\" />\n\t</Extensions>\n\t<IDPSSODescriptor protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:1.1:protocol urn:mace:shibboleth:1.0 urn:oasis:names:tc:SAML:2.0:protocol\">\n\t\t<Extensions>\n\t\t\t<shibmd:Scope regexp=\"false\">testshib.org</shibmd:Scope>\n\t\t\t<mdui:UIInfo>\n\t\t\t\t<mdui:DisplayName xml:lang=\"en\">TestShib Test IdP</mdui:DisplayName>\n\t\t\t\t<mdui:Description xml:lang=\"en\">TestShib IdP. Use this as a source of attributes\n                        for your test SP.</mdui:Description>\n\t\t\t\t<mdui:Logo height=\"88\" width=\"253\">https://www.testshib.org/testshibtwo.jpg</mdui:Logo>\n\t\t\t</mdui:UIInfo>\n\t\t</Extensions>\n\t\t<KeyDescriptor>\n\t\t\t<ds:KeyInfo>\n\t\t\t\t<ds:X509Data>\n\t\t\t\t\t<ds:X509Certificate>MIIEDjCCAvagAwIBAgIBADANBgkqhkiG9w0BAQUFADBnMQswCQYDVQQGEwJVUzEV\n                            MBMGA1UECBMMUGVubnN5bHZhbmlhMRMwEQYDVQQHEwpQaXR0c2J1cmdoMREwDwYD\n                            VQQKEwhUZXN0U2hpYjEZMBcGA1UEAxMQaWRwLnRlc3RzaGliLm9yZzAeFw0wNjA4\n                            MzAyMTEyMjVaFw0xNjA4MjcyMTEyMjVaMGcxCzAJBgNVBAYTAlVTMRUwEwYDVQQI\n                            EwxQZW5uc3lsdmFuaWExEzARBgNVBAcTClBpdHRzYnVyZ2gxETAPBgNVBAoTCFRl\n                            c3RTaGliMRkwFwYDVQQDExBpZHAudGVzdHNoaWIub3JnMIIBIjANBgkqhkiG9w0B\n                            AQEFAAOCAQ8AMIIBCgKCAQEArYkCGuTmJp9eAOSGHwRJo1SNatB5ZOKqDM9ysg7C\n                            yVTDClcpu93gSP10nH4gkCZOlnESNgttg0r+MqL8tfJC6ybddEFB3YBo8PZajKSe\n                            3OQ01Ow3yT4I+Wdg1tsTpSge9gEz7SrC07EkYmHuPtd71CHiUaCWDv+xVfUQX0aT\n                            NPFmDixzUjoYzbGDrtAyCqA8f9CN2txIfJnpHE6q6CmKcoLADS4UrNPlhHSzd614\n                            kR/JYiks0K4kbRqCQF0Dv0P5Di+rEfefC6glV8ysC8dB5/9nb0yh/ojRuJGmgMWH\n                            gWk6h0ihjihqiu4jACovUZ7vVOCgSE5Ipn7OIwqd93zp2wIDAQABo4HEMIHBMB0G\n                            A1UdDgQWBBSsBQ869nh83KqZr5jArr4/7b+QazCBkQYDVR0jBIGJMIGGgBSsBQ86\n                            9nh83KqZr5jArr4/7b+Qa6FrpGkwZzELMAkGA1UEBhMCVVMxFTATBgNVBAgTDFBl\n                            bm5zeWx2YW5pYTETMBEGA1UEBxMKUGl0dHNidXJnaDERMA8GA1UEChMIVGVzdFNo\n                            aWIxGTAXBgNVBAMTEGlkcC50ZXN0c2hpYi5vcmeCAQAwDAYDVR0TBAUwAwEB/zAN\n                            BgkqhkiG9w0BAQUFAAOCAQEAjR29PhrCbk8qLN5MFfSVk98t3CT9jHZoYxd8QMRL\n                            I4j7iYQxXiGJTT1FXs1nd4Rha9un+LqTfeMMYqISdDDI6tv8iNpkOAvZZUosVkUo\n                            93pv1T0RPz35hcHHYq2yee59HJOco2bFlcsH8JBXRSRrJ3Q7Eut+z9uo80JdGNJ4\n                            /SJy5UorZ8KazGj16lfJhOBXldgrhppQBb0Nq6HKHguqmwRfJ+WkxemZXzhediAj\n                            Geka8nz8JjwxpUjAiSWYKLtJhGEaTqCYxCCX2Dw+dOTqUzHOZ7WKv4JXPK5G/Uhr\n                            8K/qhmFT2nIQi538n6rVYLeWj8Bbnl+ev0peYzxFyF5sQA==</ds:X509Certificate>\n\t\t\t\t</ds:X509Data>\n\t\t\t</ds:KeyInfo>\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes256-cbc\" />\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes192-cbc\" />\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes128-cbc\" />\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#tripledes-cbc\" />\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p\" />\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#rsa-1_5\" />\n\t\t</KeyDescriptor>\n\t\t<ArtifactResolutionService Binding=\"urn:oasis:names:tc:SAML:1.0:bindings:SOAP-binding\" Location=\"https://idp.testshib.org:8443/idp/profile/SAML1/SOAP/ArtifactResolution\" index=\"1\" />\n\t\t<ArtifactResolutionService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:SOAP\" Location=\"https://idp.testshib.org:8443/idp/profile/SAML2/SOAP/ArtifactResolution\" index=\"2\" />\n\t\t<NameIDFormat>urn:mace:shibboleth:1.0:nameIdentifier</NameIDFormat>\n\t\t<NameIDFormat>urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDFormat>\n\t\t<SingleSignOnService Binding=\"urn:mace:shibboleth:1.0:profiles:AuthnRequest\" Location=\"https://idp.testshib.org/idp/profile/Shibboleth/SSO\" />\n\t\t<SingleSignOnService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Location=\"https://idp.testshib.org/idp/profile/SAML2/POST/SSO\" />\n\t\t<SingleSignOnService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect\" Location=\"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO\" />\n\t\t<SingleSignOnService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:SOAP\" Location=\"https://idp.testshib.org/idp/profile/SAML2/SOAP/ECP\" />\n\t</IDPSSODescriptor>\n\t<AttributeAuthorityDescriptor protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:1.1:protocol urn:oasis:names:tc:SAML:2.0:protocol\">\n\t\t<KeyDescriptor>\n\t\t\t<ds:KeyInfo>\n\t\t\t\t<ds:X509Data>\n\t\t\t\t\t<ds:X509Certificate>MIIEDjCCAvagAwIBAgIBADANBgkqhkiG9w0BAQUFADBnMQswCQYDVQQGEwJVUzEV\n                            MBMGA1UECBMMUGVubnN5bHZhbmlhMRMwEQYDVQQHEwpQaXR0c2J1cmdoMREwDwYD\n                            VQQKEwhUZXN0U2hpYjEZMBcGA1UEAxMQaWRwLnRlc3RzaGliLm9yZzAeFw0wNjA4\n                            MzAyMTEyMjVaFw0xNjA4MjcyMTEyMjVaMGcxCzAJBgNVBAYTAlVTMRUwEwYDVQQI\n                            EwxQZW5uc3lsdmFuaWExEzARBgNVBAcTClBpdHRzYnVyZ2gxETAPBgNVBAoTCFRl\n                            c3RTaGliMRkwFwYDVQQDExBpZHAudGVzdHNoaWIub3JnMIIBIjANBgkqhkiG9w0B\n                            AQEFAAOCAQ8AMIIBCgKCAQEArYkCGuTmJp9eAOSGHwRJo1SNatB5ZOKqDM9ysg7C\n                            yVTDClcpu93gSP10nH4gkCZOlnESNgttg0r+MqL8tfJC6ybddEFB3YBo8PZajKSe\n                            3OQ01Ow3yT4I+Wdg1tsTpSge9gEz7SrC07EkYmHuPtd71CHiUaCWDv+xVfUQX0aT\n                            NPFmDixzUjoYzbGDrtAyCqA8f9CN2txIfJnpHE6q6CmKcoLADS4UrNPlhHSzd614\n                            kR/JYiks0K4kbRqCQF0Dv0P5Di+rEfefC6glV8ysC8dB5/9nb0yh/ojRuJGmgMWH\n                            gWk6h0ihjihqiu4jACovUZ7vVOCgSE5Ipn7OIwqd93zp2wIDAQABo4HEMIHBMB0G\n                            A1UdDgQWBBSsBQ869nh83KqZr5jArr4/7b+QazCBkQYDVR0jBIGJMIGGgBSsBQ86\n                            9nh83KqZr5jArr4/7b+Qa6FrpGkwZzELMAkGA1UEBhMCVVMxFTATBgNVBAgTDFBl\n                            bm5zeWx2YW5pYTETMBEGA1UEBxMKUGl0dHNidXJnaDERMA8GA1UEChMIVGVzdFNo\n                            aWIxGTAXBgNVBAMTEGlkcC50ZXN0c2hpYi5vcmeCAQAwDAYDVR0TBAUwAwEB/zAN\n                            BgkqhkiG9w0BAQUFAAOCAQEAjR29PhrCbk8qLN5MFfSVk98t3CT9jHZoYxd8QMRL\n                            I4j7iYQxXiGJTT1FXs1nd4Rha9un+LqTfeMMYqISdDDI6tv8iNpkOAvZZUosVkUo\n                            93pv1T0RPz35hcHHYq2yee59HJOco2bFlcsH8JBXRSRrJ3Q7Eut+z9uo80JdGNJ4\n                            /SJy5UorZ8KazGj16lfJhOBXldgrhppQBb0Nq6HKHguqmwRfJ+WkxemZXzhediAj\n                            Geka8nz8JjwxpUjAiSWYKLtJhGEaTqCYxCCX2Dw+dOTqUzHOZ7WKv4JXPK5G/Uhr\n                            8K/qhmFT2nIQi538n6rVYLeWj8Bbnl+ev0peYzxFyF5sQA==</ds:X509Certificate>\n\t\t\t\t</ds:X509Data>\n\t\t\t</ds:KeyInfo>\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes256-cbc\" />\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes192-cbc\" />\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes128-cbc\" />\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#tripledes-cbc\" />\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p\" />\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#rsa-1_5\" />\n\t\t</KeyDescriptor>\n\t\t<AttributeService Binding=\"urn:oasis:names:tc:SAML:1.0:bindings:SOAP-binding\" Location=\"https://idp.testshib.org:8443/idp/profile/SAML1/SOAP/AttributeQuery\" />\n\t\t<AttributeService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:SOAP\" Location=\"https://idp.testshib.org:8443/idp/profile/SAML2/SOAP/AttributeQuery\" />\n\t\t<NameIDFormat>urn:mace:shibboleth:1.0:nameIdentifier</NameIDFormat>\n\t\t<NameIDFormat>urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDFormat>\n\t</AttributeAuthorityDescriptor>\n\t<Organization>\n\t\t<OrganizationName xml:lang=\"en\">TestShib Two Identity Provider</OrganizationName>\n\t\t<OrganizationDisplayName xml:lang=\"en\">TestShib Two</OrganizationDisplayName>\n\t\t<OrganizationURL xml:lang=\"en\">http://www.testshib.org/testshib-two/</OrganizationURL>\n\t</Organization>\n\t<ContactPerson contactType=\"technical\">\n\t\t<GivenName>Nate</GivenName>\n\t\t<SurName>Klingenstein</SurName>\n\t\t<EmailAddress>ndk@internet2.edu</EmailAddress>\n\t</ContactPerson>\n</EntityDescriptor>"
+
+	test.Middleware = ServiceProviderMiddleware{
+		ServiceProvider: &ServiceProvider{
+			Key:         test.Key,
+			Certificate: test.Certificate,
+			MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
+			AcsURL:      "https://15661444.ngrok.io/saml2/acs",
+			IDPMetadata: &metadata.Metadata{},
+		},
+	}
+	err := xml.Unmarshal([]byte(test.IDPMetadata), &test.Middleware.ServiceProvider.IDPMetadata)
+	c.Assert(err, IsNil)
 }
 
-func (test *ServiceProviderTest) TestCanProduceMetadata(c *C) {
-	s := ServiceProvider{
-		Key:         test.Key,
-		Certificate: test.Certificate,
-		MetadataURL: "https://example.com/saml2/metadata",
-		AcsURL:      "https://example.com/saml2/acs",
-		IDPMetadata: &metadata.Metadata{},
-	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
-	c.Assert(err, IsNil)
+func (test *ServiceProviderMiddlewareTest) TestCanProduceMetadata(c *C) {
+	req, _ := http.NewRequest("GET", "/saml2/metadata", nil)
 
-	spMetadata, err := xml.MarshalIndent(s.Metadata(), "", "  ")
-	c.Assert(err, IsNil)
-	c.Assert(string(spMetadata), DeepEquals, ""+
-		"<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2015-12-03T01:57:09Z\" entityID=\"https://example.com/saml2/metadata\">\n"+
+	resp := httptest.NewRecorder()
+	test.Middleware.ServeHTTP(resp, req)
+	c.Assert(resp.Code, Equals, http.StatusOK)
+	c.Assert(string(resp.Body.Bytes()), DeepEquals, ""+
+		"<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2015-12-03T01:57:09Z\" entityID=\"https://15661444.ngrok.io/saml2/metadata\">\n"+
 		"  <SPSSODescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" AuthnRequestsSigned=\"false\" WantAssertionsSigned=\"true\" protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\">\n"+
 		"    <KeyDescriptor use=\"signing\">\n"+
 		"      <KeyInfo xmlns=\"http://www.w3.org/2000/09/xmldsig#\">\n"+
@@ -94,223 +81,241 @@ func (test *ServiceProviderTest) TestCanProduceMetadata(c *C) {
 		"      <EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes256-cbc\"></EncryptionMethod>\n"+
 		"      <EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p\"></EncryptionMethod>\n"+
 		"    </KeyDescriptor>\n"+
-		"    <AssertionConsumerService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Location=\"https://example.com/saml2/acs\" index=\"1\"></AssertionConsumerService>\n"+
+		"    <AssertionConsumerService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Location=\"https://15661444.ngrok.io/saml2/acs\" index=\"1\"></AssertionConsumerService>\n"+
 		"  </SPSSODescriptor>\n"+
 		"</EntityDescriptor>")
 }
 
-func (test *ServiceProviderTest) TestCanProduceRedirectRequest(c *C) {
-	timeNow = func() time.Time {
-		rv, _ := time.Parse("Mon Jan 2 15:04:05 UTC 2006", "Mon Dec 1 01:31:21 UTC 2015")
-		return rv
-	}
-	s := ServiceProvider{
-		Key:         test.Key,
-		Certificate: test.Certificate,
-		MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
-		AcsURL:      "https://15661444.ngrok.io/saml2/acs",
-		IDPMetadata: &metadata.Metadata{},
-	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
-	c.Assert(err, IsNil)
+func (test *ServiceProviderMiddlewareTest) TestFourOhFour(c *C) {
+	req, _ := http.NewRequest("GET", "/this/is/not/a/supported/uri", nil)
 
-	redirectURL, err := s.MakeRedirectAuthenticationRequest("relayState")
-	c.Assert(err, IsNil)
-	c.Assert(redirectURL.String(), Equals, "https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=relayState&SAMLRequest=lJJBj9MwEIX%2FSuR7Y4%2FJRisriVS2Qqq0QNUAB27GmbYWiV08E6D%2FHqeA6AnKdfz85nvPbtYzn8Iev8xIXHyfxkCtmFMw0ZInE%2ByEZNiZfv362ehSmXOKHF0cRbEmwsQ%2BhqcYaJ4w9Zi%2Beofv98%2BtODGfyUgJD3UNVVWV4Zji59JHSXYatbSORLHJO32wi8efG344l5wP6OQ%2FlTEdl4HMWw9%2BRLlgaLnHwSd0LPv%2BrSi2m1b4YaWU0qpStXpUVjmFoEBDBTU8ggUHmIVEM24DsQ3cCq3gYQV6peCdAvMCjIaPotj9ivfSh8GHYytE8QETXQlzfNE1V5d0T1X2d0GieBXTZPnv8mWScxyuUoOBPV9E968iJ2Q7WLaN%2FAnWNW%2Byz3azi6N3l%2F980XGM354SWsZWcJpRdPcDc7KBfMZu5C1B18jbL9b9CAAA%2F%2F8%3D")
+	resp := httptest.NewRecorder()
+	test.Middleware.ServeHTTP(resp, req)
+	c.Assert(resp.Code, Equals, http.StatusNotFound)
+	respBuf, _ := ioutil.ReadAll(resp.Body)
+	c.Assert(string(respBuf), Equals, "404 page not found\n")
 }
 
-func (test *ServiceProviderTest) TestCanProducePostRequest(c *C) {
-	timeNow = func() time.Time {
-		rv, _ := time.Parse("Mon Jan 2 15:04:05 UTC 2006", "Mon Dec 1 01:31:21 UTC 2015")
-		return rv
-	}
-	s := ServiceProvider{
-		Key:         test.Key,
-		Certificate: test.Certificate,
-		MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
-		AcsURL:      "https://15661444.ngrok.io/saml2/acs",
-		IDPMetadata: &metadata.Metadata{},
-	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
-	c.Assert(err, IsNil)
+func (test *ServiceProviderMiddlewareTest) TestRequireAccountNoCreds(c *C) {
+	handler := test.Middleware.RequireAccountMiddleware(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			panic("not reached")
+		}))
 
-	form, err := s.MakePostAuthenticationRequest("relayState")
-	c.Assert(err, IsNil)
+	req, _ := http.NewRequest("GET", "/frob", nil)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
 
-	c.Assert(string(form), Equals, ``+
-		`<form method="post" action="https://idp.testshib.org/idp/profile/SAML2/POST/SSO">`+
-		`<input type="hidden" name="SAMLRequest" value="PEF1dGhuUmVxdWVzdCB4bWxucz0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOnByb3RvY29sIiBBc3NlcnRpb25Db25zdW1lclNlcnZpY2VVUkw9Imh0dHBzOi8vMTU2NjE0NDQubmdyb2suaW8vc2FtbDIvYWNzIiBEZXN0aW5hdGlvbj0iaHR0cHM6Ly9pZHAudGVzdHNoaWIub3JnL2lkcC9wcm9maWxlL1NBTUwyL1BPU1QvU1NPIiBJRD0iaWQtMDAwMjA0MDYwODBhMGMwZTEwMTIxNDE2MTgxYTFjMWUiIElzc3VlSW5zdGFudD0iMjAxNS0xMi0wMVQwMTozMToyMVoiIFByb3RvY29sQmluZGluZz0iIiBWZXJzaW9uPSIyLjAiPjxJc3N1ZXIgeG1sbnM9InVybjpvYXNpczpuYW1lczp0YzpTQU1MOjIuMDphc3NlcnRpb24iIEZvcm1hdD0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOm5hbWVpZC1mb3JtYXQ6ZW50aXR5Ij5odHRwczovLzE1NjYxNDQ0Lm5ncm9rLmlvL3NhbWwyL21ldGFkYXRhPC9Jc3N1ZXI&#43;PE5hbWVJRFBvbGljeSB4bWxucz0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOnByb3RvY29sIiBBbGxvd0NyZWF0ZT0idHJ1ZSI&#43;dXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOm5hbWVpZC1mb3JtYXQ6dHJhbnNpZW50PC9OYW1lSURQb2xpY3k&#43;PC9BdXRoblJlcXVlc3Q&#43;" />`+
-		`<input type="hidden" name="RelayState" value="relayState" />`+
-		`<input type="submit" value="Submit" /></form>`)
+	c.Assert(resp.Code, Equals, http.StatusFound)
+	c.Assert(resp.Header().Get("Location"), Equals, "https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmkiOiIvZnJvYiJ9.QEnpCWpKnhmzWZyfI8GIgCCWyH7qTly8vw-V4oJ1ni0&SAMLRequest=lJJRb9owFIX%2FSuR3YjsKGbOSSAw0CYltiGx76JvrXMBqYlPfm7b8%2Bzq0VXlq6ev18bnfOXY5H%2BjgtnA%2FAFLy1HcOKzYEp7xGi8rpHlCRUc3811plqVDH4Mkb37FkjgiBrHcL73DoITQQHqyBf9t1xQ5ER1Scy2lRyDzPU7cP%2Fi61nqPuu4xrgyxZxp3W6dHj%2FYZtjynFAzzY29SH%2FTjgcevOdsBHjIxvobUBDPGm%2BcOS1bJitp0IITKRi0LMhBZGgBQyk7ks5ExqaSREIeIAK4ekHVUsE3I6kdlEyL9Cquk3Jb7fsGTzGu%2BHda11%2B4qx5D8EPBPG%2BKwuzy7hmqr0W0Es%2BelDr%2Blj%2BTiJOXZnqQJHlk6s%2FqzIHki3mnTJX8Dq8nf0WS03vrPm9MUX7Tr%2FuAigCSpGYQBWXw9MQTu0EbvklwR1yS%2B%2FWP0cAAD%2F%2Fw%3D%3D")
 }
 
-func (test *ServiceProviderTest) TestCanParseResponse(c *C) {
-	s := ServiceProvider{
-		Key:         test.Key,
-		Certificate: test.Certificate,
-		MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
-		AcsURL:      "https://15661444.ngrok.io/saml2/acs",
-		IDPMetadata: &metadata.Metadata{},
-	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
-	c.Assert(err, IsNil)
+func (test *ServiceProviderMiddlewareTest) TestRequireAccountCreds(c *C) {
+	handler := test.Middleware.RequireAccountMiddleware(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			c.Assert(r.Header.Get("X-Saml-Telephonenumber"), Equals, "555-5555")
+			c.Assert(r.Header.Get("X-Saml-Edupersonscopedaffiliation"), Equals, "Staff@testshib.org")
+			c.Assert(r.Header.Get("X-Saml-Sn"), Equals, "And I")
+			c.Assert(r.Header.Get("X-Saml-Edupersonentitlement"), Equals, "urn:mace:dir:entitlement:common-lib-terms")
+			c.Assert(r.Header.Get("X-Saml-Edupersontargetedid"), Equals, "")
+			c.Assert(r.Header.Get("X-Saml-Givenname"), Equals, "Me Myself")
+			c.Assert(r.Header.Get("X-Saml-Cn"), Equals, "Me Myself And I")
+			c.Assert(r.Header.Get("X-Saml-Edupersonaffiliation"), Equals, "Staff")
+			c.Assert(r.Header.Get("X-Saml-Uid"), Equals, "myself")
+			c.Assert(r.Header.Get("X-Saml-Edupersonprincipalname"), Equals, "myself@testshib.org")
+			w.WriteHeader(http.StatusTeapot)
+		}))
 
-	req := http.Request{PostForm: url.Values{}}
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	attr, err := s.ParseResponse(&req, "")
-	c.Assert(err, IsNil)
-	c.Assert(attr.Get("cn").Value, Equals, "Me Myself And I")
-	c.Assert(attr.Get("urn:oid:1.3.6.1.4.1.5923.1.1.1.6").Value, Equals, "myself@testshib.org")
-	c.Assert(attr.Get("missing"), IsNil)
+	req, _ := http.NewRequest("GET", "/frob", nil)
+	req.Header.Set("Cookie", ""+
+		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; "+
+		"Path=/; Max-Age=3600")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
 
-	c.Assert(attr, DeepEquals, AssertionAttributes{
-		{FriendlyName: "uid", Name: "urn:oid:0.9.2342.19200300.100.1.1", Value: "myself"},
-		{FriendlyName: "eduPersonAffiliation", Name: "urn:oid:1.3.6.1.4.1.5923.1.1.1.1", Value: "Member"},
-		{FriendlyName: "eduPersonAffiliation", Name: "urn:oid:1.3.6.1.4.1.5923.1.1.1.1", Value: "Staff"},
-		{FriendlyName: "eduPersonPrincipalName", Name: "urn:oid:1.3.6.1.4.1.5923.1.1.1.6", Value: "myself@testshib.org"},
-		{FriendlyName: "sn", Name: "urn:oid:2.5.4.4", Value: "And I"},
-		{FriendlyName: "eduPersonScopedAffiliation", Name: "urn:oid:1.3.6.1.4.1.5923.1.1.1.9", Value: "Member@testshib.org"},
-		{FriendlyName: "eduPersonScopedAffiliation", Name: "urn:oid:1.3.6.1.4.1.5923.1.1.1.9", Value: "Staff@testshib.org"},
-		{FriendlyName: "givenName", Name: "urn:oid:2.5.4.42", Value: "Me Myself"},
-		{FriendlyName: "eduPersonEntitlement", Name: "urn:oid:1.3.6.1.4.1.5923.1.1.1.7", Value: "urn:mace:dir:entitlement:common-lib-terms"},
-		{FriendlyName: "cn", Name: "urn:oid:2.5.4.3", Value: "Me Myself And I"},
-		{FriendlyName: "eduPersonTargetedID", Name: "urn:oid:1.3.6.1.4.1.5923.1.1.1.10", Value: ""},
-		{FriendlyName: "telephoneNumber", Name: "urn:oid:2.5.4.20", Value: "555-5555"},
-	})
+	c.Assert(resp.Code, Equals, http.StatusTeapot)
 }
 
-func (test *ServiceProviderTest) TestInvalidResponses(c *C) {
-	s := ServiceProvider{
-		Key:         test.Key,
-		Certificate: test.Certificate,
-		MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
-		AcsURL:      "https://15661444.ngrok.io/saml2/acs",
-		IDPMetadata: &metadata.Metadata{},
-	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
-	c.Assert(err, IsNil)
+func (test *ServiceProviderMiddlewareTest) TestRequireAccountBadCreds(c *C) {
+	handler := test.Middleware.RequireAccountMiddleware(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			panic("not reached")
+		}))
 
-	req := http.Request{PostForm: url.Values{}}
-	req.PostForm.Set("SAMLResponse", "???")
-	_, err = s.ParseResponse(&req, "")
-	c.Assert(err.(*InvalidResponseError).PrivateErr, ErrorMatches, "cannot parse base64: illegal base64 data at input byte 0")
+	req, _ := http.NewRequest("GET", "/frob", nil)
+	req.Header.Set("Cookie", ""+
+		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.yejJbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; "+
+		"Path=/; Max-Age=3600")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
 
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte("<hello>World!</hello>")))
-	_, err = s.ParseResponse(&req, "")
-	c.Assert(err.(*InvalidResponseError).PrivateErr, ErrorMatches, "cannot unmarshal response: expected element type <Response> but have <hello>")
+	c.Assert(resp.Code, Equals, http.StatusFound)
+	c.Assert(resp.Header().Get("Location"), Equals, "https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmkiOiIvZnJvYiJ9.QEnpCWpKnhmzWZyfI8GIgCCWyH7qTly8vw-V4oJ1ni0&SAMLRequest=lJJRb9owFIX%2FSuR3YjsKGbOSSAw0CYltiGx76JvrXMBqYlPfm7b8%2Bzq0VXlq6ev18bnfOXY5H%2BjgtnA%2FAFLy1HcOKzYEp7xGi8rpHlCRUc3811plqVDH4Mkb37FkjgiBrHcL73DoITQQHqyBf9t1xQ5ER1Scy2lRyDzPU7cP%2Fi61nqPuu4xrgyxZxp3W6dHj%2FYZtjynFAzzY29SH%2FTjgcevOdsBHjIxvobUBDPGm%2BcOS1bJitp0IITKRi0LMhBZGgBQyk7ks5ExqaSREIeIAK4ekHVUsE3I6kdlEyL9Cquk3Jb7fsGTzGu%2BHda11%2B4qx5D8EPBPG%2BKwuzy7hmqr0W0Es%2BelDr%2Blj%2BTiJOXZnqQJHlk6s%2FqzIHki3mnTJX8Dq8nf0WS03vrPm9MUX7Tr%2FuAigCSpGYQBWXw9MQTu0EbvklwR1yS%2B%2FWP0cAAD%2F%2Fw%3D%3D")
+}
 
-	s.AcsURL = "https://wrong/saml2/acs"
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, "")
-	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "`Destination` does not match AcsURL (expected \"https://wrong/saml2/acs\")")
-	s.AcsURL = "https://15661444.ngrok.io/saml2/acs"
-
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, "wrongRequestID")
-	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "`InResponseTo` does not match requestID (expected \"wrongRequestID\")")
-
-	timeNow = func() time.Time {
-		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Nov 30 20:57:09 UTC 2016")
-		return rv
-	}
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, "")
-	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "IssueInstant expired at 2015-12-01 01:57:51.375 +0000 UTC")
-	timeNow = func() time.Time {
-		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Dec 1 01:57:09 UTC 2015")
+func (test *ServiceProviderMiddlewareTest) TestRequireAccountExpiredCreds(c *C) {
+	jwt.TimeFunc = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05 UTC 2006", "Mon Dec 1 01:31:21 UTC 2115")
 		return rv
 	}
 
-	s.IDPMetadata.EntityID = "http://snakeoil.com"
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, "")
-	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "Issuer does not match the IDP metadata (expected \"http://snakeoil.com\")")
-	s.IDPMetadata.EntityID = "https://idp.testshib.org/idp/shibboleth"
+	handler := test.Middleware.RequireAccountMiddleware(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			panic("not reached")
+		}))
 
-	oldSpStatusSuccess := spStatusSuccess
-	spStatusSuccess = "not:the:success:value"
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, "")
-	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "Status code was not not:the:success:value")
-	spStatusSuccess = oldSpStatusSuccess
+	req, _ := http.NewRequest("GET", "/frob", nil)
+	req.Header.Set("Cookie", ""+
+		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; "+
+		"Path=/; Max-Age=3600")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
 
-	s.Key = "invalid"
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, "")
-	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "failed to decrypt response: Cannot parse key as PEM encoded RSA private key")
-	s.Key = test.Key
-
-	s.IDPMetadata.IDPSSODescriptor.KeyDescriptor[0].KeyInfo.Certificate = "invalid"
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, "")
-	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "failed to verify signature on response: xmlSecCryptoAppKeyLoadMemory failed")
+	c.Assert(resp.Code, Equals, http.StatusFound)
+	c.Assert(resp.Header().Get("Location"), Equals, "https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmkiOiIvZnJvYiJ9.QEnpCWpKnhmzWZyfI8GIgCCWyH7qTly8vw-V4oJ1ni0&SAMLRequest=lJJRb9owFIX%2FSuR3YjsKGbOSSAw0CYltiGx76JvrXMBqYlPfm7b8%2Bzq0VXlq6ev18bnfOXY5H%2BjgtnA%2FAFLy1HcOKzYEp7xGi8rpHlCRUc3811plqVDH4Mkb37FkjgiBrHcL73DoITQQHqyBf9t1xQ5ER1Scy2lRyDzPU7cP%2Fi61nqPuu4xrgyxZxp3W6dHj%2FYZtjynFAzzY29SH%2FTjgcevOdsBHjIxvobUBDPGm%2BcOS1bJitp0IITKRi0LMhBZGgBQyk7ks5ExqaSREIeIAK4ekHVUsE3I6kdlEyL9Cquk3Jb7fsGTzGu%2BHda11%2B4qx5D8EPBPG%2BKwuzy7hmqr0W0Es%2BelDr%2Blj%2BTiJOXZnqQJHlk6s%2FqzIHki3mnTJX8Dq8nf0WS03vrPm9MUX7Tr%2FuAigCSpGYQBWXw9MQTu0EbvklwR1yS%2B%2FWP0cAAD%2F%2Fw%3D%3D")
 }
 
-func (test *ServiceProviderTest) TestInvalidAssertions(c *C) {
-	s := ServiceProvider{
-		Key:         test.Key,
-		Certificate: test.Certificate,
-		MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
-		AcsURL:      "https://15661444.ngrok.io/saml2/acs",
-		IDPMetadata: &metadata.Metadata{},
-	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
-	c.Assert(err, IsNil)
+func (test *ServiceProviderMiddlewareTest) TestRequireAccountPanicOnRequestToACS(c *C) {
+	handler := test.Middleware.RequireAccountMiddleware(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			panic("not reached")
+		}))
 
-	req := http.Request{PostForm: url.Values{}}
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	s.IDPMetadata.IDPSSODescriptor.KeyDescriptor[0].KeyInfo.Certificate = "invalid"
-	_, err = s.ParseResponse(&req, "")
-	assertionBuf := []byte(err.(*InvalidResponseError).Response)
+	req, _ := http.NewRequest("POST", "https://15661444.ngrok.io/saml2/acs", nil)
+	resp := httptest.NewRecorder()
+	c.Assert(func() { handler.ServeHTTP(resp, req) }, Panics,
+		"don't wrap ServiceProviderMiddleware with RequireAccountMiddleware")
+}
 
-	assertion := spAssertion{}
-	err = xml.Unmarshal(assertionBuf, &assertion)
-	c.Assert(err, IsNil)
+func (test *ServiceProviderMiddlewareTest) TestRejectRequestWithMagicHeader(c *C) {
+	handler := test.Middleware.RequireAccountMiddleware(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			panic("not reached")
+		}))
 
-	err = s.validateAssertion(&assertion, "", timeNow().Add(time.Hour))
-	c.Assert(err.Error(), Equals, "expired on 2015-12-01 01:57:51.375 +0000 UTC")
+	req, _ := http.NewRequest("GET", "/frob", nil)
+	req.Header.Set("Cookie", ""+
+		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; "+
+		"Path=/; Max-Age=3600")
+	req.Header.Set("X-Saml-Uid", "root") // ... evil
+	resp := httptest.NewRecorder()
+	c.Assert(func() { handler.ServeHTTP(resp, req) }, Panics,
+		"X-Saml-* headers should not exist when this function is called")
+}
 
-	assertion.Issuer.Value = "bob"
-	err = s.validateAssertion(&assertion, "", timeNow())
-	c.Assert(err.Error(), Equals, "issuer is not \"https://idp.testshib.org/idp/shibboleth\"")
-	xml.Unmarshal(assertionBuf, &assertion)
+func (test *ServiceProviderMiddlewareTest) TestRequireAttribute(c *C) {
+	handler := test.Middleware.RequireAccountMiddleware(
+		RequireAttribute("eduPersonAffiliation", "Staff")(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusTeapot)
+			})))
 
-	assertion.Subject.NameID.NameQualifier = "bob"
-	err = s.validateAssertion(&assertion, "", timeNow())
-	c.Assert(err.Error(), Equals, "Subject NameID NameQualifier is not \"https://idp.testshib.org/idp/shibboleth\"")
-	xml.Unmarshal(assertionBuf, &assertion)
+	req, _ := http.NewRequest("GET", "/frob", nil)
+	req.Header.Set("Cookie", ""+
+		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; "+
+		"Path=/; Max-Age=3600")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
 
-	assertion.Subject.NameID.SPNameQualifier = "bob"
-	err = s.validateAssertion(&assertion, "", timeNow())
-	c.Assert(err.Error(), Equals, "Subject NameID SPNameQualifier is not \"https://15661444.ngrok.io/saml2/metadata\"")
-	xml.Unmarshal(assertionBuf, &assertion)
+	c.Assert(resp.Code, Equals, http.StatusTeapot)
+}
 
-	err = s.validateAssertion(&assertion, "any request id", timeNow())
-	c.Assert(err.Error(), Equals, "SubjectConfirmation requestID is not \"any request id\"")
+func (test *ServiceProviderMiddlewareTest) TestRequireAttributeWrongValue(c *C) {
+	handler := test.Middleware.RequireAccountMiddleware(
+		RequireAttribute("eduPersonAffiliation", "DomainAdmins")(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				panic("not reached")
+			})))
 
-	assertion.Subject.SubjectConfirmation.SubjectConfirmationData.Recipient = "wrong/acs/url"
-	err = s.validateAssertion(&assertion, "", timeNow())
-	c.Assert(err.Error(), Equals, "SubjectConfirmation Recipient is not https://15661444.ngrok.io/saml2/acs")
-	xml.Unmarshal(assertionBuf, &assertion)
+	req, _ := http.NewRequest("GET", "/frob", nil)
+	req.Header.Set("Cookie", ""+
+		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; "+
+		"Path=/; Max-Age=3600")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
 
-	assertion.Subject.SubjectConfirmation.SubjectConfirmationData.NotOnOrAfter = timeNow().Add(-1 * time.Hour)
-	err = s.validateAssertion(&assertion, "", timeNow())
-	c.Assert(err.Error(), Equals, "SubjectConfirmationData is expired")
-	xml.Unmarshal(assertionBuf, &assertion)
+	c.Assert(resp.Code, Equals, http.StatusForbidden)
+}
 
-	assertion.Conditions.NotBefore = timeNow().Add(time.Hour)
-	err = s.validateAssertion(&assertion, "", timeNow())
-	c.Assert(err.Error(), Equals, "Conditions is not yet valid")
-	xml.Unmarshal(assertionBuf, &assertion)
+func (test *ServiceProviderMiddlewareTest) TestRequireAttributeNotPresent(c *C) {
+	handler := test.Middleware.RequireAccountMiddleware(
+		RequireAttribute("valueThatDoesntExist", "doesntMatter")(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				panic("not reached")
+			})))
 
-	assertion.Conditions.NotOnOrAfter = timeNow().Add(-1 * time.Hour)
-	err = s.validateAssertion(&assertion, "", timeNow())
-	c.Assert(err.Error(), Equals, "Conditions is expired")
-	xml.Unmarshal(assertionBuf, &assertion)
+	req, _ := http.NewRequest("GET", "/frob", nil)
+	req.Header.Set("Cookie", ""+
+		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; "+
+		"Path=/; Max-Age=3600")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
 
-	assertion.Conditions.AudienceRestriction.Audience.Value = "not/our/metadata/url"
-	err = s.validateAssertion(&assertion, "", timeNow())
-	c.Assert(err.Error(), Equals, "Conditions AudienceRestriction is not \"https://15661444.ngrok.io/saml2/metadata\"")
-	xml.Unmarshal(assertionBuf, &assertion)
+	c.Assert(resp.Code, Equals, http.StatusForbidden)
+}
 
+func (test *ServiceProviderMiddlewareTest) TestRequireAttributeMissingAccount(c *C) {
+	handler := RequireAttribute("eduPersonAffiliation", "DomainAdmins")(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			panic("not reached")
+		}))
+
+	req, _ := http.NewRequest("GET", "/frob", nil)
+	req.Header.Set("Cookie", ""+
+		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; "+
+		"Path=/; Max-Age=3600")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	c.Assert(resp.Code, Equals, http.StatusForbidden)
+}
+
+func (test *ServiceProviderMiddlewareTest) TestCanParseResponse(c *C) {
+	v := &url.Values{}
+	v.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
+	v.Set("RelayState", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmkiOiIvZnJvYiJ9.QEnpCWpKnhmzWZyfI8GIgCCWyH7qTly8vw-V4oJ1ni0")
+	req, _ := http.NewRequest("POST", "/saml2/acs", bytes.NewReader([]byte(v.Encode())))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp := httptest.NewRecorder()
+	test.Middleware.ServeHTTP(resp, req)
+	c.Assert(resp.Code, Equals, http.StatusFound)
+	c.Assert(resp.Header().Get("Location"), Equals, "/frob")
+	c.Assert(resp.Header().Get("Set-Cookie"), Equals, ""+
+		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; "+
+		"Path=/; Max-Age=3600")
+}
+
+func (test *ServiceProviderMiddlewareTest) TestRejectsInvalidRelayState(c *C) {
+	v := &url.Values{}
+	v.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
+	v.Set("RelayState", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ye1JcmkiOiIvZnJvYiJ9.QEnpCWpKnhmzWZyfI8GIgCCWyH7qTly8vw-V4oJ1ni0")
+	req, _ := http.NewRequest("POST", "/saml2/acs", bytes.NewReader([]byte(v.Encode())))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp := httptest.NewRecorder()
+	test.Middleware.ServeHTTP(resp, req)
+	c.Assert(resp.Code, Equals, http.StatusForbidden)
+	c.Assert(resp.Header().Get("Location"), Equals, "")
+	c.Assert(resp.Header().Get("Set-Cookie"), Equals, "")
+}
+
+func (test *ServiceProviderMiddlewareTest) TestHandlesInvalidResponse(c *C) {
+	v := &url.Values{}
+	v.Set("SAMLResponse", "this is not a valid saml response")
+	v.Set("RelayState", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmkiOiIvZnJvYiJ9.QEnpCWpKnhmzWZyfI8GIgCCWyH7qTly8vw-V4oJ1ni0")
+	req, _ := http.NewRequest("POST", "/saml2/acs", bytes.NewReader([]byte(v.Encode())))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp := httptest.NewRecorder()
+	test.Middleware.ServeHTTP(resp, req)
+
+	// note: it is important that when presented with an invalid request,
+	// the ACS handles DOES NOT reveal detailed error information in the
+	// HTTP response.
+	c.Assert(resp.Code, Equals, http.StatusForbidden)
+	respBody, _ := ioutil.ReadAll(resp.Body)
+	c.Assert(string(respBody), Equals, "Forbidden\n")
+	c.Assert(resp.Header().Get("Location"), Equals, "")
+	c.Assert(resp.Header().Get("Set-Cookie"), Equals, "")
 }

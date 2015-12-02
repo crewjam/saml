@@ -2,28 +2,22 @@
 package main
 
 import (
-	"crypto/rand"
 	"encoding/xml"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/metadata"
 	"github.com/dchest/uniuri"
-	"github.com/dgrijalva/jwt-go"
+	"github.com/kr/pretty"
 	"github.com/zenazn/goji"
 	"github.com/zenazn/goji/web"
 )
 
-var secret []byte
 var links = map[string]Link{}
 var samlsp *saml.ServiceProvider
-var timeNow = time.Now
-var maxAge = time.Minute * 5
 
 type Link struct {
 	ShortLink string
@@ -31,131 +25,9 @@ type Link struct {
 	Owner     string
 }
 
-func GetAccountFromCookie(r *http.Request) *string {
-	cookieStr, err := r.Cookie("token")
-	if err != nil {
-		return nil
-	}
-	token, err := jwt.Parse(cookieStr.Value, func(t *jwt.Token) (interface{}, error) {
-		return secret, nil
-	})
-	if err != nil {
-		return nil
-	}
-	if !token.Valid {
-		return nil
-	}
-	rv := token.Claims["u"].(string)
-	return &rv
-}
-
-func GetMetadata(c web.C, w http.ResponseWriter, r *http.Request) {
-	metadata := samlsp.Metadata()
-	buf, _ := xml.MarshalIndent(metadata, "", "\t")
-	w.Write(buf)
-}
-
-// PostACS handles the SAML ACS responses
-func PostACS(c web.C, w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
-
-	requestID := "" // XXX
-	assertionAttributes, err := samlsp.ParseResponse(r, requestID)
-	if err != nil {
-		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-		return
-	}
-
-	log.Printf("assertionAttributes: %#v", assertionAttributes)
-	relayState, err := jwt.Parse(r.Form.Get("RelayState"), func(t *jwt.Token) (interface{}, error) {
-		return secret, nil
-	})
-	if err != nil || !relayState.Valid {
-		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-		return
-	}
-	redirectURI := relayState.Claims["uri"].(string)
-
-	token := jwt.New(jwt.GetSigningMethod("HS256"))
-	token.Claims["u"] = assertionAttributes.Get("uid").Value
-	token.Claims["exp"] = timeNow().Add(maxAge).Unix()
-	signedToken, err := token.SignedString(secret)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	http.SetCookie(w, &http.Cookie{
-		Name:     "token",
-		Value:    signedToken,
-		MaxAge:   90000,
-		Secure:   true,
-		HttpOnly: false,
-		Path:     "/",
-	})
-
-	//http.Redirect(w, r, redirectURI, http.StatusTemporaryRedirect)
-	fmt.Fprintf(w, "<a href=\"%s\">Continue</a>", redirectURI)
-}
-
-var samlBinding = "post"
-
-// RequireAccount is middleware that requires the request contain a valid token
-func RequireAccount(c *web.C, h http.Handler) http.Handler {
-	fn := func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("RequireAccount(r=%#v)", r)
-		account := GetAccountFromCookie(r)
-		if account != nil {
-			log.Printf("cookie is valid")
-			c.Env["Account"] = *account
-			h.ServeHTTP(w, r)
-			return
-		}
-
-		relayState := jwt.New(jwt.GetSigningMethod("HS256"))
-		relayState.Claims["uri"] = r.RequestURI
-		signedRelayState, err := relayState.SignedString(secret)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		switch samlBinding {
-		case "redirect":
-			u, err := samlsp.MakeRedirectAuthenticationRequest(signedRelayState)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-
-			// redirect to the SAML login URL
-			http.Redirect(w, r, u.String(), http.StatusTemporaryRedirect)
-			return
-		case "post":
-			formBuf, err := samlsp.MakePostAuthenticationRequest(signedRelayState)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			fmt.Fprintf(w, "<!DOCTYPE html><html><body>%s</body></html>", formBuf)
-			return
-
-		default:
-			log.Panicf("unknown saml binding %s", samlBinding)
-		}
-	}
-	return http.HandlerFunc(fn)
-}
-
-// GetAccount returns the account associated with the request, so long as the
-// request is wrapped with RequireAccount middleware
-func GetAccount(c web.C) string {
-	return c.Env["Account"].(string)
-}
-
 // CreateLink handles requests to create links
 func CreateLink(c web.C, w http.ResponseWriter, r *http.Request) {
-	account := GetAccount(c)
+	account := r.Header.Get("X-Remote-User")
 	l := Link{
 		ShortLink: uniuri.New(),
 		Target:    r.FormValue("t"),
@@ -180,7 +52,7 @@ func ServeLink(c web.C, w http.ResponseWriter, r *http.Request) {
 
 // ListLinks returns a list of the current user's links
 func ListLinks(c web.C, w http.ResponseWriter, r *http.Request) {
-	account := GetAccount(c)
+	account := r.Header.Get("X-Remote-User")
 	for _, l := range links {
 		if l.Owner == account {
 			fmt.Fprintf(w, "%s\n", l.ShortLink)
@@ -189,14 +61,11 @@ func ListLinks(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	secret = make([]byte, 32)
-	rand.Read(secret)
-
-	baseURL := "https://15661444.ngrok.io"
+	baseURL := "https://60ebe93b.ngrok.io"
 
 	samlsp = &saml.ServiceProvider{
-		MetadataURL: baseURL + "/saml2/metadata",
-		AcsURL:      baseURL + "/saml2/acs",
+		MetadataURL: baseURL + "/saml/metadata",
+		AcsURL:      baseURL + "/saml/acs",
 	}
 	samlsp.Key = `-----BEGIN RSA PRIVATE KEY-----
 MIICXgIBAAKBgQDU8wdiaFmPfTyRYuFlVPi866WrH/2JubkHzp89bBQopDaLXYxi
@@ -228,7 +97,6 @@ QLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvn
 OwJlNCASPZRH/JmF8tX0hoHuAQ==
 -----END CERTIFICATE-----
 `
-
 	buf, err := ioutil.ReadFile("doc/idp-metadata.xml")
 	if err != nil {
 		panic(err)
@@ -248,16 +116,19 @@ OwJlNCASPZRH/JmF8tX0hoHuAQ==
 		panic("cannot find idp in metadata")
 	}
 
-	goji.Get("/saml2/metadata", GetMetadata)
-	goji.Post("/saml2/acs", PostACS)
-
-	goji.Get("/:link", ServeLink)
+	samlMiddleware := &saml.ServiceProviderMiddleware{ServiceProvider: samlsp}
+	goji.Handle("/saml/*", samlMiddleware)
 
 	authMux := web.New()
-	authMux.Use(RequireAccount)
+	authMux.Use(samlMiddleware.RequireAccountMiddleware)
+	authMux.Get("/whoami", func(w http.ResponseWriter, r *http.Request) {
+		pretty.Fprintf(w, "%# v", r)
+	})
 	authMux.Post("/", CreateLink)
 	authMux.Get("/", ListLinks)
-	goji.Handle("/", authMux)
+
+	goji.Handle("/*", authMux)
+	goji.Get("/:link", ServeLink)
 
 	goji.Serve()
 }
