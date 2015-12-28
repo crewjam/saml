@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crewjam/saml/metadata"
 	"github.com/dgrijalva/jwt-go"
 )
 
@@ -23,7 +24,7 @@ import (
 // the auth process if they do not have session credentials.
 //
 // You can stub in your session mechanism by providing values for
-// IsAuthorizedFunc (called to determine if a request is authorized) and
+// IsAuthorizedFunc (called to determine if a request is already authorized) and
 // AuthorizeFunc (called when the SAML response is received). The default
 // implementations of these functions issue and verify a signed cookie containing
 // information from the SAML assertion.
@@ -42,8 +43,9 @@ const cookieName = "token"
 func (m *ServiceProviderMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	metadataURL, _ := url.Parse(m.ServiceProvider.MetadataURL)
 	if r.URL.Path == metadataURL.Path {
-		metadata := m.ServiceProvider.Metadata()
-		buf, _ := xml.MarshalIndent(metadata, "", "  ")
+		buf, _ := xml.MarshalIndent(metadata.EntitiesDescriptor{
+			EntityDescriptor: []*metadata.Metadata{m.ServiceProvider.Metadata()},
+		}, "", "  ")
 		w.Write(buf)
 		return
 	}
@@ -202,8 +204,8 @@ func (m *ServiceProviderMiddleware) DefaultIsAuthorized(r *http.Request) bool {
 
 // RequireAttribute returns a middleware function that requires that the
 // SAML attribute `name` be set to `value`. This can be used to require
-// that a remote user be a member of a group. It requires that
-// RequireAccountMiddleware be
+// that a remote user be a member of a group. It relies on the X-Saml-* headers
+// that RequireAccountMiddleware adds to the request.
 //
 // For example:
 //

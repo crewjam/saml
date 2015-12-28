@@ -237,13 +237,13 @@ func (test *ServiceProviderTest) TestInvalidResponses(c *C) {
 	s.Key = "invalid"
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
 	_, err = s.ParseResponse(&req, "")
-	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "failed to decrypt response: Cannot parse key as PEM encoded RSA private key")
+	c.Assert(err.(*InvalidResponseError).PrivateErr, ErrorMatches, "failed to decrypt response: .*PEM_read_bio_PrivateKey.*")
 	s.Key = test.Key
 
 	s.IDPMetadata.IDPSSODescriptor.KeyDescriptor[0].KeyInfo.Certificate = "invalid"
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
 	_, err = s.ParseResponse(&req, "")
-	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "failed to verify signature on response: xmlSecCryptoAppKeyLoadMemory failed")
+	c.Assert(err.(*InvalidResponseError).PrivateErr, ErrorMatches, "failed to verify signature on response: .*xmlSecOpenSSLAppKeyLoadMemory.*")
 }
 
 func (test *ServiceProviderTest) TestInvalidAssertions(c *C) {
@@ -312,5 +312,4 @@ func (test *ServiceProviderTest) TestInvalidAssertions(c *C) {
 	err = s.validateAssertion(&assertion, "", timeNow())
 	c.Assert(err.Error(), Equals, "Conditions AudienceRestriction is not \"https://15661444.ngrok.io/saml2/metadata\"")
 	xml.Unmarshal(assertionBuf, &assertion)
-
 }

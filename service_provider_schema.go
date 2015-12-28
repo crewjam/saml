@@ -4,7 +4,7 @@ import (
 	"encoding/xml"
 	"time"
 
-	"github.com/crewjam/go-xmlsec/xmldsig"
+	"github.com/crewjam/go-xmlsec"
 )
 
 type spAuthRequest struct {
@@ -16,7 +16,7 @@ type spAuthRequest struct {
 	ProtocolBinding             string                `xml:",attr"`
 	Version                     string                `xml:",attr"`
 	Issuer                      spAuthReqIssuer       `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
-	Signature                   *xmldsig.Signature    `xml:"http://www.w3.org/2000/09/xmldsig# Signature"`
+	Signature                   *xmlsec.Signature     `xml:"http://www.w3.org/2000/09/xmldsig# Signature"`
 	NameIDPolicy                spAuthReqNameIdPolicy `xml:"urn:oasis:names:tc:SAML:2.0:protocol NameIDPolicy"`
 }
 
@@ -64,7 +64,8 @@ type spStatusCode struct {
 var spStatusSuccess = "urn:oasis:names:tc:SAML:2.0:status:Success"
 
 type spEncryptedAssertion struct {
-	Assertion *spAssertion
+	Assertion     *spAssertion
+	EncryptedData []byte `xml:",innerxml"`
 }
 
 type spAssertion struct {
@@ -73,7 +74,7 @@ type spAssertion struct {
 	IssueInstant       time.Time `xml:",attr"`
 	Version            string    `xml:",attr"`
 	Issuer             *spIssuer `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
-	Signature          *xmldsig.Signature
+	Signature          *xmlsec.Signature
 	Subject            *spSubject
 	Conditions         *spConditions
 	AuthnStatement     *spAuthnStatement
@@ -120,7 +121,7 @@ type spAudience struct {
 }
 
 type spAuthnStatement struct {
-	AuthnInstance   time.Time `xml:",attr"`
+	AuthnInstant    time.Time `xml:",attr"`
 	SessionIndex    string    `xml:",attr"`
 	SubjectLocality spSubjectLocality
 	AuthnContext    spAuthnContext

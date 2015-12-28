@@ -5,9 +5,12 @@ import (
 	"time"
 )
 
+const HTTPPostBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+const HTTPRedirectBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+
 type EntitiesDescriptor struct {
-	XMLName          xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:metadata EntitiesDescriptor"`
-	EntityDescriptor []*Metadata
+	XMLName          xml.Name    `xml:"urn:oasis:names:tc:SAML:2.0:metadata EntitiesDescriptor"`
+	EntityDescriptor []*Metadata `xml:"urn:oasis:names:tc:SAML:2.0:metadata EntityDescriptor"`
 }
 
 type Metadata struct {

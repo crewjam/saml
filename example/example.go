@@ -61,7 +61,8 @@ func ListLinks(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	baseURL := "https://60ebe93b.ngrok.io"
+	baseURL := "https://962766ce.ngrok.io"
+	idpMetadataURL := "https://516becc2.ngrok.io/metadata"
 
 	samlsp = &saml.ServiceProvider{
 		MetadataURL: baseURL + "/saml/metadata",
@@ -97,7 +98,21 @@ QLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvn
 OwJlNCASPZRH/JmF8tX0hoHuAQ==
 -----END CERTIFICATE-----
 `
-	buf, err := ioutil.ReadFile("doc/idp-metadata.xml")
+
+	/*
+		buf, err := ioutil.ReadFile("doc/idp-metadata.xml")
+		if err != nil {
+			panic(err)
+		}
+	*/
+	resp, err := http.Get(idpMetadataURL)
+	if err != nil {
+		panic(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		panic(resp.Status)
+	}
+	buf, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		panic(err)
 	}

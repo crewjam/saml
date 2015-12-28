@@ -9,13 +9,13 @@ import (
 	"encoding/xml"
 	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
 	"time"
 
-	"github.com/crewjam/go-xmlsec/xmldsig"
-	"github.com/crewjam/go-xmlsec/xmlenc"
+	"github.com/crewjam/go-xmlsec"
 
 	"github.com/crewjam/saml/metadata"
 )
@@ -96,7 +96,7 @@ func (sp *ServiceProvider) Metadata() *metadata.Metadata {
 				},
 			},
 			AssertionConsumerService: []metadata.IndexedEndpoint{{
-				Binding:  "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
+				Binding:  metadata.HTTPPostBinding,
 				Location: sp.AcsURL,
 				Index:    1,
 			}},
@@ -197,15 +197,10 @@ func (sp *ServiceProvider) getIDPSigningCert() []byte {
 
 // makeAuthenticationRequest produces a new spAuthRequest object for idpURL.
 func (sp *ServiceProvider) makeAuthenticationRequest(idpURL *url.URL) (*spAuthRequest, error) {
-	id := make([]byte, 16)
-	if _, err := randReader.Read(id); err != nil {
-		return nil, err
-	}
-
 	req := spAuthRequest{
 		AssertionConsumerServiceURL: sp.AcsURL,
 		Destination:                 idpURL.String(),
-		ID:                          fmt.Sprintf("id-%x", id),
+		ID:                          fmt.Sprintf("id-%x", randomBytes(16)),
 		IssueInstant:                timeNow(),
 		Version:                     "2.0",
 		Issuer: spAuthReqIssuer{
@@ -359,16 +354,18 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, requestID string) (A
 	}
 
 	// decrypt the response
-	assertionBuf, err := xmlenc.Decrypt([]byte(sp.Key), rawResponseBuf)
+	plaintextAssertion, err := xmlsec.Decrypt([]byte(sp.Key), resp.EncryptedAssertion.EncryptedData)
 	if err != nil {
 		retErr.PrivateErr = fmt.Errorf("failed to decrypt response: %s", err)
 		return nil, retErr
 	}
-	retErr.Response = string(assertionBuf)
+	retErr.Response = string(plaintextAssertion)
 
-	if err := xmldsig.Verify(sp.getIDPSigningCert(), assertionBuf,
-		xmldsig.Options{
-			XMLID: []xmldsig.XMLIDOption{{
+	log.Printf("XXX plaintextAssertion: `%s` XXX", string(plaintextAssertion))
+
+	if err := xmlsec.Verify(sp.getIDPSigningCert(), plaintextAssertion,
+		xmlsec.SignatureOptions{
+			XMLID: []xmlsec.XMLIDOption{{
 				ElementName:      "Assertion",
 				ElementNamespace: "urn:oasis:names:tc:SAML:2.0:assertion",
 				AttributeName:    "ID",
@@ -378,13 +375,11 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, requestID string) (A
 		return nil, retErr
 	}
 
-	assertion := spAssertion{}
-	if err := xml.Unmarshal(assertionBuf, &assertion); err != nil {
-		retErr.PrivateErr = fmt.Errorf("cannot unmarshal assertion: %s", err)
-		return nil, retErr
-	}
+	assertion := &spAssertion{}
+	xml.Unmarshal(plaintextAssertion, assertion)
+	log.Printf("XXX assertion: `%#v` XXX", resp)
 
-	if err := sp.validateAssertion(&assertion, requestID, now); err != nil {
+	if err := sp.validateAssertion(assertion, requestID, now); err != nil {
 		retErr.PrivateErr = fmt.Errorf("assertion invalid: %s", err)
 		return nil, retErr
 	}
