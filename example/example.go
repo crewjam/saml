@@ -2,7 +2,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/xml"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -61,12 +63,13 @@ func ListLinks(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	baseURL := "https://962766ce.ngrok.io"
-	idpMetadataURL := "https://516becc2.ngrok.io/metadata"
+	baseURL := flag.String("url", "https://962766ce.ngrok.io", "The base URL of this service")
+	idpMetadataURL := flag.String("idp", "https://516becc2.ngrok.io/metadata", "The metadata URL for the IDP")
+	flag.Parse()
 
 	samlsp = &saml.ServiceProvider{
-		MetadataURL: baseURL + "/saml/metadata",
-		AcsURL:      baseURL + "/saml/acs",
+		MetadataURL: *baseURL + "/saml/metadata",
+		AcsURL:      *baseURL + "/saml/acs",
 	}
 	samlsp.Key = `-----BEGIN RSA PRIVATE KEY-----
 MIICXgIBAAKBgQDU8wdiaFmPfTyRYuFlVPi866WrH/2JubkHzp89bBQopDaLXYxi
@@ -99,13 +102,8 @@ OwJlNCASPZRH/JmF8tX0hoHuAQ==
 -----END CERTIFICATE-----
 `
 
-	/*
-		buf, err := ioutil.ReadFile("doc/idp-metadata.xml")
-		if err != nil {
-			panic(err)
-		}
-	*/
-	resp, err := http.Get(idpMetadataURL)
+	fmt.Printf("fetching IDP metadata: %s\n", *idpMetadataURL)
+	resp, err := http.Get(*idpMetadataURL)
 	if err != nil {
 		panic(err)
 	}
@@ -130,6 +128,12 @@ OwJlNCASPZRH/JmF8tX0hoHuAQ==
 	if samlsp.IDPMetadata == nil {
 		panic("cannot find idp in metadata")
 	}
+
+	// register with the service provider
+	spMetadataBuf, _ := xml.MarshalIndent(metadata.EntitiesDescriptor{
+		EntityDescriptor: []*metadata.Metadata{samlsp.Metadata()},
+	}, "", "  ")
+	http.Post(strings.Replace(*idpMetadataURL, "/metadata", "/register-sp", 1), "text/xml", bytes.NewReader(spMetadataBuf))
 
 	samlMiddleware := &saml.ServiceProviderMiddleware{ServiceProvider: samlsp}
 	goji.Handle("/saml/*", samlMiddleware)

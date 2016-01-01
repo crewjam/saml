@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/xml"
+	"flag"
 	"log"
 	"net/http"
 
@@ -11,7 +12,8 @@ import (
 )
 
 func main() {
-	baseURL := "https://516becc2.ngrok.io"
+	baseURL := flag.String("idp", "", "The URL to the IDP")
+	flag.Parse()
 
 	idp := saml.IdentityProvider{
 		Key: `-----BEGIN RSA PRIVATE KEY-----
@@ -60,8 +62,8 @@ y/+1gHg2pxjGnhRBN6el/gSaDiySIMKbilDrffuvxiCfbpPN0NRRiPJhd2ay9KuL
 GFsTG2DLxnvr4GdN1BSr0Uu/KV3adj47WkXVPeMYQti/bQmxQB8tRFhrw80qakTL
 UzreO96WzlBBMtY=
 -----END CERTIFICATE-----`,
-		MetadataURL:      baseURL + "/metadata",
-		SSOURL:           baseURL + "/",
+		MetadataURL:      *baseURL + "/metadata",
+		SSOURL:           *baseURL + "/",
 		ServiceProviders: map[string]*metadata.Metadata{},
 	}
 

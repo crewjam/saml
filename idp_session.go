@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"net/http"
+	"sync"
 	"text/template"
 	"time"
 )
@@ -144,26 +145,41 @@ func (sp *DefaultSessionProvider) sendLoginForm(w http.ResponseWriter, r *http.R
 }
 
 type MemorySessionStore struct {
+	mu   sync.RWMutex
 	data map[string]*Session
 }
 
 func (m *MemorySessionStore) New(user *User) (*Session, error) {
 	session := &Session{
-		ID:         base64.StdEncoding.EncodeToString(randomBytes(32)),
-		CreateTime: timeNow(),
-		Index:      hex.EncodeToString(randomBytes(32)),
-		// XXX: fill in User* fields from User
+		ID:             base64.StdEncoding.EncodeToString(randomBytes(32)),
+		CreateTime:     timeNow(),
+		Index:          hex.EncodeToString(randomBytes(32)),
+		UserName:       user.Name,
+		Groups:         user.Groups[:],
+		UserEmail:      user.Email,
+		UserCommonName: user.CommonName,
+		UserSurname:    user.Surname,
+		UserGivenName:  user.GivenName,
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.data == nil {
+		m.data = map[string]*Session{}
 	}
 	m.data[session.ID] = session
 	return session, nil
 }
 
 func (m *MemorySessionStore) Get(id string) (*Session, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	s, _ := m.data[id]
 	return s, nil
 }
 
 func (m *MemorySessionStore) Delete(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	delete(m.data, id)
 	return nil
 }
