@@ -60,30 +60,34 @@ y/+1gHg2pxjGnhRBN6el/gSaDiySIMKbilDrffuvxiCfbpPN0NRRiPJhd2ay9KuL
 GFsTG2DLxnvr4GdN1BSr0Uu/KV3adj47WkXVPeMYQti/bQmxQB8tRFhrw80qakTL
 UzreO96WzlBBMtY=
 -----END CERTIFICATE-----`,
-		MetadataURL: baseURL + "/metadata",
-		SSOURL:      baseURL + "/",
-		Users: []saml.User{
-			{
-				Name:       "alice",
-				Password:   "hunter2",
-				Groups:     []string{"Administrators", "Users"},
-				Email:      "alice@example.com",
-				CommonName: "Alice Smith",
-				Surname:    "Smith",
-				GivenName:  "Alice",
-			},
-			{
-				Name:       "bob",
-				Password:   "hunter2",
-				Groups:     []string{"Users"},
-				Email:      "bob@example.com",
-				CommonName: "Bob Smith",
-				Surname:    "Smith",
-				GivenName:  "Bob",
-			},
-		},
+		MetadataURL:      baseURL + "/metadata",
+		SSOURL:           baseURL + "/",
 		ServiceProviders: map[string]*metadata.Metadata{},
 	}
+
+	sessionProvider := saml.DefaultSessionProvider{
+		Users:    &saml.MemoryUserStore{},
+		Sessions: &saml.MemorySessionStore{},
+	}
+	idp.SessionProvider = &sessionProvider
+
+	sessionProvider.Users.Put(saml.User{Name: "alice",
+		Password:   "hunter2",
+		Groups:     []string{"Administrators", "Users"},
+		Email:      "alice@example.com",
+		CommonName: "Alice Smith",
+		Surname:    "Smith",
+		GivenName:  "Alice",
+	})
+	sessionProvider.Users.Put(saml.User{
+		Name:       "bob",
+		Password:   "hunter2",
+		Groups:     []string{"Users"},
+		Email:      "bob@example.com",
+		CommonName: "Bob Smith",
+		Surname:    "Smith",
+		GivenName:  "Bob",
+	})
 
 	goji.Post("/register-sp", func(w http.ResponseWriter, r *http.Request) {
 		ed := metadata.EntitiesDescriptor{}
@@ -102,6 +106,6 @@ UzreO96WzlBBMtY=
 	})
 
 	goji.Get("/metadata", idp.ServeMetadata)
-	goji.Handle("/", idp.ServeRedirectAuthnRequest)
+	goji.Handle("/", idp.ServeSSO)
 	goji.Serve()
 }

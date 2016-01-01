@@ -7,14 +7,14 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"encoding/xml"
-	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"regexp"
 	"text/template"
-	"time"
 
 	"github.com/crewjam/go-xmlsec"
 	"github.com/crewjam/saml/metadata"
@@ -26,34 +26,7 @@ type IdentityProvider struct {
 	MetadataURL      string
 	SSOURL           string
 	ServiceProviders map[string]*metadata.Metadata
-	Users            []User
-
-	sessions map[string]*Session
-}
-
-type User struct {
-	Name     string
-	Password string // XXX !!!
-	Groups   []string
-	Email    string
-
-	CommonName string
-	Surname    string
-	GivenName  string
-}
-
-type Session struct {
-	CreateTime time.Time
-	Index      string
-	User       *User
-}
-
-func randomBytes(n int) []byte {
-	rv := make([]byte, n)
-	if _, err := randReader.Read(rv); err != nil {
-		panic(err)
-	}
-	return rv
+	SessionProvider  SessionProvider
 }
 
 func (idp *IdentityProvider) Metadata() *metadata.Metadata {
@@ -64,8 +37,9 @@ func (idp *IdentityProvider) Metadata() *metadata.Metadata {
 	certStr := base64.StdEncoding.EncodeToString(cert.Bytes)
 
 	return &metadata.Metadata{
-		EntityID:   idp.MetadataURL,
-		ValidUntil: timeNow().Add(DefaultValidDuration),
+		EntityID:      idp.MetadataURL,
+		ValidUntil:    timeNow().Add(DefaultValidDuration),
+		CacheDuration: DefaultValidDuration,
 		IDPSSODescriptor: &metadata.IDPSSODescriptor{
 			ProtocolSupportEnumeration: "urn:oasis:names:tc:SAML:2.0:protocol",
 			KeyDescriptor: []metadata.KeyDescriptor{
@@ -105,7 +79,26 @@ func (idp *IdentityProvider) Metadata() *metadata.Metadata {
 	}
 }
 
-// ServeMetadata returns the IDP metadata
+// Handler returns an http.Handler that serves the metadata and SSO
+// URLs
+func (idp *IdentityProvider) Handler() http.Handler {
+	mux := http.NewServeMux()
+
+	metadataURL, err := url.Parse(idp.MetadataURL)
+	if err != nil {
+		panic(err)
+	}
+	mux.HandleFunc(metadataURL.Path, idp.ServeMetadata)
+
+	ssoURL, err := url.Parse(idp.SSOURL)
+	if err != nil {
+		panic(err)
+	}
+	mux.HandleFunc(ssoURL.Path, idp.ServeSSO)
+	return mux
+}
+
+// ServeMetadata is an http.HandlerFunc that serves the IDP metadata
 func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, r *http.Request) {
 	buf, _ := xml.MarshalIndent(metadata.EntitiesDescriptor{
 		EntityDescriptor: []*metadata.Metadata{idp.Metadata()},
@@ -113,95 +106,327 @@ func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, r *http.Reques
 	w.Write(buf)
 }
 
-// ServeRedirectAuthnRequest handles SAML auth requests. When we get a request for a user that
-// does not have a valid session with us, we invoke CreateSession(). The user's request flow may
-// end up replaying the request once a valid session is established.
-func (idp *IdentityProvider) ServeRedirectAuthnRequest(w http.ResponseWriter, r *http.Request) {
-	var relayState string
-	var reqBuf []byte
-	switch r.Method {
-	case "GET":
-		compressedRequest, err := base64.StdEncoding.DecodeString(r.URL.Query().Get("SAMLRequest"))
-		if err != nil {
-			log.Printf("cannot decode request: %s", err)
-			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-			return
-		}
-		reqBuf, err = ioutil.ReadAll(flate.NewReader(bytes.NewReader(compressedRequest)))
-		if err != nil {
-			log.Printf("cannot decompress request: %s", err)
-			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-			return
-		}
-		relayState = r.URL.Query().Get("RelayState")
-	case "POST":
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-			return
-		}
-		var err error
-		reqBuf, err = base64.StdEncoding.DecodeString(r.PostForm.Get("SAMLRequest"))
-		if err != nil {
-			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-			return
-		}
-		relayState = r.PostForm.Get("RelayState")
-	default:
-		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+// ServeSSO handles SAML auth requests.
+//
+// When it gets a request for a user that does not have a valid session,
+// then it prompts the user via XXX.
+//
+// If the session already exists, then it produces a SAML assertion and
+// returns an HTTP response according to the specified binding. The
+// only supported binding right now is the HTTP-POST binding which returns
+// an HTML form in the appropriate format with Javascript to automatically
+// submit that form the to service provider's Assertion Customer Service
+// endpoint.
+//
+// If the SAML request is invalid or cannot be verified a simple StatusBadRequest
+// response is sent.
+//
+// If the assertion cannot be created or returned, a StatusInternalServerError
+// response is sent.
+func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
+	req, err := NewIdpAuthnRequest(idp, r)
+	if err != nil {
+		log.Printf("failed to parse request: %s", err)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
-	authnRequest, serviceProviderMetadata, err := idp.validateAuthnRequest(reqBuf)
-	if err != nil {
+	if err := req.Validate(); err != nil {
 		log.Printf("failed to validate request: %s", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
-	session, sessionErr := idp.getOrCreateSession(w, r)
+	// TODO(ross): we must check that the request ID has not been previously
+	//   issued.
 
-	// if we don't have a session, either from a cookie or from receiving
-	// credentials, then prompt for one
+	session := idp.SessionProvider.GetSession(w, r, req)
 	if session == nil {
-		toast := ""
-		if sessionErr == errInvalidUsernameOrPassword {
-			toast = "Invalid username or password"
-		}
-		idp.sendLoginForm(w, r, reqBuf, relayState, toast)
 		return
 	}
 
-	// the only response binding we support right now is the HTTP-POST binding. I'm not sure if other bindings are specified and/or
-	// are in use or not.
-	var binding = metadata.HTTPPostBinding
-	var acsEndpoint = idp.getAssertionConsumerServiceEndpoint(serviceProviderMetadata, binding)
-	if acsEndpoint == nil {
-		log.Panicf("ServiceProvider %s: cannot find appropriate ACS endpoint for binding %s", serviceProviderMetadata.EntityID, binding)
-	}
-
 	// we have a valid session and must make a SAML assertion
-	assertion := idp.makeAssertion(r, authnRequest, session, serviceProviderMetadata, acsEndpoint)
-	signedAssertionBuf, err := idp.signAssertion(assertion)
-	if err != nil {
-		panic(err)
+	if err := req.MakeAssertion(session); err != nil {
+		log.Printf("failed to make assertion: %s", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	if err := req.WriteResponse(w); err != nil {
+		log.Printf("failed to write response: %s", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+}
+
+// IdpAuthnRequest handles a single authentication request.
+type IdpAuthnRequest struct {
+	IDP                     *IdentityProvider
+	HttpRequest             *http.Request
+	RelayState              string
+	RequestBuffer           []byte
+	Request                 spAuthRequest
+	ServiceProviderMetadata *metadata.Metadata
+	ACSEndpoint             *metadata.IndexedEndpoint
+	Assertion               *spAssertion
+	AssertionBuffer         []byte
+	Response                *spResponse
+}
+
+// NewIdpAuthnRequest returns a new IdpAuthnRequest for the given HTTP request to the authorization
+// service.
+func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnRequest, error) {
+	req := &IdpAuthnRequest{
+		IDP:         idp,
+		HttpRequest: r,
 	}
 
-	// encrypt the assertion
-	encryptedAssertion, err := xmlsec.Encrypt(getSPEncryptionCert(serviceProviderMetadata),
-		signedAssertionBuf, xmlsec.EncryptOptions{})
-	if err != nil {
-		panic(err)
+	var err error
+	switch r.Method {
+	case "GET":
+		compressedRequest, err := base64.StdEncoding.DecodeString(r.URL.Query().Get("SAMLRequest"))
+		if err != nil {
+			return nil, fmt.Errorf("cannot decode request: %s", err)
+		}
+		req.RequestBuffer, err = ioutil.ReadAll(flate.NewReader(bytes.NewReader(compressedRequest)))
+		if err != nil {
+			return nil, fmt.Errorf("cannot decompress request: %s", err)
+		}
+		req.RelayState = r.URL.Query().Get("RelayState")
+	case "POST":
+		if err := r.ParseForm(); err != nil {
+			return nil, err
+		}
+		req.RequestBuffer, err = base64.StdEncoding.DecodeString(r.PostForm.Get("SAMLRequest"))
+		if err != nil {
+			return nil, err
+		}
+		req.RelayState = r.PostForm.Get("RelayState")
+	default:
+		return nil, fmt.Errorf("method not allowed")
+	}
+	return req, nil
+}
+
+// Validate checks that the authentication request is valid and assigns
+// the AuthRequest and Metadata properties. Returns a non-nil error if the
+// request is not valid.
+func (req *IdpAuthnRequest) Validate() error {
+	if err := xml.Unmarshal(req.RequestBuffer, &req.Request); err != nil {
+		return err
 	}
 
-	response := &spResponse{
-		Destination:  authnRequest.AssertionConsumerServiceURL,
+	// TODO(ross): is this supposed to be the metdata URL? or the target URL?
+	//   i.e. should idp.SSOURL actually be idp.Metadata().EntityID?
+	if req.Request.Destination != req.IDP.SSOURL {
+		return fmt.Errorf("expected destination to be %q, not %q",
+			req.IDP.SSOURL, req.Request.Destination)
+	}
+	if req.Request.IssueInstant.Add(MaxIssueDelay).Before(timeNow()) {
+		return fmt.Errorf("request expired at %s",
+			req.Request.IssueInstant.Add(MaxIssueDelay))
+	}
+	if req.Request.Version != "2.0" {
+		return fmt.Errorf("expected SAML request version 2, got %q", req.Request.Version)
+	}
+
+	// find the service provider
+	serviceProvider, serviceProviderFound := req.IDP.ServiceProviders[req.Request.Issuer.Text]
+	if !serviceProviderFound {
+		return fmt.Errorf("cannot handle request from unknown service provider %s",
+			req.Request.Issuer.Text)
+	}
+	req.ServiceProviderMetadata = serviceProvider
+
+	// Check that the ACS URL matches an ACS endpoint in the SP metadata.
+	acsValid := false
+	for _, acsEndpoint := range serviceProvider.SPSSODescriptor.AssertionConsumerService {
+		if req.Request.AssertionConsumerServiceURL == acsEndpoint.Location {
+			req.ACSEndpoint = &acsEndpoint
+			acsValid = true
+			break
+		}
+	}
+	if !acsValid {
+		return fmt.Errorf("invalid ACS url specified in request: %s", req.Request.AssertionConsumerServiceURL)
+	}
+
+	return nil
+}
+
+// MakeAssertion produces a SAML assertion for the
+// given request and assigns it to req.Assertion.
+func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
+	signatureTemplate := xmlsec.DefaultSignature([]byte(req.IDP.Certificate))
+	attributes := []spAttribute{}
+	if session.UserName != "" {
+		attributes = append(attributes, spAttribute{
+			FriendlyName: "uid",
+			Name:         "urn:oid:0.9.2342.19200300.100.1.1",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []spAttributeValue{spAttributeValue{
+				Type:  "xs:string",
+				Value: session.UserName,
+			}},
+		})
+	}
+
+	if session.UserEmail != "" {
+		attributes = append(attributes, spAttribute{
+			FriendlyName: "eduPersonPrincipalName",
+			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.6",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []spAttributeValue{spAttributeValue{
+				Type:  "xs:string",
+				Value: session.UserEmail,
+			}},
+		})
+	}
+	if session.UserSurname != "" {
+		attributes = append(attributes, spAttribute{
+			FriendlyName: "sn",
+			Name:         "urn:oid:2.5.4.4",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []spAttributeValue{spAttributeValue{
+				Type:  "xs:string",
+				Value: session.UserSurname,
+			}},
+		})
+	}
+	if session.UserGivenName != "" {
+		attributes = append(attributes, spAttribute{
+			FriendlyName: "givenName",
+			Name:         "urn:oid:2.5.4.42",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []spAttributeValue{spAttributeValue{
+				Type:  "xs:string",
+				Value: session.UserGivenName,
+			}},
+		})
+	}
+
+	if session.UserCommonName != "" {
+		attributes = append(attributes, spAttribute{
+			FriendlyName: "cn",
+			Name:         "urn:oid:2.5.4.3",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []spAttributeValue{spAttributeValue{
+				Type:  "xs:string",
+				Value: session.UserCommonName,
+			}},
+		})
+	}
+
+	if len(session.Groups) != 0 {
+		groupMemberAttributeValues := []spAttributeValue{}
+		for _, group := range session.Groups {
+			groupMemberAttributeValues = append(groupMemberAttributeValues, spAttributeValue{
+				Type:  "xs:string",
+				Value: group,
+			})
+		}
+		attributes = append(attributes, spAttribute{
+			FriendlyName: "eduPersonAffiliation",
+			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.1",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values:       groupMemberAttributeValues,
+		})
+	}
+
+	req.Assertion = &spAssertion{
+		ID:           hex.EncodeToString(randomBytes(32)),
+		IssueInstant: timeNow(),
+		Version:      "2.0",
+		Issuer: &spIssuer{
+			Format: "XXX",
+			Value:  req.IDP.Metadata().EntityID,
+		},
+		Signature: &signatureTemplate,
+		Subject: &spSubject{
+			NameID: &spNameID{
+				Format:          "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+				NameQualifier:   req.IDP.Metadata().EntityID,
+				SPNameQualifier: req.ServiceProviderMetadata.EntityID,
+				Value:           session.NameID,
+			},
+			SubjectConfirmation: &spSubjectConfirmation{
+				Method: "urn:oasis:names:tc:SAML:2.0:cm:bearer",
+				SubjectConfirmationData: spSubjectConfirmationData{
+					Address:      req.HttpRequest.RemoteAddr,
+					InResponseTo: req.Request.ID,
+					NotOnOrAfter: timeNow().Add(MaxIssueDelay),
+					Recipient:    req.ACSEndpoint.Location,
+				},
+			},
+		},
+		Conditions: &spConditions{
+			NotBefore:    timeNow(),
+			NotOnOrAfter: timeNow().Add(MaxIssueDelay),
+			AudienceRestriction: &spAudienceRestriction{
+				Audience: &spAudience{Value: req.ServiceProviderMetadata.EntityID},
+			},
+		},
+		AuthnStatement: &spAuthnStatement{
+			AuthnInstant: session.CreateTime,
+			SessionIndex: session.Index,
+			SubjectLocality: spSubjectLocality{
+				Address: req.HttpRequest.RemoteAddr,
+			},
+			AuthnContext: spAuthnContext{
+				AuthnContextClassRef: &spAuthnContextClassRef{
+					Value: "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport",
+				},
+			},
+		},
+		AttributeStatement: &spAttributeStatement{
+			Attributes: attributes,
+		},
+	}
+
+	return nil
+}
+
+// MarshalAssertion sets `AssertionBuffer` to a signed, encrypted
+// version of `Assertion`.
+func (req *IdpAuthnRequest) MarshalAssertion() error {
+	buf, err := xml.Marshal(req.Assertion)
+	if err != nil {
+		return err
+	}
+
+	buf, err = xmlsec.Sign([]byte(req.IDP.Key),
+		buf, xmlsec.SignatureOptions{})
+	if err != nil {
+		return err
+	}
+
+	buf, err = xmlsec.Encrypt(getSPEncryptionCert(req.ServiceProviderMetadata),
+		buf, xmlsec.EncryptOptions{})
+	if err != nil {
+		return err
+	}
+
+	req.AssertionBuffer = buf
+	return nil
+}
+
+// MakeResponse creates and assigns a new SAML response in Response. `Assertion` must
+// be non-nill. If MarshalAssertion() has not been called, this function calls it for
+// you.
+func (req *IdpAuthnRequest) MakeResponse() error {
+	if req.AssertionBuffer == nil {
+		if err := req.MarshalAssertion(); err != nil {
+			return err
+		}
+	}
+	req.Response = &spResponse{
+		Destination:  req.ACSEndpoint.Location,
 		ID:           fmt.Sprintf("id-%x", randomBytes(16)),
-		InResponseTo: authnRequest.ID,
+		InResponseTo: req.Request.ID,
 		IssueInstant: timeNow(),
 		Version:      "2.0",
 		Issuer: &spIssuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
-			Value:  idp.MetadataURL,
+			Value:  req.IDP.MetadataURL,
 		},
 		Status: &spStatus{
 			StatusCode: spStatusCode{
@@ -209,18 +434,64 @@ func (idp *IdentityProvider) ServeRedirectAuthnRequest(w http.ResponseWriter, r 
 			},
 		},
 		EncryptedAssertion: &spEncryptedAssertion{
-			EncryptedData: encryptedAssertion,
+			EncryptedData: req.AssertionBuffer,
 		},
 	}
-
-	responseBuf, _ := xml.Marshal(response)
-	log.Printf("SAML RESPONSE: XXX %s XXX", responseBuf)
-
-	idp.sendResponse(w, r, serviceProviderMetadata, relayState, response, acsEndpoint)
+	return nil
 }
 
-// getIDPSigningCert returns the certificate which we can use to verify things
-// signed by the IDP in PEM format, or nil if no such certificate is found.
+// WriteResponse writes the `Response` to the http.ResponseWriter. If
+// `Response` is not already set, it calls MakeResponse to produce it.
+func (req *IdpAuthnRequest) WriteResponse(w http.ResponseWriter) error {
+	if req.Response == nil {
+		if err := req.MakeResponse(); err != nil {
+			return err
+		}
+	}
+	responseBuf, err := xml.Marshal(req.Response)
+	if err != nil {
+		return err
+	}
+
+	// the only supported binding is the HTTP-POST binding
+	switch req.ACSEndpoint.Binding {
+	case metadata.HTTPPostBinding:
+		tmpl := template.Must(template.New("saml-post-form").Parse(`<html>` +
+			`<form method="post" action="{{.URL}}" id="SAMLResponseForm">` +
+			`<input type="hidden" name="SAMLResponse" value="{{.SAMLResponse}}" />` +
+			`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
+			`<input type="submit" value="Continue" />` +
+			`</form>` +
+			`<script>document.getElementById('SAMLResponseForm').submit();</script>` +
+			`</html>`))
+		data := struct {
+			URL          string
+			SAMLResponse string
+			RelayState   string
+		}{
+			URL:          req.ACSEndpoint.Location,
+			SAMLResponse: base64.StdEncoding.EncodeToString(responseBuf),
+			RelayState:   req.RelayState,
+		}
+
+		buf := bytes.NewBuffer(nil)
+		if err := tmpl.Execute(buf, data); err != nil {
+			return err
+		}
+		if _, err := io.Copy(w, buf); err != nil {
+			return err
+		}
+		return nil
+
+	default:
+		return fmt.Errorf("unsupported binding %s",
+			req.ServiceProviderMetadata.EntityID,
+			req.ACSEndpoint.Binding)
+	}
+}
+
+// getSPEncryptionCert returns the certificate which we can use to encrypt things
+// to the SP in PEM format, or nil if no such certificate is found.
 func getSPEncryptionCert(sp *metadata.Metadata) []byte {
 	cert := ""
 	for _, keyDescriptor := range sp.SPSSODescriptor.KeyDescriptor {
@@ -252,303 +523,4 @@ func getSPEncryptionCert(sp *metadata.Metadata) []byte {
 		Type:  "CERTIFICATE",
 		Bytes: certBytes})
 	return certBytes
-}
-
-func (idp *IdentityProvider) validateAuthnRequest(reqBuf []byte) (*spAuthRequest, *metadata.Metadata, error) {
-	req := spAuthRequest{}
-	if err := xml.Unmarshal(reqBuf, &req); err != nil {
-		return nil, nil, err
-	}
-
-	// TODO(ross): is this supposed to be the metdata URL? or the target URL?
-	//   i.e. should idp.SSOURL actually be idp.Metadata().EntityID?
-	if req.Destination != idp.SSOURL {
-		return nil, nil, fmt.Errorf("expected destination to be %q, not %q",
-			idp.SSOURL, req.Destination)
-	}
-	if req.IssueInstant.Add(MaxIssueDelay).Before(timeNow()) {
-		return nil, nil, fmt.Errorf("request expired at %s",
-			req.IssueInstant.Add(MaxIssueDelay))
-	}
-	if req.Version != "2.0" {
-		return nil, nil, fmt.Errorf("expected SAML request version 2, got %q", req.Version)
-	}
-
-	serviceProvider, serviceProviderFound := idp.ServiceProviders[req.Issuer.Text]
-	if !serviceProviderFound {
-		return nil, nil, fmt.Errorf("cannot handle request from unknown service provider %s",
-			req.Issuer.Text)
-	}
-
-	acsValid := false
-	for _, acsEndpoint := range serviceProvider.SPSSODescriptor.AssertionConsumerService {
-		if req.AssertionConsumerServiceURL == acsEndpoint.Location {
-			acsValid = true
-			break
-		}
-	}
-	if !acsValid {
-		return nil, nil, fmt.Errorf("invalid ACS url specified in request: %s", req.AssertionConsumerServiceURL)
-	}
-
-	return &req, serviceProvider, nil
-}
-
-var errInvalidUsernameOrPassword = errors.New("invalid username or password")
-
-// getOrCreateSession returns the *Session for this request. If the remote user has specified a username
-// and password it is validated against the user database, and if valid, returns a newly
-// created session object.
-//
-// If the remote user ahs specified invalid credentials, then the error returned is errInvalidUsernameOrPassword
-//
-// If a session cookie already exists and represents a valid session, then it is returned.
-//
-// If neither credentials nor a valid session cookie exist, then nil is returned for both the *Session and error.
-func (idp *IdentityProvider) getOrCreateSession(w http.ResponseWriter, r *http.Request) (*Session, error) {
-	if idp.sessions == nil { // XXX race condition!
-		idp.sessions = map[string]*Session{}
-	}
-
-	// if we received login credentials then maybe we can create a session
-	if r.Method == "POST" && r.PostForm.Get("user") != "" {
-		for _, user := range idp.Users {
-			if user.Name == r.PostForm.Get("user") && user.Password == r.PostForm.Get("password") {
-				session := &Session{
-					User:       &user,
-					CreateTime: timeNow(),
-					Index:      hex.EncodeToString(randomBytes(32)),
-				}
-				sessionID := base64.StdEncoding.EncodeToString(randomBytes(32))
-				idp.sessions[sessionID] = session
-				http.SetCookie(w, &http.Cookie{
-					Name:     "session",
-					Value:    sessionID,
-					MaxAge:   int(cookieMaxAge.Seconds()),
-					HttpOnly: false,
-					Path:     "/",
-				})
-				return session, nil
-			}
-		}
-		return nil, errInvalidUsernameOrPassword
-	}
-
-	sessionCookie, err := r.Cookie("session")
-	if err == nil {
-		session, ok := idp.sessions[sessionCookie.Value]
-		if ok {
-			return session, nil
-		}
-	}
-	return nil, nil
-}
-
-// sendLoginForm produces a form which requests a username and password and directs the user
-// back to the IDP authorize URL to restart the SAML login flow, this time establishing a
-// session based on the credentials that were provided.
-func (idp *IdentityProvider) sendLoginForm(w http.ResponseWriter, r *http.Request, reqBuf []byte, relayState string, toast string) {
-	postURL := r.URL
-	postURL.RawQuery = ""
-
-	tmpl := template.Must(template.New("saml-post-form").Parse(`` +
-		`<p>{{.Toast}}</p>` +
-		`<form method="post" action="{{.URL}}">` +
-		`<input type="text" name="user" placeholder="user" value="" />` +
-		`<input type="password" name="password" placeholder="password" value="" />` +
-		`<input type="hidden" name="SAMLRequest" value="{{.SAMLRequest}}" />` +
-		`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
-		`<input type="submit" value="Log In" />` +
-		`</form>`))
-	data := struct {
-		Toast       string
-		URL         string
-		SAMLRequest string
-		RelayState  string
-	}{
-		Toast:       toast,
-		URL:         postURL.String(),
-		SAMLRequest: base64.StdEncoding.EncodeToString(reqBuf),
-		RelayState:  relayState,
-	}
-
-	if err := tmpl.Execute(w, data); err != nil {
-		panic(err)
-	}
-}
-
-// makeAssertion produces a SAML assertion object from the specified user
-// session.
-func (idp *IdentityProvider) makeAssertion(r *http.Request, authnRequest *spAuthRequest, session *Session, serviceProvider *metadata.Metadata, acsEndpoint *metadata.IndexedEndpoint) *spAssertion {
-	signatureTemplate := xmlsec.DefaultSignature([]byte(idp.Certificate))
-	groupMemberAttributeValues := []spAttributeValue{}
-	for _, group := range session.User.Groups {
-		groupMemberAttributeValues = append(groupMemberAttributeValues, spAttributeValue{
-			Type:  "xs:string",
-			Value: group,
-		})
-	}
-	assertion := spAssertion{
-		ID:           hex.EncodeToString(randomBytes(32)),
-		IssueInstant: timeNow(),
-		Version:      "2.0",
-		Issuer: &spIssuer{
-			Format: "XXX",
-			Value:  idp.Metadata().EntityID,
-		},
-		Signature: &signatureTemplate,
-		Subject: &spSubject{
-			NameID: &spNameID{
-				Format:          "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
-				NameQualifier:   idp.Metadata().EntityID,
-				SPNameQualifier: serviceProvider.EntityID,
-				Value:           session.User.Name, // XXX should be a hash or something
-			},
-			SubjectConfirmation: &spSubjectConfirmation{
-				Method: "urn:oasis:names:tc:SAML:2.0:cm:bearer",
-				SubjectConfirmationData: spSubjectConfirmationData{
-					Address:      r.RemoteAddr,
-					InResponseTo: authnRequest.ID,
-					NotOnOrAfter: timeNow().Add(MaxIssueDelay),
-					Recipient:    acsEndpoint.Location,
-				},
-			},
-		},
-		Conditions: &spConditions{
-			NotBefore:    timeNow(),
-			NotOnOrAfter: timeNow().Add(MaxIssueDelay),
-			AudienceRestriction: &spAudienceRestriction{
-				Audience: &spAudience{Value: serviceProvider.EntityID},
-			},
-		},
-		AuthnStatement: &spAuthnStatement{
-			AuthnInstant: session.CreateTime,
-			SessionIndex: session.Index,
-			SubjectLocality: spSubjectLocality{
-				Address: r.RemoteAddr,
-			},
-			AuthnContext: spAuthnContext{
-				AuthnContextClassRef: &spAuthnContextClassRef{
-					Value: "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport",
-				},
-			},
-		},
-		AttributeStatement: &spAttributeStatement{
-			Attributes: []spAttribute{
-				spAttribute{
-					FriendlyName: "uid",
-					Name:         "urn:oid:0.9.2342.19200300.100.1.1",
-					NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-					Values: []spAttributeValue{spAttributeValue{
-						Type:  "xs:string",
-						Value: session.User.Name,
-					}},
-				},
-				spAttribute{
-					FriendlyName: "eduPersonPrincipalName",
-					Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.6",
-					NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-					Values: []spAttributeValue{spAttributeValue{
-						Type:  "xs:string",
-						Value: session.User.Email,
-					}},
-				},
-				spAttribute{
-					FriendlyName: "sn",
-					Name:         "urn:oid:2.5.4.4",
-					NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-					Values: []spAttributeValue{spAttributeValue{
-						Type:  "xs:string",
-						Value: session.User.Surname,
-					}},
-				},
-				spAttribute{
-					FriendlyName: "givenName",
-					Name:         "urn:oid:2.5.4.42",
-					NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-					Values: []spAttributeValue{spAttributeValue{
-						Type:  "xs:string",
-						Value: session.User.GivenName,
-					}},
-				},
-				spAttribute{
-					FriendlyName: "cn",
-					Name:         "urn:oid:2.5.4.3",
-					NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-					Values: []spAttributeValue{spAttributeValue{
-						Type:  "xs:string",
-						Value: session.User.CommonName,
-					}},
-				},
-				spAttribute{
-					FriendlyName: "eduPersonAffiliation",
-					Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.1",
-					NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-					Values:       groupMemberAttributeValues,
-				},
-			},
-		},
-	}
-	return &assertion
-}
-
-func (idp *IdentityProvider) signAssertion(assertion *spAssertion) ([]byte, error) {
-	assertionBuf, err := xml.Marshal(assertion)
-	if err != nil {
-		return nil, err
-	}
-
-	signedAssertionBuf, err := xmlsec.Sign([]byte(idp.Key), assertionBuf, xmlsec.SignatureOptions{})
-	if err != nil {
-		return nil, err
-	}
-	ioutil.WriteFile("idp-signed-assertion.xml", signedAssertionBuf, 0644)
-
-	return signedAssertionBuf, nil
-}
-
-func (idp *IdentityProvider) getAssertionConsumerServiceEndpoint(serviceProviderMetadata *metadata.Metadata, binding string) *metadata.IndexedEndpoint {
-	var rv *metadata.IndexedEndpoint
-	for _, acsEndpointCandidate := range serviceProviderMetadata.SPSSODescriptor.AssertionConsumerService {
-		if acsEndpointCandidate.Binding != binding {
-			continue
-		}
-		if rv == nil || rv.Index < acsEndpointCandidate.Index {
-			rv = &acsEndpointCandidate
-		}
-	}
-	return rv
-}
-
-func (idp *IdentityProvider) sendResponse(w http.ResponseWriter, r *http.Request, serviceProviderMetadata *metadata.Metadata, relayState string, response *spResponse, acsEndpoint *metadata.IndexedEndpoint) {
-	responseBuf, err := xml.Marshal(response)
-	if err != nil {
-		log.Panicf("marshal response: %s", err)
-	}
-
-	switch acsEndpoint.Binding {
-	case metadata.HTTPPostBinding:
-		tmpl := template.Must(template.New("saml-post-form").Parse(`<html>` +
-			`<form method="post" action="{{.URL}}" id="SAMLResponseForm">` +
-			`<input type="hidden" name="SAMLResponse" value="{{.SAMLResponse}}" />` +
-			`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
-			`<input type="submit" value="Continue" />` +
-			`</form>` +
-			`<script>document.getElementById('SAMLResponseForm').submit();</script>` +
-			`</html>`))
-		data := struct {
-			URL          string
-			SAMLResponse string
-			RelayState   string
-		}{
-			URL:          acsEndpoint.Location,
-			SAMLResponse: base64.StdEncoding.EncodeToString(responseBuf),
-			RelayState:   relayState,
-		}
-		tmpl.Execute(w, data)
-		return
-
-	default:
-		log.Panicf("ServiceProvider %s: unsupported binding %s", serviceProviderMetadata.EntityID, acsEndpoint.Binding)
-	}
 }

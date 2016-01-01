@@ -3,13 +3,11 @@ package saml
 import (
 	"bytes"
 	"compress/flate"
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/pem"
 	"encoding/xml"
 	"fmt"
 	"html/template"
-	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -47,9 +45,6 @@ type ServiceProvider struct {
 	// IDPMetadata is the metadata from the identity provider.
 	IDPMetadata *metadata.Metadata
 }
-
-var timeNow = time.Now       // thunk for testing
-var randReader = rand.Reader // thunk for testing
 
 // MaxIssueDelay is the longest allowed time between when a SAML assertion is
 // issued by the IDP and the time it is received by ParseResponse. (In practice
@@ -113,7 +108,7 @@ func (sp *ServiceProvider) MakeRedirectAuthenticationRequest(relayState string) 
 		return nil, fmt.Errorf("cannot parse IDP redirect url: %s", err)
 	}
 
-	req, err := sp.makeAuthenticationRequest(idpURL)
+	req, err := sp.MakeAuthenticationRequest(idpURL)
 	if err != nil {
 		return nil, err
 	}
@@ -195,8 +190,8 @@ func (sp *ServiceProvider) getIDPSigningCert() []byte {
 	return certBytes
 }
 
-// makeAuthenticationRequest produces a new spAuthRequest object for idpURL.
-func (sp *ServiceProvider) makeAuthenticationRequest(idpURL *url.URL) (*spAuthRequest, error) {
+// MakeAuthenticationRequest produces a new spAuthRequest object for idpURL.
+func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL *url.URL) (*spAuthRequest, error) {
 	req := spAuthRequest{
 		AssertionConsumerServiceURL: sp.AcsURL,
 		Destination:                 idpURL.String(),
@@ -227,7 +222,7 @@ func (sp *ServiceProvider) MakePostAuthenticationRequest(relayState string) ([]b
 		return nil, fmt.Errorf("cannot parse IDP post url: %s", err)
 	}
 
-	req, err := sp.makeAuthenticationRequest(idpURL)
+	req, err := sp.MakeAuthenticationRequest(idpURL)
 	if err != nil {
 		return nil, err
 	}
@@ -361,8 +356,6 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, requestID string) (A
 	}
 	retErr.Response = string(plaintextAssertion)
 
-	log.Printf("XXX plaintextAssertion: `%s` XXX", string(plaintextAssertion))
-
 	if err := xmlsec.Verify(sp.getIDPSigningCert(), plaintextAssertion,
 		xmlsec.SignatureOptions{
 			XMLID: []xmlsec.XMLIDOption{{
@@ -377,7 +370,6 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, requestID string) (A
 
 	assertion := &spAssertion{}
 	xml.Unmarshal(plaintextAssertion, assertion)
-	log.Printf("XXX assertion: `%#v` XXX", resp)
 
 	if err := sp.validateAssertion(assertion, requestID, now); err != nil {
 		retErr.PrivateErr = fmt.Errorf("assertion invalid: %s", err)
