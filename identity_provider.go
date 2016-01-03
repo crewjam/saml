@@ -539,7 +539,7 @@ func (req *IdpAuthnRequest) WriteResponse(w http.ResponseWriter) error {
 		return nil
 
 	default:
-		return fmt.Errorf("unsupported binding %s",
+		return fmt.Errorf("%s: unsupported binding %s",
 			req.ServiceProviderMetadata.EntityID,
 			req.ACSEndpoint.Binding)
 	}
