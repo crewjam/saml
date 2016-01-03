@@ -222,9 +222,9 @@ type IdpAuthnRequest struct {
 	Request                 AuthnRequest
 	ServiceProviderMetadata *metadata.Metadata
 	ACSEndpoint             *metadata.IndexedEndpoint
-	Assertion               *spAssertion
+	Assertion               *Assertion
 	AssertionBuffer         []byte
-	Response                *spResponse
+	Response                *Response
 }
 
 // NewIdpAuthnRequest returns a new IdpAuthnRequest for the given HTTP request to the authorization
@@ -285,10 +285,10 @@ func (req *IdpAuthnRequest) Validate() error {
 	}
 
 	// find the service provider
-	serviceProvider, serviceProviderFound := req.IDP.ServiceProviders[req.Request.Issuer.Text]
+	serviceProvider, serviceProviderFound := req.IDP.ServiceProviders[req.Request.Issuer.Value]
 	if !serviceProviderFound {
 		return fmt.Errorf("cannot handle request from unknown service provider %s",
-			req.Request.Issuer.Text)
+			req.Request.Issuer.Value)
 	}
 	req.ServiceProviderMetadata = serviceProvider
 
@@ -312,13 +312,13 @@ func (req *IdpAuthnRequest) Validate() error {
 // given request and assigns it to req.Assertion.
 func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
 	signatureTemplate := xmlsec.DefaultSignature([]byte(req.IDP.Certificate))
-	attributes := []spAttribute{}
+	attributes := []Attribute{}
 	if session.UserName != "" {
-		attributes = append(attributes, spAttribute{
+		attributes = append(attributes, Attribute{
 			FriendlyName: "uid",
 			Name:         "urn:oid:0.9.2342.19200300.100.1.1",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []spAttributeValue{spAttributeValue{
+			Values: []AttributeValue{AttributeValue{
 				Type:  "xs:string",
 				Value: session.UserName,
 			}},
@@ -326,33 +326,33 @@ func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
 	}
 
 	if session.UserEmail != "" {
-		attributes = append(attributes, spAttribute{
+		attributes = append(attributes, Attribute{
 			FriendlyName: "eduPersonPrincipalName",
 			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.6",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []spAttributeValue{spAttributeValue{
+			Values: []AttributeValue{AttributeValue{
 				Type:  "xs:string",
 				Value: session.UserEmail,
 			}},
 		})
 	}
 	if session.UserSurname != "" {
-		attributes = append(attributes, spAttribute{
+		attributes = append(attributes, Attribute{
 			FriendlyName: "sn",
 			Name:         "urn:oid:2.5.4.4",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []spAttributeValue{spAttributeValue{
+			Values: []AttributeValue{AttributeValue{
 				Type:  "xs:string",
 				Value: session.UserSurname,
 			}},
 		})
 	}
 	if session.UserGivenName != "" {
-		attributes = append(attributes, spAttribute{
+		attributes = append(attributes, Attribute{
 			FriendlyName: "givenName",
 			Name:         "urn:oid:2.5.4.42",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []spAttributeValue{spAttributeValue{
+			Values: []AttributeValue{AttributeValue{
 				Type:  "xs:string",
 				Value: session.UserGivenName,
 			}},
@@ -360,11 +360,11 @@ func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
 	}
 
 	if session.UserCommonName != "" {
-		attributes = append(attributes, spAttribute{
+		attributes = append(attributes, Attribute{
 			FriendlyName: "cn",
 			Name:         "urn:oid:2.5.4.3",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []spAttributeValue{spAttributeValue{
+			Values: []AttributeValue{AttributeValue{
 				Type:  "xs:string",
 				Value: session.UserCommonName,
 			}},
@@ -372,14 +372,14 @@ func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
 	}
 
 	if len(session.Groups) != 0 {
-		groupMemberAttributeValues := []spAttributeValue{}
+		groupMemberAttributeValues := []AttributeValue{}
 		for _, group := range session.Groups {
-			groupMemberAttributeValues = append(groupMemberAttributeValues, spAttributeValue{
+			groupMemberAttributeValues = append(groupMemberAttributeValues, AttributeValue{
 				Type:  "xs:string",
 				Value: group,
 			})
 		}
-		attributes = append(attributes, spAttribute{
+		attributes = append(attributes, Attribute{
 			FriendlyName: "eduPersonAffiliation",
 			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.1",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
@@ -387,25 +387,25 @@ func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
 		})
 	}
 
-	req.Assertion = &spAssertion{
+	req.Assertion = &Assertion{
 		ID:           hex.EncodeToString(randomBytes(32)),
 		IssueInstant: timeNow(),
 		Version:      "2.0",
-		Issuer: &spIssuer{
+		Issuer: &Issuer{
 			Format: "XXX",
 			Value:  req.IDP.Metadata().EntityID,
 		},
 		Signature: &signatureTemplate,
-		Subject: &spSubject{
-			NameID: &spNameID{
+		Subject: &Subject{
+			NameID: &NameID{
 				Format:          "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
 				NameQualifier:   req.IDP.Metadata().EntityID,
 				SPNameQualifier: req.ServiceProviderMetadata.EntityID,
 				Value:           session.NameID,
 			},
-			SubjectConfirmation: &spSubjectConfirmation{
+			SubjectConfirmation: &SubjectConfirmation{
 				Method: "urn:oasis:names:tc:SAML:2.0:cm:bearer",
-				SubjectConfirmationData: spSubjectConfirmationData{
+				SubjectConfirmationData: SubjectConfirmationData{
 					Address:      req.HTTPRequest.RemoteAddr,
 					InResponseTo: req.Request.ID,
 					NotOnOrAfter: timeNow().Add(MaxIssueDelay),
@@ -413,26 +413,26 @@ func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
 				},
 			},
 		},
-		Conditions: &spConditions{
+		Conditions: &Conditions{
 			NotBefore:    timeNow(),
 			NotOnOrAfter: timeNow().Add(MaxIssueDelay),
-			AudienceRestriction: &spAudienceRestriction{
-				Audience: &spAudience{Value: req.ServiceProviderMetadata.EntityID},
+			AudienceRestriction: &AudienceRestriction{
+				Audience: &Audience{Value: req.ServiceProviderMetadata.EntityID},
 			},
 		},
-		AuthnStatement: &spAuthnStatement{
+		AuthnStatement: &AuthnStatement{
 			AuthnInstant: session.CreateTime,
 			SessionIndex: session.Index,
-			SubjectLocality: spSubjectLocality{
+			SubjectLocality: SubjectLocality{
 				Address: req.HTTPRequest.RemoteAddr,
 			},
-			AuthnContext: spAuthnContext{
-				AuthnContextClassRef: &spAuthnContextClassRef{
+			AuthnContext: AuthnContext{
+				AuthnContextClassRef: &AuthnContextClassRef{
 					Value: "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport",
 				},
 			},
 		},
-		AttributeStatement: &spAttributeStatement{
+		AttributeStatement: &AttributeStatement{
 			Attributes: attributes,
 		},
 	}
@@ -473,22 +473,22 @@ func (req *IdpAuthnRequest) MakeResponse() error {
 			return err
 		}
 	}
-	req.Response = &spResponse{
+	req.Response = &Response{
 		Destination:  req.ACSEndpoint.Location,
 		ID:           fmt.Sprintf("id-%x", randomBytes(16)),
 		InResponseTo: req.Request.ID,
 		IssueInstant: timeNow(),
 		Version:      "2.0",
-		Issuer: &spIssuer{
+		Issuer: &Issuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
 			Value:  req.IDP.MetadataURL,
 		},
-		Status: &spStatus{
-			StatusCode: spStatusCode{
-				Value: spStatusSuccess,
+		Status: &Status{
+			StatusCode: StatusCode{
+				Value: StatusSuccess,
 			},
 		},
-		EncryptedAssertion: &spEncryptedAssertion{
+		EncryptedAssertion: &EncryptedAssertion{
 			EncryptedData: req.AssertionBuffer,
 		},
 	}

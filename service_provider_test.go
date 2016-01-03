@@ -227,12 +227,12 @@ func (test *ServiceProviderTest) TestInvalidResponses(c *C) {
 	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "Issuer does not match the IDP metadata (expected \"http://snakeoil.com\")")
 	s.IDPMetadata.EntityID = "https://idp.testshib.org/idp/shibboleth"
 
-	oldSpStatusSuccess := spStatusSuccess
-	spStatusSuccess = "not:the:success:value"
+	oldSpStatusSuccess := StatusSuccess
+	StatusSuccess = "not:the:success:value"
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
 	_, err = s.ParseResponse(&req, "")
 	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "Status code was not not:the:success:value")
-	spStatusSuccess = oldSpStatusSuccess
+	StatusSuccess = oldSpStatusSuccess
 
 	s.Key = "invalid"
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
@@ -263,7 +263,7 @@ func (test *ServiceProviderTest) TestInvalidAssertions(c *C) {
 	_, err = s.ParseResponse(&req, "")
 	assertionBuf := []byte(err.(*InvalidResponseError).Response)
 
-	assertion := spAssertion{}
+	assertion := Assertion{}
 	err = xml.Unmarshal(assertionBuf, &assertion)
 	c.Assert(err, IsNil)
 

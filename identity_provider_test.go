@@ -429,11 +429,11 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 	})
 	c.Assert(err, IsNil)
 
-	c.Assert(req.Assertion, DeepEquals, &spAssertion{
+	c.Assert(req.Assertion, DeepEquals, &Assertion{
 		ID:           "00020406080a0c0e10121416181a1c1e20222426282a2c2e30323436383a3c3e",
 		IssueInstant: timeNow(),
 		Version:      "2.0",
-		Issuer: &spIssuer{
+		Issuer: &Issuer{
 			Format: "XXX",
 			Value:  "https://idp.example.com/saml/metadata",
 		},
@@ -449,11 +449,11 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 			KeyName:         "",
 			X509Certificate: &xmlsec.SignatureX509Data{X509Certificate: "MIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJVUzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkdBMQwwCgYDVQQKDANmb28xEjAQBgNVBAMMCWxvY2FsaG9zdDCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA1PMHYmhZj308kWLhZVT4vOulqx/9ibm5B86fPWwUKKQ2i12MYtz07tzukPymisTDhQaqyJ8Kqb/6JjhmeMnEOdTvSPmHO8m1ZVveJU6NoKRn/mP/BD7FW52WhbrUXLSeHVSKfWkNk6S4hk9MV9TswTvyRIKvRsw0X/gfnqkroJcCAwEAATANBgkqhkiG9w0BAQUFAAOBgQCMMlIO+GNcGekevKgkakpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeTQLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvnOwJlNCASPZRH/JmF8tX0hoHuAQ=="},
 		},
-		Subject: &spSubject{
-			NameID: &spNameID{Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:transient", NameQualifier: "https://idp.example.com/saml/metadata", SPNameQualifier: "https://sp.example.com/saml2/metadata", Value: ""},
-			SubjectConfirmation: &spSubjectConfirmation{
+		Subject: &Subject{
+			NameID: &NameID{Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:transient", NameQualifier: "https://idp.example.com/saml/metadata", SPNameQualifier: "https://sp.example.com/saml2/metadata", Value: ""},
+			SubjectConfirmation: &SubjectConfirmation{
 				Method: "urn:oasis:names:tc:SAML:2.0:cm:bearer",
-				SubjectConfirmationData: spSubjectConfirmationData{
+				SubjectConfirmationData: SubjectConfirmationData{
 					Address:      "",
 					InResponseTo: "id-00020406080a0c0e10121416181a1c1e",
 					NotOnOrAfter: timeNow().Add(MaxIssueDelay),
@@ -461,29 +461,29 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 				},
 			},
 		},
-		Conditions: &spConditions{
+		Conditions: &Conditions{
 			NotBefore:    timeNow(),
 			NotOnOrAfter: timeNow().Add(MaxIssueDelay),
-			AudienceRestriction: &spAudienceRestriction{
-				Audience: &spAudience{Value: "https://sp.example.com/saml2/metadata"},
+			AudienceRestriction: &AudienceRestriction{
+				Audience: &Audience{Value: "https://sp.example.com/saml2/metadata"},
 			},
 		},
-		AuthnStatement: &spAuthnStatement{
+		AuthnStatement: &AuthnStatement{
 			AuthnInstant:    time.Time{},
 			SessionIndex:    "",
-			SubjectLocality: spSubjectLocality{},
-			AuthnContext: spAuthnContext{
-				AuthnContextClassRef: &spAuthnContextClassRef{Value: "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport"},
+			SubjectLocality: SubjectLocality{},
+			AuthnContext: AuthnContext{
+				AuthnContextClassRef: &AuthnContextClassRef{Value: "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport"},
 			},
 		},
-		AttributeStatement: &spAttributeStatement{
-			Attributes: []spAttribute{
-				spAttribute{
+		AttributeStatement: &AttributeStatement{
+			Attributes: []Attribute{
+				Attribute{
 					FriendlyName: "uid",
 					Name:         "urn:oid:0.9.2342.19200300.100.1.1",
 					NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-					Values: []spAttributeValue{
-						spAttributeValue{
+					Values: []AttributeValue{
+						AttributeValue{
 							Type:  "xs:string",
 							Value: "alice",
 						},
@@ -507,13 +507,13 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 	})
 	c.Assert(err, IsNil)
 
-	c.Assert(req.Assertion.AttributeStatement.Attributes, DeepEquals, []spAttribute{
+	c.Assert(req.Assertion.AttributeStatement.Attributes, DeepEquals, []Attribute{
 		{
 			FriendlyName: "uid",
 			Name:         "urn:oid:0.9.2342.19200300.100.1.1",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []spAttributeValue{
-				spAttributeValue{
+			Values: []AttributeValue{
+				AttributeValue{
 					Type:  "xs:string",
 					Value: "alice",
 				},
@@ -523,8 +523,8 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 			FriendlyName: "eduPersonPrincipalName",
 			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.6",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []spAttributeValue{
-				spAttributeValue{
+			Values: []AttributeValue{
+				AttributeValue{
 					Type:  "xs:string",
 					Value: "alice@example.com",
 				},
@@ -534,8 +534,8 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 			FriendlyName: "sn",
 			Name:         "urn:oid:2.5.4.4",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []spAttributeValue{
-				spAttributeValue{
+			Values: []AttributeValue{
+				AttributeValue{
 					Type:  "xs:string",
 					Value: "Smith",
 				},
@@ -545,8 +545,8 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 			FriendlyName: "givenName",
 			Name:         "urn:oid:2.5.4.42",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []spAttributeValue{
-				spAttributeValue{
+			Values: []AttributeValue{
+				AttributeValue{
 					Type:  "xs:string",
 					Value: "Alice",
 				},
@@ -556,8 +556,8 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 			FriendlyName: "cn",
 			Name:         "urn:oid:2.5.4.3",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []spAttributeValue{
-				spAttributeValue{
+			Values: []AttributeValue{
+				AttributeValue{
 					Type:  "xs:string",
 					Value: "Alice Smith",
 				},
@@ -567,16 +567,16 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 			FriendlyName: "eduPersonAffiliation",
 			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.1",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []spAttributeValue{
-				spAttributeValue{
+			Values: []AttributeValue{
+				AttributeValue{
 					Type:  "xs:string",
 					Value: "Users",
 				},
-				spAttributeValue{
+				AttributeValue{
 					Type:  "xs:string",
 					Value: "Administrators",
 				},
-				spAttributeValue{
+				AttributeValue{
 					Type:  "xs:string",
 					Value: "♀",
 				},
@@ -648,22 +648,22 @@ func (test *IdentityProviderTest) TestMakeResponse(c *C) {
 	err = req.MakeResponse()
 	c.Assert(err, IsNil)
 
-	c.Assert(req.Response, DeepEquals, &spResponse{
+	c.Assert(req.Response, DeepEquals, &Response{
 		Destination:  "https://sp.example.com/saml2/acs",
 		ID:           "id-40424446484a4c4e50525456585a5c5e",
 		InResponseTo: "id-00020406080a0c0e10121416181a1c1e",
 		IssueInstant: timeNow(),
 		Version:      "2.0",
-		Issuer: &spIssuer{
+		Issuer: &Issuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
 			Value:  "https://idp.example.com/saml/metadata",
 		},
-		Status: &spStatus{
-			StatusCode: spStatusCode{
+		Status: &Status{
+			StatusCode: StatusCode{
 				Value: "urn:oasis:names:tc:SAML:2.0:status:Success",
 			},
 		},
-		EncryptedAssertion: &spEncryptedAssertion{
+		EncryptedAssertion: &EncryptedAssertion{
 			EncryptedData: []byte("THIS_IS_THE_ENCRYPTED_ASSERTION"),
 		},
 	})
@@ -685,7 +685,7 @@ func (test *IdentityProviderTest) TestWriteResponse(c *C) {
 			"  <NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
 			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
 			"</AuthnRequest>"),
-		Response: &spResponse{ID: "THIS_IS_THE_SAML_RESPONSE"},
+		Response: &Response{ID: "THIS_IS_THE_SAML_RESPONSE"},
 	}
 	req.HTTPRequest, _ = http.NewRequest("POST", "http://idp.example.com/saml/sso", nil)
 	req.Validate()

@@ -198,11 +198,11 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL *url.URL) (*AuthnReq
 		ID:                          fmt.Sprintf("id-%x", randomBytes(16)),
 		IssueInstant:                timeNow(),
 		Version:                     "2.0",
-		Issuer: spAuthReqIssuer{
+		Issuer: Issuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
-			Text:   sp.MetadataURL,
+			Value:  sp.MetadataURL,
 		},
-		NameIDPolicy: spAuthReqNameIDPolicy{
+		NameIDPolicy: NameIDPolicy{
 			AllowCreate: true,
 			// TODO(ross): figure out exactly policy we need
 			// urn:mace:shibboleth:1.0:nameIdentifier
@@ -322,7 +322,7 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, requestID string) (A
 	retErr.Response = string(rawResponseBuf)
 
 	// do some validation first before we decrypt
-	resp := spResponse{}
+	resp := Response{}
 	if err := xml.Unmarshal(rawResponseBuf, &resp); err != nil {
 		retErr.PrivateErr = fmt.Errorf("cannot unmarshal response: %s", err)
 		return nil, retErr
@@ -343,8 +343,8 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, requestID string) (A
 		retErr.PrivateErr = fmt.Errorf("Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
 		return nil, retErr
 	}
-	if resp.Status.StatusCode.Value != spStatusSuccess {
-		retErr.PrivateErr = fmt.Errorf("Status code was not %s", spStatusSuccess)
+	if resp.Status.StatusCode.Value != StatusSuccess {
+		retErr.PrivateErr = fmt.Errorf("Status code was not %s", StatusSuccess)
 		return nil, retErr
 	}
 
@@ -368,7 +368,7 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, requestID string) (A
 		return nil, retErr
 	}
 
-	assertion := &spAssertion{}
+	assertion := &Assertion{}
 	xml.Unmarshal(plaintextAssertion, assertion)
 
 	if err := sp.validateAssertion(assertion, requestID, now); err != nil {
@@ -395,7 +395,7 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, requestID string) (A
 // the requirements to accept. If validation fails, it returns an error describing
 // the failure. (The digital signature on the assertion is not checked -- this
 // should be done before calling this function).
-func (sp *ServiceProvider) validateAssertion(assertion *spAssertion, requestID string, now time.Time) error {
+func (sp *ServiceProvider) validateAssertion(assertion *Assertion, requestID string, now time.Time) error {
 	if assertion.IssueInstant.Add(MaxIssueDelay).Before(now) {
 		return fmt.Errorf("expired on %s", assertion.IssueInstant.Add(MaxIssueDelay))
 	}

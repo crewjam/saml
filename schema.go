@@ -9,151 +9,211 @@ import (
 
 // AuthnRequest represents the SAML object of the same name, a request from a service provider
 // to authenticate a user.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
 type AuthnRequest struct {
-	XMLName                     xml.Name              `xml:"urn:oasis:names:tc:SAML:2.0:protocol AuthnRequest"`
-	AssertionConsumerServiceURL string                `xml:",attr"`
-	Destination                 string                `xml:",attr"`
-	ID                          string                `xml:",attr"`
-	IssueInstant                time.Time             `xml:",attr"`
-	ProtocolBinding             string                `xml:",attr"`
-	Version                     string                `xml:",attr"`
-	Issuer                      spAuthReqIssuer       `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
-	Signature                   *xmlsec.Signature     `xml:"http://www.w3.org/2000/09/xmldsig# Signature"`
-	NameIDPolicy                spAuthReqNameIDPolicy `xml:"urn:oasis:names:tc:SAML:2.0:protocol NameIDPolicy"`
+	XMLName                     xml.Name          `xml:"urn:oasis:names:tc:SAML:2.0:protocol AuthnRequest"`
+	AssertionConsumerServiceURL string            `xml:",attr"`
+	Destination                 string            `xml:",attr"`
+	ID                          string            `xml:",attr"`
+	IssueInstant                time.Time         `xml:",attr"`
+	ProtocolBinding             string            `xml:",attr"`
+	Version                     string            `xml:",attr"`
+	Issuer                      Issuer            `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
+	Signature                   *xmlsec.Signature `xml:"http://www.w3.org/2000/09/xmldsig# Signature"`
+	NameIDPolicy                NameIDPolicy      `xml:"urn:oasis:names:tc:SAML:2.0:protocol NameIDPolicy"`
 }
 
-type spAuthReqIssuer struct {
+// Issuer represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type Issuer struct {
 	XMLName xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
 	Format  string   `xml:",attr"`
-	Text    string   `xml:",chardata"`
+	Value   string   `xml:",chardata"`
 }
 
-type spAuthReqNameIDPolicy struct {
+// NameIDPolicy represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type NameIDPolicy struct {
 	XMLName     xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol NameIDPolicy"`
 	AllowCreate bool     `xml:",attr"`
 	Format      string   `xml:",chardata"`
 }
 
-type spResponse struct {
+// Response represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type Response struct {
 	XMLName            xml.Name  `xml:"urn:oasis:names:tc:SAML:2.0:protocol Response"`
 	Destination        string    `xml:",attr"`
 	ID                 string    `xml:",attr"`
 	InResponseTo       string    `xml:",attr"`
 	IssueInstant       time.Time `xml:",attr"`
 	Version            string    `xml:",attr"`
-	Issuer             *spIssuer `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
-	Status             *spStatus `xml:"urn:oasis:names:tc:SAML:2.0:protocol Status"`
-	EncryptedAssertion *spEncryptedAssertion
-	Assertion          *spAssertion `xml:"urn:oasis:names:tc:SAML:2.0:assertion Assertion"`
+	Issuer             *Issuer   `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
+	Status             *Status   `xml:"urn:oasis:names:tc:SAML:2.0:protocol Status"`
+	EncryptedAssertion *EncryptedAssertion
+	Assertion          *Assertion `xml:"urn:oasis:names:tc:SAML:2.0:assertion Assertion"`
 }
 
-type spIssuer struct {
-	XMLName xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
-	Format  string   `xml:",attr"`
-	Value   string   `xml:",chardata"`
-}
-
-type spStatus struct {
+// Status represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type Status struct {
 	XMLName    xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol Status"`
-	StatusCode spStatusCode
+	StatusCode StatusCode
 }
 
-type spStatusCode struct {
+// StatusCode represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type StatusCode struct {
 	XMLName xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol StatusCode"`
 	Value   string   `xml:",attr"`
 }
 
-var spStatusSuccess = "urn:oasis:names:tc:SAML:2.0:status:Success"
+// StatusSuccess is the value of a StatusCode element when the authentication succeeds.
+var StatusSuccess = "urn:oasis:names:tc:SAML:2.0:status:Success"
 
-type spEncryptedAssertion struct {
-	Assertion     *spAssertion
+// EncryptedAssertion represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type EncryptedAssertion struct {
+	Assertion     *Assertion
 	EncryptedData []byte `xml:",innerxml"`
 }
 
-type spAssertion struct {
+// Assertion represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type Assertion struct {
 	XMLName            xml.Name  `xml:"urn:oasis:names:tc:SAML:2.0:assertion Assertion"`
 	ID                 string    `xml:",attr"`
 	IssueInstant       time.Time `xml:",attr"`
 	Version            string    `xml:",attr"`
-	Issuer             *spIssuer `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
+	Issuer             *Issuer   `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
 	Signature          *xmlsec.Signature
-	Subject            *spSubject
-	Conditions         *spConditions
-	AuthnStatement     *spAuthnStatement
-	AttributeStatement *spAttributeStatement
+	Subject            *Subject
+	Conditions         *Conditions
+	AuthnStatement     *AuthnStatement
+	AttributeStatement *AttributeStatement
 }
 
-type spSubject struct {
+// Subject represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type Subject struct {
 	XMLName             xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:assertion Subject"`
-	NameID              *spNameID
-	SubjectConfirmation *spSubjectConfirmation
+	NameID              *NameID
+	SubjectConfirmation *SubjectConfirmation
 }
 
-type spNameID struct {
+// NameID represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type NameID struct {
 	Format          string `xml:",attr"`
 	NameQualifier   string `xml:",attr"`
 	SPNameQualifier string `xml:",attr"`
 	Value           string `xml:",chardata"`
 }
 
-type spSubjectConfirmation struct {
+// SubjectConfirmation represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type SubjectConfirmation struct {
 	Method                  string `xml:",attr"`
-	SubjectConfirmationData spSubjectConfirmationData
+	SubjectConfirmationData SubjectConfirmationData
 }
 
-type spSubjectConfirmationData struct {
+// SubjectConfirmationData represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type SubjectConfirmationData struct {
 	Address      string    `xml:",attr"`
 	InResponseTo string    `xml:",attr"`
 	NotOnOrAfter time.Time `xml:",attr"`
 	Recipient    string    `xml:",attr"`
 }
 
-type spConditions struct {
+// Conditions represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type Conditions struct {
 	NotBefore           time.Time `xml:",attr"`
 	NotOnOrAfter        time.Time `xml:",attr"`
-	AudienceRestriction *spAudienceRestriction
+	AudienceRestriction *AudienceRestriction
 }
 
-type spAudienceRestriction struct {
-	Audience *spAudience
+// AudienceRestriction represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type AudienceRestriction struct {
+	Audience *Audience
 }
 
-type spAudience struct {
+// Audience represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type Audience struct {
 	Value string `xml:",chardata"`
 }
 
-type spAuthnStatement struct {
+// AuthnStatement represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type AuthnStatement struct {
 	AuthnInstant    time.Time `xml:",attr"`
 	SessionIndex    string    `xml:",attr"`
-	SubjectLocality spSubjectLocality
-	AuthnContext    spAuthnContext
+	SubjectLocality SubjectLocality
+	AuthnContext    AuthnContext
 }
 
-type spSubjectLocality struct {
+// SubjectLocality represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type SubjectLocality struct {
 	Address string `xml:",attr"`
 }
 
-type spAuthnContext struct {
-	AuthnContextClassRef *spAuthnContextClassRef
+// AuthnContext represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type AuthnContext struct {
+	AuthnContextClassRef *AuthnContextClassRef
 }
 
-type spAuthnContextClassRef struct {
+// AuthnContextClassRef represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type AuthnContextClassRef struct {
 	Value string `xml:",chardata"`
 }
 
-type spAttributeStatement struct {
-	Attributes []spAttribute `xml:"Attribute"`
+// AttributeStatement represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type AttributeStatement struct {
+	Attributes []Attribute `xml:"Attribute"`
 }
 
-type spAttribute struct {
-	FriendlyName string             `xml:",attr"`
-	Name         string             `xml:",attr"`
-	NameFormat   string             `xml:",attr"`
-	Values       []spAttributeValue `xml:"AttributeValue"`
+// Attribute represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type Attribute struct {
+	FriendlyName string           `xml:",attr"`
+	Name         string           `xml:",attr"`
+	NameFormat   string           `xml:",attr"`
+	Values       []AttributeValue `xml:"AttributeValue"`
 }
 
-type spAttributeValue struct {
+// AttributeValue represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type AttributeValue struct {
 	Type   string `xml:"http://www.w3.org/2001/XMLSchema-instance type,attr"`
 	Value  string `xml:",chardata"`
-	NameID *spNameID
+	NameID *NameID
 }
