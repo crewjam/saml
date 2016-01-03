@@ -9,6 +9,9 @@ import (
 	"time"
 )
 
+// Session represents a user session. It is returned by the
+// SessionProvider implementation's GetSession method. Fields here
+// are used to set fields in the SAML assertion.
 type Session struct {
 	ID         string
 	CreateTime time.Time
@@ -144,11 +147,13 @@ func (sp *DefaultSessionProvider) sendLoginForm(w http.ResponseWriter, r *http.R
 	}
 }
 
+// MemorySessionStore is an in-memory, thread safe implementation of SessionStore.
 type MemorySessionStore struct {
 	mu   sync.RWMutex
 	data map[string]*Session
 }
 
+// New returns a new session
 func (m *MemorySessionStore) New(user *User) (*Session, error) {
 	session := &Session{
 		ID:             base64.StdEncoding.EncodeToString(randomBytes(32)),
@@ -170,6 +175,7 @@ func (m *MemorySessionStore) New(user *User) (*Session, error) {
 	return session, nil
 }
 
+// Get fetches an existing session by ID
 func (m *MemorySessionStore) Get(id string) (*Session, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -177,6 +183,7 @@ func (m *MemorySessionStore) Get(id string) (*Session, error) {
 	return s, nil
 }
 
+// Delete removes a session.
 func (m *MemorySessionStore) Delete(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

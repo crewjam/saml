@@ -7,7 +7,9 @@ import (
 	"github.com/crewjam/go-xmlsec"
 )
 
-type spAuthRequest struct {
+// AuthnRequest represents the SAML object of the same name, a request from a service provider
+// to authenticate a user.
+type AuthnRequest struct {
 	XMLName                     xml.Name              `xml:"urn:oasis:names:tc:SAML:2.0:protocol AuthnRequest"`
 	AssertionConsumerServiceURL string                `xml:",attr"`
 	Destination                 string                `xml:",attr"`
@@ -17,7 +19,7 @@ type spAuthRequest struct {
 	Version                     string                `xml:",attr"`
 	Issuer                      spAuthReqIssuer       `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
 	Signature                   *xmlsec.Signature     `xml:"http://www.w3.org/2000/09/xmldsig# Signature"`
-	NameIDPolicy                spAuthReqNameIdPolicy `xml:"urn:oasis:names:tc:SAML:2.0:protocol NameIDPolicy"`
+	NameIDPolicy                spAuthReqNameIDPolicy `xml:"urn:oasis:names:tc:SAML:2.0:protocol NameIDPolicy"`
 }
 
 type spAuthReqIssuer struct {
@@ -26,7 +28,7 @@ type spAuthReqIssuer struct {
 	Text    string   `xml:",chardata"`
 }
 
-type spAuthReqNameIdPolicy struct {
+type spAuthReqNameIDPolicy struct {
 	XMLName     xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol NameIDPolicy"`
 	AllowCreate bool     `xml:",attr"`
 	Format      string   `xml:",chardata"`

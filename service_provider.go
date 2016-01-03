@@ -190,9 +190,9 @@ func (sp *ServiceProvider) getIDPSigningCert() []byte {
 	return certBytes
 }
 
-// MakeAuthenticationRequest produces a new spAuthRequest object for idpURL.
-func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL *url.URL) (*spAuthRequest, error) {
-	req := spAuthRequest{
+// MakeAuthenticationRequest produces a new AuthnRequest object for idpURL.
+func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL *url.URL) (*AuthnRequest, error) {
+	req := AuthnRequest{
 		AssertionConsumerServiceURL: sp.AcsURL,
 		Destination:                 idpURL.String(),
 		ID:                          fmt.Sprintf("id-%x", randomBytes(16)),
@@ -202,7 +202,7 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL *url.URL) (*spAuthRe
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
 			Text:   sp.MetadataURL,
 		},
-		NameIDPolicy: spAuthReqNameIdPolicy{
+		NameIDPolicy: spAuthReqNameIDPolicy{
 			AllowCreate: true,
 			// TODO(ross): figure out exactly policy we need
 			// urn:mace:shibboleth:1.0:nameIdentifier

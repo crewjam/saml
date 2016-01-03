@@ -20,6 +20,20 @@ import (
 	"github.com/crewjam/saml/metadata"
 )
 
+// IdentityProvider implements the SAML Identity Provider role (IDP).
+//
+// An identity provider receives SAML assertion requests and responds
+// with SAML Assertions.
+//
+// You must provide a keypair that is used to
+// sign assertions.
+//
+// For each service provider that is able to use this
+// IDP you must add their metadata to the ServiceProviders map.
+//
+// You must provide an implementation of the SessionProvider which
+// handles the actual authentication (i.e. prompting for a username
+// and password).
 type IdentityProvider struct {
 	Key              string
 	Certificate      string
@@ -29,6 +43,7 @@ type IdentityProvider struct {
 	SessionProvider  SessionProvider
 }
 
+// Metadata returns the metadata structure for this identity provider.
 func (idp *IdentityProvider) Metadata() *metadata.Metadata {
 	cert, _ := pem.Decode([]byte(idp.Certificate))
 	if cert == nil {
@@ -164,7 +179,7 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Request, serviceProviderID string, relayState string) {
 	req := &IdpAuthnRequest{
 		IDP:         idp,
-		HttpRequest: r,
+		HTTPRequest: r,
 		RelayState:  relayState,
 	}
 
@@ -201,10 +216,10 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 // IdpAuthnRequest handles a single authentication request.
 type IdpAuthnRequest struct {
 	IDP                     *IdentityProvider
-	HttpRequest             *http.Request
+	HTTPRequest             *http.Request
 	RelayState              string
 	RequestBuffer           []byte
-	Request                 spAuthRequest
+	Request                 AuthnRequest
 	ServiceProviderMetadata *metadata.Metadata
 	ACSEndpoint             *metadata.IndexedEndpoint
 	Assertion               *spAssertion
@@ -217,7 +232,7 @@ type IdpAuthnRequest struct {
 func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnRequest, error) {
 	req := &IdpAuthnRequest{
 		IDP:         idp,
-		HttpRequest: r,
+		HTTPRequest: r,
 	}
 
 	var err error
@@ -248,7 +263,7 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 }
 
 // Validate checks that the authentication request is valid and assigns
-// the AuthRequest and Metadata properties. Returns a non-nil error if the
+// the AuthnRequest and Metadata properties. Returns a non-nil error if the
 // request is not valid.
 func (req *IdpAuthnRequest) Validate() error {
 	if err := xml.Unmarshal(req.RequestBuffer, &req.Request); err != nil {
@@ -391,7 +406,7 @@ func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
 			SubjectConfirmation: &spSubjectConfirmation{
 				Method: "urn:oasis:names:tc:SAML:2.0:cm:bearer",
 				SubjectConfirmationData: spSubjectConfirmationData{
-					Address:      req.HttpRequest.RemoteAddr,
+					Address:      req.HTTPRequest.RemoteAddr,
 					InResponseTo: req.Request.ID,
 					NotOnOrAfter: timeNow().Add(MaxIssueDelay),
 					Recipient:    req.ACSEndpoint.Location,
@@ -409,7 +424,7 @@ func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
 			AuthnInstant: session.CreateTime,
 			SessionIndex: session.Index,
 			SubjectLocality: spSubjectLocality{
-				Address: req.HttpRequest.RemoteAddr,
+				Address: req.HTTPRequest.RemoteAddr,
 			},
 			AuthnContext: spAuthnContext{
 				AuthnContextClassRef: &spAuthnContextClassRef{
