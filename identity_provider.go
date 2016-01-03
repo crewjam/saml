@@ -158,6 +158,46 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ServeIDPInitiated handes an IDP-initiated authorization request. Requests of this
+// type require us to know a registered service provider and (optionally) the RelayState
+// that will be passed to the application.
+func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Request, serviceProviderID string, relayState string) {
+	req := &IdpAuthnRequest{
+		IDP:         idp,
+		HttpRequest: r,
+		RelayState:  relayState,
+	}
+
+	session := idp.SessionProvider.GetSession(w, r, req)
+	if session == nil {
+		return
+	}
+
+	var ok bool
+	req.ServiceProviderMetadata, ok = idp.ServiceProviders[serviceProviderID]
+	if !ok {
+		log.Printf("cannot find service provider: %s", serviceProviderID)
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		return
+	}
+
+	for _, endpoint := range req.ServiceProviderMetadata.SPSSODescriptor.AssertionConsumerService {
+		req.ACSEndpoint = &endpoint
+		break
+	}
+
+	if err := req.MakeAssertion(session); err != nil {
+		log.Printf("failed to make assertion: %s", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	if err := req.WriteResponse(w); err != nil {
+		log.Printf("failed to write response: %s", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+}
+
 // IdpAuthnRequest handles a single authentication request.
 type IdpAuthnRequest struct {
 	IDP                     *IdentityProvider

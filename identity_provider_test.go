@@ -696,3 +696,52 @@ func (test *IdentityProviderTest) TestWriteResponse(c *C) {
 	c.Assert(w.Code, Equals, 200)
 	c.Assert(string(w.Body.Bytes()), Equals, "<html><form method=\"post\" action=\"https://sp.example.com/saml2/acs\" id=\"SAMLResponseForm\"><input type=\"hidden\" name=\"SAMLResponse\" value=\"PFJlc3BvbnNlIHhtbG5zPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6cHJvdG9jb2wiIERlc3RpbmF0aW9uPSIiIElEPSJUSElTX0lTX1RIRV9TQU1MX1JFU1BPTlNFIiBJblJlc3BvbnNlVG89IiIgSXNzdWVJbnN0YW50PSIwMDAxLTAxLTAxVDAwOjAwOjAwWiIgVmVyc2lvbj0iIj48L1Jlc3BvbnNlPg==\" /><input type=\"hidden\" name=\"RelayState\" value=\"THIS_IS_THE_RELAY_STATE\" /><input type=\"submit\" value=\"Continue\" /></form><script>document.getElementById('SAMLResponseForm').submit();</script></html>")
 }
+
+func (test *IdentityProviderTest) TestIDPInitiatedNewSession(c *C) {
+	test.IDP.SessionProvider = &mockSessionProvider{
+		GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
+			fmt.Fprintf(w, "RelayState: %s", req.RelayState)
+			return nil
+		},
+	}
+
+	w := httptest.NewRecorder()
+	r, _ := http.NewRequest("GET", "https://idp.example.com/services/sp/whoami", nil)
+	test.IDP.ServeIDPInitiated(w, r, test.SP.MetadataURL, "ThisIsTheRelayState")
+	c.Assert(w.Code, Equals, 200)
+	c.Assert(string(w.Body.Bytes()), Equals, "RelayState: ThisIsTheRelayState")
+}
+
+func (test *IdentityProviderTest) TestIDPInitiatedExistingSession(c *C) {
+	test.IDP.SessionProvider = &mockSessionProvider{
+		GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
+			return &Session{
+				ID:       "f00df00df00d",
+				UserName: "alice",
+			}
+		},
+	}
+
+	w := httptest.NewRecorder()
+	r, _ := http.NewRequest("GET", "https://idp.example.com/services/sp/whoami", nil)
+	test.IDP.ServeIDPInitiated(w, r, test.SP.MetadataURL, "ThisIsTheRelayState")
+	c.Assert(w.Code, Equals, 200)
+	c.Assert(string(w.Body.Bytes()), Matches,
+		"^<html><form method=\"post\" action=\"https://sp\\.example\\.com/saml2/acs\" id=\"SAMLResponseForm\"><input type=\"hidden\" name=\"SAMLResponse\" value=\".*\" /><input type=\"hidden\" name=\"RelayState\" value=\"ThisIsTheRelayState\" /><input type=\"submit\" value=\"Continue\" /></form><script>document\\.getElementById\\('SAMLResponseForm'\\)\\.submit\\(\\);</script></html>$")
+}
+
+func (test *IdentityProviderTest) TestIDPInitiatedBadServiceProvider(c *C) {
+	test.IDP.SessionProvider = &mockSessionProvider{
+		GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
+			return &Session{
+				ID:       "f00df00df00d",
+				UserName: "alice",
+			}
+		},
+	}
+
+	w := httptest.NewRecorder()
+	r, _ := http.NewRequest("GET", "https://idp.example.com/services/sp/whoami", nil)
+	test.IDP.ServeIDPInitiated(w, r, "https://wrong.url/metadata", "ThisIsTheRelayState")
+	c.Assert(w.Code, Equals, http.StatusNotFound)
+}
