@@ -14,7 +14,6 @@ import (
 
 	"github.com/crewjam/saml/metadata"
 	"github.com/dgrijalva/jwt-go"
-	"github.com/kr/pretty"
 )
 
 type ServiceProviderMiddlewareTest struct {
@@ -298,13 +297,11 @@ func (test *ServiceProviderMiddlewareTest) TestCanParseResponse(c *C) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Cookie", ""+
 		"saml_KCosLjAyNDY4Ojw+QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
-		"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlIiwidXJpIjoiL2Zyb2IifQ.oXSHI6UFeIRK_IR40GFwHbqHzauuEmNEdVu-Eq7glHA")
+		"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTllNjE3NTNkNjRlOTI4YWY1YTdhMzQxYTk3ZjQyMGM5IiwidXJpIjoiL2Zyb2IifQ.RHNEmqXQcB_ncWZSPkhOL4Sx5hZFD6eHP1RJ0ZgUhuk")
 
 	resp := httptest.NewRecorder()
 	test.Middleware.ServeHTTP(resp, req)
 	c.Assert(resp.Code, Equals, http.StatusFound)
-
-	pretty.Print(resp.Header())
 
 	c.Assert(resp.Header().Get("Location"), Equals, "/frob")
 	c.Assert(resp.Header()["Set-Cookie"], DeepEquals, []string{

@@ -297,7 +297,7 @@ func (ivr *InvalidResponseError) Error() string {
 // properties are useful in describing which part of the parsing process
 // failed. However, to discourage inadvertent disclosure the diagnostic
 // information, the Error() method returns a static string.
-func (sp *ServiceProvider) ParseResponse(req *http.Request, requestID string) (AssertionAttributes, error) {
+func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs []string) (*Assertion, error) {
 	now := timeNow()
 	retErr := &InvalidResponseError{
 		Now:      now,
@@ -321,10 +321,20 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, requestID string) (A
 		retErr.PrivateErr = fmt.Errorf("`Destination` does not match AcsURL (expected %q)", sp.AcsURL)
 		return nil, retErr
 	}
-	if requestID != "" && resp.InResponseTo != requestID {
-		retErr.PrivateErr = fmt.Errorf("`InResponseTo` does not match requestID (expected %q)", requestID)
-		return nil, retErr
+
+	if possibleRequestIDs != nil {
+		valid := false
+		for _, possibleRequestID := range possibleRequestIDs {
+			if resp.InResponseTo == possibleRequestID {
+				valid = true
+			}
+		}
+		if !valid {
+			retErr.PrivateErr = fmt.Errorf("`InResponseTo` does not match any of the possible request IDs (expected %v)", possibleRequestIDs)
+			return nil, retErr
+		}
 	}
+
 	if resp.IssueInstant.Add(MaxIssueDelay).Before(now) {
 		retErr.PrivateErr = fmt.Errorf("IssueInstant expired at %s", resp.IssueInstant.Add(MaxIssueDelay))
 		return nil, retErr
@@ -361,31 +371,19 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, requestID string) (A
 	assertion := &Assertion{}
 	xml.Unmarshal(plaintextAssertion, assertion)
 
-	if err := sp.validateAssertion(assertion, requestID, now); err != nil {
+	if err := sp.validateAssertion(assertion, possibleRequestIDs, now); err != nil {
 		retErr.PrivateErr = fmt.Errorf("assertion invalid: %s", err)
 		return nil, retErr
 	}
 
-	// Extract properties from the SAML assertion
-	attributes := []AssertionAttribute{}
-	for _, x := range assertion.AttributeStatement.Attributes {
-		for _, v := range x.Values {
-			attributes = append(attributes, AssertionAttribute{
-				FriendlyName: x.FriendlyName,
-				Name:         x.Name,
-				Value:        v.Value,
-			})
-		}
-	}
-
-	return attributes, nil
+	return assertion, nil
 }
 
 // validateAssertion checks that the conditions specified in assertion match
 // the requirements to accept. If validation fails, it returns an error describing
 // the failure. (The digital signature on the assertion is not checked -- this
 // should be done before calling this function).
-func (sp *ServiceProvider) validateAssertion(assertion *Assertion, requestID string, now time.Time) error {
+func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleRequestIDs []string, now time.Time) error {
 	if assertion.IssueInstant.Add(MaxIssueDelay).Before(now) {
 		return fmt.Errorf("expired on %s", assertion.IssueInstant.Add(MaxIssueDelay))
 	}
@@ -398,8 +396,17 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, requestID str
 	if assertion.Subject.NameID.SPNameQualifier != sp.MetadataURL {
 		return fmt.Errorf("Subject NameID SPNameQualifier is not %q", sp.MetadataURL)
 	}
-	if requestID != "" && assertion.Subject.SubjectConfirmation.SubjectConfirmationData.InResponseTo != requestID {
-		return fmt.Errorf("SubjectConfirmation requestID is not %q", requestID)
+	if possibleRequestIDs != nil {
+		valid := false
+		for _, possibleRequestID := range possibleRequestIDs {
+			if assertion.Subject.SubjectConfirmation.SubjectConfirmationData.InResponseTo == possibleRequestID {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("SubjectConfirmation one of the possible request IDs (%v)", possibleRequestIDs)
+		}
 	}
 	if assertion.Subject.SubjectConfirmation.SubjectConfirmationData.Recipient != sp.AcsURL {
 		return fmt.Errorf("SubjectConfirmation Recipient is not %s", sp.AcsURL)

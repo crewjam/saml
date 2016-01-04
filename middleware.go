@@ -30,9 +30,7 @@ import (
 // implementations of these functions issue and verify a signed cookie containing
 // information from the SAML assertion.
 type ServiceProviderMiddleware struct {
-	ServiceProvider  *ServiceProvider
-	IsAuthorizedFunc func(r *http.Request) bool
-	AuthorizeFunc    func(w http.ResponseWriter, r *http.Request, assertionAttributes AssertionAttributes)
+	ServiceProvider *ServiceProvider
 }
 
 const cookieMaxAge = time.Hour // TODO(ross): must be configurable
@@ -54,9 +52,7 @@ func (m *ServiceProviderMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Req
 	acsURL, _ := url.Parse(m.ServiceProvider.AcsURL)
 	if r.URL.Path == acsURL.Path {
 		r.ParseForm()
-
-		requestID := "" // XXX
-		assertionAttributes, err := m.ServiceProvider.ParseResponse(r, requestID)
+		assertion, err := m.ServiceProvider.ParseResponse(r, m.getPossibleRequestIDs(r))
 		if err != nil {
 			if parseErr, ok := err.(*InvalidResponseError); ok {
 				log.Printf("RESPONSE: ===\n%s\n===\nNOW: %s\nERROR: %s",
@@ -66,11 +62,7 @@ func (m *ServiceProviderMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Req
 			return
 		}
 
-		authorizeFunc := m.AuthorizeFunc
-		if authorizeFunc == nil {
-			authorizeFunc = m.DefaultAuthorizeFunc
-		}
-		authorizeFunc(w, r, assertionAttributes)
+		m.Authorize(w, r, assertion)
 		return
 	}
 
@@ -83,11 +75,7 @@ func (m *ServiceProviderMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Req
 // to start the SAML auth flow.
 func (m *ServiceProviderMiddleware) RequireAccountMiddleware(handler http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
-		isAuthorized := m.IsAuthorizedFunc
-		if isAuthorized == nil {
-			isAuthorized = m.DefaultIsAuthorized
-		}
-		if isAuthorized(r) {
+		if m.IsAuthorized(r) {
 			handler.ServeHTTP(w, r)
 			return
 		}
@@ -138,11 +126,30 @@ func (m *ServiceProviderMiddleware) RequireAccountMiddleware(handler http.Handle
 	return http.HandlerFunc(fn)
 }
 
-// DefaultAuthorizeFunc is the default implementation of AuthorizeFunc. This function
-// is invoked by ServeHTTP when we have a new, valid SAML assertion. It sets a cookie
-// that contains a signed JWT containing the assertion attributes. It then redirects the
-// user's browser to the original URL contained in RelayState.
-func (m *ServiceProviderMiddleware) DefaultAuthorizeFunc(w http.ResponseWriter, r *http.Request, assertionAttributes AssertionAttributes) {
+func (m *ServiceProviderMiddleware) getPossibleRequestIDs(r *http.Request) []string {
+	rv := []string{}
+	for _, cookie := range r.Cookies() {
+		if !strings.HasPrefix(cookie.Name, "saml_") {
+			continue
+		}
+		log.Printf("getPossibleRequestIDs: cookie: %s", cookie.String())
+		token, err := jwt.Parse(cookie.Value, func(t *jwt.Token) (interface{}, error) {
+			secretBlock, _ := pem.Decode([]byte(m.ServiceProvider.Key))
+			return secretBlock.Bytes, nil
+		})
+		if err != nil || !token.Valid {
+			log.Printf("... invalid token %s", err)
+			continue
+		}
+		rv = append(rv, token.Claims["id"].(string))
+	}
+	return rv
+}
+
+// Authorize is invoked by ServeHTTP when we have a new, valid SAML assertion.
+// It sets a cookie that contains a signed JWT containing the assertion attributes.
+// It then redirects the user's browser to the original URL contained in RelayState.
+func (m *ServiceProviderMiddleware) Authorize(w http.ResponseWriter, r *http.Request, assertion *Assertion) {
 	secretBlock, _ := pem.Decode([]byte(m.ServiceProvider.Key))
 
 	redirectURI := "/"
@@ -164,15 +171,6 @@ func (m *ServiceProviderMiddleware) DefaultAuthorizeFunc(w http.ResponseWriter, 
 		}
 		redirectURI = state.Claims["uri"].(string)
 
-		// TODO(ross): verify that the request ID matches the value in the JWT token
-		/*
-			expectedRequestID := relayState.Claims["id"].(string)
-			if expectedRequestID != requestID {
-				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-				return
-			}
-		*/
-
 		// delete the cookie
 		stateCookie.Value = ""
 		stateCookie.Expires = time.Time{}
@@ -180,8 +178,16 @@ func (m *ServiceProviderMiddleware) DefaultAuthorizeFunc(w http.ResponseWriter, 
 	}
 
 	token := jwt.New(jwt.GetSigningMethod("HS256"))
-	for _, attr := range assertionAttributes {
-		token.Claims[attr.FriendlyName] = attr.Value
+	for _, attr := range assertion.AttributeStatement.Attributes {
+		valueStrings := []string{}
+		for _, v := range attr.Values {
+			valueStrings = append(valueStrings, v.Value)
+		}
+		if len(valueStrings) == 1 || true { // TODO(ross): use an array if there are multiple values (or something)
+			token.Claims[attr.FriendlyName] = valueStrings[len(valueStrings)-1]
+		} else {
+			token.Claims[attr.FriendlyName] = valueStrings
+		}
 	}
 	token.Claims["exp"] = timeNow().Add(cookieMaxAge).Unix()
 	signedToken, err := token.SignedString(secretBlock.Bytes)
@@ -200,8 +206,7 @@ func (m *ServiceProviderMiddleware) DefaultAuthorizeFunc(w http.ResponseWriter, 
 	http.Redirect(w, r, redirectURI, http.StatusFound)
 }
 
-// DefaultIsAuthorized is the default implementation of IsAuthorizedFunc. This
-// function is invoked by RequireAccountMiddleware to determine if the request
+// IsAuthorized is invoked by RequireAccountMiddleware to determine if the request
 // is already authorized or if the user's browser should be redirected to the
 // SAML login flow. If the request is authorized, then the request headers
 // starting with X-Saml- for each SAML assertion attribute are set. For example,
@@ -212,7 +217,7 @@ func (m *ServiceProviderMiddleware) DefaultAuthorizeFunc(w http.ResponseWriter, 
 //
 // It is an error for this function to be invoked with a request containing
 // any headers starting with X-Saml. This function will panic if you do.
-func (m *ServiceProviderMiddleware) DefaultIsAuthorized(r *http.Request) bool {
+func (m *ServiceProviderMiddleware) IsAuthorized(r *http.Request) bool {
 	cookie, err := r.Cookie(cookieName)
 	if err != nil {
 		return false

@@ -157,25 +157,127 @@ func (test *ServiceProviderTest) TestCanParseResponse(c *C) {
 
 	req := http.Request{PostForm: url.Values{}}
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	attr, err := s.ParseResponse(&req, "")
+	assertion, err := s.ParseResponse(&req, nil)
 	c.Assert(err, IsNil)
-	c.Assert(attr.Get("cn").Value, Equals, "Me Myself And I")
-	c.Assert(attr.Get("urn:oid:1.3.6.1.4.1.5923.1.1.1.6").Value, Equals, "myself@testshib.org")
-	c.Assert(attr.Get("missing"), IsNil)
 
-	c.Assert(attr, DeepEquals, AssertionAttributes{
-		{FriendlyName: "uid", Name: "urn:oid:0.9.2342.19200300.100.1.1", Value: "myself"},
-		{FriendlyName: "eduPersonAffiliation", Name: "urn:oid:1.3.6.1.4.1.5923.1.1.1.1", Value: "Member"},
-		{FriendlyName: "eduPersonAffiliation", Name: "urn:oid:1.3.6.1.4.1.5923.1.1.1.1", Value: "Staff"},
-		{FriendlyName: "eduPersonPrincipalName", Name: "urn:oid:1.3.6.1.4.1.5923.1.1.1.6", Value: "myself@testshib.org"},
-		{FriendlyName: "sn", Name: "urn:oid:2.5.4.4", Value: "And I"},
-		{FriendlyName: "eduPersonScopedAffiliation", Name: "urn:oid:1.3.6.1.4.1.5923.1.1.1.9", Value: "Member@testshib.org"},
-		{FriendlyName: "eduPersonScopedAffiliation", Name: "urn:oid:1.3.6.1.4.1.5923.1.1.1.9", Value: "Staff@testshib.org"},
-		{FriendlyName: "givenName", Name: "urn:oid:2.5.4.42", Value: "Me Myself"},
-		{FriendlyName: "eduPersonEntitlement", Name: "urn:oid:1.3.6.1.4.1.5923.1.1.1.7", Value: "urn:mace:dir:entitlement:common-lib-terms"},
-		{FriendlyName: "cn", Name: "urn:oid:2.5.4.3", Value: "Me Myself And I"},
-		{FriendlyName: "eduPersonTargetedID", Name: "urn:oid:1.3.6.1.4.1.5923.1.1.1.10", Value: ""},
-		{FriendlyName: "telephoneNumber", Name: "urn:oid:2.5.4.20", Value: "555-5555"},
+	c.Assert(assertion.AttributeStatement.Attributes, DeepEquals, []Attribute{
+		Attribute{
+			FriendlyName: "uid",
+			Name:         "urn:oid:0.9.2342.19200300.100.1.1",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []AttributeValue{
+				{
+					Type:  "xs:string",
+					Value: "myself",
+				},
+			},
+		},
+		Attribute{
+			FriendlyName: "eduPersonAffiliation",
+			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.1",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []AttributeValue{
+				{
+					Type:  "xs:string",
+					Value: "Member",
+				},
+				{
+					Type:  "xs:string",
+					Value: "Staff",
+				},
+			},
+		},
+		Attribute{
+			FriendlyName: "eduPersonPrincipalName",
+			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.6",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []AttributeValue{
+				{
+					Type:  "xs:string",
+					Value: "myself@testshib.org",
+				},
+			},
+		},
+		Attribute{
+			FriendlyName: "sn",
+			Name:         "urn:oid:2.5.4.4",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []AttributeValue{
+				{
+					Type:  "xs:string",
+					Value: "And I",
+				},
+			},
+		},
+		Attribute{
+			FriendlyName: "eduPersonScopedAffiliation",
+			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.9",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []AttributeValue{
+				{
+					Type:  "xs:string",
+					Value: "Member@testshib.org",
+				},
+				{
+					Type:  "xs:string",
+					Value: "Staff@testshib.org",
+				},
+			},
+		},
+		Attribute{
+			FriendlyName: "givenName",
+			Name:         "urn:oid:2.5.4.42",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []AttributeValue{
+				{
+					Type:  "xs:string",
+					Value: "Me Myself",
+				},
+			},
+		},
+		Attribute{
+			FriendlyName: "eduPersonEntitlement",
+			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.7",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []AttributeValue{
+				{
+					Type:  "xs:string",
+					Value: "urn:mace:dir:entitlement:common-lib-terms",
+				},
+			},
+		},
+		Attribute{
+			FriendlyName: "cn",
+			Name:         "urn:oid:2.5.4.3",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []AttributeValue{
+				{
+					Type:  "xs:string",
+					Value: "Me Myself And I",
+				},
+			},
+		},
+		Attribute{
+			FriendlyName: "eduPersonTargetedID",
+			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.10",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []AttributeValue{
+				{
+					NameID: &NameID{Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent", NameQualifier: "https://idp.testshib.org/idp/shibboleth", SPNameQualifier: "https://15661444.ngrok.io/saml2/metadata", Value: "8F+M9ovyaYNwCId0pVkVsnZYRDo="},
+				},
+			},
+		},
+		Attribute{
+			FriendlyName: "telephoneNumber",
+			Name:         "urn:oid:2.5.4.20",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []AttributeValue{
+				{
+					Type:  "xs:string",
+					Value: "555-5555",
+				},
+			},
+		},
 	})
 }
 
@@ -192,29 +294,29 @@ func (test *ServiceProviderTest) TestInvalidResponses(c *C) {
 
 	req := http.Request{PostForm: url.Values{}}
 	req.PostForm.Set("SAMLResponse", "???")
-	_, err = s.ParseResponse(&req, "")
+	_, err = s.ParseResponse(&req, nil)
 	c.Assert(err.(*InvalidResponseError).PrivateErr, ErrorMatches, "cannot parse base64: illegal base64 data at input byte 0")
 
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte("<hello>World!</hello>")))
-	_, err = s.ParseResponse(&req, "")
+	_, err = s.ParseResponse(&req, nil)
 	c.Assert(err.(*InvalidResponseError).PrivateErr, ErrorMatches, "cannot unmarshal response: expected element type <Response> but have <hello>")
 
 	s.AcsURL = "https://wrong/saml2/acs"
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, "")
+	_, err = s.ParseResponse(&req, nil)
 	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "`Destination` does not match AcsURL (expected \"https://wrong/saml2/acs\")")
 	s.AcsURL = "https://15661444.ngrok.io/saml2/acs"
 
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, "wrongRequestID")
-	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "`InResponseTo` does not match requestID (expected \"wrongRequestID\")")
+	_, err = s.ParseResponse(&req, []string{"wrongRequestID"})
+	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "`InResponseTo` does not match any of the possible request IDs (expected [wrongRequestID])")
 
 	timeNow = func() time.Time {
 		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Nov 30 20:57:09 UTC 2016")
 		return rv
 	}
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, "")
+	_, err = s.ParseResponse(&req, nil)
 	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "IssueInstant expired at 2015-12-01 01:57:51.375 +0000 UTC")
 	timeNow = func() time.Time {
 		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Dec 1 01:57:09 UTC 2015")
@@ -223,26 +325,26 @@ func (test *ServiceProviderTest) TestInvalidResponses(c *C) {
 
 	s.IDPMetadata.EntityID = "http://snakeoil.com"
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, "")
+	_, err = s.ParseResponse(&req, nil)
 	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "Issuer does not match the IDP metadata (expected \"http://snakeoil.com\")")
 	s.IDPMetadata.EntityID = "https://idp.testshib.org/idp/shibboleth"
 
 	oldSpStatusSuccess := StatusSuccess
 	StatusSuccess = "not:the:success:value"
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, "")
+	_, err = s.ParseResponse(&req, nil)
 	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "Status code was not not:the:success:value")
 	StatusSuccess = oldSpStatusSuccess
 
 	s.Key = "invalid"
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, "")
+	_, err = s.ParseResponse(&req, nil)
 	c.Assert(err.(*InvalidResponseError).PrivateErr, ErrorMatches, "failed to decrypt response: .*PEM_read_bio_PrivateKey.*")
 	s.Key = test.Key
 
 	s.IDPMetadata.IDPSSODescriptor.KeyDescriptor[0].KeyInfo.Certificate = "invalid"
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, "")
+	_, err = s.ParseResponse(&req, nil)
 	c.Assert(err.(*InvalidResponseError).PrivateErr, ErrorMatches, "failed to verify signature on response: .*xmlSecOpenSSLAppKeyLoadMemory.*")
 }
 
@@ -260,56 +362,57 @@ func (test *ServiceProviderTest) TestInvalidAssertions(c *C) {
 	req := http.Request{PostForm: url.Values{}}
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
 	s.IDPMetadata.IDPSSODescriptor.KeyDescriptor[0].KeyInfo.Certificate = "invalid"
-	_, err = s.ParseResponse(&req, "")
+	_, err = s.ParseResponse(&req, nil)
 	assertionBuf := []byte(err.(*InvalidResponseError).Response)
 
 	assertion := Assertion{}
 	err = xml.Unmarshal(assertionBuf, &assertion)
 	c.Assert(err, IsNil)
 
-	err = s.validateAssertion(&assertion, "", timeNow().Add(time.Hour))
+	err = s.validateAssertion(&assertion, nil, timeNow().Add(time.Hour))
 	c.Assert(err.Error(), Equals, "expired on 2015-12-01 01:57:51.375 +0000 UTC")
 
 	assertion.Issuer.Value = "bob"
-	err = s.validateAssertion(&assertion, "", timeNow())
+	err = s.validateAssertion(&assertion, nil, timeNow())
 	c.Assert(err.Error(), Equals, "issuer is not \"https://idp.testshib.org/idp/shibboleth\"")
 	xml.Unmarshal(assertionBuf, &assertion)
 
 	assertion.Subject.NameID.NameQualifier = "bob"
-	err = s.validateAssertion(&assertion, "", timeNow())
+	err = s.validateAssertion(&assertion, nil, timeNow())
 	c.Assert(err.Error(), Equals, "Subject NameID NameQualifier is not \"https://idp.testshib.org/idp/shibboleth\"")
 	xml.Unmarshal(assertionBuf, &assertion)
 
 	assertion.Subject.NameID.SPNameQualifier = "bob"
-	err = s.validateAssertion(&assertion, "", timeNow())
+	err = s.validateAssertion(&assertion, nil, timeNow())
 	c.Assert(err.Error(), Equals, "Subject NameID SPNameQualifier is not \"https://15661444.ngrok.io/saml2/metadata\"")
 	xml.Unmarshal(assertionBuf, &assertion)
 
-	err = s.validateAssertion(&assertion, "any request id", timeNow())
-	c.Assert(err.Error(), Equals, "SubjectConfirmation requestID is not \"any request id\"")
+	err = s.validateAssertion(&assertion, []string{"any request id"}, timeNow())
+	c.Assert(err.Error(), Equals,
+		"SubjectConfirmation one of the possible request IDs ([any request id])")
 
 	assertion.Subject.SubjectConfirmation.SubjectConfirmationData.Recipient = "wrong/acs/url"
-	err = s.validateAssertion(&assertion, "", timeNow())
+	err = s.validateAssertion(&assertion, nil, timeNow())
 	c.Assert(err.Error(), Equals, "SubjectConfirmation Recipient is not https://15661444.ngrok.io/saml2/acs")
 	xml.Unmarshal(assertionBuf, &assertion)
 
 	assertion.Subject.SubjectConfirmation.SubjectConfirmationData.NotOnOrAfter = timeNow().Add(-1 * time.Hour)
-	err = s.validateAssertion(&assertion, "", timeNow())
+	err = s.validateAssertion(&assertion, nil, timeNow())
 	c.Assert(err.Error(), Equals, "SubjectConfirmationData is expired")
 	xml.Unmarshal(assertionBuf, &assertion)
 
 	assertion.Conditions.NotBefore = timeNow().Add(time.Hour)
-	err = s.validateAssertion(&assertion, "", timeNow())
+	err = s.validateAssertion(&assertion, nil, timeNow())
 	c.Assert(err.Error(), Equals, "Conditions is not yet valid")
 	xml.Unmarshal(assertionBuf, &assertion)
 
 	assertion.Conditions.NotOnOrAfter = timeNow().Add(-1 * time.Hour)
-	err = s.validateAssertion(&assertion, "", timeNow())
+	err = s.validateAssertion(&assertion, nil, timeNow())
 	c.Assert(err.Error(), Equals, "Conditions is expired")
 	xml.Unmarshal(assertionBuf, &assertion)
 
 	assertion.Conditions.AudienceRestriction.Audience.Value = "not/our/metadata/url"
-	err = s.validateAssertion(&assertion, "", timeNow())
+	err = s.validateAssertion(&assertion, nil, timeNow())
 	c.Assert(err.Error(), Equals, "Conditions AudienceRestriction is not \"https://15661444.ngrok.io/saml2/metadata\"")
 	xml.Unmarshal(assertionBuf, &assertion)
 }
