@@ -6,7 +6,7 @@ import (
 	"encoding/xml"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"log"
 	"net/http"
 	"strings"
 
@@ -15,12 +15,10 @@ import (
 	"github.com/zenazn/goji"
 	"github.com/zenazn/goji/web"
 
-	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/samlmiddleware"
+	"github.com/crewjam/saml/samlsp"
 )
 
 var links = map[string]Link{}
-var samlsp *saml.ServiceProvider
 
 type Link struct {
 	ShortLink string
@@ -68,11 +66,9 @@ func main() {
 	idpMetadataURL := flag.String("idp", "https://516becc2.ngrok.io/metadata", "The metadata URL for the IDP")
 	flag.Parse()
 
-	samlsp = &saml.ServiceProvider{
-		MetadataURL: *baseURL + "/saml/metadata",
-		AcsURL:      *baseURL + "/saml/acs",
-	}
-	samlsp.Key = `-----BEGIN RSA PRIVATE KEY-----
+	samlSP, err := samlsp.New(samlsp.Options{
+		URL: *baseURL,
+		Key: `-----BEGIN RSA PRIVATE KEY-----
 MIICXgIBAAKBgQDU8wdiaFmPfTyRYuFlVPi866WrH/2JubkHzp89bBQopDaLXYxi
 3PTu3O6Q/KaKxMOFBqrInwqpv/omOGZ4ycQ51O9I+Yc7ybVlW94lTo2gpGf+Y/8E
 PsVbnZaFutRctJ4dVIp9aQ2TpLiGT0xX1OzBO/JEgq9GzDRf+B+eqSuglwIDAQAB
@@ -87,8 +83,8 @@ yfjNVUNVaIbQTzEbRlRvT6MqR+PTCefC072NF9aJWR93JimspGZMR7viY6IM4lrr
 vBkm0F5yXKaYtoiiDMzlOQJADqmEwXl0D72ZG/2KDg8b4QZEmC9i5gidpQwJXUc6
 hU+IVQoLxRq0fBib/36K9tcrrO5Ba4iEvDcNY+D8yGbUtA==
 -----END RSA PRIVATE KEY-----
-`
-	samlsp.Certificate = `-----BEGIN CERTIFICATE-----
+`,
+		Certificate: `-----BEGIN CERTIFICATE-----
 MIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJV
 UzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0
 MB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMx
@@ -101,48 +97,23 @@ akpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeT
 QLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvn
 OwJlNCASPZRH/JmF8tX0hoHuAQ==
 -----END CERTIFICATE-----
-`
-
-	fmt.Printf("fetching IDP metadata: %s\n", *idpMetadataURL)
-	resp, err := http.Get(*idpMetadataURL)
+`,
+		AllowIDPInitiated: true,
+		IDPMetadataURL:    *idpMetadataURL,
+	})
 	if err != nil {
-		panic(err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		panic(resp.Status)
-	}
-	buf, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		panic(err)
-	}
-
-	r := saml.EntitiesDescriptor{}
-	if err := xml.Unmarshal(buf, &r); err != nil {
-		panic(err)
-	}
-	for _, e := range r.EntityDescriptor {
-		if e.IDPSSODescriptor != nil {
-			samlsp.IDPMetadata = e
-			break
-		}
-	}
-	if samlsp.IDPMetadata == nil {
-		panic("cannot find idp in metadata")
+		log.Fatalf("%s", err)
 	}
 
 	// register with the service provider
-	spMetadataBuf, _ := xml.MarshalIndent(samlsp.Metadata(), "", "  ")
+	spMetadataBuf, _ := xml.MarshalIndent(samlSP.ServiceProvider.Metadata(), "", "  ")
 	http.Post(strings.Replace(*idpMetadataURL, "/metadata", "/services/sp", 1),
 		"text/xml", bytes.NewReader(spMetadataBuf))
 
-	samlMiddleware := &samlmiddleware.ServiceProviderMiddleware{
-		ServiceProvider:   samlsp,
-		AllowIDPInitiated: true,
-	}
-	goji.Handle("/saml/*", samlMiddleware)
+	goji.Handle("/saml/*", samlSP)
 
 	authMux := web.New()
-	authMux.Use(samlMiddleware.RequireAccountMiddleware)
+	authMux.Use(samlSP.RequireAccount)
 	authMux.Get("/whoami", func(w http.ResponseWriter, r *http.Request) {
 		pretty.Fprintf(w, "%# v", r)
 	})

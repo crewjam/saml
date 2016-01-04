@@ -1,4 +1,4 @@
-package samlmiddleware
+package samlsp
 
 import (
 	"bytes"
@@ -20,16 +20,16 @@ import (
 // Hook up gocheck into the "go test" runner.
 func Test(t *testing.T) { TestingT(t) }
 
-type ServiceProviderMiddlewareTest struct {
+type MiddlewareTest struct {
 	AuthnRequest string
 	SamlResponse string
 	Key          string
 	Certificate  string
 	IDPMetadata  string
-	Middleware   ServiceProviderMiddleware
+	Middleware   Middleware
 }
 
-var _ = Suite(&ServiceProviderMiddlewareTest{})
+var _ = Suite(&MiddlewareTest{})
 
 type testRandomReader struct {
 	Next byte
@@ -43,7 +43,7 @@ func (tr *testRandomReader) Read(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-func (test *ServiceProviderMiddlewareTest) SetUpTest(c *C) {
+func (test *MiddlewareTest) SetUpTest(c *C) {
 	saml.TimeNow = func() time.Time {
 		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Dec 1 01:57:09 UTC 2015")
 		return rv
@@ -57,8 +57,8 @@ func (test *ServiceProviderMiddlewareTest) SetUpTest(c *C) {
 	test.Certificate = "-----BEGIN CERTIFICATE-----\nMIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJV\nUzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0\nMB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMx\nCzAJBgNVBAgMAkdBMQwwCgYDVQQKDANmb28xEjAQBgNVBAMMCWxvY2FsaG9zdDCB\nnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA1PMHYmhZj308kWLhZVT4vOulqx/9\nibm5B86fPWwUKKQ2i12MYtz07tzukPymisTDhQaqyJ8Kqb/6JjhmeMnEOdTvSPmH\nO8m1ZVveJU6NoKRn/mP/BD7FW52WhbrUXLSeHVSKfWkNk6S4hk9MV9TswTvyRIKv\nRsw0X/gfnqkroJcCAwEAATANBgkqhkiG9w0BAQUFAAOBgQCMMlIO+GNcGekevKgk\nakpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeT\nQLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvn\nOwJlNCASPZRH/JmF8tX0hoHuAQ==\n-----END CERTIFICATE-----\n"
 	test.IDPMetadata = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\" xmlns:mdalg=\"urn:oasis:names:tc:SAML:metadata:algsupport\" xmlns:mdui=\"urn:oasis:names:tc:SAML:metadata:ui\" xmlns:shibmd=\"urn:mace:shibboleth:metadata:1.0\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" Name=\"urn:mace:shibboleth:testshib:two\" entityID=\"https://idp.testshib.org/idp/shibboleth\">\n\t<Extensions>\n\t\t<mdalg:DigestMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#sha512\" />\n\t\t<mdalg:DigestMethod Algorithm=\"http://www.w3.org/2001/04/xmldsig-more#sha384\" />\n\t\t<mdalg:DigestMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#sha256\" />\n\t\t<mdalg:DigestMethod Algorithm=\"http://www.w3.org/2000/09/xmldsig#sha1\" />\n\t\t<mdalg:SigningMethod Algorithm=\"http://www.w3.org/2001/04/xmldsig-more#rsa-sha512\" />\n\t\t<mdalg:SigningMethod Algorithm=\"http://www.w3.org/2001/04/xmldsig-more#rsa-sha384\" />\n\t\t<mdalg:SigningMethod Algorithm=\"http://www.w3.org/2001/04/xmldsig-more#rsa-sha256\" />\n\t\t<mdalg:SigningMethod Algorithm=\"http://www.w3.org/2000/09/xmldsig#rsa-sha1\" />\n\t</Extensions>\n\t<IDPSSODescriptor protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:1.1:protocol urn:mace:shibboleth:1.0 urn:oasis:names:tc:SAML:2.0:protocol\">\n\t\t<Extensions>\n\t\t\t<shibmd:Scope regexp=\"false\">testshib.org</shibmd:Scope>\n\t\t\t<mdui:UIInfo>\n\t\t\t\t<mdui:DisplayName xml:lang=\"en\">TestShib Test IdP</mdui:DisplayName>\n\t\t\t\t<mdui:Description xml:lang=\"en\">TestShib IdP. Use this as a source of attributes\n                        for your test SP.</mdui:Description>\n\t\t\t\t<mdui:Logo height=\"88\" width=\"253\">https://www.testshib.org/testshibtwo.jpg</mdui:Logo>\n\t\t\t</mdui:UIInfo>\n\t\t</Extensions>\n\t\t<KeyDescriptor>\n\t\t\t<ds:KeyInfo>\n\t\t\t\t<ds:X509Data>\n\t\t\t\t\t<ds:X509Certificate>MIIEDjCCAvagAwIBAgIBADANBgkqhkiG9w0BAQUFADBnMQswCQYDVQQGEwJVUzEV\n                            MBMGA1UECBMMUGVubnN5bHZhbmlhMRMwEQYDVQQHEwpQaXR0c2J1cmdoMREwDwYD\n                            VQQKEwhUZXN0U2hpYjEZMBcGA1UEAxMQaWRwLnRlc3RzaGliLm9yZzAeFw0wNjA4\n                            MzAyMTEyMjVaFw0xNjA4MjcyMTEyMjVaMGcxCzAJBgNVBAYTAlVTMRUwEwYDVQQI\n                            EwxQZW5uc3lsdmFuaWExEzARBgNVBAcTClBpdHRzYnVyZ2gxETAPBgNVBAoTCFRl\n                            c3RTaGliMRkwFwYDVQQDExBpZHAudGVzdHNoaWIub3JnMIIBIjANBgkqhkiG9w0B\n                            AQEFAAOCAQ8AMIIBCgKCAQEArYkCGuTmJp9eAOSGHwRJo1SNatB5ZOKqDM9ysg7C\n                            yVTDClcpu93gSP10nH4gkCZOlnESNgttg0r+MqL8tfJC6ybddEFB3YBo8PZajKSe\n                            3OQ01Ow3yT4I+Wdg1tsTpSge9gEz7SrC07EkYmHuPtd71CHiUaCWDv+xVfUQX0aT\n                            NPFmDixzUjoYzbGDrtAyCqA8f9CN2txIfJnpHE6q6CmKcoLADS4UrNPlhHSzd614\n                            kR/JYiks0K4kbRqCQF0Dv0P5Di+rEfefC6glV8ysC8dB5/9nb0yh/ojRuJGmgMWH\n                            gWk6h0ihjihqiu4jACovUZ7vVOCgSE5Ipn7OIwqd93zp2wIDAQABo4HEMIHBMB0G\n                            A1UdDgQWBBSsBQ869nh83KqZr5jArr4/7b+QazCBkQYDVR0jBIGJMIGGgBSsBQ86\n                            9nh83KqZr5jArr4/7b+Qa6FrpGkwZzELMAkGA1UEBhMCVVMxFTATBgNVBAgTDFBl\n                            bm5zeWx2YW5pYTETMBEGA1UEBxMKUGl0dHNidXJnaDERMA8GA1UEChMIVGVzdFNo\n                            aWIxGTAXBgNVBAMTEGlkcC50ZXN0c2hpYi5vcmeCAQAwDAYDVR0TBAUwAwEB/zAN\n                            BgkqhkiG9w0BAQUFAAOCAQEAjR29PhrCbk8qLN5MFfSVk98t3CT9jHZoYxd8QMRL\n                            I4j7iYQxXiGJTT1FXs1nd4Rha9un+LqTfeMMYqISdDDI6tv8iNpkOAvZZUosVkUo\n                            93pv1T0RPz35hcHHYq2yee59HJOco2bFlcsH8JBXRSRrJ3Q7Eut+z9uo80JdGNJ4\n                            /SJy5UorZ8KazGj16lfJhOBXldgrhppQBb0Nq6HKHguqmwRfJ+WkxemZXzhediAj\n                            Geka8nz8JjwxpUjAiSWYKLtJhGEaTqCYxCCX2Dw+dOTqUzHOZ7WKv4JXPK5G/Uhr\n                            8K/qhmFT2nIQi538n6rVYLeWj8Bbnl+ev0peYzxFyF5sQA==</ds:X509Certificate>\n\t\t\t\t</ds:X509Data>\n\t\t\t</ds:KeyInfo>\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes256-cbc\" />\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes192-cbc\" />\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes128-cbc\" />\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#tripledes-cbc\" />\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p\" />\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#rsa-1_5\" />\n\t\t</KeyDescriptor>\n\t\t<ArtifactResolutionService Binding=\"urn:oasis:names:tc:SAML:1.0:bindings:SOAP-binding\" Location=\"https://idp.testshib.org:8443/idp/profile/SAML1/SOAP/ArtifactResolution\" index=\"1\" />\n\t\t<ArtifactResolutionService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:SOAP\" Location=\"https://idp.testshib.org:8443/idp/profile/SAML2/SOAP/ArtifactResolution\" index=\"2\" />\n\t\t<NameIDFormat>urn:mace:shibboleth:1.0:nameIdentifier</NameIDFormat>\n\t\t<NameIDFormat>urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDFormat>\n\t\t<SingleSignOnService Binding=\"urn:mace:shibboleth:1.0:profiles:AuthnRequest\" Location=\"https://idp.testshib.org/idp/profile/Shibboleth/SSO\" />\n\t\t<SingleSignOnService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Location=\"https://idp.testshib.org/idp/profile/SAML2/POST/SSO\" />\n\t\t<SingleSignOnService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect\" Location=\"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO\" />\n\t\t<SingleSignOnService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:SOAP\" Location=\"https://idp.testshib.org/idp/profile/SAML2/SOAP/ECP\" />\n\t</IDPSSODescriptor>\n\t<AttributeAuthorityDescriptor protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:1.1:protocol urn:oasis:names:tc:SAML:2.0:protocol\">\n\t\t<KeyDescriptor>\n\t\t\t<ds:KeyInfo>\n\t\t\t\t<ds:X509Data>\n\t\t\t\t\t<ds:X509Certificate>MIIEDjCCAvagAwIBAgIBADANBgkqhkiG9w0BAQUFADBnMQswCQYDVQQGEwJVUzEV\n                            MBMGA1UECBMMUGVubnN5bHZhbmlhMRMwEQYDVQQHEwpQaXR0c2J1cmdoMREwDwYD\n                            VQQKEwhUZXN0U2hpYjEZMBcGA1UEAxMQaWRwLnRlc3RzaGliLm9yZzAeFw0wNjA4\n                            MzAyMTEyMjVaFw0xNjA4MjcyMTEyMjVaMGcxCzAJBgNVBAYTAlVTMRUwEwYDVQQI\n                            EwxQZW5uc3lsdmFuaWExEzARBgNVBAcTClBpdHRzYnVyZ2gxETAPBgNVBAoTCFRl\n                            c3RTaGliMRkwFwYDVQQDExBpZHAudGVzdHNoaWIub3JnMIIBIjANBgkqhkiG9w0B\n                            AQEFAAOCAQ8AMIIBCgKCAQEArYkCGuTmJp9eAOSGHwRJo1SNatB5ZOKqDM9ysg7C\n                            yVTDClcpu93gSP10nH4gkCZOlnESNgttg0r+MqL8tfJC6ybddEFB3YBo8PZajKSe\n                            3OQ01Ow3yT4I+Wdg1tsTpSge9gEz7SrC07EkYmHuPtd71CHiUaCWDv+xVfUQX0aT\n                            NPFmDixzUjoYzbGDrtAyCqA8f9CN2txIfJnpHE6q6CmKcoLADS4UrNPlhHSzd614\n                            kR/JYiks0K4kbRqCQF0Dv0P5Di+rEfefC6glV8ysC8dB5/9nb0yh/ojRuJGmgMWH\n                            gWk6h0ihjihqiu4jACovUZ7vVOCgSE5Ipn7OIwqd93zp2wIDAQABo4HEMIHBMB0G\n                            A1UdDgQWBBSsBQ869nh83KqZr5jArr4/7b+QazCBkQYDVR0jBIGJMIGGgBSsBQ86\n                            9nh83KqZr5jArr4/7b+Qa6FrpGkwZzELMAkGA1UEBhMCVVMxFTATBgNVBAgTDFBl\n                            bm5zeWx2YW5pYTETMBEGA1UEBxMKUGl0dHNidXJnaDERMA8GA1UEChMIVGVzdFNo\n                            aWIxGTAXBgNVBAMTEGlkcC50ZXN0c2hpYi5vcmeCAQAwDAYDVR0TBAUwAwEB/zAN\n                            BgkqhkiG9w0BAQUFAAOCAQEAjR29PhrCbk8qLN5MFfSVk98t3CT9jHZoYxd8QMRL\n                            I4j7iYQxXiGJTT1FXs1nd4Rha9un+LqTfeMMYqISdDDI6tv8iNpkOAvZZUosVkUo\n                            93pv1T0RPz35hcHHYq2yee59HJOco2bFlcsH8JBXRSRrJ3Q7Eut+z9uo80JdGNJ4\n                            /SJy5UorZ8KazGj16lfJhOBXldgrhppQBb0Nq6HKHguqmwRfJ+WkxemZXzhediAj\n                            Geka8nz8JjwxpUjAiSWYKLtJhGEaTqCYxCCX2Dw+dOTqUzHOZ7WKv4JXPK5G/Uhr\n                            8K/qhmFT2nIQi538n6rVYLeWj8Bbnl+ev0peYzxFyF5sQA==</ds:X509Certificate>\n\t\t\t\t</ds:X509Data>\n\t\t\t</ds:KeyInfo>\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes256-cbc\" />\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes192-cbc\" />\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes128-cbc\" />\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#tripledes-cbc\" />\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p\" />\n\t\t\t<EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#rsa-1_5\" />\n\t\t</KeyDescriptor>\n\t\t<AttributeService Binding=\"urn:oasis:names:tc:SAML:1.0:bindings:SOAP-binding\" Location=\"https://idp.testshib.org:8443/idp/profile/SAML1/SOAP/AttributeQuery\" />\n\t\t<AttributeService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:SOAP\" Location=\"https://idp.testshib.org:8443/idp/profile/SAML2/SOAP/AttributeQuery\" />\n\t\t<NameIDFormat>urn:mace:shibboleth:1.0:nameIdentifier</NameIDFormat>\n\t\t<NameIDFormat>urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDFormat>\n\t</AttributeAuthorityDescriptor>\n\t<Organization>\n\t\t<OrganizationName xml:lang=\"en\">TestShib Two Identity Provider</OrganizationName>\n\t\t<OrganizationDisplayName xml:lang=\"en\">TestShib Two</OrganizationDisplayName>\n\t\t<OrganizationURL xml:lang=\"en\">http://www.testshib.org/testshib-two/</OrganizationURL>\n\t</Organization>\n\t<ContactPerson contactType=\"technical\">\n\t\t<GivenName>Nate</GivenName>\n\t\t<SurName>Klingenstein</SurName>\n\t\t<EmailAddress>ndk@internet2.edu</EmailAddress>\n\t</ContactPerson>\n</EntityDescriptor>"
 
-	test.Middleware = ServiceProviderMiddleware{
-		ServiceProvider: &saml.ServiceProvider{
+	test.Middleware = Middleware{
+		ServiceProvider: saml.ServiceProvider{
 			Key:         test.Key,
 			Certificate: test.Certificate,
 			MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
@@ -70,7 +70,7 @@ func (test *ServiceProviderMiddlewareTest) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (test *ServiceProviderMiddlewareTest) TestCanProduceMetadata(c *C) {
+func (test *MiddlewareTest) TestCanProduceMetadata(c *C) {
 	req, _ := http.NewRequest("GET", "/saml2/metadata", nil)
 
 	resp := httptest.NewRecorder()
@@ -104,7 +104,7 @@ func (test *ServiceProviderMiddlewareTest) TestCanProduceMetadata(c *C) {
 		"</EntitiesDescriptor>")
 }
 
-func (test *ServiceProviderMiddlewareTest) TestFourOhFour(c *C) {
+func (test *MiddlewareTest) TestFourOhFour(c *C) {
 	req, _ := http.NewRequest("GET", "/this/is/not/a/supported/uri", nil)
 
 	resp := httptest.NewRecorder()
@@ -114,8 +114,8 @@ func (test *ServiceProviderMiddlewareTest) TestFourOhFour(c *C) {
 	c.Assert(string(respBuf), Equals, "404 page not found\n")
 }
 
-func (test *ServiceProviderMiddlewareTest) TestRequireAccountNoCreds(c *C) {
-	handler := test.Middleware.RequireAccountMiddleware(
+func (test *MiddlewareTest) TestRequireAccountNoCreds(c *C) {
+	handler := test.Middleware.RequireAccount(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			panic("not reached")
 		}))
@@ -133,8 +133,8 @@ func (test *ServiceProviderMiddlewareTest) TestRequireAccountNoCreds(c *C) {
 		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw%2BQEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJBj9MwEIX%2FSuR747GVhsVKIpWtkCotsGqAAzfjzLYWiV08E6D%2FHqeA6Am61%2FHMm%2B89T7OZ%2BRj2%2BHVG4uLHNAZqxZyCiZY8mWAnJMPO9Js3D0aXYE4pcnRxFMWGCBP7GO5joHnC1GP65h1%2B2D%2B04sh8IiOlWte1qqqqDIcUv5Q%2BSrLTqKV1JIpt3umDXTT%2BTvjhVHJ%2BoKP%2FXMZ0WAoyb33yI8oFQ8s9Dj6hY9n370Sx27bCDysA0FBBDXdgwQEqUFpVqlZ3yiqnUIPWutJ1HiCacReIbeBWaFDrldIrUO9BmfULAy8%2FieLxt81XPgw%2BHFohio%2BY6EKaYxBdc1FJt0Rm%2FwQlitcxTZb%2F3b5Usp%2BnS6vBwJ7PovtfoBOyHSzbRv4C65q3WWe3fYyjd%2Bdn%2Fuw4xu%2F3CS1jKzjNKLrbgTnZQD5jN%2FKaoGvk9al1PwMAAP%2F%2F")
 }
 
-func (test *ServiceProviderMiddlewareTest) TestRequireAccountCreds(c *C) {
-	handler := test.Middleware.RequireAccountMiddleware(
+func (test *MiddlewareTest) TestRequireAccountCreds(c *C) {
+	handler := test.Middleware.RequireAccount(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c.Assert(r.Header.Get("X-Saml-Telephonenumber"), Equals, "555-5555")
 			c.Assert(r.Header.Get("X-Saml-Edupersonscopedaffiliation"), Equals, "Staff@testshib.org")
@@ -159,8 +159,8 @@ func (test *ServiceProviderMiddlewareTest) TestRequireAccountCreds(c *C) {
 	c.Assert(resp.Code, Equals, http.StatusTeapot)
 }
 
-func (test *ServiceProviderMiddlewareTest) TestRequireAccountBadCreds(c *C) {
-	handler := test.Middleware.RequireAccountMiddleware(
+func (test *MiddlewareTest) TestRequireAccountBadCreds(c *C) {
+	handler := test.Middleware.RequireAccount(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			panic("not reached")
 		}))
@@ -182,13 +182,13 @@ func (test *ServiceProviderMiddlewareTest) TestRequireAccountBadCreds(c *C) {
 		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw%2BQEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJBj9MwEIX%2FSuR747GVhsVKIpWtkCotsGqAAzfjzLYWiV08E6D%2FHqeA6Am61%2FHMm%2B89T7OZ%2BRj2%2BHVG4uLHNAZqxZyCiZY8mWAnJMPO9Js3D0aXYE4pcnRxFMWGCBP7GO5joHnC1GP65h1%2B2D%2B04sh8IiOlWte1qqqqDIcUv5Q%2BSrLTqKV1JIpt3umDXTT%2BTvjhVHJ%2BoKP%2FXMZ0WAoyb33yI8oFQ8s9Dj6hY9n370Sx27bCDysA0FBBDXdgwQEqUFpVqlZ3yiqnUIPWutJ1HiCacReIbeBWaFDrldIrUO9BmfULAy8%2FieLxt81XPgw%2BHFohio%2BY6EKaYxBdc1FJt0Rm%2FwQlitcxTZb%2F3b5Usp%2BnS6vBwJ7PovtfoBOyHSzbRv4C65q3WWe3fYyjd%2Bdn%2Fuw4xu%2F3CS1jKzjNKLrbgTnZQD5jN%2FKaoGvk9al1PwMAAP%2F%2F")
 }
 
-func (test *ServiceProviderMiddlewareTest) TestRequireAccountExpiredCreds(c *C) {
+func (test *MiddlewareTest) TestRequireAccountExpiredCreds(c *C) {
 	jwt.TimeFunc = func() time.Time {
 		rv, _ := time.Parse("Mon Jan 2 15:04:05 UTC 2006", "Mon Dec 1 01:31:21 UTC 2115")
 		return rv
 	}
 
-	handler := test.Middleware.RequireAccountMiddleware(
+	handler := test.Middleware.RequireAccount(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			panic("not reached")
 		}))
@@ -210,8 +210,8 @@ func (test *ServiceProviderMiddlewareTest) TestRequireAccountExpiredCreds(c *C) 
 		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw%2BQEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJBj9MwEIX%2FSuR747GVhsVKIpWtkCotsGqAAzfjzLYWiV08E6D%2FHqeA6Am61%2FHMm%2B89T7OZ%2BRj2%2BHVG4uLHNAZqxZyCiZY8mWAnJMPO9Js3D0aXYE4pcnRxFMWGCBP7GO5joHnC1GP65h1%2B2D%2B04sh8IiOlWte1qqqqDIcUv5Q%2BSrLTqKV1JIpt3umDXTT%2BTvjhVHJ%2BoKP%2FXMZ0WAoyb33yI8oFQ8s9Dj6hY9n370Sx27bCDysA0FBBDXdgwQEqUFpVqlZ3yiqnUIPWutJ1HiCacReIbeBWaFDrldIrUO9BmfULAy8%2FieLxt81XPgw%2BHFohio%2BY6EKaYxBdc1FJt0Rm%2FwQlitcxTZb%2F3b5Usp%2BnS6vBwJ7PovtfoBOyHSzbRv4C65q3WWe3fYyjd%2Bdn%2Fuw4xu%2F3CS1jKzjNKLrbgTnZQD5jN%2FKaoGvk9al1PwMAAP%2F%2F")
 }
 
-func (test *ServiceProviderMiddlewareTest) TestRequireAccountPanicOnRequestToACS(c *C) {
-	handler := test.Middleware.RequireAccountMiddleware(
+func (test *MiddlewareTest) TestRequireAccountPanicOnRequestToACS(c *C) {
+	handler := test.Middleware.RequireAccount(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			panic("not reached")
 		}))
@@ -219,11 +219,11 @@ func (test *ServiceProviderMiddlewareTest) TestRequireAccountPanicOnRequestToACS
 	req, _ := http.NewRequest("POST", "https://15661444.ngrok.io/saml2/acs", nil)
 	resp := httptest.NewRecorder()
 	c.Assert(func() { handler.ServeHTTP(resp, req) }, Panics,
-		"don't wrap ServiceProviderMiddleware with RequireAccountMiddleware")
+		"don't wrap Middleware with RequireAccount")
 }
 
-func (test *ServiceProviderMiddlewareTest) TestRejectRequestWithMagicHeader(c *C) {
-	handler := test.Middleware.RequireAccountMiddleware(
+func (test *MiddlewareTest) TestRejectRequestWithMagicHeader(c *C) {
+	handler := test.Middleware.RequireAccount(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			panic("not reached")
 		}))
@@ -238,8 +238,8 @@ func (test *ServiceProviderMiddlewareTest) TestRejectRequestWithMagicHeader(c *C
 		"X-Saml-* headers should not exist when this function is called")
 }
 
-func (test *ServiceProviderMiddlewareTest) TestRequireAttribute(c *C) {
-	handler := test.Middleware.RequireAccountMiddleware(
+func (test *MiddlewareTest) TestRequireAttribute(c *C) {
+	handler := test.Middleware.RequireAccount(
 		RequireAttribute("eduPersonAffiliation", "Staff")(
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusTeapot)
@@ -255,8 +255,8 @@ func (test *ServiceProviderMiddlewareTest) TestRequireAttribute(c *C) {
 	c.Assert(resp.Code, Equals, http.StatusTeapot)
 }
 
-func (test *ServiceProviderMiddlewareTest) TestRequireAttributeWrongValue(c *C) {
-	handler := test.Middleware.RequireAccountMiddleware(
+func (test *MiddlewareTest) TestRequireAttributeWrongValue(c *C) {
+	handler := test.Middleware.RequireAccount(
 		RequireAttribute("eduPersonAffiliation", "DomainAdmins")(
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				panic("not reached")
@@ -272,8 +272,8 @@ func (test *ServiceProviderMiddlewareTest) TestRequireAttributeWrongValue(c *C) 
 	c.Assert(resp.Code, Equals, http.StatusForbidden)
 }
 
-func (test *ServiceProviderMiddlewareTest) TestRequireAttributeNotPresent(c *C) {
-	handler := test.Middleware.RequireAccountMiddleware(
+func (test *MiddlewareTest) TestRequireAttributeNotPresent(c *C) {
+	handler := test.Middleware.RequireAccount(
 		RequireAttribute("valueThatDoesntExist", "doesntMatter")(
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				panic("not reached")
@@ -289,7 +289,7 @@ func (test *ServiceProviderMiddlewareTest) TestRequireAttributeNotPresent(c *C) 
 	c.Assert(resp.Code, Equals, http.StatusForbidden)
 }
 
-func (test *ServiceProviderMiddlewareTest) TestRequireAttributeMissingAccount(c *C) {
+func (test *MiddlewareTest) TestRequireAttributeMissingAccount(c *C) {
 	handler := RequireAttribute("eduPersonAffiliation", "DomainAdmins")(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			panic("not reached")
@@ -305,7 +305,7 @@ func (test *ServiceProviderMiddlewareTest) TestRequireAttributeMissingAccount(c 
 	c.Assert(resp.Code, Equals, http.StatusForbidden)
 }
 
-func (test *ServiceProviderMiddlewareTest) TestCanParseResponse(c *C) {
+func (test *MiddlewareTest) TestCanParseResponse(c *C) {
 	v := &url.Values{}
 	v.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
 	v.Set("RelayState", "KCosLjAyNDY4Ojw+QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6")
@@ -327,7 +327,7 @@ func (test *ServiceProviderMiddlewareTest) TestCanParseResponse(c *C) {
 	})
 }
 
-func (test *ServiceProviderMiddlewareTest) TestRejectsInvalidRelayState(c *C) {
+func (test *MiddlewareTest) TestRejectsInvalidRelayState(c *C) {
 	v := &url.Values{}
 	v.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
 	v.Set("RelayState", "ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy")
@@ -341,7 +341,7 @@ func (test *ServiceProviderMiddlewareTest) TestRejectsInvalidRelayState(c *C) {
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals, "")
 }
 
-func (test *ServiceProviderMiddlewareTest) TestHandlesInvalidResponse(c *C) {
+func (test *MiddlewareTest) TestHandlesInvalidResponse(c *C) {
 	v := &url.Values{}
 	v.Set("SAMLResponse", "this is not a valid saml response")
 	v.Set("RelayState", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmkiOiIvZnJvYiJ9.QEnpCWpKnhmzWZyfI8GIgCCWyH7qTly8vw-V4oJ1ni0")

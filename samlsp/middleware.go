@@ -1,4 +1,4 @@
-package samlmiddleware
+package samlsp
 
 import (
 	"encoding/base64"
@@ -16,13 +16,13 @@ import (
 	"github.com/crewjam/saml"
 )
 
-// ServiceProviderMiddleware implements middleware than allows a web application
+// Middleware implements middleware than allows a web application
 // to support SAML.
 //
 // It implements http.Handler so that it can provide the metadata and ACS endpoints,
 // typically /saml/metadata and /saml/acs, respectively.
 //
-// It also provides middleware, RequireAccountMiddleware which redirects users to
+// It also provides middleware, RequireAccount which redirects users to
 // the auth process if they do not have session credentials.
 //
 // You can stub in your session mechanism by providing values for
@@ -30,8 +30,8 @@ import (
 // AuthorizeFunc (called when the SAML response is received). The default
 // implementations of these functions issue and verify a signed cookie containing
 // information from the SAML assertion.
-type ServiceProviderMiddleware struct {
-	ServiceProvider   *saml.ServiceProvider
+type Middleware struct {
+	ServiceProvider   saml.ServiceProvider
 	AllowIDPInitiated bool
 }
 
@@ -49,7 +49,7 @@ func randomBytes(n int) []byte {
 // ServeHTTP implements http.Handler and serves the SAML-specific HTTP endpoints
 // on the URIs specified by m.ServiceProvider.MetadataURL and
 // m.ServiceProvider.AcsURL.
-func (m *ServiceProviderMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	metadataURL, _ := url.Parse(m.ServiceProvider.MetadataURL)
 	if r.URL.Path == metadataURL.Path {
 		buf, _ := xml.MarshalIndent(saml.EntitiesDescriptor{
@@ -79,11 +79,11 @@ func (m *ServiceProviderMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Req
 	http.NotFoundHandler().ServeHTTP(w, r)
 }
 
-// RequireAccountMiddleware is HTTP middleware that requires that each request be
+// RequireAccount is HTTP middleware that requires that each request be
 // associated with a valid session. If the request is not associated with a valid
 // session, then rather than serve the request, the middlware redirects the user
 // to start the SAML auth flow.
-func (m *ServiceProviderMiddleware) RequireAccountMiddleware(handler http.Handler) http.Handler {
+func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		if m.IsAuthorized(r) {
 			handler.ServeHTTP(w, r)
@@ -96,7 +96,7 @@ func (m *ServiceProviderMiddleware) RequireAccountMiddleware(handler http.Handle
 		// redirect loop.
 		acsURL, _ := url.Parse(m.ServiceProvider.AcsURL)
 		if r.URL.Path == acsURL.Path {
-			panic("don't wrap ServiceProviderMiddleware with RequireAccountMiddleware")
+			panic("don't wrap Middleware with RequireAccount")
 		}
 
 		req, err := m.ServiceProvider.MakeAuthenticationRequest(
@@ -136,7 +136,7 @@ func (m *ServiceProviderMiddleware) RequireAccountMiddleware(handler http.Handle
 	return http.HandlerFunc(fn)
 }
 
-func (m *ServiceProviderMiddleware) getPossibleRequestIDs(r *http.Request) []string {
+func (m *Middleware) getPossibleRequestIDs(r *http.Request) []string {
 	rv := []string{}
 	for _, cookie := range r.Cookies() {
 		if !strings.HasPrefix(cookie.Name, "saml_") {
@@ -165,7 +165,7 @@ func (m *ServiceProviderMiddleware) getPossibleRequestIDs(r *http.Request) []str
 // Authorize is invoked by ServeHTTP when we have a new, valid SAML assertion.
 // It sets a cookie that contains a signed JWT containing the assertion attributes.
 // It then redirects the user's browser to the original URL contained in RelayState.
-func (m *ServiceProviderMiddleware) Authorize(w http.ResponseWriter, r *http.Request, assertion *saml.Assertion) {
+func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion *saml.Assertion) {
 	secretBlock, _ := pem.Decode([]byte(m.ServiceProvider.Key))
 
 	redirectURI := "/"
@@ -222,7 +222,7 @@ func (m *ServiceProviderMiddleware) Authorize(w http.ResponseWriter, r *http.Req
 	http.Redirect(w, r, redirectURI, http.StatusFound)
 }
 
-// IsAuthorized is invoked by RequireAccountMiddleware to determine if the request
+// IsAuthorized is invoked by RequireAccount to determine if the request
 // is already authorized or if the user's browser should be redirected to the
 // SAML login flow. If the request is authorized, then the request headers
 // starting with X-Saml- for each SAML assertion attribute are set. For example,
@@ -233,7 +233,7 @@ func (m *ServiceProviderMiddleware) Authorize(w http.ResponseWriter, r *http.Req
 //
 // It is an error for this function to be invoked with a request containing
 // any headers starting with X-Saml. This function will panic if you do.
-func (m *ServiceProviderMiddleware) IsAuthorized(r *http.Request) bool {
+func (m *Middleware) IsAuthorized(r *http.Request) bool {
 	cookie, err := r.Cookie(cookieName)
 	if err != nil {
 		return false
@@ -266,11 +266,11 @@ func (m *ServiceProviderMiddleware) IsAuthorized(r *http.Request) bool {
 // RequireAttribute returns a middleware function that requires that the
 // SAML attribute `name` be set to `value`. This can be used to require
 // that a remote user be a member of a group. It relies on the X-Saml-* headers
-// that RequireAccountMiddleware adds to the request.
+// that RequireAccount adds to the request.
 //
 // For example:
 //
-//     goji.Use(m.RequireAccountMiddleware)
+//     goji.Use(m.RequireAccount)
 //     goji.Use(RequireAttributeMiddleware("eduPersonAffiliation", "Staff"))
 //
 func RequireAttribute(name, value string) func(http.Handler) http.Handler {
