@@ -3,6 +3,7 @@ package samlidp
 import (
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"text/template"
@@ -11,6 +12,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/crewjam/saml"
+	"github.com/zenazn/goji/web"
 )
 
 var sessionMaxAge = time.Hour
@@ -123,4 +125,48 @@ func (s *Server) sendLoginForm(w http.ResponseWriter, r *http.Request, req *saml
 	if err := tmpl.Execute(w, data); err != nil {
 		panic(err)
 	}
+}
+
+func (s *Server) HandleLogin(c web.C, w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+	session := s.GetSession(w, r, &saml.IdpAuthnRequest{IDP: &s.IDP})
+	if session == nil {
+		return
+	}
+	json.NewEncoder(w).Encode(session)
+}
+
+func (s *Server) HandleListSessions(c web.C, w http.ResponseWriter, r *http.Request) {
+	sessions, err := s.Store.List("/sessions/")
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(struct {
+		Sessions []string `json:"sessions"`
+	}{Sessions: sessions})
+}
+
+func (s *Server) HandleGetSession(c web.C, w http.ResponseWriter, r *http.Request) {
+	session := saml.Session{}
+	err := s.Store.Get(fmt.Sprintf("/sessions/%s", c.URLParams["id"]), &session)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(session)
+}
+
+func (s *Server) HandleDeleteSession(c web.C, w http.ResponseWriter, r *http.Request) {
+	err := s.Store.Delete(fmt.Sprintf("/sessions/%s", c.URLParams["id"]))
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
