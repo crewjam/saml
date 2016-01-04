@@ -14,8 +14,6 @@ import (
 	"time"
 
 	"github.com/crewjam/go-xmlsec"
-
-	"github.com/crewjam/saml/metadata"
 )
 
 // ServiceProvider implements SAML Service provider.
@@ -43,7 +41,7 @@ type ServiceProvider struct {
 	AcsURL string
 
 	// IDPMetadata is the metadata from the identity provider.
-	IDPMetadata *metadata.Metadata
+	IDPMetadata *Metadata
 }
 
 // MaxIssueDelay is the longest allowed time between when a SAML assertion is
@@ -58,40 +56,40 @@ const DefaultValidDuration = time.Hour * 24 * 2
 const DefaultCacheDuration = time.Hour * 24 * 1
 
 // Metadata returns the service provider metadata
-func (sp *ServiceProvider) Metadata() *metadata.Metadata {
+func (sp *ServiceProvider) Metadata() *Metadata {
 	if cert, _ := pem.Decode([]byte(sp.Certificate)); cert != nil {
 		sp.Certificate = base64.StdEncoding.EncodeToString(cert.Bytes)
 	}
 
-	return &metadata.Metadata{
+	return &Metadata{
 		EntityID:   sp.MetadataURL,
 		ValidUntil: TimeNow().Add(DefaultValidDuration),
-		SPSSODescriptor: &metadata.SPSSODescriptor{
+		SPSSODescriptor: &SPSSODescriptor{
 			AuthnRequestsSigned:        false,
 			WantAssertionsSigned:       true,
 			ProtocolSupportEnumeration: "urn:oasis:names:tc:SAML:2.0:protocol",
-			KeyDescriptor: []metadata.KeyDescriptor{
-				metadata.KeyDescriptor{
+			KeyDescriptor: []KeyDescriptor{
+				KeyDescriptor{
 					Use: "signing",
-					KeyInfo: metadata.KeyInfo{
+					KeyInfo: KeyInfo{
 						Certificate: sp.Certificate,
 					},
 				},
-				metadata.KeyDescriptor{
+				KeyDescriptor{
 					Use: "encryption",
-					KeyInfo: metadata.KeyInfo{
+					KeyInfo: KeyInfo{
 						Certificate: sp.Certificate,
 					},
-					EncryptionMethods: []metadata.EncryptionMethod{
-						metadata.EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
-						metadata.EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
-						metadata.EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
-						metadata.EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"},
+					EncryptionMethods: []EncryptionMethod{
+						EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
+						EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
+						EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
+						EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"},
 					},
 				},
 			},
-			AssertionConsumerService: []metadata.IndexedEndpoint{{
-				Binding:  metadata.HTTPPostBinding,
+			AssertionConsumerService: []IndexedEndpoint{{
+				Binding:  HTTPPostBinding,
 				Location: sp.AcsURL,
 				Index:    1,
 			}},
@@ -131,9 +129,6 @@ func (req *AuthnRequest) Redirect(relayState string) *url.URL {
 
 	return rv
 }
-
-const HTTPRedirectBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
-const HTTPPostBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
 
 // GetSSOBindingLocation returns URL for the IDP's Single Sign On Service binding
 // of the specified type (HTTPRedirectBinding or HTTPPostBinding)

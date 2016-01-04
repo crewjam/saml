@@ -9,8 +9,6 @@ import (
 	"time"
 
 	. "gopkg.in/check.v1"
-
-	"github.com/crewjam/saml/metadata"
 )
 
 // Hook up gocheck into the "go test" runner.
@@ -66,7 +64,7 @@ func (test *ServiceProviderTest) TestCanProduceMetadata(c *C) {
 		Certificate: test.Certificate,
 		MetadataURL: "https://example.com/saml2/metadata",
 		AcsURL:      "https://example.com/saml2/acs",
-		IDPMetadata: &metadata.Metadata{},
+		IDPMetadata: &Metadata{},
 	}
 	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
 	c.Assert(err, IsNil)
@@ -109,7 +107,7 @@ func (test *ServiceProviderTest) TestCanProduceRedirectRequest(c *C) {
 		Certificate: test.Certificate,
 		MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
 		AcsURL:      "https://15661444.ngrok.io/saml2/acs",
-		IDPMetadata: &metadata.Metadata{},
+		IDPMetadata: &Metadata{},
 	}
 	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
 	c.Assert(err, IsNil)
@@ -129,7 +127,7 @@ func (test *ServiceProviderTest) TestCanProducePostRequest(c *C) {
 		Certificate: test.Certificate,
 		MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
 		AcsURL:      "https://15661444.ngrok.io/saml2/acs",
-		IDPMetadata: &metadata.Metadata{},
+		IDPMetadata: &Metadata{},
 	}
 	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
 	c.Assert(err, IsNil)
@@ -150,7 +148,7 @@ func (test *ServiceProviderTest) TestCanParseResponse(c *C) {
 		Certificate: test.Certificate,
 		MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
 		AcsURL:      "https://15661444.ngrok.io/saml2/acs",
-		IDPMetadata: &metadata.Metadata{},
+		IDPMetadata: &Metadata{},
 	}
 	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
 	c.Assert(err, IsNil)
@@ -287,7 +285,7 @@ func (test *ServiceProviderTest) TestInvalidResponses(c *C) {
 		Certificate: test.Certificate,
 		MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
 		AcsURL:      "https://15661444.ngrok.io/saml2/acs",
-		IDPMetadata: &metadata.Metadata{},
+		IDPMetadata: &Metadata{},
 	}
 	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
 	c.Assert(err, IsNil)
@@ -354,7 +352,7 @@ func (test *ServiceProviderTest) TestInvalidAssertions(c *C) {
 		Certificate: test.Certificate,
 		MetadataURL: "https://15661444.ngrok.io/saml2/metadata",
 		AcsURL:      "https://15661444.ngrok.io/saml2/acs",
-		IDPMetadata: &metadata.Metadata{},
+		IDPMetadata: &Metadata{},
 	}
 	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
 	c.Assert(err, IsNil)

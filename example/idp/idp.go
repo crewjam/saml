@@ -7,7 +7,6 @@ import (
 	"net/http"
 
 	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/metadata"
 	"github.com/zenazn/goji"
 )
 
@@ -64,7 +63,7 @@ UzreO96WzlBBMtY=
 -----END CERTIFICATE-----`,
 		MetadataURL:      *baseURL + "/metadata",
 		SSOURL:           *baseURL + "/",
-		ServiceProviders: map[string]*metadata.Metadata{},
+		ServiceProviders: map[string]*saml.Metadata{},
 	}
 
 	sessionProvider := saml.DefaultSessionProvider{
@@ -92,7 +91,7 @@ UzreO96WzlBBMtY=
 	})
 
 	goji.Post("/register-sp", func(w http.ResponseWriter, r *http.Request) {
-		ed := metadata.EntitiesDescriptor{}
+		ed := saml.EntitiesDescriptor{}
 		if err := xml.NewDecoder(r.Body).Decode(&ed); err != nil {
 			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 			return

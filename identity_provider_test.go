@@ -13,7 +13,6 @@ import (
 	. "gopkg.in/check.v1"
 
 	"github.com/crewjam/go-xmlsec"
-	"github.com/crewjam/saml/metadata"
 	"github.com/dgrijalva/jwt-go"
 )
 
@@ -76,7 +75,7 @@ OwJlNCASPZRH/JmF8tX0hoHuAQ==
 		Certificate: test.SPCertificate,
 		MetadataURL: "https://sp.example.com/saml2/metadata",
 		AcsURL:      "https://sp.example.com/saml2/acs",
-		IDPMetadata: &metadata.Metadata{},
+		IDPMetadata: &Metadata{},
 	}
 
 	test.Key = "-----BEGIN RSA PRIVATE KEY-----\nMIICXgIBAAKBgQDU8wdiaFmPfTyRYuFlVPi866WrH/2JubkHzp89bBQopDaLXYxi\n3PTu3O6Q/KaKxMOFBqrInwqpv/omOGZ4ycQ51O9I+Yc7ybVlW94lTo2gpGf+Y/8E\nPsVbnZaFutRctJ4dVIp9aQ2TpLiGT0xX1OzBO/JEgq9GzDRf+B+eqSuglwIDAQAB\nAoGBAMuy1eN6cgFiCOgBsB3gVDdTKpww87Qk5ivjqEt28SmXO13A1KNVPS6oQ8SJ\nCT5Azc6X/BIAoJCURVL+LHdqebogKljhH/3yIel1kH19vr4E2kTM/tYH+qj8afUS\nJEmArUzsmmK8ccuNqBcllqdwCZjxL4CHDUmyRudFcHVX9oyhAkEA/OV1OkjM3CLU\nN3sqELdMmHq5QZCUihBmk3/N5OvGdqAFGBlEeewlepEVxkh7JnaNXAXrKHRVu/f/\nfbCQxH+qrwJBANeQERF97b9Sibp9xgolb749UWNlAdqmEpmlvmS202TdcaaT1msU\n4rRLiQN3X9O9mq4LZMSVethrQAdX1whawpkCQQDk1yGf7xZpMJ8F4U5sN+F4rLyM\nRq8Sy8p2OBTwzCUXXK+fYeXjybsUUMr6VMYTRP2fQr/LKJIX+E5ZxvcIyFmDAkEA\nyfjNVUNVaIbQTzEbRlRvT6MqR+PTCefC072NF9aJWR93JimspGZMR7viY6IM4lrr\nvBkm0F5yXKaYtoiiDMzlOQJADqmEwXl0D72ZG/2KDg8b4QZEmC9i5gidpQwJXUc6\nhU+IVQoLxRq0fBib/36K9tcrrO5Ba4iEvDcNY+D8yGbUtA==\n-----END RSA PRIVATE KEY-----\n"
@@ -90,7 +89,7 @@ OwJlNCASPZRH/JmF8tX0hoHuAQ==
 		Certificate:      test.Certificate,
 		MetadataURL:      "https://idp.example.com/saml/metadata",
 		SSOURL:           "https://idp.example.com/saml/sso",
-		ServiceProviders: map[string]*metadata.Metadata{},
+		ServiceProviders: map[string]*Metadata{},
 		SessionProvider:  &test.SessionProvider,
 	}
 
@@ -108,17 +107,17 @@ func (msp *mockSessionProvider) GetSession(w http.ResponseWriter, r *http.Reques
 }
 
 func (test *IdentityProviderTest) TestCanProduceMetadata(c *C) {
-	c.Assert(test.IDP.Metadata(), DeepEquals, &metadata.Metadata{
+	c.Assert(test.IDP.Metadata(), DeepEquals, &Metadata{
 		ValidUntil:    TimeNow().Add(DefaultValidDuration),
 		CacheDuration: DefaultValidDuration,
 		EntityID:      "https://idp.example.com/saml/metadata",
-		IDPSSODescriptor: &metadata.IDPSSODescriptor{
+		IDPSSODescriptor: &IDPSSODescriptor{
 			XMLName:                    xml.Name{},
 			ProtocolSupportEnumeration: "urn:oasis:names:tc:SAML:2.0:protocol",
-			KeyDescriptor: []metadata.KeyDescriptor{
+			KeyDescriptor: []KeyDescriptor{
 				{
 					Use: "signing",
-					KeyInfo: metadata.KeyInfo{
+					KeyInfo: KeyInfo{
 						XMLName:     xml.Name{},
 						Certificate: "MIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJVUzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkdBMQwwCgYDVQQKDANmb28xEjAQBgNVBAMMCWxvY2FsaG9zdDCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA1PMHYmhZj308kWLhZVT4vOulqx/9ibm5B86fPWwUKKQ2i12MYtz07tzukPymisTDhQaqyJ8Kqb/6JjhmeMnEOdTvSPmHO8m1ZVveJU6NoKRn/mP/BD7FW52WhbrUXLSeHVSKfWkNk6S4hk9MV9TswTvyRIKvRsw0X/gfnqkroJcCAwEAATANBgkqhkiG9w0BAQUFAAOBgQCMMlIO+GNcGekevKgkakpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeTQLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvnOwJlNCASPZRH/JmF8tX0hoHuAQ==",
 					},
@@ -126,11 +125,11 @@ func (test *IdentityProviderTest) TestCanProduceMetadata(c *C) {
 				},
 				{
 					Use: "encryption",
-					KeyInfo: metadata.KeyInfo{
+					KeyInfo: KeyInfo{
 						XMLName:     xml.Name{},
 						Certificate: "MIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJVUzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkdBMQwwCgYDVQQKDANmb28xEjAQBgNVBAMMCWxvY2FsaG9zdDCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA1PMHYmhZj308kWLhZVT4vOulqx/9ibm5B86fPWwUKKQ2i12MYtz07tzukPymisTDhQaqyJ8Kqb/6JjhmeMnEOdTvSPmHO8m1ZVveJU6NoKRn/mP/BD7FW52WhbrUXLSeHVSKfWkNk6S4hk9MV9TswTvyRIKvRsw0X/gfnqkroJcCAwEAATANBgkqhkiG9w0BAQUFAAOBgQCMMlIO+GNcGekevKgkakpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeTQLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvnOwJlNCASPZRH/JmF8tX0hoHuAQ==",
 					},
-					EncryptionMethods: []metadata.EncryptionMethod{
+					EncryptionMethods: []EncryptionMethod{
 						{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
 						{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
 						{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
@@ -139,7 +138,7 @@ func (test *IdentityProviderTest) TestCanProduceMetadata(c *C) {
 				},
 			},
 			NameIDFormat: []string{"urn:oasis:names:tc:SAML:2.0:nameid-format:transient"},
-			SingleSignOnService: []metadata.Endpoint{
+			SingleSignOnService: []Endpoint{
 				{Binding: "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect", Location: "https://idp.example.com/saml/sso", ResponseLocation: ""},
 				{Binding: "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST", Location: "https://idp.example.com/saml/sso", ResponseLocation: ""},
 			},
@@ -308,7 +307,7 @@ func (test *IdentityProviderTest) TestCanValidate(c *C) {
 	c.Assert(req.Validate(), IsNil)
 	c.Assert(req.Request, Not(IsNil))
 	c.Assert(req.ServiceProviderMetadata, Not(IsNil))
-	c.Assert(req.ACSEndpoint, DeepEquals, &metadata.IndexedEndpoint{Binding: "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST", Location: "https://sp.example.com/saml2/acs", Index: 1})
+	c.Assert(req.ACSEndpoint, DeepEquals, &IndexedEndpoint{Binding: "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST", Location: "https://sp.example.com/saml2/acs", Index: 1})
 
 	req = IdpAuthnRequest{
 		IDP:           &test.IDP,

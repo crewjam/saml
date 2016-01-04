@@ -10,12 +10,13 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/metadata"
 	"github.com/dchest/uniuri"
 	"github.com/kr/pretty"
 	"github.com/zenazn/goji"
 	"github.com/zenazn/goji/web"
+
+	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/samlmiddleware"
 )
 
 var links = map[string]Link{}
@@ -115,7 +116,7 @@ OwJlNCASPZRH/JmF8tX0hoHuAQ==
 		panic(err)
 	}
 
-	r := metadata.EntitiesDescriptor{}
+	r := saml.EntitiesDescriptor{}
 	if err := xml.Unmarshal(buf, &r); err != nil {
 		panic(err)
 	}
@@ -130,12 +131,12 @@ OwJlNCASPZRH/JmF8tX0hoHuAQ==
 	}
 
 	// register with the service provider
-	spMetadataBuf, _ := xml.MarshalIndent(metadata.EntitiesDescriptor{
-		EntityDescriptor: []*metadata.Metadata{samlsp.Metadata()},
+	spMetadataBuf, _ := xml.MarshalIndent(saml.EntitiesDescriptor{
+		EntityDescriptor: []*saml.Metadata{samlsp.Metadata()},
 	}, "", "  ")
 	http.Post(strings.Replace(*idpMetadataURL, "/metadata", "/register-sp", 1), "text/xml", bytes.NewReader(spMetadataBuf))
 
-	samlMiddleware := &saml.ServiceProviderMiddleware{ServiceProvider: samlsp}
+	samlMiddleware := &samlmiddleware.ServiceProviderMiddleware{ServiceProvider: samlsp}
 	goji.Handle("/saml/*", samlMiddleware)
 
 	authMux := web.New()

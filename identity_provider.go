@@ -16,7 +16,6 @@ import (
 	"text/template"
 
 	"github.com/crewjam/go-xmlsec"
-	"github.com/crewjam/saml/metadata"
 )
 
 // IdentityProvider implements the SAML Identity Provider role (IDP).
@@ -38,54 +37,54 @@ type IdentityProvider struct {
 	Certificate      string
 	MetadataURL      string
 	SSOURL           string
-	ServiceProviders map[string]*metadata.Metadata
+	ServiceProviders map[string]*Metadata
 	SessionProvider  SessionProvider
 }
 
 // Metadata returns the metadata structure for this identity provider.
-func (idp *IdentityProvider) Metadata() *metadata.Metadata {
+func (idp *IdentityProvider) Metadata() *Metadata {
 	cert, _ := pem.Decode([]byte(idp.Certificate))
 	if cert == nil {
 		panic("invalid IDP certificate")
 	}
 	certStr := base64.StdEncoding.EncodeToString(cert.Bytes)
 
-	return &metadata.Metadata{
+	return &Metadata{
 		EntityID:      idp.MetadataURL,
 		ValidUntil:    TimeNow().Add(DefaultValidDuration),
 		CacheDuration: DefaultValidDuration,
-		IDPSSODescriptor: &metadata.IDPSSODescriptor{
+		IDPSSODescriptor: &IDPSSODescriptor{
 			ProtocolSupportEnumeration: "urn:oasis:names:tc:SAML:2.0:protocol",
-			KeyDescriptor: []metadata.KeyDescriptor{
-				metadata.KeyDescriptor{
+			KeyDescriptor: []KeyDescriptor{
+				KeyDescriptor{
 					Use: "signing",
-					KeyInfo: metadata.KeyInfo{
+					KeyInfo: KeyInfo{
 						Certificate: certStr,
 					},
 				},
-				metadata.KeyDescriptor{
+				KeyDescriptor{
 					Use: "encryption",
-					KeyInfo: metadata.KeyInfo{
+					KeyInfo: KeyInfo{
 						Certificate: certStr,
 					},
-					EncryptionMethods: []metadata.EncryptionMethod{
-						metadata.EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
-						metadata.EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
-						metadata.EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
-						metadata.EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"},
+					EncryptionMethods: []EncryptionMethod{
+						EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
+						EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
+						EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
+						EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"},
 					},
 				},
 			},
 			NameIDFormat: []string{
 				"urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
 			},
-			SingleSignOnService: []metadata.Endpoint{
+			SingleSignOnService: []Endpoint{
 				{
-					Binding:  metadata.HTTPRedirectBinding,
+					Binding:  HTTPRedirectBinding,
 					Location: idp.SSOURL,
 				},
 				{
-					Binding:  metadata.HTTPPostBinding,
+					Binding:  HTTPPostBinding,
 					Location: idp.SSOURL,
 				},
 			},
@@ -114,8 +113,8 @@ func (idp *IdentityProvider) Handler() http.Handler {
 
 // ServeMetadata is an http.HandlerFunc that serves the IDP metadata
 func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, r *http.Request) {
-	buf, _ := xml.MarshalIndent(metadata.EntitiesDescriptor{
-		EntityDescriptor: []*metadata.Metadata{idp.Metadata()},
+	buf, _ := xml.MarshalIndent(EntitiesDescriptor{
+		EntityDescriptor: []*Metadata{idp.Metadata()},
 	}, "", "  ")
 	w.Write(buf)
 }
@@ -219,8 +218,8 @@ type IdpAuthnRequest struct {
 	RelayState              string
 	RequestBuffer           []byte
 	Request                 AuthnRequest
-	ServiceProviderMetadata *metadata.Metadata
-	ACSEndpoint             *metadata.IndexedEndpoint
+	ServiceProviderMetadata *Metadata
+	ACSEndpoint             *IndexedEndpoint
 	Assertion               *Assertion
 	AssertionBuffer         []byte
 	Response                *Response
@@ -509,7 +508,7 @@ func (req *IdpAuthnRequest) WriteResponse(w http.ResponseWriter) error {
 
 	// the only supported binding is the HTTP-POST binding
 	switch req.ACSEndpoint.Binding {
-	case metadata.HTTPPostBinding:
+	case HTTPPostBinding:
 		tmpl := template.Must(template.New("saml-post-form").Parse(`<html>` +
 			`<form method="post" action="{{.URL}}" id="SAMLResponseForm">` +
 			`<input type="hidden" name="SAMLResponse" value="{{.SAMLResponse}}" />` +
@@ -546,7 +545,7 @@ func (req *IdpAuthnRequest) WriteResponse(w http.ResponseWriter) error {
 
 // getSPEncryptionCert returns the certificate which we can use to encrypt things
 // to the SP in PEM format, or nil if no such certificate is found.
-func getSPEncryptionCert(sp *metadata.Metadata) []byte {
+func getSPEncryptionCert(sp *Metadata) []byte {
 	cert := ""
 	for _, keyDescriptor := range sp.SPSSODescriptor.KeyDescriptor {
 		if keyDescriptor.Use == "encryption" {

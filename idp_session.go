@@ -92,6 +92,8 @@ func (sp *DefaultSessionProvider) GetSession(w http.ResponseWriter, r *http.Requ
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return nil
 		}
+		session.ExpireTime = session.CreateTime.Add(sessionMaxAge)
+
 		http.SetCookie(w, &http.Cookie{
 			Name:     "session",
 			Value:    session.ID,
@@ -108,9 +110,13 @@ func (sp *DefaultSessionProvider) GetSession(w http.ResponseWriter, r *http.Requ
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return nil
 		}
-		if session != nil {
-			return session
+		if session == nil {
+			return nil
 		}
+		if TimeNow().After(session.ExpireTime) {
+			return nil
+		}
+		return session
 	}
 
 	sp.sendLoginForm(w, r, req, "")
