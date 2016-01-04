@@ -25,6 +25,9 @@ func (s *MemoryStore) Get(key string, value interface{}) error {
 func (s *MemoryStore) Put(key string, value interface{}) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.data == nil {
+		s.data = map[string]string{}
+	}
 
 	buf, err := json.Marshal(value)
 	if err != nil {
@@ -45,7 +48,7 @@ func (s *MemoryStore) List(prefix string) ([]string, error) {
 	rv := []string{}
 	for k, _ := range s.data {
 		if strings.HasPrefix(k, prefix) {
-			rv = append(rv, k)
+			rv = append(rv, strings.TrimPrefix(k, prefix))
 		}
 	}
 	return rv, nil

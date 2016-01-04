@@ -39,34 +39,34 @@ func New(opts Options) *Server {
 	mux.Get("/metadata", s.IDP.ServeMetadata)
 	mux.Handle("/sso", s.IDP.ServeSSO)
 
-	/*
-		mux.Handle("/login/:shortcut", s.HandleIDPInitiated)
-		mux.Handle("/login/:shortcut/*", s.HandleIDPInitiated)
+	//mux.Handle("/login/:shortcut", s.HandleIDPInitiated)
+	//mux.Handle("/login/:shortcut/*", s.HandleIDPInitiated)
 
-		mux.Get("/services", s.HandleListService)
-		mux.Get("/services/:id", s.HandleGetService)
-		mux.Put("/services/:id", s.HandlePutService)
-		mux.Delete("/services/:id", s.HandleDeleteService)
+	//mux.Post("/password", s.HandleSetPassword)
 
-		mux.Get("/users", s.HandleListUsers)
-		mux.Get("/users/:id", s.HandleGetUser)
-		mux.Put("/users/:id", s.HandlePutUser)
-		mux.Delete("/users/:id", s.HandleDeleteUser)
+	//mux.Get("/services", s.HandleListService)
+	//mux.Get("/services/:id", s.HandleGetService)
+	//mux.Put("/services/:id", s.HandlePutService)
+	//mux.Delete("/services/:id", s.HandleDeleteService)
 
-		mux.Get("/groups", s.HandleListGroups)
-		mux.Get("/groups/:id", s.HandleGetGroup)
-		mux.Put("/groups/:id", s.HandlePutGroup)
-		mux.Delete("/groups/:id", s.HandleDeleteGroup)
+	mux.Get("/users/", s.HandleListUsers)
+	mux.Get("/users/:id", s.HandleGetUser)
+	mux.Put("/users/:id", s.HandlePutUser)
+	mux.Delete("/users/:id", s.HandleDeleteUser)
 
-		mux.Get("/sessions", s.HandleListSesssions)
-		mux.Get("/sessions/:id", s.HandleGetSession)
-		mux.Delete("/sessions/:id", s.HandleDeleteSession)
+	//mux.Get("/groups", s.HandleListGroups)
+	//mux.Get("/groups/:id", s.HandleGetGroup)
+	//mux.Put("/groups/:id", s.HandlePutGroup)
+	//mux.Delete("/groups/:id", s.HandleDeleteGroup)
 
-		mux.Get("/shortcuts", s.HandleListShortcuts)
-		mux.Get("/shortcuts/:id", s.HandleGetShortcut)
-		mux.Put("/shortcuts/:id", s.HandlePutShortcut)
-		mux.Delete("/shortcuts/:id", s.HandleDeleteShortcut)
-	*/
+	//mux.Get("/sessions", s.HandleListSesssions)
+	//mux.Get("/sessions/:id", s.HandleGetSession)
+	//mux.Delete("/sessions/:id", s.HandleDeleteSession)
+
+	//mux.Get("/shortcuts", s.HandleListShortcuts)
+	//mux.Get("/shortcuts/:id", s.HandleGetShortcut)
+	//mux.Put("/shortcuts/:id", s.HandlePutShortcut)
+	//mux.Delete("/shortcuts/:id", s.HandleDeleteShortcut)
 
 	return s
 }
