@@ -14,9 +14,39 @@ import (
 	"net/url"
 	"regexp"
 	"text/template"
+	"time"
 
 	"github.com/crewjam/go-xmlsec"
 )
+
+// Session represents a user session. It is returned by the
+// SessionProvider implementation's GetSession method. Fields here
+// are used to set fields in the SAML assertion.
+type Session struct {
+	ID         string
+	CreateTime time.Time
+	ExpireTime time.Time
+	Index      string
+
+	NameID         string
+	Groups         []string
+	UserName       string
+	UserEmail      string
+	UserCommonName string
+	UserSurname    string
+	UserGivenName  string
+}
+
+// SessionProvider is an interface used by IdentityProvider to determine the
+// Session associated with a request. The default implementation is
+// DefaultSessionProvider.
+type SessionProvider interface {
+	// GetSession returns the remote user session associated with the http.Request.
+	//
+	// If (and only if) the request is not associated with a session then GetSession
+	// must complete the HTTP request and return nil.
+	GetSession(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session
+}
 
 // IdentityProvider implements the SAML Identity Provider role (IDP).
 //
