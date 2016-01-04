@@ -228,8 +228,7 @@ func (test *IdentityProviderTest) TestCanHandlePostRequestWithExistingSession(c 
 
 	w := httptest.NewRecorder()
 
-	idpURL, _ := url.Parse("https://idp.example.com/saml/sso")
-	authRequest, err := test.SP.MakeAuthenticationRequest(idpURL)
+	authRequest, err := test.SP.MakeAuthenticationRequest(test.SP.GetSSOBindingLocation(HTTPRedirectBinding))
 	c.Assert(err, IsNil)
 	authRequestBuf, err := xml.Marshal(authRequest)
 	c.Assert(err, IsNil)

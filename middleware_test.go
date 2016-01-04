@@ -14,6 +14,7 @@ import (
 
 	"github.com/crewjam/saml/metadata"
 	"github.com/dgrijalva/jwt-go"
+	"github.com/kr/pretty"
 )
 
 type ServiceProviderMiddlewareTest struct {
@@ -109,7 +110,12 @@ func (test *ServiceProviderMiddlewareTest) TestRequireAccountNoCreds(c *C) {
 	handler.ServeHTTP(resp, req)
 
 	c.Assert(resp.Code, Equals, http.StatusFound)
-	c.Assert(resp.Header().Get("Location"), Equals, "https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmkiOiIvZnJvYiJ9.QEnpCWpKnhmzWZyfI8GIgCCWyH7qTly8vw-V4oJ1ni0&SAMLRequest=lJJRb9owFIX%2FSuR3YjsKGbOSSAw0CYltiGx76JvrXMBqYlPfm7b8%2Bzq0VXlq6ev18bnfOXY5H%2BjgtnA%2FAFLy1HcOKzYEp7xGi8rpHlCRUc3811plqVDH4Mkb37FkjgiBrHcL73DoITQQHqyBf9t1xQ5ER1Scy2lRyDzPU7cP%2Fi61nqPuu4xrgyxZxp3W6dHj%2FYZtjynFAzzY29SH%2FTjgcevOdsBHjIxvobUBDPGm%2BcOS1bJitp0IITKRi0LMhBZGgBQyk7ks5ExqaSREIeIAK4ekHVUsE3I6kdlEyL9Cquk3Jb7fsGTzGu%2BHda11%2B4qx5D8EPBPG%2BKwuzy7hmqr0W0Es%2BelDr%2Blj%2BTiJOXZnqQJHlk6s%2FqzIHki3mnTJX8Dq8nf0WS03vrPm9MUX7Tr%2FuAigCSpGYQBWXw9MQTu0EbvklwR1yS%2B%2FWP0cAAD%2F%2Fw%3D%3D")
+	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
+		"saml_ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy="+
+			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlIiwidXJpIjoiL2Zyb2IifQ.oXSHI6UFeIRK_IR40GFwHbqHzauuEmNEdVu-Eq7glHA"+
+			"; Path=/saml2/acs; Max-Age=90")
+	c.Assert(resp.Header().Get("Location"), Equals,
+		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy&SAMLRequest=lJJRb9owFIX%2FSuR3YjsKGbOSSAw0CYltiGx76JvrXMBqYlPfm7b8%2Bzq0VXlq6ev18bnfOXY5H%2BjgtnA%2FAFLy1HcOKzYEp7xGi8rpHlCRUc3811plqVDH4Mkb37FkjgiBrHcL73DoITQQHqyBf9t1xQ5ER1Scy2lRyDzPU7cP%2Fi61nqPuu4xrgyxZxp3W6dHj%2FYZtjynFAzzY29SH%2FTjgcevOdsBHjIxvobUBDPGm%2BcOS1bJitp0IITKRi0LMhBZGgBQyk7ks5ExqaSREIeIAK4ekHVUsE3I6kdlEyL9Cquk3Jb7fsGTzGu%2BHda11%2B4qx5D8EPBPG%2BKwuzy7hmqr0W0Es%2BelDr%2Blj%2BTiJOXZnqQJHlk6s%2FqzIHki3mnTJX8Dq8nf0WS03vrPm9MUX7Tr%2FuAigCSpGYQBWXw9MQTu0EbvklwR1yS%2B%2FWP0cAAD%2F%2Fw%3D%3D")
 }
 
 func (test *ServiceProviderMiddlewareTest) TestRequireAccountCreds(c *C) {
@@ -152,7 +158,12 @@ func (test *ServiceProviderMiddlewareTest) TestRequireAccountBadCreds(c *C) {
 	handler.ServeHTTP(resp, req)
 
 	c.Assert(resp.Code, Equals, http.StatusFound)
-	c.Assert(resp.Header().Get("Location"), Equals, "https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmkiOiIvZnJvYiJ9.QEnpCWpKnhmzWZyfI8GIgCCWyH7qTly8vw-V4oJ1ni0&SAMLRequest=lJJRb9owFIX%2FSuR3YjsKGbOSSAw0CYltiGx76JvrXMBqYlPfm7b8%2Bzq0VXlq6ev18bnfOXY5H%2BjgtnA%2FAFLy1HcOKzYEp7xGi8rpHlCRUc3811plqVDH4Mkb37FkjgiBrHcL73DoITQQHqyBf9t1xQ5ER1Scy2lRyDzPU7cP%2Fi61nqPuu4xrgyxZxp3W6dHj%2FYZtjynFAzzY29SH%2FTjgcevOdsBHjIxvobUBDPGm%2BcOS1bJitp0IITKRi0LMhBZGgBQyk7ks5ExqaSREIeIAK4ekHVUsE3I6kdlEyL9Cquk3Jb7fsGTzGu%2BHda11%2B4qx5D8EPBPG%2BKwuzy7hmqr0W0Es%2BelDr%2Blj%2BTiJOXZnqQJHlk6s%2FqzIHki3mnTJX8Dq8nf0WS03vrPm9MUX7Tr%2FuAigCSpGYQBWXw9MQTu0EbvklwR1yS%2B%2FWP0cAAD%2F%2Fw%3D%3D")
+
+	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
+		"saml_ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy="+
+			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlIiwidXJpIjoiL2Zyb2IifQ.oXSHI6UFeIRK_IR40GFwHbqHzauuEmNEdVu-Eq7glHA"+
+			"; Path=/saml2/acs; Max-Age=90")
+	c.Assert(resp.Header().Get("Location"), Equals, "https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy&SAMLRequest=lJJRb9owFIX%2FSuR3YjsKGbOSSAw0CYltiGx76JvrXMBqYlPfm7b8%2Bzq0VXlq6ev18bnfOXY5H%2BjgtnA%2FAFLy1HcOKzYEp7xGi8rpHlCRUc3811plqVDH4Mkb37FkjgiBrHcL73DoITQQHqyBf9t1xQ5ER1Scy2lRyDzPU7cP%2Fi61nqPuu4xrgyxZxp3W6dHj%2FYZtjynFAzzY29SH%2FTjgcevOdsBHjIxvobUBDPGm%2BcOS1bJitp0IITKRi0LMhBZGgBQyk7ks5ExqaSREIeIAK4ekHVUsE3I6kdlEyL9Cquk3Jb7fsGTzGu%2BHda11%2B4qx5D8EPBPG%2BKwuzy7hmqr0W0Es%2BelDr%2Blj%2BTiJOXZnqQJHlk6s%2FqzIHki3mnTJX8Dq8nf0WS03vrPm9MUX7Tr%2FuAigCSpGYQBWXw9MQTu0EbvklwR1yS%2B%2FWP0cAAD%2F%2Fw%3D%3D")
 }
 
 func (test *ServiceProviderMiddlewareTest) TestRequireAccountExpiredCreds(c *C) {
@@ -174,7 +185,12 @@ func (test *ServiceProviderMiddlewareTest) TestRequireAccountExpiredCreds(c *C) 
 	handler.ServeHTTP(resp, req)
 
 	c.Assert(resp.Code, Equals, http.StatusFound)
-	c.Assert(resp.Header().Get("Location"), Equals, "https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmkiOiIvZnJvYiJ9.QEnpCWpKnhmzWZyfI8GIgCCWyH7qTly8vw-V4oJ1ni0&SAMLRequest=lJJRb9owFIX%2FSuR3YjsKGbOSSAw0CYltiGx76JvrXMBqYlPfm7b8%2Bzq0VXlq6ev18bnfOXY5H%2BjgtnA%2FAFLy1HcOKzYEp7xGi8rpHlCRUc3811plqVDH4Mkb37FkjgiBrHcL73DoITQQHqyBf9t1xQ5ER1Scy2lRyDzPU7cP%2Fi61nqPuu4xrgyxZxp3W6dHj%2FYZtjynFAzzY29SH%2FTjgcevOdsBHjIxvobUBDPGm%2BcOS1bJitp0IITKRi0LMhBZGgBQyk7ks5ExqaSREIeIAK4ekHVUsE3I6kdlEyL9Cquk3Jb7fsGTzGu%2BHda11%2B4qx5D8EPBPG%2BKwuzy7hmqr0W0Es%2BelDr%2Blj%2BTiJOXZnqQJHlk6s%2FqzIHki3mnTJX8Dq8nf0WS03vrPm9MUX7Tr%2FuAigCSpGYQBWXw9MQTu0EbvklwR1yS%2B%2FWP0cAAD%2F%2Fw%3D%3D")
+	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
+		"saml_ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy="+
+			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlIiwidXJpIjoiL2Zyb2IifQ.oXSHI6UFeIRK_IR40GFwHbqHzauuEmNEdVu-Eq7glHA"+
+			"; Path=/saml2/acs; Max-Age=90")
+
+	c.Assert(resp.Header().Get("Location"), Equals, "https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy&SAMLRequest=lJJRb9owFIX%2FSuR3YjsKGbOSSAw0CYltiGx76JvrXMBqYlPfm7b8%2Bzq0VXlq6ev18bnfOXY5H%2BjgtnA%2FAFLy1HcOKzYEp7xGi8rpHlCRUc3811plqVDH4Mkb37FkjgiBrHcL73DoITQQHqyBf9t1xQ5ER1Scy2lRyDzPU7cP%2Fi61nqPuu4xrgyxZxp3W6dHj%2FYZtjynFAzzY29SH%2FTjgcevOdsBHjIxvobUBDPGm%2BcOS1bJitp0IITKRi0LMhBZGgBQyk7ks5ExqaSREIeIAK4ekHVUsE3I6kdlEyL9Cquk3Jb7fsGTzGu%2BHda11%2B4qx5D8EPBPG%2BKwuzy7hmqr0W0Es%2BelDr%2Blj%2BTiJOXZnqQJHlk6s%2FqzIHki3mnTJX8Dq8nf0WS03vrPm9MUX7Tr%2FuAigCSpGYQBWXw9MQTu0EbvklwR1yS%2B%2FWP0cAAD%2F%2Fw%3D%3D")
 }
 
 func (test *ServiceProviderMiddlewareTest) TestRequireAccountPanicOnRequestToACS(c *C) {
@@ -275,23 +291,31 @@ func (test *ServiceProviderMiddlewareTest) TestRequireAttributeMissingAccount(c 
 func (test *ServiceProviderMiddlewareTest) TestCanParseResponse(c *C) {
 	v := &url.Values{}
 	v.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	v.Set("RelayState", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmkiOiIvZnJvYiJ9.QEnpCWpKnhmzWZyfI8GIgCCWyH7qTly8vw-V4oJ1ni0")
+	v.Set("RelayState", "ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy")
 	req, _ := http.NewRequest("POST", "/saml2/acs", bytes.NewReader([]byte(v.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Cookie", ""+
+		"saml_ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy="+
+		"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlIiwidXJpIjoiL2Zyb2IifQ.oXSHI6UFeIRK_IR40GFwHbqHzauuEmNEdVu-Eq7glHA")
 
 	resp := httptest.NewRecorder()
 	test.Middleware.ServeHTTP(resp, req)
 	c.Assert(resp.Code, Equals, http.StatusFound)
+
+	pretty.Print(resp.Header())
+
 	c.Assert(resp.Header().Get("Location"), Equals, "/frob")
-	c.Assert(resp.Header().Get("Set-Cookie"), Equals, ""+
-		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; "+
-		"Path=/; Max-Age=3600")
+	c.Assert(resp.Header()["Set-Cookie"], DeepEquals, []string{
+		"saml_ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy=",
+		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; " +
+			"Path=/; Max-Age=3600",
+	})
 }
 
 func (test *ServiceProviderMiddlewareTest) TestRejectsInvalidRelayState(c *C) {
 	v := &url.Values{}
 	v.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	v.Set("RelayState", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ye1JcmkiOiIvZnJvYiJ9.QEnpCWpKnhmzWZyfI8GIgCCWyH7qTly8vw-V4oJ1ni0")
+	v.Set("RelayState", "ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy")
 	req, _ := http.NewRequest("POST", "/saml2/acs", bytes.NewReader([]byte(v.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 

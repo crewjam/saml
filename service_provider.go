@@ -103,51 +103,43 @@ func (sp *ServiceProvider) Metadata() *metadata.Metadata {
 // the HTTP-Redirect binding. It returns a URL that we will redirect the user to
 // in order to start the auth process.
 func (sp *ServiceProvider) MakeRedirectAuthenticationRequest(relayState string) (*url.URL, error) {
-	idpURL, err := url.Parse(sp.getIDPRedirectURL())
-	if err != nil {
-		return nil, fmt.Errorf("cannot parse IDP redirect url: %s", err)
-	}
-
-	req, err := sp.MakeAuthenticationRequest(idpURL)
+	req, err := sp.MakeAuthenticationRequest(sp.GetSSOBindingLocation(HTTPRedirectBinding))
 	if err != nil {
 		return nil, err
 	}
+	return req.Redirect(relayState), nil
+}
 
+func (req *AuthnRequest) Redirect(relayState string) *url.URL {
 	w := &bytes.Buffer{}
 	w1 := base64.NewEncoder(base64.StdEncoding, w)
 	w2, _ := flate.NewWriter(w1, 9)
 	if err := xml.NewEncoder(w2).Encode(req); err != nil {
-		return nil, err
+		panic(err)
 	}
 	w2.Close()
 	w1.Close()
+
+	rv, _ := url.Parse(req.Destination)
 
 	query := url.Values{}
 	query.Set("SAMLRequest", string(w.Bytes()))
 	if relayState != "" {
 		query.Set("RelayState", relayState)
 	}
-	idpURL.RawQuery = query.Encode()
+	rv.RawQuery = query.Encode()
 
-	return idpURL, nil
+	return rv
 }
 
-// getIDPRedirectURL returns URL for the IDP's HTTP-Redirect binding or an empty string
-// if one is not specified.
-func (sp *ServiceProvider) getIDPRedirectURL() string {
-	for _, singleSignOnService := range sp.IDPMetadata.IDPSSODescriptor.SingleSignOnService {
-		if singleSignOnService.Binding == "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" {
-			return singleSignOnService.Location
-		}
-	}
-	return ""
-}
+const HTTPRedirectBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+const HTTPPostBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
 
-// getIDPPostURL returns URL for the IDP's HTTP-POST binding or an empty string if one
-// is not specified.
-func (sp *ServiceProvider) getIDPPostURL() string {
+// GetSSOBindingLocation returns URL for the IDP's Single Sign On Service binding
+// of the specified type (HTTPRedirectBinding or HTTPPostBinding)
+func (sp *ServiceProvider) GetSSOBindingLocation(binding string) string {
 	for _, singleSignOnService := range sp.IDPMetadata.IDPSSODescriptor.SingleSignOnService {
-		if singleSignOnService.Binding == "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" {
+		if singleSignOnService.Binding == binding {
 			return singleSignOnService.Location
 		}
 	}
@@ -191,10 +183,10 @@ func (sp *ServiceProvider) getIDPSigningCert() []byte {
 }
 
 // MakeAuthenticationRequest produces a new AuthnRequest object for idpURL.
-func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL *url.URL) (*AuthnRequest, error) {
+func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string) (*AuthnRequest, error) {
 	req := AuthnRequest{
 		AssertionConsumerServiceURL: sp.AcsURL,
-		Destination:                 idpURL.String(),
+		Destination:                 idpURL,
 		ID:                          fmt.Sprintf("id-%x", randomBytes(16)),
 		IssueInstant:                timeNow(),
 		Version:                     "2.0",
@@ -217,16 +209,14 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL *url.URL) (*AuthnReq
 // the HTTP-POST binding. It returns HTML text representing an HTML form that
 // can be sent presented to a browser to initiate the login process.
 func (sp *ServiceProvider) MakePostAuthenticationRequest(relayState string) ([]byte, error) {
-	idpURL, err := url.Parse(sp.getIDPPostURL())
-	if err != nil {
-		return nil, fmt.Errorf("cannot parse IDP post url: %s", err)
-	}
-
-	req, err := sp.MakeAuthenticationRequest(idpURL)
+	req, err := sp.MakeAuthenticationRequest(sp.GetSSOBindingLocation(HTTPPostBinding))
 	if err != nil {
 		return nil, err
 	}
+	return req.Post(relayState), nil
+}
 
+func (req *AuthnRequest) Post(relayState string) []byte {
 	reqBuf, err := xml.Marshal(req)
 	if err != nil {
 		panic(err)
@@ -244,7 +234,7 @@ func (sp *ServiceProvider) MakePostAuthenticationRequest(relayState string) ([]b
 		SAMLRequest string
 		RelayState  string
 	}{
-		URL:         idpURL.String(),
+		URL:         req.Destination,
 		SAMLRequest: encodedReqBuf,
 		RelayState:  relayState,
 	}
@@ -254,7 +244,7 @@ func (sp *ServiceProvider) MakePostAuthenticationRequest(relayState string) ([]b
 		panic(err)
 	}
 
-	return rv.Bytes(), nil
+	return rv.Bytes()
 }
 
 // AssertionAttributes is a list of AssertionAttribute

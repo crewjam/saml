@@ -1,6 +1,7 @@
 package saml
 
 import (
+	"encoding/base64"
 	"encoding/pem"
 	"encoding/xml"
 	"fmt"
@@ -91,20 +92,6 @@ func (m *ServiceProviderMiddleware) RequireAccountMiddleware(handler http.Handle
 			return
 		}
 
-		secretBlock, _ := pem.Decode([]byte(m.ServiceProvider.Key))
-		relayState := jwt.New(jwt.GetSigningMethod("HS256"))
-		relayState.Claims["uri"] = r.URL.String()
-		signedRelayState, err := relayState.SignedString(secretBlock.Bytes)
-		if err != nil {
-			panic(err)
-		}
-
-		redirectURL, err := m.ServiceProvider.MakeRedirectAuthenticationRequest(signedRelayState)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
 		// If we try to redirect when the original request is the ACS URL we'll
 		// end up in a loop. This is a programming error, so we panic here. In
 		// general this means a 500 to the user, which is preferable to a
@@ -113,6 +100,37 @@ func (m *ServiceProviderMiddleware) RequireAccountMiddleware(handler http.Handle
 		if r.URL.Path == acsURL.Path {
 			panic("don't wrap ServiceProviderMiddleware with RequireAccountMiddleware")
 		}
+
+		req, err := m.ServiceProvider.MakeAuthenticationRequest(
+			m.ServiceProvider.GetSSOBindingLocation(HTTPRedirectBinding))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// relayState is limited to 80 bytes but also must be integrety protected.
+		// this means that we cannot use a JWT because it is way to long. Instead
+		// we set a cookie that corresponds to the state
+		relayState := base64.StdEncoding.EncodeToString(randomBytes(42))
+
+		secretBlock, _ := pem.Decode([]byte(m.ServiceProvider.Key))
+		state := jwt.New(jwt.GetSigningMethod("HS256"))
+		state.Claims["id"] = req.ID
+		state.Claims["uri"] = r.URL.String()
+		signedState, err := state.SignedString(secretBlock.Bytes)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		http.SetCookie(w, &http.Cookie{
+			Name:     fmt.Sprintf("saml_%s", relayState),
+			Value:    signedState,
+			MaxAge:   int(MaxIssueDelay.Seconds()),
+			HttpOnly: false,
+			Path:     acsURL.Path,
+		})
+		redirectURL := req.Redirect(relayState)
 
 		http.Redirect(w, r, redirectURL.String(), http.StatusFound)
 		return
@@ -129,14 +147,36 @@ func (m *ServiceProviderMiddleware) DefaultAuthorizeFunc(w http.ResponseWriter, 
 
 	redirectURI := "/"
 	if r.Form.Get("RelayState") != "" {
-		relayState, err := jwt.Parse(r.Form.Get("RelayState"), func(t *jwt.Token) (interface{}, error) {
-			return secretBlock.Bytes, nil
-		})
-		if err != nil || !relayState.Valid {
+		stateCookie, err := r.Cookie(fmt.Sprintf("saml_%s", r.Form.Get("RelayState")))
+		if err != nil {
+			log.Printf("cannot find corresponding cookie: %s", fmt.Sprintf("saml_%s", r.Form.Get("RelayState")))
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
-		redirectURI = relayState.Claims["uri"].(string)
+
+		state, err := jwt.Parse(stateCookie.Value, func(t *jwt.Token) (interface{}, error) {
+			return secretBlock.Bytes, nil
+		})
+		if err != nil || !state.Valid {
+			log.Printf("Cannot decode state JWT: %s (%s)", err, stateCookie.Value)
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+		redirectURI = state.Claims["uri"].(string)
+
+		// TODO(ross): verify that the request ID matches the value in the JWT token
+		/*
+			expectedRequestID := relayState.Claims["id"].(string)
+			if expectedRequestID != requestID {
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
+		*/
+
+		// delete the cookie
+		stateCookie.Value = ""
+		stateCookie.Expires = time.Time{}
+		http.SetCookie(w, stateCookie)
 	}
 
 	token := jwt.New(jwt.GetSigningMethod("HS256"))
