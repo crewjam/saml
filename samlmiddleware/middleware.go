@@ -1,4 +1,4 @@
-package saml
+package samlmiddleware
 
 import (
 	"encoding/base64"
@@ -11,8 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/crewjam/saml/metadata"
 	"github.com/dgrijalva/jwt-go"
+
+	"github.com/crewjam/saml"
 )
 
 // ServiceProviderMiddleware implements middleware than allows a web application
@@ -30,11 +31,19 @@ import (
 // implementations of these functions issue and verify a signed cookie containing
 // information from the SAML assertion.
 type ServiceProviderMiddleware struct {
-	ServiceProvider *ServiceProvider
+	ServiceProvider *saml.ServiceProvider
 }
 
 const cookieMaxAge = time.Hour // TODO(ross): must be configurable
 const cookieName = "token"
+
+func randomBytes(n int) []byte {
+	rv := make([]byte, n)
+	if _, err := saml.RandReader.Read(rv); err != nil {
+		panic(err)
+	}
+	return rv
+}
 
 // ServeHTTP implements http.Handler and serves the SAML-specific HTTP endpoints
 // on the URIs specified by m.ServiceProvider.MetadataURL and
@@ -42,8 +51,8 @@ const cookieName = "token"
 func (m *ServiceProviderMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	metadataURL, _ := url.Parse(m.ServiceProvider.MetadataURL)
 	if r.URL.Path == metadataURL.Path {
-		buf, _ := xml.MarshalIndent(metadata.EntitiesDescriptor{
-			EntityDescriptor: []*metadata.Metadata{m.ServiceProvider.Metadata()},
+		buf, _ := xml.MarshalIndent(saml.EntitiesDescriptor{
+			EntityDescriptor: []*saml.Metadata{m.ServiceProvider.Metadata()},
 		}, "", "  ")
 		w.Write(buf)
 		return
@@ -54,7 +63,7 @@ func (m *ServiceProviderMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Req
 		r.ParseForm()
 		assertion, err := m.ServiceProvider.ParseResponse(r, m.getPossibleRequestIDs(r))
 		if err != nil {
-			if parseErr, ok := err.(*InvalidResponseError); ok {
+			if parseErr, ok := err.(*saml.InvalidResponseError); ok {
 				log.Printf("RESPONSE: ===\n%s\n===\nNOW: %s\nERROR: %s",
 					parseErr.Response, parseErr.Now, parseErr.PrivateErr)
 			}
@@ -90,7 +99,7 @@ func (m *ServiceProviderMiddleware) RequireAccountMiddleware(handler http.Handle
 		}
 
 		req, err := m.ServiceProvider.MakeAuthenticationRequest(
-			m.ServiceProvider.GetSSOBindingLocation(HTTPRedirectBinding))
+			m.ServiceProvider.GetSSOBindingLocation(saml.HTTPRedirectBinding))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -114,7 +123,7 @@ func (m *ServiceProviderMiddleware) RequireAccountMiddleware(handler http.Handle
 		http.SetCookie(w, &http.Cookie{
 			Name:     fmt.Sprintf("saml_%s", relayState),
 			Value:    signedState,
-			MaxAge:   int(MaxIssueDelay.Seconds()),
+			MaxAge:   int(saml.MaxIssueDelay.Seconds()),
 			HttpOnly: false,
 			Path:     acsURL.Path,
 		})
@@ -149,7 +158,7 @@ func (m *ServiceProviderMiddleware) getPossibleRequestIDs(r *http.Request) []str
 // Authorize is invoked by ServeHTTP when we have a new, valid SAML assertion.
 // It sets a cookie that contains a signed JWT containing the assertion attributes.
 // It then redirects the user's browser to the original URL contained in RelayState.
-func (m *ServiceProviderMiddleware) Authorize(w http.ResponseWriter, r *http.Request, assertion *Assertion) {
+func (m *ServiceProviderMiddleware) Authorize(w http.ResponseWriter, r *http.Request, assertion *saml.Assertion) {
 	secretBlock, _ := pem.Decode([]byte(m.ServiceProvider.Key))
 
 	redirectURI := "/"
@@ -189,7 +198,7 @@ func (m *ServiceProviderMiddleware) Authorize(w http.ResponseWriter, r *http.Req
 			token.Claims[attr.FriendlyName] = valueStrings
 		}
 	}
-	token.Claims["exp"] = timeNow().Add(cookieMaxAge).Unix()
+	token.Claims["exp"] = saml.TimeNow().Add(cookieMaxAge).Unix()
 	signedToken, err := token.SignedString(secretBlock.Bytes)
 	if err != nil {
 		panic(err)

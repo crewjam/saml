@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+var sessionMaxAge = time.Hour // TODO(ross): must be configurable
+
 // Session represents a user session. It is returned by the
 // SessionProvider implementation's GetSession method. Fields here
 // are used to set fields in the SAML assertion.
@@ -93,7 +95,7 @@ func (sp *DefaultSessionProvider) GetSession(w http.ResponseWriter, r *http.Requ
 		http.SetCookie(w, &http.Cookie{
 			Name:     "session",
 			Value:    session.ID,
-			MaxAge:   int(cookieMaxAge.Seconds()),
+			MaxAge:   int(sessionMaxAge.Seconds()),
 			HttpOnly: false,
 			Path:     "/",
 		})
@@ -157,7 +159,7 @@ type MemorySessionStore struct {
 func (m *MemorySessionStore) New(user *User) (*Session, error) {
 	session := &Session{
 		ID:             base64.StdEncoding.EncodeToString(randomBytes(32)),
-		CreateTime:     timeNow(),
+		CreateTime:     TimeNow(),
 		Index:          hex.EncodeToString(randomBytes(32)),
 		UserName:       user.Name,
 		Groups:         user.Groups[:],

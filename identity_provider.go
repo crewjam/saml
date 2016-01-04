@@ -52,7 +52,7 @@ func (idp *IdentityProvider) Metadata() *metadata.Metadata {
 
 	return &metadata.Metadata{
 		EntityID:      idp.MetadataURL,
-		ValidUntil:    timeNow().Add(DefaultValidDuration),
+		ValidUntil:    TimeNow().Add(DefaultValidDuration),
 		CacheDuration: DefaultValidDuration,
 		IDPSSODescriptor: &metadata.IDPSSODescriptor{
 			ProtocolSupportEnumeration: "urn:oasis:names:tc:SAML:2.0:protocol",
@@ -275,7 +275,7 @@ func (req *IdpAuthnRequest) Validate() error {
 		return fmt.Errorf("expected destination to be %q, not %q",
 			req.IDP.SSOURL, req.Request.Destination)
 	}
-	if req.Request.IssueInstant.Add(MaxIssueDelay).Before(timeNow()) {
+	if req.Request.IssueInstant.Add(MaxIssueDelay).Before(TimeNow()) {
 		return fmt.Errorf("request expired at %s",
 			req.Request.IssueInstant.Add(MaxIssueDelay))
 	}
@@ -388,7 +388,7 @@ func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
 
 	req.Assertion = &Assertion{
 		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
-		IssueInstant: timeNow(),
+		IssueInstant: TimeNow(),
 		Version:      "2.0",
 		Issuer: &Issuer{
 			Format: "XXX",
@@ -407,14 +407,14 @@ func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
 				SubjectConfirmationData: SubjectConfirmationData{
 					Address:      req.HTTPRequest.RemoteAddr,
 					InResponseTo: req.Request.ID,
-					NotOnOrAfter: timeNow().Add(MaxIssueDelay),
+					NotOnOrAfter: TimeNow().Add(MaxIssueDelay),
 					Recipient:    req.ACSEndpoint.Location,
 				},
 			},
 		},
 		Conditions: &Conditions{
-			NotBefore:    timeNow(),
-			NotOnOrAfter: timeNow().Add(MaxIssueDelay),
+			NotBefore:    TimeNow(),
+			NotOnOrAfter: TimeNow().Add(MaxIssueDelay),
 			AudienceRestriction: &AudienceRestriction{
 				Audience: &Audience{Value: req.ServiceProviderMetadata.EntityID},
 			},
@@ -476,7 +476,7 @@ func (req *IdpAuthnRequest) MakeResponse() error {
 		Destination:  req.ACSEndpoint.Location,
 		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
 		InResponseTo: req.Request.ID,
-		IssueInstant: timeNow(),
+		IssueInstant: TimeNow(),
 		Version:      "2.0",
 		Issuer: &Issuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",

@@ -65,7 +65,7 @@ func (sp *ServiceProvider) Metadata() *metadata.Metadata {
 
 	return &metadata.Metadata{
 		EntityID:   sp.MetadataURL,
-		ValidUntil: timeNow().Add(DefaultValidDuration),
+		ValidUntil: TimeNow().Add(DefaultValidDuration),
 		SPSSODescriptor: &metadata.SPSSODescriptor{
 			AuthnRequestsSigned:        false,
 			WantAssertionsSigned:       true,
@@ -188,7 +188,7 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string) (*AuthnReque
 		AssertionConsumerServiceURL: sp.AcsURL,
 		Destination:                 idpURL,
 		ID:                          fmt.Sprintf("id-%x", randomBytes(20)),
-		IssueInstant:                timeNow(),
+		IssueInstant:                TimeNow(),
 		Version:                     "2.0",
 		Issuer: Issuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
@@ -298,7 +298,7 @@ func (ivr *InvalidResponseError) Error() string {
 // failed. However, to discourage inadvertent disclosure the diagnostic
 // information, the Error() method returns a static string.
 func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs []string) (*Assertion, error) {
-	now := timeNow()
+	now := TimeNow()
 	retErr := &InvalidResponseError{
 		Now:      now,
 		Response: req.PostForm.Get("SAMLResponse"),
