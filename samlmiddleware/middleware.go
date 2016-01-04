@@ -31,7 +31,8 @@ import (
 // implementations of these functions issue and verify a signed cookie containing
 // information from the SAML assertion.
 type ServiceProviderMiddleware struct {
-	ServiceProvider *saml.ServiceProvider
+	ServiceProvider   *saml.ServiceProvider
+	AllowIDPInitiated bool
 }
 
 const cookieMaxAge = time.Hour // TODO(ross): must be configurable
@@ -152,6 +153,12 @@ func (m *ServiceProviderMiddleware) getPossibleRequestIDs(r *http.Request) []str
 		}
 		rv = append(rv, token.Claims["id"].(string))
 	}
+
+	// If IDP initiated requests are allowed, then we can expect an empty response ID.
+	if m.AllowIDPInitiated {
+		rv = append(rv, "")
+	}
+
 	return rv
 }
 
