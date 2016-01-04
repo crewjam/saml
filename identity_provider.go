@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"compress/flate"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/pem"
 	"encoding/xml"
 	"fmt"
@@ -388,7 +387,7 @@ func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
 	}
 
 	req.Assertion = &Assertion{
-		ID:           hex.EncodeToString(randomBytes(32)),
+		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
 		IssueInstant: timeNow(),
 		Version:      "2.0",
 		Issuer: &Issuer{
@@ -475,7 +474,7 @@ func (req *IdpAuthnRequest) MakeResponse() error {
 	}
 	req.Response = &Response{
 		Destination:  req.ACSEndpoint.Location,
-		ID:           fmt.Sprintf("id-%x", randomBytes(16)),
+		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
 		InResponseTo: req.Request.ID,
 		IssueInstant: timeNow(),
 		Version:      "2.0",

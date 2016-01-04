@@ -111,11 +111,11 @@ func (test *ServiceProviderMiddlewareTest) TestRequireAccountNoCreds(c *C) {
 
 	c.Assert(resp.Code, Equals, http.StatusFound)
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
-		"saml_ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy="+
-			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlIiwidXJpIjoiL2Zyb2IifQ.oXSHI6UFeIRK_IR40GFwHbqHzauuEmNEdVu-Eq7glHA"+
+		"saml_KCosLjAyNDY4Ojw+QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
+			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
 			"; Path=/saml2/acs; Max-Age=90")
 	c.Assert(resp.Header().Get("Location"), Equals,
-		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy&SAMLRequest=lJJRb9owFIX%2FSuR3YjsKGbOSSAw0CYltiGx76JvrXMBqYlPfm7b8%2Bzq0VXlq6ev18bnfOXY5H%2BjgtnA%2FAFLy1HcOKzYEp7xGi8rpHlCRUc3811plqVDH4Mkb37FkjgiBrHcL73DoITQQHqyBf9t1xQ5ER1Scy2lRyDzPU7cP%2Fi61nqPuu4xrgyxZxp3W6dHj%2FYZtjynFAzzY29SH%2FTjgcevOdsBHjIxvobUBDPGm%2BcOS1bJitp0IITKRi0LMhBZGgBQyk7ks5ExqaSREIeIAK4ekHVUsE3I6kdlEyL9Cquk3Jb7fsGTzGu%2BHda11%2B4qx5D8EPBPG%2BKwuzy7hmqr0W0Es%2BelDr%2Blj%2BTiJOXZnqQJHlk6s%2FqzIHki3mnTJX8Dq8nf0WS03vrPm9MUX7Tr%2FuAigCSpGYQBWXw9MQTu0EbvklwR1yS%2B%2FWP0cAAD%2F%2Fw%3D%3D")
+		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw%2BQEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJBj9MwEIX%2FSuR747GVhsVKIpWtkCotsGqAAzfjzLYWiV08E6D%2FHqeA6Am61%2FHMm%2B89T7OZ%2BRj2%2BHVG4uLHNAZqxZyCiZY8mWAnJMPO9Js3D0aXYE4pcnRxFMWGCBP7GO5joHnC1GP65h1%2B2D%2B04sh8IiOlWte1qqqqDIcUv5Q%2BSrLTqKV1JIpt3umDXTT%2BTvjhVHJ%2BoKP%2FXMZ0WAoyb33yI8oFQ8s9Dj6hY9n370Sx27bCDysA0FBBDXdgwQEqUFpVqlZ3yiqnUIPWutJ1HiCacReIbeBWaFDrldIrUO9BmfULAy8%2FieLxt81XPgw%2BHFohio%2BY6EKaYxBdc1FJt0Rm%2FwQlitcxTZb%2F3b5Usp%2BnS6vBwJ7PovtfoBOyHSzbRv4C65q3WWe3fYyjd%2Bdn%2Fuw4xu%2F3CS1jKzjNKLrbgTnZQD5jN%2FKaoGvk9al1PwMAAP%2F%2F")
 }
 
 func (test *ServiceProviderMiddlewareTest) TestRequireAccountCreds(c *C) {
@@ -160,10 +160,11 @@ func (test *ServiceProviderMiddlewareTest) TestRequireAccountBadCreds(c *C) {
 	c.Assert(resp.Code, Equals, http.StatusFound)
 
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
-		"saml_ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy="+
-			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlIiwidXJpIjoiL2Zyb2IifQ.oXSHI6UFeIRK_IR40GFwHbqHzauuEmNEdVu-Eq7glHA"+
+		"saml_KCosLjAyNDY4Ojw+QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
+			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
 			"; Path=/saml2/acs; Max-Age=90")
-	c.Assert(resp.Header().Get("Location"), Equals, "https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy&SAMLRequest=lJJRb9owFIX%2FSuR3YjsKGbOSSAw0CYltiGx76JvrXMBqYlPfm7b8%2Bzq0VXlq6ev18bnfOXY5H%2BjgtnA%2FAFLy1HcOKzYEp7xGi8rpHlCRUc3811plqVDH4Mkb37FkjgiBrHcL73DoITQQHqyBf9t1xQ5ER1Scy2lRyDzPU7cP%2Fi61nqPuu4xrgyxZxp3W6dHj%2FYZtjynFAzzY29SH%2FTjgcevOdsBHjIxvobUBDPGm%2BcOS1bJitp0IITKRi0LMhBZGgBQyk7ks5ExqaSREIeIAK4ekHVUsE3I6kdlEyL9Cquk3Jb7fsGTzGu%2BHda11%2B4qx5D8EPBPG%2BKwuzy7hmqr0W0Es%2BelDr%2Blj%2BTiJOXZnqQJHlk6s%2FqzIHki3mnTJX8Dq8nf0WS03vrPm9MUX7Tr%2FuAigCSpGYQBWXw9MQTu0EbvklwR1yS%2B%2FWP0cAAD%2F%2Fw%3D%3D")
+	c.Assert(resp.Header().Get("Location"), Equals,
+		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw%2BQEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJBj9MwEIX%2FSuR747GVhsVKIpWtkCotsGqAAzfjzLYWiV08E6D%2FHqeA6Am61%2FHMm%2B89T7OZ%2BRj2%2BHVG4uLHNAZqxZyCiZY8mWAnJMPO9Js3D0aXYE4pcnRxFMWGCBP7GO5joHnC1GP65h1%2B2D%2B04sh8IiOlWte1qqqqDIcUv5Q%2BSrLTqKV1JIpt3umDXTT%2BTvjhVHJ%2BoKP%2FXMZ0WAoyb33yI8oFQ8s9Dj6hY9n370Sx27bCDysA0FBBDXdgwQEqUFpVqlZ3yiqnUIPWutJ1HiCacReIbeBWaFDrldIrUO9BmfULAy8%2FieLxt81XPgw%2BHFohio%2BY6EKaYxBdc1FJt0Rm%2FwQlitcxTZb%2F3b5Usp%2BnS6vBwJ7PovtfoBOyHSzbRv4C65q3WWe3fYyjd%2Bdn%2Fuw4xu%2F3CS1jKzjNKLrbgTnZQD5jN%2FKaoGvk9al1PwMAAP%2F%2F")
 }
 
 func (test *ServiceProviderMiddlewareTest) TestRequireAccountExpiredCreds(c *C) {
@@ -186,11 +187,12 @@ func (test *ServiceProviderMiddlewareTest) TestRequireAccountExpiredCreds(c *C) 
 
 	c.Assert(resp.Code, Equals, http.StatusFound)
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
-		"saml_ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy="+
-			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlIiwidXJpIjoiL2Zyb2IifQ.oXSHI6UFeIRK_IR40GFwHbqHzauuEmNEdVu-Eq7glHA"+
+		"saml_KCosLjAyNDY4Ojw+QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
+			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
 			"; Path=/saml2/acs; Max-Age=90")
 
-	c.Assert(resp.Header().Get("Location"), Equals, "https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy&SAMLRequest=lJJRb9owFIX%2FSuR3YjsKGbOSSAw0CYltiGx76JvrXMBqYlPfm7b8%2Bzq0VXlq6ev18bnfOXY5H%2BjgtnA%2FAFLy1HcOKzYEp7xGi8rpHlCRUc3811plqVDH4Mkb37FkjgiBrHcL73DoITQQHqyBf9t1xQ5ER1Scy2lRyDzPU7cP%2Fi61nqPuu4xrgyxZxp3W6dHj%2FYZtjynFAzzY29SH%2FTjgcevOdsBHjIxvobUBDPGm%2BcOS1bJitp0IITKRi0LMhBZGgBQyk7ks5ExqaSREIeIAK4ekHVUsE3I6kdlEyL9Cquk3Jb7fsGTzGu%2BHda11%2B4qx5D8EPBPG%2BKwuzy7hmqr0W0Es%2BelDr%2Blj%2BTiJOXZnqQJHlk6s%2FqzIHki3mnTJX8Dq8nf0WS03vrPm9MUX7Tr%2FuAigCSpGYQBWXw9MQTu0EbvklwR1yS%2B%2FWP0cAAD%2F%2Fw%3D%3D")
+	c.Assert(resp.Header().Get("Location"), Equals,
+		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw%2BQEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJBj9MwEIX%2FSuR747GVhsVKIpWtkCotsGqAAzfjzLYWiV08E6D%2FHqeA6Am61%2FHMm%2B89T7OZ%2BRj2%2BHVG4uLHNAZqxZyCiZY8mWAnJMPO9Js3D0aXYE4pcnRxFMWGCBP7GO5joHnC1GP65h1%2B2D%2B04sh8IiOlWte1qqqqDIcUv5Q%2BSrLTqKV1JIpt3umDXTT%2BTvjhVHJ%2BoKP%2FXMZ0WAoyb33yI8oFQ8s9Dj6hY9n370Sx27bCDysA0FBBDXdgwQEqUFpVqlZ3yiqnUIPWutJ1HiCacReIbeBWaFDrldIrUO9BmfULAy8%2FieLxt81XPgw%2BHFohio%2BY6EKaYxBdc1FJt0Rm%2FwQlitcxTZb%2F3b5Usp%2BnS6vBwJ7PovtfoBOyHSzbRv4C65q3WWe3fYyjd%2Bdn%2Fuw4xu%2F3CS1jKzjNKLrbgTnZQD5jN%2FKaoGvk9al1PwMAAP%2F%2F")
 }
 
 func (test *ServiceProviderMiddlewareTest) TestRequireAccountPanicOnRequestToACS(c *C) {
@@ -291,11 +293,11 @@ func (test *ServiceProviderMiddlewareTest) TestRequireAttributeMissingAccount(c 
 func (test *ServiceProviderMiddlewareTest) TestCanParseResponse(c *C) {
 	v := &url.Values{}
 	v.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	v.Set("RelayState", "ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy")
+	v.Set("RelayState", "KCosLjAyNDY4Ojw+QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6")
 	req, _ := http.NewRequest("POST", "/saml2/acs", bytes.NewReader([]byte(v.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Cookie", ""+
-		"saml_ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy="+
+		"saml_KCosLjAyNDY4Ojw+QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 		"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlIiwidXJpIjoiL2Zyb2IifQ.oXSHI6UFeIRK_IR40GFwHbqHzauuEmNEdVu-Eq7glHA")
 
 	resp := httptest.NewRecorder()
@@ -306,7 +308,7 @@ func (test *ServiceProviderMiddlewareTest) TestCanParseResponse(c *C) {
 
 	c.Assert(resp.Header().Get("Location"), Equals, "/frob")
 	c.Assert(resp.Header()["Set-Cookie"], DeepEquals, []string{
-		"saml_ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy=",
+		"saml_KCosLjAyNDY4Ojw+QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6=",
 		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; " +
 			"Path=/; Max-Age=3600",
 	})

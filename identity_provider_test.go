@@ -185,13 +185,13 @@ func (test *IdentityProviderTest) TestCanHandleRequestWithNewSession(c *C) {
 
 	requestURL, err := test.SP.MakeRedirectAuthenticationRequest("ThisIsTheRelayState")
 	c.Assert(err, IsNil)
-	c.Assert(requestURL.String(), Equals, "https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJBayoxFIX%2FypC9JhnU5wszAz7lgWCLaNtFd5fMbQ1MkmnunVb%2FfUfbUqEgdhs%2BTr5zkmLW8S5s8KVD4mzvm0Cl6FIwEciRCeCRDFuznd2sTD5Upk2Ro42NyGZEmNjFMI%2BBOo9pi%2BnVWbzfrEqxY27JSEntEPfg2waHNnpJ4JtcgiWRLfoLXYBjwDfu6p%2B8JIoiWy5K4eqBUipXIzVRUwXKKtRK53qkJ3qqQVuNPUjU4TIQQ%2BBS5EqPBzofKH2ntBn%2FMervo8jWnyX%2BuVC78FwKkT1gopNKX1JUxSklXTMIfM0gsv8xeeDL%2BPGk7%2FF0Qg0GdnwQ1cW5PDLUwFDID6uquO1Dlot1bJw9%2FPLRmia%2BzRMCYyk4dSiq6205QSDXOxfy3KAq5Pkvqt4DAAD%2F%2Fw%3D%3D")
+	c.Assert(requestURL.String(), Equals, "https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJRqxMxEIX%2FypL3NpPQW69hd6HeIhSqlFZ98G3IjjawSdbMrLb%2F3m1VLAilvoaTM985M%2FVqlGPa07eRWKpT7BM3aizJZeTALmEkduLdYfVu6%2Bwc3FCyZJ97Va2YqUjI6SUnHiOVA5XvwdPH%2FbZRR5GBndY8zOmEcehp7nPUjLG3Gj2raj0NDAkvBn%2FloftXr5mzqjbrRoVuBgAWFrCEZ0DwQAaMNQuzNM8GjTdkwVq7sMvpA%2FNIm8SCSRplwTzNjJ2B%2BQDGPb1y8Pqzqna%2Fw7wJqQvpa6NU9YkKX5GmsKqtry7lkWLwTx2qeptLRLkvv7xMeb5cpY6SBDmr9m5tkQQ7FKz1L6q2fj%2BZbNa73Ad%2F%2Fs%2Fl9X3%2B8VIIhRolZSTVPk4rBROHibnWtwRtrW%2Bvqf0ZAAD%2F%2Fw%3D%3D")
 
 	r, _ := http.NewRequest("GET", requestURL.String(), nil)
 	test.IDP.ServeSSO(w, r)
 	c.Assert(w.Code, Equals, 200)
 	c.Assert(string(w.Body.Bytes()), Equals, ""+
-		"RelayState: ThisIsTheRelayState\nSAMLRequest: <AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AssertionConsumerServiceURL=\"https://sp.example.com/saml2/acs\" Destination=\"https://idp.example.com/saml/sso\" ID=\"id-00020406080a0c0e10121416181a1c1e\" IssueInstant=\"2015-12-01T01:57:09Z\" ProtocolBinding=\"\" Version=\"2.0\"><Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</Issuer><NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy></AuthnRequest>")
+		"RelayState: ThisIsTheRelayState\nSAMLRequest: <AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AssertionConsumerServiceURL=\"https://sp.example.com/saml2/acs\" Destination=\"https://idp.example.com/saml/sso\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" IssueInstant=\"2015-12-01T01:57:09Z\" ProtocolBinding=\"\" Version=\"2.0\"><Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</Issuer><NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy></AuthnRequest>")
 }
 
 func (test *IdentityProviderTest) TestCanHandleRequestWithExistingSession(c *C) {
@@ -207,7 +207,8 @@ func (test *IdentityProviderTest) TestCanHandleRequestWithExistingSession(c *C) 
 	w := httptest.NewRecorder()
 	requestURL, err := test.SP.MakeRedirectAuthenticationRequest("ThisIsTheRelayState")
 	c.Assert(err, IsNil)
-	c.Assert(requestURL.String(), Equals, "https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJBayoxFIX%2FypC9JhnU5wszAz7lgWCLaNtFd5fMbQ1MkmnunVb%2FfUfbUqEgdhs%2BTr5zkmLW8S5s8KVD4mzvm0Cl6FIwEciRCeCRDFuznd2sTD5Upk2Ro42NyGZEmNjFMI%2BBOo9pi%2BnVWbzfrEqxY27JSEntEPfg2waHNnpJ4JtcgiWRLfoLXYBjwDfu6p%2B8JIoiWy5K4eqBUipXIzVRUwXKKtRK53qkJ3qqQVuNPUjU4TIQQ%2BBS5EqPBzofKH2ntBn%2FMervo8jWnyX%2BuVC78FwKkT1gopNKX1JUxSklXTMIfM0gsv8xeeDL%2BPGk7%2FF0Qg0GdnwQ1cW5PDLUwFDID6uquO1Dlot1bJw9%2FPLRmia%2BzRMCYyk4dSiq6205QSDXOxfy3KAq5Pkvqt4DAAD%2F%2Fw%3D%3D")
+	c.Assert(requestURL.String(), Equals,
+		"https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJRqxMxEIX%2FypL3NpPQW69hd6HeIhSqlFZ98G3IjjawSdbMrLb%2F3m1VLAilvoaTM985M%2FVqlGPa07eRWKpT7BM3aizJZeTALmEkduLdYfVu6%2Bwc3FCyZJ97Va2YqUjI6SUnHiOVA5XvwdPH%2FbZRR5GBndY8zOmEcehp7nPUjLG3Gj2raj0NDAkvBn%2FloftXr5mzqjbrRoVuBgAWFrCEZ0DwQAaMNQuzNM8GjTdkwVq7sMvpA%2FNIm8SCSRplwTzNjJ2B%2BQDGPb1y8Pqzqna%2Fw7wJqQvpa6NU9YkKX5GmsKqtry7lkWLwTx2qeptLRLkvv7xMeb5cpY6SBDmr9m5tkQQ7FKz1L6q2fj%2BZbNa73Ad%2F%2Fs%2Fl9X3%2B8VIIhRolZSTVPk4rBROHibnWtwRtrW%2Bvqf0ZAAD%2F%2Fw%3D%3D")
 
 	r, _ := http.NewRequest("GET", requestURL.String(), nil)
 	test.IDP.ServeSSO(w, r)
@@ -429,7 +430,7 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 	c.Assert(err, IsNil)
 
 	c.Assert(req.Assertion, DeepEquals, &Assertion{
-		ID:           "00020406080a0c0e10121416181a1c1e20222426282a2c2e30323436383a3c3e",
+		ID:           "id-00020406080a0c0e10121416181a1c1e20222426",
 		IssueInstant: timeNow(),
 		Version:      "2.0",
 		Issuer: &Issuer{
@@ -649,7 +650,7 @@ func (test *IdentityProviderTest) TestMakeResponse(c *C) {
 
 	c.Assert(req.Response, DeepEquals, &Response{
 		Destination:  "https://sp.example.com/saml2/acs",
-		ID:           "id-40424446484a4c4e50525456585a5c5e",
+		ID:           "id-282a2c2e30323436383a3c3e40424446484a4c4e",
 		InResponseTo: "id-00020406080a0c0e10121416181a1c1e",
 		IssueInstant: timeNow(),
 		Version:      "2.0",

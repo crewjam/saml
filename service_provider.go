@@ -187,7 +187,7 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string) (*AuthnReque
 	req := AuthnRequest{
 		AssertionConsumerServiceURL: sp.AcsURL,
 		Destination:                 idpURL,
-		ID:                          fmt.Sprintf("id-%x", randomBytes(16)),
+		ID:                          fmt.Sprintf("id-%x", randomBytes(20)),
 		IssueInstant:                timeNow(),
 		Version:                     "2.0",
 		Issuer: Issuer{
