@@ -50,11 +50,8 @@ func New(opts Options) (*Server, error) {
 	})
 
 	mux.Handle("/login", s.HandleLogin)
-
-	//mux.Handle("/login/:shortcut", s.HandleIDPInitiated)
-	//mux.Handle("/login/:shortcut/*", s.HandleIDPInitiated)
-
-	//mux.Post("/password", s.HandleSetPassword)
+	mux.Handle("/login/:shortcut", s.HandleIDPInitiated)
+	mux.Handle("/login/:shortcut/*", s.HandleIDPInitiated)
 
 	mux.Get("/services/", s.HandleListServices)
 	mux.Get("/services/:id", s.HandleGetService)
@@ -66,19 +63,14 @@ func New(opts Options) (*Server, error) {
 	mux.Put("/users/:id", s.HandlePutUser)
 	mux.Delete("/users/:id", s.HandleDeleteUser)
 
-	//mux.Get("/groups/", s.HandleListGroups)
-	//mux.Get("/groups/:id", s.HandleGetGroup)
-	//mux.Put("/groups/:id", s.HandlePutGroup)
-	//mux.Delete("/groups/:id", s.HandleDeleteGroup)
-
 	mux.Get("/sessions/", s.HandleListSessions)
 	mux.Get("/sessions/:id", s.HandleGetSession)
 	mux.Delete("/sessions/:id", s.HandleDeleteSession)
 
-	//mux.Get("/shortcuts/", s.HandleListShortcuts)
-	//mux.Get("/shortcuts/:id", s.HandleGetShortcut)
-	//mux.Put("/shortcuts/:id", s.HandlePutShortcut)
-	//mux.Delete("/shortcuts/:id", s.HandleDeleteShortcut)
+	mux.Get("/shortcuts/", s.HandleListShortcuts)
+	mux.Get("/shortcuts/:id", s.HandleGetShortcut)
+	mux.Put("/shortcuts/:id", s.HandlePutShortcut)
+	mux.Delete("/shortcuts/:id", s.HandleDeleteShortcut)
 
 	if err := s.initializeServices(); err != nil {
 		return nil, err
