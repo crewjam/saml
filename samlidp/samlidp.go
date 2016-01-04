@@ -56,6 +56,7 @@ func New(opts Options) (*Server, error) {
 	mux.Get("/services/", s.HandleListServices)
 	mux.Get("/services/:id", s.HandleGetService)
 	mux.Put("/services/:id", s.HandlePutService)
+	mux.Post("/services/:id", s.HandlePutService)
 	mux.Delete("/services/:id", s.HandleDeleteService)
 
 	mux.Get("/users/", s.HandleListUsers)

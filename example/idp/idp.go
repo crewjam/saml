@@ -1,20 +1,22 @@
 package main
 
 import (
-	"encoding/xml"
 	"flag"
 	"log"
-	"net/http"
 
-	"github.com/crewjam/saml"
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/zenazn/goji"
+
+	"github.com/crewjam/saml/samlidp"
 )
 
 func main() {
 	baseURL := flag.String("idp", "", "The URL to the IDP")
 	flag.Parse()
 
-	idp := saml.IdentityProvider{
+	idpServer, err := samlidp.New(samlidp.Options{
+		URL: *baseURL,
 		Key: `-----BEGIN RSA PRIVATE KEY-----
 MIIEpAIBAAKCAQEA0OhbMuizgtbFOfwbK7aURuXhZx6VRuAs3nNibiuifwCGz6u9
 yy7bOR0P+zqN0YkjxaokqFgra7rXKCdeABmoLqCC0U+cGmLNwPOOA0PaD5q5xKhQ
@@ -61,52 +63,38 @@ y/+1gHg2pxjGnhRBN6el/gSaDiySIMKbilDrffuvxiCfbpPN0NRRiPJhd2ay9KuL
 GFsTG2DLxnvr4GdN1BSr0Uu/KV3adj47WkXVPeMYQti/bQmxQB8tRFhrw80qakTL
 UzreO96WzlBBMtY=
 -----END CERTIFICATE-----`,
-		MetadataURL:      *baseURL + "/metadata",
-		SSOURL:           *baseURL + "/",
-		ServiceProviders: map[string]*saml.Metadata{},
+		Store: &samlidp.MemoryStore{},
+	})
+	if err != nil {
+		log.Fatalf("%s", err)
 	}
 
-	sessionProvider := saml.DefaultSessionProvider{
-		Users:    &saml.MemoryUserStore{},
-		Sessions: &saml.MemorySessionStore{},
+	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("hunter2"), bcrypt.DefaultCost)
+	err = idpServer.Store.Put("/users/alice", samlidp.User{Name: "alice",
+		HashedPassword: hashedPassword,
+		Groups:         []string{"Administrators", "Users"},
+		Email:          "alice@example.com",
+		CommonName:     "Alice Smith",
+		Surname:        "Smith",
+		GivenName:      "Alice",
+	})
+	if err != nil {
+		log.Fatalf("%s", err)
 	}
-	idp.SessionProvider = &sessionProvider
 
-	sessionProvider.Users.Put(saml.User{Name: "alice",
-		Password:   "hunter2",
-		Groups:     []string{"Administrators", "Users"},
-		Email:      "alice@example.com",
-		CommonName: "Alice Smith",
-		Surname:    "Smith",
-		GivenName:  "Alice",
+	err = idpServer.Store.Put("/users/bob", samlidp.User{
+		Name:           "bob",
+		HashedPassword: hashedPassword,
+		Groups:         []string{"Users"},
+		Email:          "bob@example.com",
+		CommonName:     "Bob Smith",
+		Surname:        "Smith",
+		GivenName:      "Bob",
 	})
-	sessionProvider.Users.Put(saml.User{
-		Name:       "bob",
-		Password:   "hunter2",
-		Groups:     []string{"Users"},
-		Email:      "bob@example.com",
-		CommonName: "Bob Smith",
-		Surname:    "Smith",
-		GivenName:  "Bob",
-	})
+	if err != nil {
+		log.Fatalf("%s", err)
+	}
 
-	goji.Post("/register-sp", func(w http.ResponseWriter, r *http.Request) {
-		ed := saml.EntitiesDescriptor{}
-		if err := xml.NewDecoder(r.Body).Decode(&ed); err != nil {
-			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-			return
-		}
-		log.Printf("entityMetadata: %#v", ed)
-		for _, entityMetadata := range ed.EntityDescriptor {
-			log.Printf("entityMetadata: %#v", entityMetadata)
-			if entityMetadata.SPSSODescriptor != nil {
-				idp.ServiceProviders[entityMetadata.EntityID] = entityMetadata
-				log.Printf("registered service provider: %s", entityMetadata.EntityID)
-			}
-		}
-	})
-
-	goji.Get("/metadata", idp.ServeMetadata)
-	goji.Handle("/", idp.ServeSSO)
+	goji.Handle("/*", idpServer)
 	goji.Serve()
 }

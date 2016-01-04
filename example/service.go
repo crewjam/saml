@@ -131,12 +131,14 @@ OwJlNCASPZRH/JmF8tX0hoHuAQ==
 	}
 
 	// register with the service provider
-	spMetadataBuf, _ := xml.MarshalIndent(saml.EntitiesDescriptor{
-		EntityDescriptor: []*saml.Metadata{samlsp.Metadata()},
-	}, "", "  ")
-	http.Post(strings.Replace(*idpMetadataURL, "/metadata", "/register-sp", 1), "text/xml", bytes.NewReader(spMetadataBuf))
+	spMetadataBuf, _ := xml.MarshalIndent(samlsp.Metadata(), "", "  ")
+	http.Post(strings.Replace(*idpMetadataURL, "/metadata", "/services/sp", 1),
+		"text/xml", bytes.NewReader(spMetadataBuf))
 
-	samlMiddleware := &samlmiddleware.ServiceProviderMiddleware{ServiceProvider: samlsp}
+	samlMiddleware := &samlmiddleware.ServiceProviderMiddleware{
+		ServiceProvider:   samlsp,
+		AllowIDPInitiated: true,
+	}
 	goji.Handle("/saml/*", samlMiddleware)
 
 	authMux := web.New()
