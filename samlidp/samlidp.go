@@ -3,6 +3,7 @@ package samlidp
 
 import (
 	"net/http"
+	"sync"
 
 	"github.com/crewjam/saml"
 	"github.com/zenazn/goji/web"
@@ -17,11 +18,12 @@ type Options struct {
 
 type Server struct {
 	http.Handler
-	IDP   saml.IdentityProvider
-	Store Store
+	idpConfigMu sync.RWMutex
+	IDP         saml.IdentityProvider
+	Store       Store
 }
 
-func New(opts Options) *Server {
+func New(opts Options) (*Server, error) {
 	mux := web.New()
 	s := &Server{
 		IDP: saml.IdentityProvider{
@@ -36,8 +38,16 @@ func New(opts Options) *Server {
 	}
 	s.IDP.SessionProvider = s
 
-	mux.Get("/metadata", s.IDP.ServeMetadata)
-	mux.Handle("/sso", s.IDP.ServeSSO)
+	mux.Get("/metadata", func(w http.ResponseWriter, r *http.Request) {
+		s.idpConfigMu.RLock()
+		defer s.idpConfigMu.RUnlock()
+		s.IDP.ServeMetadata(w, r)
+	})
+	mux.Handle("/sso", func(w http.ResponseWriter, r *http.Request) {
+		s.idpConfigMu.RLock()
+		defer s.idpConfigMu.RUnlock()
+		s.IDP.ServeSSO(w, r)
+	})
 
 	mux.Handle("/login", s.HandleLogin)
 
@@ -46,10 +56,10 @@ func New(opts Options) *Server {
 
 	//mux.Post("/password", s.HandleSetPassword)
 
-	//mux.Get("/services/", s.HandleListService)
-	//mux.Get("/services/:id", s.HandleGetService)
-	//mux.Put("/services/:id", s.HandlePutService)
-	//mux.Delete("/services/:id", s.HandleDeleteService)
+	mux.Get("/services/", s.HandleListServices)
+	mux.Get("/services/:id", s.HandleGetService)
+	mux.Put("/services/:id", s.HandlePutService)
+	mux.Delete("/services/:id", s.HandleDeleteService)
 
 	mux.Get("/users/", s.HandleListUsers)
 	mux.Get("/users/:id", s.HandleGetUser)
@@ -70,5 +80,9 @@ func New(opts Options) *Server {
 	//mux.Put("/shortcuts/:id", s.HandlePutShortcut)
 	//mux.Delete("/shortcuts/:id", s.HandleDeleteShortcut)
 
-	return s
+	if err := s.initializeServices(); err != nil {
+		return nil, err
+	}
+
+	return s, nil
 }
