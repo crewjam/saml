@@ -386,12 +386,6 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if assertion.Issuer.Value != sp.IDPMetadata.EntityID {
 		return fmt.Errorf("issuer is not %q", sp.IDPMetadata.EntityID)
 	}
-	if assertion.Subject.NameID.NameQualifier != sp.IDPMetadata.EntityID {
-		return fmt.Errorf("Subject NameID NameQualifier is not %q", sp.IDPMetadata.EntityID)
-	}
-	if assertion.Subject.NameID.SPNameQualifier != sp.MetadataURL {
-		return fmt.Errorf("Subject NameID SPNameQualifier is not %q", sp.MetadataURL)
-	}
 	requestIDvalid := false
 	for _, possibleRequestID := range possibleRequestIDs {
 		if assertion.Subject.SubjectConfirmation.SubjectConfirmationData.InResponseTo == possibleRequestID {

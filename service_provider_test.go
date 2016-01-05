@@ -378,12 +378,12 @@ func (test *ServiceProviderTest) TestInvalidAssertions(c *C) {
 
 	assertion.Subject.NameID.NameQualifier = "bob"
 	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
-	c.Assert(err.Error(), Equals, "Subject NameID NameQualifier is not \"https://idp.testshib.org/idp/shibboleth\"")
+	c.Assert(err, IsNil) // not verified
 	xml.Unmarshal(assertionBuf, &assertion)
 
 	assertion.Subject.NameID.SPNameQualifier = "bob"
 	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
-	c.Assert(err.Error(), Equals, "Subject NameID SPNameQualifier is not \"https://15661444.ngrok.io/saml2/metadata\"")
+	c.Assert(err, IsNil) // not verified
 	xml.Unmarshal(assertionBuf, &assertion)
 
 	err = s.validateAssertion(&assertion, []string{"any request id"}, TimeNow())
