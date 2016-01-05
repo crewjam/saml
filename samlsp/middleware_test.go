@@ -126,11 +126,11 @@ func (test *MiddlewareTest) TestRequireAccountNoCreds(c *C) {
 
 	c.Assert(resp.Code, Equals, http.StatusFound)
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
-		"saml_KCosLjAyNDY4Ojw+QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
+		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
 			"; Path=/saml2/acs; Max-Age=90")
 	c.Assert(resp.Header().Get("Location"), Equals,
-		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw%2BQEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJBj9MwEIX%2FSuR747GVhsVKIpWtkCotsGqAAzfjzLYWiV08E6D%2FHqeA6Am61%2FHMm%2B89T7OZ%2BRj2%2BHVG4uLHNAZqxZyCiZY8mWAnJMPO9Js3D0aXYE4pcnRxFMWGCBP7GO5joHnC1GP65h1%2B2D%2B04sh8IiOlWte1qqqqDIcUv5Q%2BSrLTqKV1JIpt3umDXTT%2BTvjhVHJ%2BoKP%2FXMZ0WAoyb33yI8oFQ8s9Dj6hY9n370Sx27bCDysA0FBBDXdgwQEqUFpVqlZ3yiqnUIPWutJ1HiCacReIbeBWaFDrldIrUO9BmfULAy8%2FieLxt81XPgw%2BHFohio%2BY6EKaYxBdc1FJt0Rm%2FwQlitcxTZb%2F3b5Usp%2BnS6vBwJ7PovtfoBOyHSzbRv4C65q3WWe3fYyjd%2Bdn%2Fuw4xu%2F3CS1jKzjNKLrbgTnZQD5jN%2FKaoGvk9al1PwMAAP%2F%2F")
+		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJBj9MwEIX%2FSuR747GVhsVKIpWtkCotsGqAAzfjzLYWiV08E6D%2FHqeA6Am61%2FHMm%2B89T7OZ%2BRj2%2BHVG4uLHNAZqxZyCiZY8mWAnJMPO9Js3D0aXYE4pcnRxFMWGCBP7GO5joHnC1GP65h1%2B2D%2B04sh8IiOlWte1qqqqDIcUv5Q%2BSrLTqKV1JIpt3umDXTT%2BTvjhVHJ%2BoKP%2FXMZ0WAoyb33yI8oFQ8s9Dj6hY9n370Sx27bCDysA0FBBDXdgwQEqUFpVqlZ3yiqnUIPWutJ1HiCacReIbeBWaFDrldIrUO9BmfULAy8%2FieLxt81XPgw%2BHFohio%2BY6EKaYxBdc1FJt0Rm%2FwQlitcxTZb%2F3b5Usp%2BnS6vBwJ7PovtfoBOyHSzbRv4C65q3WWe3fYyjd%2Bdn%2Fuw4xu%2F3CS1jKzjNKLrbgTnZQD5jN%2FKaoGvk9al1PwMAAP%2F%2F")
 }
 
 func (test *MiddlewareTest) TestRequireAccountCreds(c *C) {
@@ -175,11 +175,11 @@ func (test *MiddlewareTest) TestRequireAccountBadCreds(c *C) {
 	c.Assert(resp.Code, Equals, http.StatusFound)
 
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
-		"saml_KCosLjAyNDY4Ojw+QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
+		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
 			"; Path=/saml2/acs; Max-Age=90")
 	c.Assert(resp.Header().Get("Location"), Equals,
-		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw%2BQEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJBj9MwEIX%2FSuR747GVhsVKIpWtkCotsGqAAzfjzLYWiV08E6D%2FHqeA6Am61%2FHMm%2B89T7OZ%2BRj2%2BHVG4uLHNAZqxZyCiZY8mWAnJMPO9Js3D0aXYE4pcnRxFMWGCBP7GO5joHnC1GP65h1%2B2D%2B04sh8IiOlWte1qqqqDIcUv5Q%2BSrLTqKV1JIpt3umDXTT%2BTvjhVHJ%2BoKP%2FXMZ0WAoyb33yI8oFQ8s9Dj6hY9n370Sx27bCDysA0FBBDXdgwQEqUFpVqlZ3yiqnUIPWutJ1HiCacReIbeBWaFDrldIrUO9BmfULAy8%2FieLxt81XPgw%2BHFohio%2BY6EKaYxBdc1FJt0Rm%2FwQlitcxTZb%2F3b5Usp%2BnS6vBwJ7PovtfoBOyHSzbRv4C65q3WWe3fYyjd%2Bdn%2Fuw4xu%2F3CS1jKzjNKLrbgTnZQD5jN%2FKaoGvk9al1PwMAAP%2F%2F")
+		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJBj9MwEIX%2FSuR747GVhsVKIpWtkCotsGqAAzfjzLYWiV08E6D%2FHqeA6Am61%2FHMm%2B89T7OZ%2BRj2%2BHVG4uLHNAZqxZyCiZY8mWAnJMPO9Js3D0aXYE4pcnRxFMWGCBP7GO5joHnC1GP65h1%2B2D%2B04sh8IiOlWte1qqqqDIcUv5Q%2BSrLTqKV1JIpt3umDXTT%2BTvjhVHJ%2BoKP%2FXMZ0WAoyb33yI8oFQ8s9Dj6hY9n370Sx27bCDysA0FBBDXdgwQEqUFpVqlZ3yiqnUIPWutJ1HiCacReIbeBWaFDrldIrUO9BmfULAy8%2FieLxt81XPgw%2BHFohio%2BY6EKaYxBdc1FJt0Rm%2FwQlitcxTZb%2F3b5Usp%2BnS6vBwJ7PovtfoBOyHSzbRv4C65q3WWe3fYyjd%2Bdn%2Fuw4xu%2F3CS1jKzjNKLrbgTnZQD5jN%2FKaoGvk9al1PwMAAP%2F%2F")
 }
 
 func (test *MiddlewareTest) TestRequireAccountExpiredCreds(c *C) {
@@ -202,12 +202,12 @@ func (test *MiddlewareTest) TestRequireAccountExpiredCreds(c *C) {
 
 	c.Assert(resp.Code, Equals, http.StatusFound)
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
-		"saml_KCosLjAyNDY4Ojw+QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
+		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
 			"; Path=/saml2/acs; Max-Age=90")
 
 	c.Assert(resp.Header().Get("Location"), Equals,
-		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw%2BQEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJBj9MwEIX%2FSuR747GVhsVKIpWtkCotsGqAAzfjzLYWiV08E6D%2FHqeA6Am61%2FHMm%2B89T7OZ%2BRj2%2BHVG4uLHNAZqxZyCiZY8mWAnJMPO9Js3D0aXYE4pcnRxFMWGCBP7GO5joHnC1GP65h1%2B2D%2B04sh8IiOlWte1qqqqDIcUv5Q%2BSrLTqKV1JIpt3umDXTT%2BTvjhVHJ%2BoKP%2FXMZ0WAoyb33yI8oFQ8s9Dj6hY9n370Sx27bCDysA0FBBDXdgwQEqUFpVqlZ3yiqnUIPWutJ1HiCacReIbeBWaFDrldIrUO9BmfULAy8%2FieLxt81XPgw%2BHFohio%2BY6EKaYxBdc1FJt0Rm%2FwQlitcxTZb%2F3b5Usp%2BnS6vBwJ7PovtfoBOyHSzbRv4C65q3WWe3fYyjd%2Bdn%2Fuw4xu%2F3CS1jKzjNKLrbgTnZQD5jN%2FKaoGvk9al1PwMAAP%2F%2F")
+		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJBj9MwEIX%2FSuR747GVhsVKIpWtkCotsGqAAzfjzLYWiV08E6D%2FHqeA6Am61%2FHMm%2B89T7OZ%2BRj2%2BHVG4uLHNAZqxZyCiZY8mWAnJMPO9Js3D0aXYE4pcnRxFMWGCBP7GO5joHnC1GP65h1%2B2D%2B04sh8IiOlWte1qqqqDIcUv5Q%2BSrLTqKV1JIpt3umDXTT%2BTvjhVHJ%2BoKP%2FXMZ0WAoyb33yI8oFQ8s9Dj6hY9n370Sx27bCDysA0FBBDXdgwQEqUFpVqlZ3yiqnUIPWutJ1HiCacReIbeBWaFDrldIrUO9BmfULAy8%2FieLxt81XPgw%2BHFohio%2BY6EKaYxBdc1FJt0Rm%2FwQlitcxTZb%2F3b5Usp%2BnS6vBwJ7PovtfoBOyHSzbRv4C65q3WWe3fYyjd%2Bdn%2Fuw4xu%2F3CS1jKzjNKLrbgTnZQD5jN%2FKaoGvk9al1PwMAAP%2F%2F")
 }
 
 func (test *MiddlewareTest) TestRequireAccountPanicOnRequestToACS(c *C) {
@@ -308,11 +308,11 @@ func (test *MiddlewareTest) TestRequireAttributeMissingAccount(c *C) {
 func (test *MiddlewareTest) TestCanParseResponse(c *C) {
 	v := &url.Values{}
 	v.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	v.Set("RelayState", "KCosLjAyNDY4Ojw+QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6")
+	v.Set("RelayState", "KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6")
 	req, _ := http.NewRequest("POST", "/saml2/acs", bytes.NewReader([]byte(v.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Cookie", ""+
-		"saml_KCosLjAyNDY4Ojw+QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
+		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 		"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTllNjE3NTNkNjRlOTI4YWY1YTdhMzQxYTk3ZjQyMGM5IiwidXJpIjoiL2Zyb2IifQ.RHNEmqXQcB_ncWZSPkhOL4Sx5hZFD6eHP1RJ0ZgUhuk")
 
 	resp := httptest.NewRecorder()
@@ -321,7 +321,7 @@ func (test *MiddlewareTest) TestCanParseResponse(c *C) {
 
 	c.Assert(resp.Header().Get("Location"), Equals, "/frob")
 	c.Assert(resp.Header()["Set-Cookie"], DeepEquals, []string{
-		"saml_KCosLjAyNDY4Ojw+QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6=",
+		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6=",
 		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6WyJNZSBNeXNlbGYgQW5kIEkiXSwiZWR1UGVyc29uQWZmaWxpYXRpb24iOlsiTWVtYmVyIiwiU3RhZmYiXSwiZWR1UGVyc29uRW50aXRsZW1lbnQiOlsidXJuOm1hY2U6ZGlyOmVudGl0bGVtZW50OmNvbW1vbi1saWItdGVybXMiXSwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6WyJteXNlbGZAdGVzdHNoaWIub3JnIl0sImVkdVBlcnNvblNjb3BlZEFmZmlsaWF0aW9uIjpbIk1lbWJlckB0ZXN0c2hpYi5vcmciLCJTdGFmZkB0ZXN0c2hpYi5vcmciXSwiZWR1UGVyc29uVGFyZ2V0ZWRJRCI6WyIiXSwiZXhwIjoxNDQ4OTM4NjI5LCJnaXZlbk5hbWUiOlsiTWUgTXlzZWxmIl0sInNuIjpbIkFuZCBJIl0sInRlbGVwaG9uZU51bWJlciI6WyI1NTUtNTU1NSJdLCJ1aWQiOlsibXlzZWxmIl19.mSuh3p0ldSrhF_F8y3g9S3HNrb8-TCIhMJQh7zi03Jw; " +
 			"Path=/; Max-Age=3600",
 	})
