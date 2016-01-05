@@ -137,13 +137,13 @@ func (test *MiddlewareTest) TestRequireAccountCreds(c *C) {
 	handler := test.Middleware.RequireAccount(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c.Assert(r.Header.Get("X-Saml-Telephonenumber"), Equals, "555-5555")
-			c.Assert(r.Header.Get("X-Saml-Edupersonscopedaffiliation"), Equals, "Staff@testshib.org")
+			c.Assert(r.Header["X-Saml-Edupersonscopedaffiliation"], DeepEquals, []string{"Member@testshib.org", "Staff@testshib.org"})
 			c.Assert(r.Header.Get("X-Saml-Sn"), Equals, "And I")
 			c.Assert(r.Header.Get("X-Saml-Edupersonentitlement"), Equals, "urn:mace:dir:entitlement:common-lib-terms")
 			c.Assert(r.Header.Get("X-Saml-Edupersontargetedid"), Equals, "")
 			c.Assert(r.Header.Get("X-Saml-Givenname"), Equals, "Me Myself")
 			c.Assert(r.Header.Get("X-Saml-Cn"), Equals, "Me Myself And I")
-			c.Assert(r.Header.Get("X-Saml-Edupersonaffiliation"), Equals, "Staff")
+			c.Assert(r.Header["X-Saml-Edupersonaffiliation"], DeepEquals, []string{"Member", "Staff"})
 			c.Assert(r.Header.Get("X-Saml-Uid"), Equals, "myself")
 			c.Assert(r.Header.Get("X-Saml-Edupersonprincipalname"), Equals, "myself@testshib.org")
 			w.WriteHeader(http.StatusTeapot)
@@ -151,7 +151,7 @@ func (test *MiddlewareTest) TestRequireAccountCreds(c *C) {
 
 	req, _ := http.NewRequest("GET", "/frob", nil)
 	req.Header.Set("Cookie", ""+
-		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; "+
+		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6WyJNZSBNeXNlbGYgQW5kIEkiXSwiZWR1UGVyc29uQWZmaWxpYXRpb24iOlsiTWVtYmVyIiwiU3RhZmYiXSwiZWR1UGVyc29uRW50aXRsZW1lbnQiOlsidXJuOm1hY2U6ZGlyOmVudGl0bGVtZW50OmNvbW1vbi1saWItdGVybXMiXSwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6WyJteXNlbGZAdGVzdHNoaWIub3JnIl0sImVkdVBlcnNvblNjb3BlZEFmZmlsaWF0aW9uIjpbIk1lbWJlckB0ZXN0c2hpYi5vcmciLCJTdGFmZkB0ZXN0c2hpYi5vcmciXSwiZWR1UGVyc29uVGFyZ2V0ZWRJRCI6WyIiXSwiZXhwIjoxNDQ4OTM4NjI5LCJnaXZlbk5hbWUiOlsiTWUgTXlzZWxmIl0sInNuIjpbIkFuZCBJIl0sInRlbGVwaG9uZU51bWJlciI6WyI1NTUtNTU1NSJdLCJ1aWQiOlsibXlzZWxmIl19.mSuh3p0ldSrhF_F8y3g9S3HNrb8-TCIhMJQh7zi03Jw; "+
 		"Path=/; Max-Age=3600")
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
@@ -195,7 +195,7 @@ func (test *MiddlewareTest) TestRequireAccountExpiredCreds(c *C) {
 
 	req, _ := http.NewRequest("GET", "/frob", nil)
 	req.Header.Set("Cookie", ""+
-		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; "+
+		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6WyJNZSBNeXNlbGYgQW5kIEkiXSwiZWR1UGVyc29uQWZmaWxpYXRpb24iOlsiTWVtYmVyIiwiU3RhZmYiXSwiZWR1UGVyc29uRW50aXRsZW1lbnQiOlsidXJuOm1hY2U6ZGlyOmVudGl0bGVtZW50OmNvbW1vbi1saWItdGVybXMiXSwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6WyJteXNlbGZAdGVzdHNoaWIub3JnIl0sImVkdVBlcnNvblNjb3BlZEFmZmlsaWF0aW9uIjpbIk1lbWJlckB0ZXN0c2hpYi5vcmciLCJTdGFmZkB0ZXN0c2hpYi5vcmciXSwiZWR1UGVyc29uVGFyZ2V0ZWRJRCI6WyIiXSwiZXhwIjoxNDQ4OTM4NjI5LCJnaXZlbk5hbWUiOlsiTWUgTXlzZWxmIl0sInNuIjpbIkFuZCBJIl0sInRlbGVwaG9uZU51bWJlciI6WyI1NTUtNTU1NSJdLCJ1aWQiOlsibXlzZWxmIl19.mSuh3p0ldSrhF_F8y3g9S3HNrb8-TCIhMJQh7zi03Jw; "+
 		"Path=/; Max-Age=3600")
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
@@ -230,7 +230,7 @@ func (test *MiddlewareTest) TestRejectRequestWithMagicHeader(c *C) {
 
 	req, _ := http.NewRequest("GET", "/frob", nil)
 	req.Header.Set("Cookie", ""+
-		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; "+
+		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6WyJNZSBNeXNlbGYgQW5kIEkiXSwiZWR1UGVyc29uQWZmaWxpYXRpb24iOlsiTWVtYmVyIiwiU3RhZmYiXSwiZWR1UGVyc29uRW50aXRsZW1lbnQiOlsidXJuOm1hY2U6ZGlyOmVudGl0bGVtZW50OmNvbW1vbi1saWItdGVybXMiXSwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6WyJteXNlbGZAdGVzdHNoaWIub3JnIl0sImVkdVBlcnNvblNjb3BlZEFmZmlsaWF0aW9uIjpbIk1lbWJlckB0ZXN0c2hpYi5vcmciLCJTdGFmZkB0ZXN0c2hpYi5vcmciXSwiZWR1UGVyc29uVGFyZ2V0ZWRJRCI6WyIiXSwiZXhwIjoxNDQ4OTM4NjI5LCJnaXZlbk5hbWUiOlsiTWUgTXlzZWxmIl0sInNuIjpbIkFuZCBJIl0sInRlbGVwaG9uZU51bWJlciI6WyI1NTUtNTU1NSJdLCJ1aWQiOlsibXlzZWxmIl19.mSuh3p0ldSrhF_F8y3g9S3HNrb8-TCIhMJQh7zi03Jw; "+
 		"Path=/; Max-Age=3600")
 	req.Header.Set("X-Saml-Uid", "root") // ... evil
 	resp := httptest.NewRecorder()
@@ -247,7 +247,7 @@ func (test *MiddlewareTest) TestRequireAttribute(c *C) {
 
 	req, _ := http.NewRequest("GET", "/frob", nil)
 	req.Header.Set("Cookie", ""+
-		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; "+
+		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6WyJNZSBNeXNlbGYgQW5kIEkiXSwiZWR1UGVyc29uQWZmaWxpYXRpb24iOlsiTWVtYmVyIiwiU3RhZmYiXSwiZWR1UGVyc29uRW50aXRsZW1lbnQiOlsidXJuOm1hY2U6ZGlyOmVudGl0bGVtZW50OmNvbW1vbi1saWItdGVybXMiXSwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6WyJteXNlbGZAdGVzdHNoaWIub3JnIl0sImVkdVBlcnNvblNjb3BlZEFmZmlsaWF0aW9uIjpbIk1lbWJlckB0ZXN0c2hpYi5vcmciLCJTdGFmZkB0ZXN0c2hpYi5vcmciXSwiZWR1UGVyc29uVGFyZ2V0ZWRJRCI6WyIiXSwiZXhwIjoxNDQ4OTM4NjI5LCJnaXZlbk5hbWUiOlsiTWUgTXlzZWxmIl0sInNuIjpbIkFuZCBJIl0sInRlbGVwaG9uZU51bWJlciI6WyI1NTUtNTU1NSJdLCJ1aWQiOlsibXlzZWxmIl19.mSuh3p0ldSrhF_F8y3g9S3HNrb8-TCIhMJQh7zi03Jw; "+
 		"Path=/; Max-Age=3600")
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
@@ -264,7 +264,7 @@ func (test *MiddlewareTest) TestRequireAttributeWrongValue(c *C) {
 
 	req, _ := http.NewRequest("GET", "/frob", nil)
 	req.Header.Set("Cookie", ""+
-		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; "+
+		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6WyJNZSBNeXNlbGYgQW5kIEkiXSwiZWR1UGVyc29uQWZmaWxpYXRpb24iOlsiTWVtYmVyIiwiU3RhZmYiXSwiZWR1UGVyc29uRW50aXRsZW1lbnQiOlsidXJuOm1hY2U6ZGlyOmVudGl0bGVtZW50OmNvbW1vbi1saWItdGVybXMiXSwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6WyJteXNlbGZAdGVzdHNoaWIub3JnIl0sImVkdVBlcnNvblNjb3BlZEFmZmlsaWF0aW9uIjpbIk1lbWJlckB0ZXN0c2hpYi5vcmciLCJTdGFmZkB0ZXN0c2hpYi5vcmciXSwiZWR1UGVyc29uVGFyZ2V0ZWRJRCI6WyIiXSwiZXhwIjoxNDQ4OTM4NjI5LCJnaXZlbk5hbWUiOlsiTWUgTXlzZWxmIl0sInNuIjpbIkFuZCBJIl0sInRlbGVwaG9uZU51bWJlciI6WyI1NTUtNTU1NSJdLCJ1aWQiOlsibXlzZWxmIl19.mSuh3p0ldSrhF_F8y3g9S3HNrb8-TCIhMJQh7zi03Jw; "+
 		"Path=/; Max-Age=3600")
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
@@ -281,7 +281,7 @@ func (test *MiddlewareTest) TestRequireAttributeNotPresent(c *C) {
 
 	req, _ := http.NewRequest("GET", "/frob", nil)
 	req.Header.Set("Cookie", ""+
-		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; "+
+		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6WyJNZSBNeXNlbGYgQW5kIEkiXSwiZWR1UGVyc29uQWZmaWxpYXRpb24iOlsiTWVtYmVyIiwiU3RhZmYiXSwiZWR1UGVyc29uRW50aXRsZW1lbnQiOlsidXJuOm1hY2U6ZGlyOmVudGl0bGVtZW50OmNvbW1vbi1saWItdGVybXMiXSwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6WyJteXNlbGZAdGVzdHNoaWIub3JnIl0sImVkdVBlcnNvblNjb3BlZEFmZmlsaWF0aW9uIjpbIk1lbWJlckB0ZXN0c2hpYi5vcmciLCJTdGFmZkB0ZXN0c2hpYi5vcmciXSwiZWR1UGVyc29uVGFyZ2V0ZWRJRCI6WyIiXSwiZXhwIjoxNDQ4OTM4NjI5LCJnaXZlbk5hbWUiOlsiTWUgTXlzZWxmIl0sInNuIjpbIkFuZCBJIl0sInRlbGVwaG9uZU51bWJlciI6WyI1NTUtNTU1NSJdLCJ1aWQiOlsibXlzZWxmIl19.mSuh3p0ldSrhF_F8y3g9S3HNrb8-TCIhMJQh7zi03Jw; "+
 		"Path=/; Max-Age=3600")
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
@@ -297,7 +297,7 @@ func (test *MiddlewareTest) TestRequireAttributeMissingAccount(c *C) {
 
 	req, _ := http.NewRequest("GET", "/frob", nil)
 	req.Header.Set("Cookie", ""+
-		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; "+
+		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6WyJNZSBNeXNlbGYgQW5kIEkiXSwiZWR1UGVyc29uQWZmaWxpYXRpb24iOlsiTWVtYmVyIiwiU3RhZmYiXSwiZWR1UGVyc29uRW50aXRsZW1lbnQiOlsidXJuOm1hY2U6ZGlyOmVudGl0bGVtZW50OmNvbW1vbi1saWItdGVybXMiXSwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6WyJteXNlbGZAdGVzdHNoaWIub3JnIl0sImVkdVBlcnNvblNjb3BlZEFmZmlsaWF0aW9uIjpbIk1lbWJlckB0ZXN0c2hpYi5vcmciLCJTdGFmZkB0ZXN0c2hpYi5vcmciXSwiZWR1UGVyc29uVGFyZ2V0ZWRJRCI6WyIiXSwiZXhwIjoxNDQ4OTM4NjI5LCJnaXZlbk5hbWUiOlsiTWUgTXlzZWxmIl0sInNuIjpbIkFuZCBJIl0sInRlbGVwaG9uZU51bWJlciI6WyI1NTUtNTU1NSJdLCJ1aWQiOlsibXlzZWxmIl19.mSuh3p0ldSrhF_F8y3g9S3HNrb8-TCIhMJQh7zi03Jw; "+
 		"Path=/; Max-Age=3600")
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
@@ -322,7 +322,7 @@ func (test *MiddlewareTest) TestCanParseResponse(c *C) {
 	c.Assert(resp.Header().Get("Location"), Equals, "/frob")
 	c.Assert(resp.Header()["Set-Cookie"], DeepEquals, []string{
 		"saml_KCosLjAyNDY4Ojw+QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6=",
-		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; " +
+		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbiI6WyJNZSBNeXNlbGYgQW5kIEkiXSwiZWR1UGVyc29uQWZmaWxpYXRpb24iOlsiTWVtYmVyIiwiU3RhZmYiXSwiZWR1UGVyc29uRW50aXRsZW1lbnQiOlsidXJuOm1hY2U6ZGlyOmVudGl0bGVtZW50OmNvbW1vbi1saWItdGVybXMiXSwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6WyJteXNlbGZAdGVzdHNoaWIub3JnIl0sImVkdVBlcnNvblNjb3BlZEFmZmlsaWF0aW9uIjpbIk1lbWJlckB0ZXN0c2hpYi5vcmciLCJTdGFmZkB0ZXN0c2hpYi5vcmciXSwiZWR1UGVyc29uVGFyZ2V0ZWRJRCI6WyIiXSwiZXhwIjoxNDQ4OTM4NjI5LCJnaXZlbk5hbWUiOlsiTWUgTXlzZWxmIl0sInNuIjpbIkFuZCBJIl0sInRlbGVwaG9uZU51bWJlciI6WyI1NTUtNTU1NSJdLCJ1aWQiOlsibXlzZWxmIl19.mSuh3p0ldSrhF_F8y3g9S3HNrb8-TCIhMJQh7zi03Jw; " +
 			"Path=/; Max-Age=3600",
 	})
 }

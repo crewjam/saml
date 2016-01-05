@@ -150,7 +150,8 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 		})
 		redirectURL := req.Redirect(relayState)
 
-		http.Redirect(w, r, redirectURL.String(), http.StatusFound)
+		w.Header().Add("Location", redirectURL.String())
+		w.WriteHeader(http.StatusFound)
 		return
 	}
 	return http.HandlerFunc(fn)
@@ -219,11 +220,11 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 		for _, v := range attr.Values {
 			valueStrings = append(valueStrings, v.Value)
 		}
-		if len(valueStrings) == 1 || true { // TODO(ross): use an array if there are multiple values (or something)
-			token.Claims[attr.FriendlyName] = valueStrings[len(valueStrings)-1]
-		} else {
-			token.Claims[attr.FriendlyName] = valueStrings
+		claimName := attr.FriendlyName
+		if claimName == "" {
+			claimName = attr.Name
 		}
+		token.Claims[claimName] = valueStrings
 	}
 	token.Claims["exp"] = saml.TimeNow().Add(cookieMaxAge).Unix()
 	signedToken, err := token.SignedString(secretBlock.Bytes)
@@ -276,8 +277,11 @@ func (m *Middleware) IsAuthorized(r *http.Request) bool {
 	}
 
 	for claimName, claimValue := range token.Claims {
-		if c, ok := claimValue.(string); ok {
-			r.Header.Set(fmt.Sprintf("X-Saml-%s", claimName), c)
+		if claimName == "exp" {
+			continue
+		}
+		for _, claimValueStr := range claimValue.([]interface{}) {
+			r.Header.Add(fmt.Sprintf("X-Saml-%s", claimName), claimValueStr.(string))
 		}
 	}
 	return true
