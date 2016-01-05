@@ -121,7 +121,7 @@ func (req *AuthnRequest) Redirect(relayState string) *url.URL {
 
 	rv, _ := url.Parse(req.Destination)
 
-	query := url.Values{}
+	query := rv.Query()
 	query.Set("SAMLRequest", string(w.Bytes()))
 	if relayState != "" {
 		query.Set("RelayState", relayState)
