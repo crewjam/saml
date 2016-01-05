@@ -143,6 +143,128 @@ func (test *ServiceProviderTest) TestCanProducePostRequest(c *C) {
 		`<script>document.getElementById('SAMLRequestForm').submit();</script>`)
 }
 
+func (test *ServiceProviderTest) TestCanHandleOneloginResponse(c *C) {
+	// An actual response from onelogin
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05 UTC 2006", "Tue Jan 5 17:53:12 UTC 2016")
+		return rv
+	}
+	SamlResponse := `PHNhbWxwOlJlc3BvbnNlIHhtbG5zOnNhbWw9InVybjpvYXNpczpuYW1lczp0YzpTQU1MOjIuMDphc3NlcnRpb24iIHhtbG5zOnNhbWxwPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6cHJvdG9jb2wiIElEPSJwZnhlZDg4YzQzZC02NTA0LWUxZjEtNWFmMC00MGJlN2YyNzlmYzUiIFZlcnNpb249IjIuMCIgSXNzdWVJbnN0YW50PSIyMDE2LTAxLTA1VDE3OjUzOjExWiIgRGVzdGluYXRpb249Imh0dHBzOi8vMjllZTZkMmUubmdyb2suaW8vc2FtbC9hY3MiIEluUmVzcG9uc2VUbz0iaWQtZDQwYzE1YzEwNGI1MjY5MWVjY2YwYTJhNWM4YTE1NTk1YmU3NTQyMyI+PHNhbWw6SXNzdWVyPmh0dHBzOi8vYXBwLm9uZWxvZ2luLmNvbS9zYW1sL21ldGFkYXRhLzUwMzk4Mzwvc2FtbDpJc3N1ZXI+PGRzOlNpZ25hdHVyZSB4bWxuczpkcz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC8wOS94bWxkc2lnIyI+PGRzOlNpZ25lZEluZm8+PGRzOkNhbm9uaWNhbGl6YXRpb25NZXRob2QgQWxnb3JpdGhtPSJodHRwOi8vd3d3LnczLm9yZy8yMDAxLzEwL3htbC1leGMtYzE0biMiLz48ZHM6U2lnbmF0dXJlTWV0aG9kIEFsZ29yaXRobT0iaHR0cDovL3d3dy53My5vcmcvMjAwMC8wOS94bWxkc2lnI3JzYS1zaGExIi8+PGRzOlJlZmVyZW5jZSBVUkk9IiNwZnhlZDg4YzQzZC02NTA0LWUxZjEtNWFmMC00MGJlN2YyNzlmYzUiPjxkczpUcmFuc2Zvcm1zPjxkczpUcmFuc2Zvcm0gQWxnb3JpdGhtPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwLzA5L3htbGRzaWcjZW52ZWxvcGVkLXNpZ25hdHVyZSIvPjxkczpUcmFuc2Zvcm0gQWxnb3JpdGhtPSJodHRwOi8vd3d3LnczLm9yZy8yMDAxLzEwL3htbC1leGMtYzE0biMiLz48L2RzOlRyYW5zZm9ybXM+PGRzOkRpZ2VzdE1ldGhvZCBBbGdvcml0aG09Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvMDkveG1sZHNpZyNzaGExIi8+PGRzOkRpZ2VzdFZhbHVlPlNWQWFRZzh2bW1TUUw2L1lCbVMyeWRLUlA3ST08L2RzOkRpZ2VzdFZhbHVlPjwvZHM6UmVmZXJlbmNlPjwvZHM6U2lnbmVkSW5mbz48ZHM6U2lnbmF0dXJlVmFsdWU+c0JlVFZQMGJab1BSK2JmeUFrVnY2STNDVjdZOFhxbkoycjhmMStXbXIyZ0ZnblJGODVOdnZTUCtyMUJvN250dU9zd080ZkI0Uks0SHlTYnlsZzRiS0hLSDE5WDkxaFZBekpTeXNmbVMvZDV3ZzFDZmlXV3Q1UzJIQTUwOHRoWHVabndHM1h6NktuV0s4a1JkeDFkYytZUldnYUZ5ZDRnTEc5YUJUc1hPWjd2eC83UDRicnpORW00d1A5LzB0dWZ4Rytuc1k2RHB3bkVHQ2psK1ZVS3BnekVxd05OalFxWUZZU0FYRWsrVnQrWDNjMmQwSElyWlF2WW5OaDAyS3h1d1ZCVGhuM01helFOYU54Qy9zeWYza0RRQ1JyWkNZbytZdER1ZHpKVTlwM0EwWVhIVFFjc2RldHNIWlhDTWozbXV2emMwbUVCbHc0TGJjaEttbmJ5Wm1nPT08L2RzOlNpZ25hdHVyZVZhbHVlPjxkczpLZXlJbmZvPjxkczpYNTA5RGF0YT48ZHM6WDUwOUNlcnRpZmljYXRlPk1JSUVDRENDQXZDZ0F3SUJBZ0lVWHVuMDhDc2xMUldTTHFObkRFMU50R0plZmwwd0RRWUpLb1pJaHZjTkFRRUZCUUF3VXpFTE1Ba0dBMVVFQmhNQ1ZWTXhEREFLQmdOVkJBb01BMk4wZFRFVk1CTUdBMVVFQ3d3TVQyNWxURzluYVc0Z1NXUlFNUjh3SFFZRFZRUUREQlpQYm1WTWIyZHBiaUJCWTJOdmRXNTBJRE15TmpFME1CNFhEVEV6TURrek1ERTVNelUwTkZvWERURTRNVEF3TVRFNU16VTBORm93VXpFTE1Ba0dBMVVFQmhNQ1ZWTXhEREFLQmdOVkJBb01BMk4wZFRFVk1CTUdBMVVFQ3d3TVQyNWxURzluYVc0Z1NXUlFNUjh3SFFZRFZRUUREQlpQYm1WTWIyZHBiaUJCWTJOdmRXNTBJRE15TmpFME1JSUJJakFOQmdrcWhraUc5dzBCQVFFRkFBT0NBUThBTUlJQkNnS0NBUUVBME9HOFY4bWhvdmtqNHJoR2hqcmJFeFJZYnpLVjJaeGZ2R2ZFR1hHVXZYYzZEcWVqWUVkaFoybUlmQ0RvamhRamswQnl3aWlyQUtNT3QxR051SDdhV0lFNDdEMGV3dEs1eWxFQW03ZVZtb1k0a3hMQ2FXNXdZckMxU3pNbnBlaXRVeHF2c2JuS3ozalVLWUhSZ2dwZnZWajRzaUhEWmVJWmE5YTVyVXZwTW5uYk9vRmlaQ0lFTnBxM1RDMzNpdk9TWmhFTlJUem12bms1R0RvTEh3LzhxQWdRaXlUM0QxeENrU0JiNTRQSGdrUTVScTFvZExNL2hKK0wwanpDVVFINGd4cFdsRUFhYjRLOXM4ZnBCVUJCaDVnbUpDWWk4VWJJbGhxTzhOMm15bnVtMzNCVS92SjNQbmF3VDRZWWtUd1JVeDZZKzNmcG1SQkhxbDRoODNTTWV3SURBUUFCbzRIVE1JSFFNQXdHQTFVZEV3RUIvd1FDTUFBd0hRWURWUjBPQkJZRUZPZkZGakhGajlhNnhwbmdiMTFycmhnTWU5QXJNSUdRQmdOVkhTTUVnWWd3Z1lXQUZPZkZGakhGajlhNnhwbmdiMTFycmhnTWU5QXJvVmVrVlRCVE1Rc3dDUVlEVlFRR0V3SlZVekVNTUFvR0ExVUVDZ3dEWTNSMU1SVXdFd1lEVlFRTERBeFBibVZNYjJkcGJpQkpaRkF4SHpBZEJnTlZCQU1NRms5dVpVeHZaMmx1SUVGalkyOTFiblFnTXpJMk1UU0NGRjdwOVBBckpTMFZraTZqWnd4TlRiUmlYbjVkTUE0R0ExVWREd0VCL3dRRUF3SUhnREFOQmdrcWhraUc5dzBCQVFVRkFBT0NBUUVBTWdsbjROUE1RbjhHeXZxOENUUCtjMmU2Q1V6Y3ZSRUtuVGhqeFQ5V2N2VjFaVlhNQk5QbTRjVHFUMzYxRWRMelk1eVdMVVdYZDRBdkZuY2lxQjNNSFlhMm5xVG1udkxnbWhrV2UraGRGb05lNStJQThBeEduK25xVUlTbXlCZUN4dVVVQWJSTXVvd2lBcndISXB6cEV5UklZZFNaUk5GMGR2Z2lQWXlyL01pUFhJY3pwSDVuTGt2YkxwY0FGK1I4Wmg5bndZMGcxSlZ5YzZBQjZqN1lleHVVUVpwSEg0czBWZHgvbldtcmNGZUxaS0NUeGNhaEh2VTUwZTF5S1g1dGhmVmFKcUk4UVE3eFp4eXUwVFRzaWFYMHV3NTFKUE96UHVBUHBoMHo2eG9TOW9ZeHV6WjF5OXNOSEg2a0g4R0ZudlMyTXF5SGlOejBoMFNxL3E2bit3PT08L2RzOlg1MDlDZXJ0aWZpY2F0ZT48L2RzOlg1MDlEYXRhPjwvZHM6S2V5SW5mbz48L2RzOlNpZ25hdHVyZT48c2FtbHA6U3RhdHVzPjxzYW1scDpTdGF0dXNDb2RlIFZhbHVlPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6c3RhdHVzOlN1Y2Nlc3MiLz48L3NhbWxwOlN0YXR1cz48c2FtbDpBc3NlcnRpb24geG1sbnM6c2FtbD0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOmFzc2VydGlvbiIgeG1sbnM6eHM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDEvWE1MU2NoZW1hIiB4bWxuczp4c2k9Imh0dHA6Ly93d3cudzMub3JnLzIwMDEvWE1MU2NoZW1hLWluc3RhbmNlIiBWZXJzaW9uPSIyLjAiIElEPSJBZDk0NWFlZGEzOGE1MDhmOGZhYzliYzk2MTNkNTk2NDJjMGQyZDhjYiIgSXNzdWVJbnN0YW50PSIyMDE2LTAxLTA1VDE3OjUzOjExWiI+PHNhbWw6SXNzdWVyPmh0dHBzOi8vYXBwLm9uZWxvZ2luLmNvbS9zYW1sL21ldGFkYXRhLzUwMzk4Mzwvc2FtbDpJc3N1ZXI+PHNhbWw6U3ViamVjdD48c2FtbDpOYW1lSUQgRm9ybWF0PSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoxLjE6bmFtZWlkLWZvcm1hdDplbWFpbEFkZHJlc3MiPnJvc3NAa25kci5vcmc8L3NhbWw6TmFtZUlEPjxzYW1sOlN1YmplY3RDb25maXJtYXRpb24gTWV0aG9kPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6Y206YmVhcmVyIj48c2FtbDpTdWJqZWN0Q29uZmlybWF0aW9uRGF0YSBOb3RPbk9yQWZ0ZXI9IjIwMTYtMDEtMDVUMTc6NTY6MTFaIiBSZWNpcGllbnQ9Imh0dHBzOi8vMjllZTZkMmUubmdyb2suaW8vc2FtbC9hY3MiIEluUmVzcG9uc2VUbz0iaWQtZDQwYzE1YzEwNGI1MjY5MWVjY2YwYTJhNWM4YTE1NTk1YmU3NTQyMyIvPjwvc2FtbDpTdWJqZWN0Q29uZmlybWF0aW9uPjwvc2FtbDpTdWJqZWN0PjxzYW1sOkNvbmRpdGlvbnMgTm90QmVmb3JlPSIyMDE2LTAxLTA1VDE3OjUwOjExWiIgTm90T25PckFmdGVyPSIyMDE2LTAxLTA1VDE3OjU2OjExWiI+PHNhbWw6QXVkaWVuY2VSZXN0cmljdGlvbj48c2FtbDpBdWRpZW5jZT5odHRwczovLzI5ZWU2ZDJlLm5ncm9rLmlvL3NhbWwvbWV0YWRhdGE8L3NhbWw6QXVkaWVuY2U+PC9zYW1sOkF1ZGllbmNlUmVzdHJpY3Rpb24+PC9zYW1sOkNvbmRpdGlvbnM+PHNhbWw6QXV0aG5TdGF0ZW1lbnQgQXV0aG5JbnN0YW50PSIyMDE2LTAxLTA1VDE3OjUzOjEwWiIgU2Vzc2lvbk5vdE9uT3JBZnRlcj0iMjAxNi0wMS0wNlQxNzo1MzoxMVoiIFNlc3Npb25JbmRleD0iX2ViZGNiZTgwLTk1ZmYtMDEzMy1kODcxLTM4Y2EzYTY2MmYxYyI+PHNhbWw6QXV0aG5Db250ZXh0PjxzYW1sOkF1dGhuQ29udGV4dENsYXNzUmVmPnVybjpvYXNpczpuYW1lczp0YzpTQU1MOjIuMDphYzpjbGFzc2VzOlBhc3N3b3JkUHJvdGVjdGVkVHJhbnNwb3J0PC9zYW1sOkF1dGhuQ29udGV4dENsYXNzUmVmPjwvc2FtbDpBdXRobkNvbnRleHQ+PC9zYW1sOkF1dGhuU3RhdGVtZW50PjxzYW1sOkF0dHJpYnV0ZVN0YXRlbWVudD48c2FtbDpBdHRyaWJ1dGUgTmFtZUZvcm1hdD0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOmF0dHJuYW1lLWZvcm1hdDpiYXNpYyIgTmFtZT0iVXNlci5lbWFpbCI+PHNhbWw6QXR0cmlidXRlVmFsdWUgeG1sbnM6eHNpPSJodHRwOi8vd3d3LnczLm9yZy8yMDAxL1hNTFNjaGVtYS1pbnN0YW5jZSIgeHNpOnR5cGU9InhzOnN0cmluZyI+cm9zc0BrbmRyLm9yZzwvc2FtbDpBdHRyaWJ1dGVWYWx1ZT48L3NhbWw6QXR0cmlidXRlPjxzYW1sOkF0dHJpYnV0ZSBOYW1lRm9ybWF0PSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6YXR0cm5hbWUtZm9ybWF0OmJhc2ljIiBOYW1lPSJtZW1iZXJPZiI+PHNhbWw6QXR0cmlidXRlVmFsdWUgeG1sbnM6eHNpPSJodHRwOi8vd3d3LnczLm9yZy8yMDAxL1hNTFNjaGVtYS1pbnN0YW5jZSIgeHNpOnR5cGU9InhzOnN0cmluZyIvPjwvc2FtbDpBdHRyaWJ1dGU+PHNhbWw6QXR0cmlidXRlIE5hbWVGb3JtYXQ9InVybjpvYXNpczpuYW1lczp0YzpTQU1MOjIuMDphdHRybmFtZS1mb3JtYXQ6YmFzaWMiIE5hbWU9IlVzZXIuTGFzdE5hbWUiPjxzYW1sOkF0dHJpYnV0ZVZhbHVlIHhtbG5zOnhzaT0iaHR0cDovL3d3dy53My5vcmcvMjAwMS9YTUxTY2hlbWEtaW5zdGFuY2UiIHhzaTp0eXBlPSJ4czpzdHJpbmciPktpbmRlcjwvc2FtbDpBdHRyaWJ1dGVWYWx1ZT48L3NhbWw6QXR0cmlidXRlPjxzYW1sOkF0dHJpYnV0ZSBOYW1lRm9ybWF0PSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6YXR0cm5hbWUtZm9ybWF0OmJhc2ljIiBOYW1lPSJQZXJzb25JbW11dGFibGVJRCI+PHNhbWw6QXR0cmlidXRlVmFsdWUgeG1sbnM6eHNpPSJodHRwOi8vd3d3LnczLm9yZy8yMDAxL1hNTFNjaGVtYS1pbnN0YW5jZSIgeHNpOnR5cGU9InhzOnN0cmluZyIvPjwvc2FtbDpBdHRyaWJ1dGU+PHNhbWw6QXR0cmlidXRlIE5hbWVGb3JtYXQ9InVybjpvYXNpczpuYW1lczp0YzpTQU1MOjIuMDphdHRybmFtZS1mb3JtYXQ6YmFzaWMiIE5hbWU9IlVzZXIuRmlyc3ROYW1lIj48c2FtbDpBdHRyaWJ1dGVWYWx1ZSB4bWxuczp4c2k9Imh0dHA6Ly93d3cudzMub3JnLzIwMDEvWE1MU2NoZW1hLWluc3RhbmNlIiB4c2k6dHlwZT0ieHM6c3RyaW5nIj5Sb3NzPC9zYW1sOkF0dHJpYnV0ZVZhbHVlPjwvc2FtbDpBdHRyaWJ1dGU+PC9zYW1sOkF0dHJpYnV0ZVN0YXRlbWVudD48L3NhbWw6QXNzZXJ0aW9uPjwvc2FtbHA6UmVzcG9uc2U+Cgo=`
+	test.IDPMetadata = `<?xml version="1.0"?>
+<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://app.onelogin.com/saml/metadata/503983">
+  <IDPSSODescriptor xmlns:ds="http://www.w3.org/2000/09/xmldsig#" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <KeyDescriptor use="signing">
+      <ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+        <ds:X509Data>
+          <ds:X509Certificate>MIIECDCCAvCgAwIBAgIUXun08CslLRWSLqNnDE1NtGJefl0wDQYJKoZIhvcNAQEF
+BQAwUzELMAkGA1UEBhMCVVMxDDAKBgNVBAoMA2N0dTEVMBMGA1UECwwMT25lTG9n
+aW4gSWRQMR8wHQYDVQQDDBZPbmVMb2dpbiBBY2NvdW50IDMyNjE0MB4XDTEzMDkz
+MDE5MzU0NFoXDTE4MTAwMTE5MzU0NFowUzELMAkGA1UEBhMCVVMxDDAKBgNVBAoM
+A2N0dTEVMBMGA1UECwwMT25lTG9naW4gSWRQMR8wHQYDVQQDDBZPbmVMb2dpbiBB
+Y2NvdW50IDMyNjE0MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0OG8
+V8mhovkj4rhGhjrbExRYbzKV2ZxfvGfEGXGUvXc6DqejYEdhZ2mIfCDojhQjk0By
+wiirAKMOt1GNuH7aWIE47D0ewtK5ylEAm7eVmoY4kxLCaW5wYrC1SzMnpeitUxqv
+sbnKz3jUKYHRggpfvVj4siHDZeIZa9a5rUvpMnnbOoFiZCIENpq3TC33ivOSZhEN
+RTzmvnk5GDoLHw/8qAgQiyT3D1xCkSBb54PHgkQ5Rq1odLM/hJ+L0jzCUQH4gxpW
+lEAab4K9s8fpBUBBh5gmJCYi8UbIlhqO8N2mynum33BU/vJ3PnawT4YYkTwRUx6Y
++3fpmRBHql4h83SMewIDAQABo4HTMIHQMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYE
+FOfFFjHFj9a6xpngb11rrhgMe9ArMIGQBgNVHSMEgYgwgYWAFOfFFjHFj9a6xpng
+b11rrhgMe9AroVekVTBTMQswCQYDVQQGEwJVUzEMMAoGA1UECgwDY3R1MRUwEwYD
+VQQLDAxPbmVMb2dpbiBJZFAxHzAdBgNVBAMMFk9uZUxvZ2luIEFjY291bnQgMzI2
+MTSCFF7p9PArJS0Vki6jZwxNTbRiXn5dMA4GA1UdDwEB/wQEAwIHgDANBgkqhkiG
+9w0BAQUFAAOCAQEAMgln4NPMQn8Gyvq8CTP+c2e6CUzcvREKnThjxT9WcvV1ZVXM
+BNPm4cTqT361EdLzY5yWLUWXd4AvFnciqB3MHYa2nqTmnvLgmhkWe+hdFoNe5+IA
+8AxGn+nqUISmyBeCxuUUAbRMuowiArwHIpzpEyRIYdSZRNF0dvgiPYyr/MiPXIcz
+pH5nLkvbLpcAF+R8Zh9nwY0g1JVyc6AB6j7YexuUQZpHH4s0Vdx/nWmrcFeLZKCT
+xcahHvU50e1yKX5thfVaJqI8QQ7xZxyu0TTsiaX0uw51JPOzPuAPph0z6xoS9oYx
+uzZ1y9sNHH6kH8GFnvS2MqyHiNz0h0Sq/q6n+w==</ds:X509Certificate>
+        </ds:X509Data>
+      </ds:KeyInfo>
+    </KeyDescriptor>
+    <NameIDFormat>urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress</NameIDFormat>
+    <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://app.onelogin.com/trust/saml2/http-post/sso/503983"/>
+    <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://app.onelogin.com/trust/saml2/http-post/sso/503983"/>
+    <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:SOAP" Location="https://app.onelogin.com/trust/saml2/soap/sso/503983"/>
+  </IDPSSODescriptor>
+  <ContactPerson contactType="technical">
+    <SurName>Support</SurName>
+    <EmailAddress>support@onelogin.com</EmailAddress>
+  </ContactPerson>
+</EntityDescriptor>
+`
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: "https://29ee6d2e.ngrok.io/saml/metadata",
+		AcsURL:      "https://29ee6d2e.ngrok.io/saml/acs",
+		IDPMetadata: &Metadata{},
+	}
+	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	c.Assert(err, IsNil)
+
+	req := http.Request{PostForm: url.Values{}}
+	req.PostForm.Set("SAMLResponse", SamlResponse)
+	assertion, err := s.ParseResponse(&req, []string{"id-d40c15c104b52691eccf0a2a5c8a15595be75423"})
+	if err != nil {
+		c.Logf("%s", err.(*InvalidResponseError).PrivateErr)
+	}
+	c.Assert(err, IsNil)
+
+	c.Assert(assertion.Subject.NameID.Value, DeepEquals, "ross@kndr.org")
+	c.Assert(assertion.AttributeStatement.Attributes, DeepEquals, []Attribute{
+		{
+			Name:       "User.email",
+			NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:basic",
+			Values: []AttributeValue{
+				AttributeValue{
+					Type:  "xs:string",
+					Value: "ross@kndr.org",
+				},
+			},
+		},
+		Attribute{
+			Name:       "memberOf",
+			NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:basic",
+			Values: []AttributeValue{
+				AttributeValue{
+					Type:  "xs:string",
+					Value: "",
+				},
+			},
+		},
+		Attribute{
+			Name:       "User.LastName",
+			NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:basic",
+			Values: []AttributeValue{
+				AttributeValue{
+					Type:  "xs:string",
+					Value: "Kinder",
+				},
+			},
+		},
+		Attribute{
+			Name:       "PersonImmutableID",
+			NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:basic",
+			Values: []AttributeValue{
+				AttributeValue{
+					Type:  "xs:string",
+					Value: "",
+				},
+			},
+		},
+		Attribute{
+			Name:       "User.FirstName",
+			NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:basic",
+			Values: []AttributeValue{
+				AttributeValue{
+					Type:  "xs:string",
+					Value: "Ross",
+				},
+			},
+		},
+	})
+}
+
 func (test *ServiceProviderTest) TestCanHandlePlaintextResponse(c *C) {
 	// An actual response from google
 	TimeNow = func() time.Time {
