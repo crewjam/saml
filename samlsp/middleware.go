@@ -25,11 +25,31 @@ import (
 // It also provides middleware, RequireAccount which redirects users to
 // the auth process if they do not have session credentials.
 //
-// You can stub in your session mechanism by providing values for
-// IsAuthorizedFunc (called to determine if a request is already authorized) and
-// AuthorizeFunc (called when the SAML response is received). The default
-// implementations of these functions issue and verify a signed cookie containing
-// information from the SAML assertion.
+// When redirecting the user through the SAML auth flow, the middlware assigns
+// a temporary cookie with a random name beginning with "saml_". The value of
+// the cookie is a signed JSON Web Token containing the original URL requested
+// and the SAML request ID. The random part of the name corresponds to the
+// RelayState parameter passed through the SAML flow.
+//
+// When validating the SAML response, the RelayState is used to look up the
+// correct cookie, validate that the SAML request ID, and redirect the user
+// back to their original URL.
+//
+// Sessions are established by issuing a JSON Web Token (JWT) as a session
+// cookie once the SAML flow has succeeded. The JWT token contains the
+// authenticated attributes from the SAML assertion.
+//
+// When the middlware receives a request with a valid session JWT it extracts
+// the SAML attributes and modifies the http.Request object adding headers
+// corresponding to the specified attributes. For example, if the attribute
+// "cn" were present in the initial assertion with a value of "Alice Smith",
+// then a corresponding header "X-Saml-Cn" will be added to the request with
+// a value of "Alice Smith". For safety, the middleware strips out any existing
+// headers that begin with "X-Saml-".
+//
+// When issuing JSON Web Tokens, a signing key is required. Because the
+// SAML service provider already has a private key, we borrow that key
+// to sign the JWTs as well.
 type Middleware struct {
 	ServiceProvider   saml.ServiceProvider
 	AllowIDPInitiated bool

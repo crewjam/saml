@@ -127,9 +127,12 @@ func (s *Server) sendLoginForm(w http.ResponseWriter, r *http.Request, req *saml
 	}
 }
 
+// HandleLogin handles the `POST /login` and `GET /login` forms. If credentials are present
+// in the request body, then they are validated. For valid credentials, the response is a
+// 200 OK and the JSON session object. For invalid credentials, the HTML login prompt form
+// is sent.
 func (s *Server) HandleLogin(c web.C, w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
@@ -140,6 +143,8 @@ func (s *Server) HandleLogin(c web.C, w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(session)
 }
 
+// HandleListSessions handles the `GET /sessions/` request and responds with a JSON formatted list
+// of session names.
 func (s *Server) HandleListSessions(c web.C, w http.ResponseWriter, r *http.Request) {
 	sessions, err := s.Store.List("/sessions/")
 	if err != nil {
@@ -152,6 +157,8 @@ func (s *Server) HandleListSessions(c web.C, w http.ResponseWriter, r *http.Requ
 	}{Sessions: sessions})
 }
 
+// HandleGetSession handles the `GET /sessions/:id` request and responds with the session
+// object in JSON format.
 func (s *Server) HandleGetSession(c web.C, w http.ResponseWriter, r *http.Request) {
 	session := saml.Session{}
 	err := s.Store.Get(fmt.Sprintf("/sessions/%s", c.URLParams["id"]), &session)
@@ -162,6 +169,8 @@ func (s *Server) HandleGetSession(c web.C, w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(session)
 }
 
+// HandleDeleteSession handles the `DELETE /sessions/:id` request. It invalidates the
+// specified session.
 func (s *Server) HandleDeleteSession(c web.C, w http.ResponseWriter, r *http.Request) {
 	err := s.Store.Delete(fmt.Sprintf("/sessions/%s", c.URLParams["id"]))
 	if err != nil {

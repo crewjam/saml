@@ -75,6 +75,7 @@ type StatusCode struct {
 }
 
 // StatusSuccess is the value of a StatusCode element when the authentication succeeds.
+// (nominally a constant, except for testing)
 var StatusSuccess = "urn:oasis:names:tc:SAML:2.0:status:Success"
 
 // EncryptedAssertion represents the SAML object of the same name.

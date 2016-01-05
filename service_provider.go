@@ -108,6 +108,7 @@ func (sp *ServiceProvider) MakeRedirectAuthenticationRequest(relayState string) 
 	return req.Redirect(relayState), nil
 }
 
+// Redirect returns a URL suitable for using the redirect binding with the request
 func (req *AuthnRequest) Redirect(relayState string) *url.URL {
 	w := &bytes.Buffer{}
 	w1 := base64.NewEncoder(base64.StdEncoding, w)
@@ -211,6 +212,7 @@ func (sp *ServiceProvider) MakePostAuthenticationRequest(relayState string) ([]b
 	return req.Post(relayState), nil
 }
 
+// Post returns an HTML form suitable for using the HTTP-POST binding with the request
 func (req *AuthnRequest) Post(relayState string) []byte {
 	reqBuf, err := xml.Marshal(req)
 	if err != nil {
@@ -219,11 +221,12 @@ func (req *AuthnRequest) Post(relayState string) []byte {
 	encodedReqBuf := base64.StdEncoding.EncodeToString(reqBuf)
 
 	tmpl := template.Must(template.New("saml-post-form").Parse(`` +
-		`<form method="post" action="{{.URL}}">` +
+		`<form method="post" action="{{.URL}}" id="SAMLRequestForm">` +
 		`<input type="hidden" name="SAMLRequest" value="{{.SAMLRequest}}" />` +
 		`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
 		`<input type="submit" value="Submit" />` +
-		`</form>`))
+		`</form>` +
+		`<script>document.getElementById('SAMLRequestForm').submit();</script>`))
 	data := struct {
 		URL         string
 		SAMLRequest string

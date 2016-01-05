@@ -20,6 +20,7 @@ import (
 
 var links = map[string]Link{}
 
+// Link represents a short link
 type Link struct {
 	ShortLink string
 	Target    string

@@ -1,3 +1,5 @@
+// Package samlsp provides helpers that can be used to protect web
+// services using SAML.
 package samlsp
 
 import (
@@ -10,6 +12,7 @@ import (
 	"github.com/crewjam/saml"
 )
 
+// Options represents the parameters for creating a new middleware
 type Options struct {
 	URL               string
 	Key               string
@@ -19,6 +22,7 @@ type Options struct {
 	IDPMetadataURL    string
 }
 
+// New creates a new Middleware
 func New(opts Options) (*Middleware, error) {
 	m := &Middleware{
 		ServiceProvider: saml.ServiceProvider{

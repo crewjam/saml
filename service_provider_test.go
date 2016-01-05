@@ -136,10 +136,11 @@ func (test *ServiceProviderTest) TestCanProducePostRequest(c *C) {
 	c.Assert(err, IsNil)
 
 	c.Assert(string(form), Equals, ``+
-		`<form method="post" action="https://idp.testshib.org/idp/profile/SAML2/POST/SSO">`+
+		`<form method="post" action="https://idp.testshib.org/idp/profile/SAML2/POST/SSO" id="SAMLRequestForm">`+
 		`<input type="hidden" name="SAMLRequest" value="PEF1dGhuUmVxdWVzdCB4bWxucz0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOnByb3RvY29sIiBBc3NlcnRpb25Db25zdW1lclNlcnZpY2VVUkw9Imh0dHBzOi8vMTU2NjE0NDQubmdyb2suaW8vc2FtbDIvYWNzIiBEZXN0aW5hdGlvbj0iaHR0cHM6Ly9pZHAudGVzdHNoaWIub3JnL2lkcC9wcm9maWxlL1NBTUwyL1BPU1QvU1NPIiBJRD0iaWQtMDAwMjA0MDYwODBhMGMwZTEwMTIxNDE2MTgxYTFjMWUyMDIyMjQyNiIgSXNzdWVJbnN0YW50PSIyMDE1LTEyLTAxVDAxOjMxOjIxWiIgUHJvdG9jb2xCaW5kaW5nPSIiIFZlcnNpb249IjIuMCI&#43;PElzc3VlciB4bWxucz0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOmFzc2VydGlvbiIgRm9ybWF0PSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6bmFtZWlkLWZvcm1hdDplbnRpdHkiPmh0dHBzOi8vMTU2NjE0NDQubmdyb2suaW8vc2FtbDIvbWV0YWRhdGE8L0lzc3Vlcj48TmFtZUlEUG9saWN5IHhtbG5zPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6cHJvdG9jb2wiIEFsbG93Q3JlYXRlPSJ0cnVlIj51cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6bmFtZWlkLWZvcm1hdDp0cmFuc2llbnQ8L05hbWVJRFBvbGljeT48L0F1dGhuUmVxdWVzdD4=" />`+
 		`<input type="hidden" name="RelayState" value="relayState" />`+
-		`<input type="submit" value="Submit" /></form>`)
+		`<input type="submit" value="Submit" /></form>`+
+		`<script>document.getElementById('SAMLRequestForm').submit();</script>`)
 }
 
 func (test *ServiceProviderTest) TestCanParseResponse(c *C) {

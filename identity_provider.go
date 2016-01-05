@@ -38,8 +38,8 @@ type Session struct {
 }
 
 // SessionProvider is an interface used by IdentityProvider to determine the
-// Session associated with a request. The default implementation is
-// DefaultSessionProvider.
+// Session associated with a request. For an example implementation, see
+// GetSession in the samlidp package.
 type SessionProvider interface {
 	// GetSession returns the remote user session associated with the http.Request.
 	//
@@ -241,7 +241,7 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 	}
 }
 
-// IdpAuthnRequest handles a single authentication request.
+// IdpAuthnRequest is used by IdentityProvider to handle a single authentication request.
 type IdpAuthnRequest struct {
 	IDP                     *IdentityProvider
 	HTTPRequest             *http.Request
@@ -263,7 +263,6 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 		HTTPRequest: r,
 	}
 
-	var err error
 	switch r.Method {
 	case "GET":
 		compressedRequest, err := base64.StdEncoding.DecodeString(r.URL.Query().Get("SAMLRequest"))
@@ -279,6 +278,7 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 		if err := r.ParseForm(); err != nil {
 			return nil, err
 		}
+		var err error
 		req.RequestBuffer, err = base64.StdEncoding.DecodeString(r.PostForm.Get("SAMLRequest"))
 		if err != nil {
 			return nil, err

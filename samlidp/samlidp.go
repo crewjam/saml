@@ -1,4 +1,5 @@
-// This package implements a SAML identity provider
+// Package samlidp a rudimentary SAML identity provider suitable for
+// testing or as a starting point for a more complex service.
 package samlidp
 
 import (
@@ -9,6 +10,7 @@ import (
 	"github.com/zenazn/goji/web"
 )
 
+// Options represent the parameters to New() for creating a new IDP server
 type Options struct {
 	URL         string
 	Key         string
@@ -16,15 +18,25 @@ type Options struct {
 	Store       Store
 }
 
+// Server represents an IDP server. The server provides the following URLs:
+//
+//     /metadata     - the SAML metadata
+//     /sso          - the SAML endpoint to initiate an authentication flow
+//     /login        - prompt for a username and password if no session established
+//     /login/:shortcut - kick off an IDP-initiated authentication flow
+//     /services     - RESTful interface to Service objects
+//     /users        - RESTful interface to User objects
+//     /sessions     - RESTful interface to Session objects
+//     /shortcuts    - RESTful interface to Shortcut objects
 type Server struct {
 	http.Handler
-	idpConfigMu sync.RWMutex
-	IDP         saml.IdentityProvider
-	Store       Store
+	idpConfigMu sync.RWMutex          // protects calls into the IDP
+	IDP         saml.IdentityProvider // the underlying IDP
+	Store       Store                 // the data store
 }
 
+// New returns a new Server
 func New(opts Options) (*Server, error) {
-	mux := web.New()
 	s := &Server{
 		IDP: saml.IdentityProvider{
 			Key:              opts.Key,
@@ -33,10 +45,23 @@ func New(opts Options) (*Server, error) {
 			SSOURL:           opts.URL + "/sso",
 			ServiceProviders: map[string]*saml.Metadata{},
 		},
-		Store:   opts.Store,
-		Handler: mux,
+		Store: opts.Store,
 	}
 	s.IDP.SessionProvider = s
+
+	if err := s.initializeServices(); err != nil {
+		return nil, err
+	}
+	s.InitializeHTTP()
+	return s, nil
+}
+
+// InitializeHTTP sets up the HTTP handler for the server. (This function
+// is called automatically for you by New, but you may need to call it
+// yourself if you don't create the object using New.)
+func (s *Server) InitializeHTTP() {
+	mux := web.New()
+	s.Handler = mux
 
 	mux.Get("/metadata", func(w http.ResponseWriter, r *http.Request) {
 		s.idpConfigMu.RLock()
@@ -72,10 +97,4 @@ func New(opts Options) (*Server, error) {
 	mux.Get("/shortcuts/:id", s.HandleGetShortcut)
 	mux.Put("/shortcuts/:id", s.HandlePutShortcut)
 	mux.Delete("/shortcuts/:id", s.HandleDeleteShortcut)
-
-	if err := s.initializeServices(); err != nil {
-		return nil, err
-	}
-
-	return s, nil
 }
