@@ -344,28 +344,46 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 		return nil, retErr
 	}
 
+	var assertion *Assertion
+	if resp.EncryptedAssertion == nil {
+		if err := xmlsec.Verify(sp.getIDPSigningCert(), rawResponseBuf,
+			xmlsec.SignatureOptions{
+				XMLID: []xmlsec.XMLIDOption{{
+					ElementName:      "Response",
+					ElementNamespace: "urn:oasis:names:tc:SAML:2.0:protocol",
+					AttributeName:    "ID",
+				}},
+			}); err != nil {
+			retErr.PrivateErr = fmt.Errorf("failed to verify signature on response: %s", err)
+			return nil, retErr
+		}
+		assertion = resp.Assertion
+	}
+
 	// decrypt the response
-	plaintextAssertion, err := xmlsec.Decrypt([]byte(sp.Key), resp.EncryptedAssertion.EncryptedData)
-	if err != nil {
-		retErr.PrivateErr = fmt.Errorf("failed to decrypt response: %s", err)
-		return nil, retErr
-	}
-	retErr.Response = string(plaintextAssertion)
+	if resp.EncryptedAssertion != nil {
+		plaintextAssertion, err := xmlsec.Decrypt([]byte(sp.Key), resp.EncryptedAssertion.EncryptedData)
+		if err != nil {
+			retErr.PrivateErr = fmt.Errorf("failed to decrypt response: %s", err)
+			return nil, retErr
+		}
+		retErr.Response = string(plaintextAssertion)
 
-	if err := xmlsec.Verify(sp.getIDPSigningCert(), plaintextAssertion,
-		xmlsec.SignatureOptions{
-			XMLID: []xmlsec.XMLIDOption{{
-				ElementName:      "Assertion",
-				ElementNamespace: "urn:oasis:names:tc:SAML:2.0:assertion",
-				AttributeName:    "ID",
-			}},
-		}); err != nil {
-		retErr.PrivateErr = fmt.Errorf("failed to verify signature on response: %s", err)
-		return nil, retErr
-	}
+		if err := xmlsec.Verify(sp.getIDPSigningCert(), plaintextAssertion,
+			xmlsec.SignatureOptions{
+				XMLID: []xmlsec.XMLIDOption{{
+					ElementName:      "Assertion",
+					ElementNamespace: "urn:oasis:names:tc:SAML:2.0:assertion",
+					AttributeName:    "ID",
+				}},
+			}); err != nil {
+			retErr.PrivateErr = fmt.Errorf("failed to verify signature on response: %s", err)
+			return nil, retErr
+		}
 
-	assertion := &Assertion{}
-	xml.Unmarshal(plaintextAssertion, assertion)
+		assertion = &Assertion{}
+		xml.Unmarshal(plaintextAssertion, assertion)
+	}
 
 	if err := sp.validateAssertion(assertion, possibleRequestIDs, now); err != nil {
 		retErr.PrivateErr = fmt.Errorf("assertion invalid: %s", err)
@@ -396,7 +414,6 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if !requestIDvalid {
 		return fmt.Errorf("SubjectConfirmation one of the possible request IDs (%v)", possibleRequestIDs)
 	}
-
 	if assertion.Subject.SubjectConfirmation.SubjectConfirmationData.Recipient != sp.AcsURL {
 		return fmt.Errorf("SubjectConfirmation Recipient is not %s", sp.AcsURL)
 	}
