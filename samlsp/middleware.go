@@ -129,7 +129,7 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 		// relayState is limited to 80 bytes but also must be integrety protected.
 		// this means that we cannot use a JWT because it is way to long. Instead
 		// we set a cookie that corresponds to the state
-		relayState := base64.StdEncoding.EncodeToString(randomBytes(42))
+		relayState := base64.URLEncoding.EncodeToString(randomBytes(42))
 
 		secretBlock, _ := pem.Decode([]byte(m.ServiceProvider.Key))
 		state := jwt.New(jwt.GetSigningMethod("HS256"))
