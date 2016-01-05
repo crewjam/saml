@@ -320,17 +320,15 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 		return nil, retErr
 	}
 
-	if possibleRequestIDs != nil {
-		valid := false
-		for _, possibleRequestID := range possibleRequestIDs {
-			if resp.InResponseTo == possibleRequestID {
-				valid = true
-			}
+	requestIDvalid := false
+	for _, possibleRequestID := range possibleRequestIDs {
+		if resp.InResponseTo == possibleRequestID {
+			requestIDvalid = true
 		}
-		if !valid {
-			retErr.PrivateErr = fmt.Errorf("`InResponseTo` does not match any of the possible request IDs (expected %v)", possibleRequestIDs)
-			return nil, retErr
-		}
+	}
+	if !requestIDvalid {
+		retErr.PrivateErr = fmt.Errorf("`InResponseTo` does not match any of the possible request IDs (expected %v)", possibleRequestIDs)
+		return nil, retErr
 	}
 
 	if resp.IssueInstant.Add(MaxIssueDelay).Before(now) {
@@ -394,18 +392,17 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if assertion.Subject.NameID.SPNameQualifier != sp.MetadataURL {
 		return fmt.Errorf("Subject NameID SPNameQualifier is not %q", sp.MetadataURL)
 	}
-	if possibleRequestIDs != nil {
-		valid := false
-		for _, possibleRequestID := range possibleRequestIDs {
-			if assertion.Subject.SubjectConfirmation.SubjectConfirmationData.InResponseTo == possibleRequestID {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			return fmt.Errorf("SubjectConfirmation one of the possible request IDs (%v)", possibleRequestIDs)
+	requestIDvalid := false
+	for _, possibleRequestID := range possibleRequestIDs {
+		if assertion.Subject.SubjectConfirmation.SubjectConfirmationData.InResponseTo == possibleRequestID {
+			requestIDvalid = true
+			break
 		}
 	}
+	if !requestIDvalid {
+		return fmt.Errorf("SubjectConfirmation one of the possible request IDs (%v)", possibleRequestIDs)
+	}
+
 	if assertion.Subject.SubjectConfirmation.SubjectConfirmationData.Recipient != sp.AcsURL {
 		return fmt.Errorf("SubjectConfirmation Recipient is not %s", sp.AcsURL)
 	}

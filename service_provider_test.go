@@ -156,7 +156,7 @@ func (test *ServiceProviderTest) TestCanParseResponse(c *C) {
 
 	req := http.Request{PostForm: url.Values{}}
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	assertion, err := s.ParseResponse(&req, nil)
+	assertion, err := s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	c.Assert(err, IsNil)
 
 	c.Assert(assertion.AttributeStatement.Attributes, DeepEquals, []Attribute{
@@ -293,16 +293,16 @@ func (test *ServiceProviderTest) TestInvalidResponses(c *C) {
 
 	req := http.Request{PostForm: url.Values{}}
 	req.PostForm.Set("SAMLResponse", "???")
-	_, err = s.ParseResponse(&req, nil)
+	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	c.Assert(err.(*InvalidResponseError).PrivateErr, ErrorMatches, "cannot parse base64: illegal base64 data at input byte 0")
 
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte("<hello>World!</hello>")))
-	_, err = s.ParseResponse(&req, nil)
+	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	c.Assert(err.(*InvalidResponseError).PrivateErr, ErrorMatches, "cannot unmarshal response: expected element type <Response> but have <hello>")
 
 	s.AcsURL = "https://wrong/saml2/acs"
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, nil)
+	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "`Destination` does not match AcsURL (expected \"https://wrong/saml2/acs\")")
 	s.AcsURL = "https://15661444.ngrok.io/saml2/acs"
 
@@ -315,7 +315,7 @@ func (test *ServiceProviderTest) TestInvalidResponses(c *C) {
 		return rv
 	}
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, nil)
+	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "IssueInstant expired at 2015-12-01 01:57:51.375 +0000 UTC")
 	TimeNow = func() time.Time {
 		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Dec 1 01:57:09 UTC 2015")
@@ -324,26 +324,26 @@ func (test *ServiceProviderTest) TestInvalidResponses(c *C) {
 
 	s.IDPMetadata.EntityID = "http://snakeoil.com"
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, nil)
+	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "Issuer does not match the IDP metadata (expected \"http://snakeoil.com\")")
 	s.IDPMetadata.EntityID = "https://idp.testshib.org/idp/shibboleth"
 
 	oldSpStatusSuccess := StatusSuccess
 	StatusSuccess = "not:the:success:value"
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, nil)
+	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "Status code was not not:the:success:value")
 	StatusSuccess = oldSpStatusSuccess
 
 	s.Key = "invalid"
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, nil)
+	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	c.Assert(err.(*InvalidResponseError).PrivateErr, ErrorMatches, "failed to decrypt response: .*PEM_read_bio_PrivateKey.*")
 	s.Key = test.Key
 
 	s.IDPMetadata.IDPSSODescriptor.KeyDescriptor[0].KeyInfo.Certificate = "invalid"
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, nil)
+	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	c.Assert(err.(*InvalidResponseError).PrivateErr, ErrorMatches, "failed to verify signature on response: .*xmlSecOpenSSLAppKeyLoadMemory.*")
 }
 
@@ -361,28 +361,28 @@ func (test *ServiceProviderTest) TestInvalidAssertions(c *C) {
 	req := http.Request{PostForm: url.Values{}}
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
 	s.IDPMetadata.IDPSSODescriptor.KeyDescriptor[0].KeyInfo.Certificate = "invalid"
-	_, err = s.ParseResponse(&req, nil)
+	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	assertionBuf := []byte(err.(*InvalidResponseError).Response)
 
 	assertion := Assertion{}
 	err = xml.Unmarshal(assertionBuf, &assertion)
 	c.Assert(err, IsNil)
 
-	err = s.validateAssertion(&assertion, nil, TimeNow().Add(time.Hour))
+	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow().Add(time.Hour))
 	c.Assert(err.Error(), Equals, "expired on 2015-12-01 01:57:51.375 +0000 UTC")
 
 	assertion.Issuer.Value = "bob"
-	err = s.validateAssertion(&assertion, nil, TimeNow())
+	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
 	c.Assert(err.Error(), Equals, "issuer is not \"https://idp.testshib.org/idp/shibboleth\"")
 	xml.Unmarshal(assertionBuf, &assertion)
 
 	assertion.Subject.NameID.NameQualifier = "bob"
-	err = s.validateAssertion(&assertion, nil, TimeNow())
+	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
 	c.Assert(err.Error(), Equals, "Subject NameID NameQualifier is not \"https://idp.testshib.org/idp/shibboleth\"")
 	xml.Unmarshal(assertionBuf, &assertion)
 
 	assertion.Subject.NameID.SPNameQualifier = "bob"
-	err = s.validateAssertion(&assertion, nil, TimeNow())
+	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
 	c.Assert(err.Error(), Equals, "Subject NameID SPNameQualifier is not \"https://15661444.ngrok.io/saml2/metadata\"")
 	xml.Unmarshal(assertionBuf, &assertion)
 
@@ -391,27 +391,27 @@ func (test *ServiceProviderTest) TestInvalidAssertions(c *C) {
 		"SubjectConfirmation one of the possible request IDs ([any request id])")
 
 	assertion.Subject.SubjectConfirmation.SubjectConfirmationData.Recipient = "wrong/acs/url"
-	err = s.validateAssertion(&assertion, nil, TimeNow())
+	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
 	c.Assert(err.Error(), Equals, "SubjectConfirmation Recipient is not https://15661444.ngrok.io/saml2/acs")
 	xml.Unmarshal(assertionBuf, &assertion)
 
 	assertion.Subject.SubjectConfirmation.SubjectConfirmationData.NotOnOrAfter = TimeNow().Add(-1 * time.Hour)
-	err = s.validateAssertion(&assertion, nil, TimeNow())
+	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
 	c.Assert(err.Error(), Equals, "SubjectConfirmationData is expired")
 	xml.Unmarshal(assertionBuf, &assertion)
 
 	assertion.Conditions.NotBefore = TimeNow().Add(time.Hour)
-	err = s.validateAssertion(&assertion, nil, TimeNow())
+	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
 	c.Assert(err.Error(), Equals, "Conditions is not yet valid")
 	xml.Unmarshal(assertionBuf, &assertion)
 
 	assertion.Conditions.NotOnOrAfter = TimeNow().Add(-1 * time.Hour)
-	err = s.validateAssertion(&assertion, nil, TimeNow())
+	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
 	c.Assert(err.Error(), Equals, "Conditions is expired")
 	xml.Unmarshal(assertionBuf, &assertion)
 
 	assertion.Conditions.AudienceRestriction.Audience.Value = "not/our/metadata/url"
-	err = s.validateAssertion(&assertion, nil, TimeNow())
+	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
 	c.Assert(err.Error(), Equals, "Conditions AudienceRestriction is not \"https://15661444.ngrok.io/saml2/metadata\"")
 	xml.Unmarshal(assertionBuf, &assertion)
 }
