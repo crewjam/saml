@@ -109,7 +109,7 @@ func (test *ServerTest) TestHTTPCanHandleMetadataRequest(c *C) {
 	r, _ := http.NewRequest("GET", "https://idp.example.com/metadata", nil)
 	test.Server.ServeHTTP(w, r)
 	c.Assert(w.Code, Equals, http.StatusOK)
-	c.Assert(strings.HasPrefix(string(w.Body.Bytes()), "<EntitiesDescriptor"), Equals, true)
+	c.Assert(strings.HasPrefix(string(w.Body.Bytes()), "<EntityDescriptor"), Equals, true)
 }
 
 func (test *ServerTest) TestHTTPCanSSORequest(c *C) {

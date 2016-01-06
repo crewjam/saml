@@ -155,7 +155,8 @@ func (test *IdentityProviderTest) TestHTTPCanHandleMetadataRequest(c *C) {
 	r, _ := http.NewRequest("GET", "https://idp.example.com/saml/metadata", nil)
 	test.IDP.Handler().ServeHTTP(w, r)
 	c.Assert(w.Code, Equals, http.StatusOK)
-	c.Assert(strings.HasPrefix(string(w.Body.Bytes()), "<EntitiesDescriptor"), Equals, true)
+	c.Assert(w.Header().Get("Content-type"), Equals, "application/samlmetadata+xml")
+	c.Assert(strings.HasPrefix(string(w.Body.Bytes()), "<EntityDescriptor"), Equals, true)
 }
 
 func (test *IdentityProviderTest) TestHTTPCanHandleSSORequest(c *C) {

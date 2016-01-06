@@ -143,9 +143,8 @@ func (idp *IdentityProvider) Handler() http.Handler {
 
 // ServeMetadata is an http.HandlerFunc that serves the IDP metadata
 func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, r *http.Request) {
-	buf, _ := xml.MarshalIndent(EntitiesDescriptor{
-		EntityDescriptor: []*Metadata{idp.Metadata()},
-	}, "", "  ")
+	buf, _ := xml.MarshalIndent(idp.Metadata(), "", "  ")
+	w.Header().Set("Content-Type", "application/samlmetadata+xml")
 	w.Write(buf)
 }
 

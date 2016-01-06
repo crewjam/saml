@@ -35,8 +35,7 @@ func New(opts Options) (*Middleware, error) {
 		AllowIDPInitiated: opts.AllowIDPInitiated,
 	}
 
-	// fetch the IDP metadata if needed. We do this asyncronously so that
-	// we can start service the service provider metadata, which might be required
+	// fetch the IDP metadata if needed.
 	if opts.IDPMetadataURL != "" {
 		for i := 0; true; i++ {
 			resp, err := http.Get(opts.IDPMetadataURL)
@@ -52,15 +51,9 @@ func New(opts Options) (*Middleware, error) {
 				continue
 			}
 
-			md := saml.EntitiesDescriptor{}
-			if err := xml.NewDecoder(resp.Body).Decode(&md); err != nil {
+			m.ServiceProvider.IDPMetadata = &saml.Metadata{}
+			if err := xml.NewDecoder(resp.Body).Decode(m.ServiceProvider.IDPMetadata); err != nil {
 				return nil, err
-			}
-			for _, entity := range md.EntityDescriptor {
-				if entity.IDPSSODescriptor != nil {
-					m.ServiceProvider.IDPMetadata = entity
-					break
-				}
 			}
 			break
 		}
