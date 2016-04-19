@@ -344,8 +344,8 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 		return nil, retErr
 	}
 
-	var assertion *Assertion
-	if resp.EncryptedAssertion == nil {
+	// verify signed message
+	if resp.Signature != nil {
 		if err := xmlsec.Verify(sp.getIDPSigningCert(), rawResponseBuf,
 			xmlsec.SignatureOptions{
 				XMLID: []xmlsec.XMLIDOption{{
@@ -357,11 +357,27 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 			retErr.PrivateErr = fmt.Errorf("failed to verify signature on response: %s", err)
 			return nil, retErr
 		}
-		assertion = resp.Assertion
 	}
 
-	// decrypt the response
-	if resp.EncryptedAssertion != nil {
+	assertion := resp.Assertion
+
+	// verfiy signed assertions
+	if assertion != nil && assertion.Signature != nil {
+		if err := xmlsec.Verify(sp.getIDPSigningCert(), rawResponseBuf,
+			xmlsec.SignatureOptions{
+				XMLID: []xmlsec.XMLIDOption{{
+					ElementName:      "Assertion",
+					ElementNamespace: "urn:oasis:names:tc:SAML:2.0:assertion",
+					AttributeName:    "ID",
+				}},
+			}); err != nil {
+			retErr.PrivateErr = fmt.Errorf("failed to verify signature on response: %s", err)
+			return nil, retErr
+		}
+	}
+
+	// decrypt the assertions
+	if assertion == nil && resp.EncryptedAssertion != nil {
 		plaintextAssertion, err := xmlsec.Decrypt([]byte(sp.Key), resp.EncryptedAssertion.EncryptedData)
 		if err != nil {
 			retErr.PrivateErr = fmt.Errorf("failed to decrypt response: %s", err)

@@ -55,7 +55,8 @@ type Response struct {
 	Issuer             *Issuer   `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
 	Status             *Status   `xml:"urn:oasis:names:tc:SAML:2.0:protocol Status"`
 	EncryptedAssertion *EncryptedAssertion
-	Assertion          *Assertion `xml:"urn:oasis:names:tc:SAML:2.0:assertion Assertion"`
+	Signature          *xmlsec.Signature `xml:"http://www.w3.org/2000/09/xmldsig# Signature"`
+	Assertion          *Assertion        `xml:"urn:oasis:names:tc:SAML:2.0:assertion Assertion"`
 }
 
 // Status represents the SAML object of the same name.
