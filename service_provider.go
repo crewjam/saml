@@ -69,22 +69,22 @@ func (sp *ServiceProvider) Metadata() *Metadata {
 			WantAssertionsSigned:       true,
 			ProtocolSupportEnumeration: "urn:oasis:names:tc:SAML:2.0:protocol",
 			KeyDescriptor: []KeyDescriptor{
-				KeyDescriptor{
+				{
 					Use: "signing",
 					KeyInfo: KeyInfo{
 						Certificate: sp.Certificate,
 					},
 				},
-				KeyDescriptor{
+				{
 					Use: "encryption",
 					KeyInfo: KeyInfo{
 						Certificate: sp.Certificate,
 					},
 					EncryptionMethods: []EncryptionMethod{
-						EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
-						EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
-						EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
-						EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"},
+						{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
+						{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
+						{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
+						{Algorithm: "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"},
 					},
 				},
 			},

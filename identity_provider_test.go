@@ -441,7 +441,7 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 			CanonicalizationMethod: xmlsec.Method{Algorithm: "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"},
 			SignatureMethod:        xmlsec.Method{Algorithm: "http://www.w3.org/2000/09/xmldsig#rsa-sha1"},
 			ReferenceTransforms: []xmlsec.Method{
-				xmlsec.Method{Algorithm: "http://www.w3.org/2000/09/xmldsig#enveloped-signature"},
+				{Algorithm: "http://www.w3.org/2000/09/xmldsig#enveloped-signature"},
 			},
 			DigestMethod:    xmlsec.Method{Algorithm: "http://www.w3.org/2000/09/xmldsig#sha1"},
 			DigestValue:     "",
@@ -478,12 +478,12 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 		},
 		AttributeStatement: &AttributeStatement{
 			Attributes: []Attribute{
-				Attribute{
+				{
 					FriendlyName: "uid",
 					Name:         "urn:oid:0.9.2342.19200300.100.1.1",
 					NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
 					Values: []AttributeValue{
-						AttributeValue{
+						{
 							Type:  "xs:string",
 							Value: "alice",
 						},
@@ -513,7 +513,7 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 			Name:         "urn:oid:0.9.2342.19200300.100.1.1",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
 			Values: []AttributeValue{
-				AttributeValue{
+				{
 					Type:  "xs:string",
 					Value: "alice",
 				},
@@ -524,7 +524,7 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.6",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
 			Values: []AttributeValue{
-				AttributeValue{
+				{
 					Type:  "xs:string",
 					Value: "alice@example.com",
 				},
@@ -535,7 +535,7 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 			Name:         "urn:oid:2.5.4.4",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
 			Values: []AttributeValue{
-				AttributeValue{
+				{
 					Type:  "xs:string",
 					Value: "Smith",
 				},
@@ -546,7 +546,7 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 			Name:         "urn:oid:2.5.4.42",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
 			Values: []AttributeValue{
-				AttributeValue{
+				{
 					Type:  "xs:string",
 					Value: "Alice",
 				},
@@ -557,7 +557,7 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 			Name:         "urn:oid:2.5.4.3",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
 			Values: []AttributeValue{
-				AttributeValue{
+				{
 					Type:  "xs:string",
 					Value: "Alice Smith",
 				},
@@ -568,15 +568,15 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.1",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
 			Values: []AttributeValue{
-				AttributeValue{
+				{
 					Type:  "xs:string",
 					Value: "Users",
 				},
-				AttributeValue{
+				{
 					Type:  "xs:string",
 					Value: "Administrators",
 				},
-				AttributeValue{
+				{
 					Type:  "xs:string",
 					Value: "♀",
 				},

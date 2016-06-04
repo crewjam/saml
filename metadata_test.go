@@ -21,7 +21,7 @@ func (s *MetadataTest) TestCanProduceSPMetadata(c *C) {
 			WantAssertionsSigned:       true,
 			ProtocolSupportEnumeration: "urn:oasis:names:tc:SAML:2.0:protocol",
 			KeyDescriptor: []KeyDescriptor{
-				KeyDescriptor{
+				{
 					Use: "encryption",
 					KeyInfo: KeyInfo{
 						Certificate: `MIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJVUzELMAkGA1UE
@@ -35,7 +35,7 @@ TLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeTQLSouMM8o57h0uKjfTmuoWHLQLi6hnF+
 cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvnOwJlNCASPZRH/JmF8tX0hoHuAQ==`,
 					},
 				},
-				KeyDescriptor{
+				{
 					Use: "signing",
 					KeyInfo: KeyInfo{
 						Certificate: `MIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJVUzELMAkGA1UE

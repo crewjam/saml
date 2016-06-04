@@ -216,47 +216,47 @@ uzZ1y9sNHH6kH8GFnvS2MqyHiNz0h0Sq/q6n+w==</ds:X509Certificate>
 			Name:       "User.email",
 			NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:basic",
 			Values: []AttributeValue{
-				AttributeValue{
+				{
 					Type:  "xs:string",
 					Value: "ross@kndr.org",
 				},
 			},
 		},
-		Attribute{
+		{
 			Name:       "memberOf",
 			NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:basic",
 			Values: []AttributeValue{
-				AttributeValue{
+				{
 					Type:  "xs:string",
 					Value: "",
 				},
 			},
 		},
-		Attribute{
+		{
 			Name:       "User.LastName",
 			NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:basic",
 			Values: []AttributeValue{
-				AttributeValue{
+				{
 					Type:  "xs:string",
 					Value: "Kinder",
 				},
 			},
 		},
-		Attribute{
+		{
 			Name:       "PersonImmutableID",
 			NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:basic",
 			Values: []AttributeValue{
-				AttributeValue{
+				{
 					Type:  "xs:string",
 					Value: "",
 				},
 			},
 		},
-		Attribute{
+		{
 			Name:       "User.FirstName",
 			NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:basic",
 			Values: []AttributeValue{
-				AttributeValue{
+				{
 					Type:  "xs:string",
 					Value: "Ross",
 				},
@@ -323,31 +323,31 @@ PUkfbaYHQGP6IS0lzeCeDX0wab3qRoh7/jJt5/BR8Iwf</ds:X509Certificate>
 
 	c.Assert(assertion.Subject.NameID.Value, DeepEquals, "ross@octolabs.io")
 	c.Assert(assertion.AttributeStatement.Attributes, DeepEquals, []Attribute{
-		Attribute{
+		{
 			Name:   "phone",
 			Values: nil,
 		},
-		Attribute{
+		{
 			Name:   "address",
 			Values: nil,
 		},
-		Attribute{
+		{
 			Name:   "jobTitle",
 			Values: nil,
 		},
-		Attribute{
+		{
 			Name: "firstName",
 			Values: []AttributeValue{
-				AttributeValue{
+				{
 					Type:  "xs:anyType",
 					Value: "Ross",
 				},
 			},
 		},
-		Attribute{
+		{
 			Name: "lastName",
 			Values: []AttributeValue{
-				AttributeValue{
+				{
 					Type:  "xs:anyType",
 					Value: "Kinder",
 				},
@@ -373,7 +373,7 @@ func (test *ServiceProviderTest) TestCanParseResponse(c *C) {
 	c.Assert(err, IsNil)
 
 	c.Assert(assertion.AttributeStatement.Attributes, DeepEquals, []Attribute{
-		Attribute{
+		{
 			FriendlyName: "uid",
 			Name:         "urn:oid:0.9.2342.19200300.100.1.1",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
@@ -384,7 +384,7 @@ func (test *ServiceProviderTest) TestCanParseResponse(c *C) {
 				},
 			},
 		},
-		Attribute{
+		{
 			FriendlyName: "eduPersonAffiliation",
 			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.1",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
@@ -399,7 +399,7 @@ func (test *ServiceProviderTest) TestCanParseResponse(c *C) {
 				},
 			},
 		},
-		Attribute{
+		{
 			FriendlyName: "eduPersonPrincipalName",
 			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.6",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
@@ -410,7 +410,7 @@ func (test *ServiceProviderTest) TestCanParseResponse(c *C) {
 				},
 			},
 		},
-		Attribute{
+		{
 			FriendlyName: "sn",
 			Name:         "urn:oid:2.5.4.4",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
@@ -421,7 +421,7 @@ func (test *ServiceProviderTest) TestCanParseResponse(c *C) {
 				},
 			},
 		},
-		Attribute{
+		{
 			FriendlyName: "eduPersonScopedAffiliation",
 			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.9",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
@@ -436,7 +436,7 @@ func (test *ServiceProviderTest) TestCanParseResponse(c *C) {
 				},
 			},
 		},
-		Attribute{
+		{
 			FriendlyName: "givenName",
 			Name:         "urn:oid:2.5.4.42",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
@@ -447,7 +447,7 @@ func (test *ServiceProviderTest) TestCanParseResponse(c *C) {
 				},
 			},
 		},
-		Attribute{
+		{
 			FriendlyName: "eduPersonEntitlement",
 			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.7",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
@@ -458,7 +458,7 @@ func (test *ServiceProviderTest) TestCanParseResponse(c *C) {
 				},
 			},
 		},
-		Attribute{
+		{
 			FriendlyName: "cn",
 			Name:         "urn:oid:2.5.4.3",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
@@ -469,7 +469,7 @@ func (test *ServiceProviderTest) TestCanParseResponse(c *C) {
 				},
 			},
 		},
-		Attribute{
+		{
 			FriendlyName: "eduPersonTargetedID",
 			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.10",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
@@ -479,7 +479,7 @@ func (test *ServiceProviderTest) TestCanParseResponse(c *C) {
 				},
 			},
 		},
-		Attribute{
+		{
 			FriendlyName: "telephoneNumber",
 			Name:         "urn:oid:2.5.4.20",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",

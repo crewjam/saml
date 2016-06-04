@@ -86,22 +86,22 @@ func (idp *IdentityProvider) Metadata() *Metadata {
 		IDPSSODescriptor: &IDPSSODescriptor{
 			ProtocolSupportEnumeration: "urn:oasis:names:tc:SAML:2.0:protocol",
 			KeyDescriptor: []KeyDescriptor{
-				KeyDescriptor{
+				{
 					Use: "signing",
 					KeyInfo: KeyInfo{
 						Certificate: certStr,
 					},
 				},
-				KeyDescriptor{
+				{
 					Use: "encryption",
 					KeyInfo: KeyInfo{
 						Certificate: certStr,
 					},
 					EncryptionMethods: []EncryptionMethod{
-						EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
-						EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
-						EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
-						EncryptionMethod{Algorithm: "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"},
+						{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
+						{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
+						{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
+						{Algorithm: "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"},
 					},
 				},
 			},
@@ -345,7 +345,7 @@ func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
 			FriendlyName: "uid",
 			Name:         "urn:oid:0.9.2342.19200300.100.1.1",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []AttributeValue{AttributeValue{
+			Values: []AttributeValue{{
 				Type:  "xs:string",
 				Value: session.UserName,
 			}},
@@ -357,7 +357,7 @@ func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
 			FriendlyName: "eduPersonPrincipalName",
 			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.6",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []AttributeValue{AttributeValue{
+			Values: []AttributeValue{{
 				Type:  "xs:string",
 				Value: session.UserEmail,
 			}},
@@ -368,7 +368,7 @@ func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
 			FriendlyName: "sn",
 			Name:         "urn:oid:2.5.4.4",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []AttributeValue{AttributeValue{
+			Values: []AttributeValue{{
 				Type:  "xs:string",
 				Value: session.UserSurname,
 			}},
@@ -379,7 +379,7 @@ func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
 			FriendlyName: "givenName",
 			Name:         "urn:oid:2.5.4.42",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []AttributeValue{AttributeValue{
+			Values: []AttributeValue{{
 				Type:  "xs:string",
 				Value: session.UserGivenName,
 			}},
@@ -391,7 +391,7 @@ func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
 			FriendlyName: "cn",
 			Name:         "urn:oid:2.5.4.3",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []AttributeValue{AttributeValue{
+			Values: []AttributeValue{{
 				Type:  "xs:string",
 				Value: session.UserCommonName,
 			}},
