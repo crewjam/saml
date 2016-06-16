@@ -214,16 +214,21 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 	}
 
 	token := jwt.New(jwt.GetSigningMethod("HS256"))
-	for _, attr := range assertion.AttributeStatement.Attributes {
-		valueStrings := []string{}
-		for _, v := range attr.Values {
-			valueStrings = append(valueStrings, v.Value)
+	if assertion.AttributeStatement != nil {
+		for _, attr := range assertion.AttributeStatement.Attributes {
+			valueStrings := []string{}
+			for _, v := range attr.Values {
+				valueStrings = append(valueStrings, v.Value)
+			}
+			claimName := attr.FriendlyName
+			if claimName == "" {
+				claimName = attr.Name
+			}
+			token.Claims[claimName] = valueStrings
 		}
-		claimName := attr.FriendlyName
-		if claimName == "" {
-			claimName = attr.Name
-		}
-		token.Claims[claimName] = valueStrings
+	}
+	if assertion.Subject != nil && assertion.Subject.NameID != nil {
+		token.Claims["subject"] = []string{assertion.Subject.NameID.Value}
 	}
 	token.Claims["exp"] = saml.TimeNow().Add(cookieMaxAge).Unix()
 	signedToken, err := token.SignedString(secretBlock.Bytes)
