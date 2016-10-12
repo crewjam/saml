@@ -9,6 +9,8 @@ import (
 	"time"
 
 	. "gopkg.in/check.v1"
+
+	"github.com/crewjam/saml/testsaml"
 )
 
 // Hook up gocheck into the "go test" runner.
@@ -114,7 +116,13 @@ func (test *ServiceProviderTest) TestCanProduceRedirectRequest(c *C) {
 
 	redirectURL, err := s.MakeRedirectAuthenticationRequest("relayState")
 	c.Assert(err, IsNil)
-	c.Assert(redirectURL.String(), Equals, "https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=relayState&SAMLRequest=lJJRr9MwDIX%2FSpX3NXHora6ittK4E9KkC0wr8MBbSL0tok1G7AL796QDxJ5gvDr28XdO3KxnPoU9fpmRuPg%2BjYFaMadgoiVPJtgJybAz%2Ffr1s9GlMucUObo4imJNhIl9DE8x0Dxh6jF99Q7f759bcWI%2Bk5ESHuoaqqoqwzHFz6WPkuw0amkdiWKTd%2FpgF40%2FE344l5wf6OQ%2FlTEdl4LMWw9%2BRLlgaLnHwSd0LPv%2BrSi2m1b4YaWU0qpStXpUVjmFoEBDBTU8ggUHqJXWutJ1HiCacRuIbeBWaAUPK9ArBe8UmBdgNHwUxe6XzZc%2BDD4cWyGKD5joSppjEF1zVUn3RGZ%2FByWKVzFNlv%2FevlSyn8O11WBgzxfR%2FSvQCdkOlm0jf4J1zZuss93s4ujd5T9%2Fdhzjt6eElrEVnGYU3f3AnGwgn7EbeUvQNfL21LofAQAA%2F%2F8%3D")
+
+	c.Assert(redirectURL.String(), testsaml.EqualsAny, []interface{}{
+		// go1.5, go1.6
+		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=relayState&SAMLRequest=lJJRr9MwDIX%2FSpX3NXHora6ittK4E9KkC0wr8MBbSL0tok1G7AL796QDxJ5gvDr28XdO3KxnPoU9fpmRuPg%2BjYFaMadgoiVPJtgJybAz%2Ffr1s9GlMucUObo4imJNhIl9DE8x0Dxh6jF99Q7f759bcWI%2Bk5ESHuoaqqoqwzHFz6WPkuw0amkdiWKTd%2FpgF40%2FE344l5wf6OQ%2FlTEdl4LMWw9%2BRLlgaLnHwSd0LPv%2BrSi2m1b4YaWU0qpStXpUVjmFoEBDBTU8ggUHqJXWutJ1HiCacRuIbeBWaAUPK9ArBe8UmBdgNHwUxe6XzZc%2BDD4cWyGKD5joSppjEF1zVUn3RGZ%2FByWKVzFNlv%2FevlSyn8O11WBgzxfR%2FSvQCdkOlm0jf4J1zZuss93s4ujd5T9%2Fdhzjt6eElrEVnGYU3f3AnGwgn7EbeUvQNfL21LofAQAA%2F%2F8%3D",
+		// go1.7
+		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=relayState&SAMLRequest=lJJBj9NADIX%2FSjT3ZsZDNlqNkkhlK6RKC6xa4MDNTLytRTJTxg6w%2Fx61gNgTlOvT89PnZ3frRY9pR18WEq2%2Bz1OS3iwlhYzCEhLOJEFj2K9f3wdfu3AqWXPMk6nWIlSUc7rLSZaZyp7KV470fnffm6PqSYK1cNO20DRNnQ4lf645W8F58hajmGpDopzwnPFngsdTrSQqR%2F5U53I4C%2FZU8iNPZM8Y3u5o5EJR7X7%2F1lTbTW94XDnnvGtc624duugIHHhooIVbQIhA3nnvG9%2Baaiuy0DaJYtLeeAc3K%2FArB%2B8chBcQPHw01cOvNV9yGjkdemOqD1TkQuprZ4buklKuqQx%2FF2WqV7nMqH%2B3nxUeV48Xa6CkrE9m%2BFehMymOqNjZn2BD9wZn2m4e8sTx6T8vO035210hVOqNloXMcD2wFkzClLSzzwmGzj5%2FteFHAAAA%2F%2F8%3D",
+	})
 }
 
 func (test *ServiceProviderTest) TestCanProducePostRequest(c *C) {

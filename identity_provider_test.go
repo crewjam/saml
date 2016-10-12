@@ -10,10 +10,11 @@ import (
 	"strings"
 	"time"
 
-	. "gopkg.in/check.v1"
-
 	"github.com/crewjam/go-xmlsec"
 	"github.com/dgrijalva/jwt-go"
+	. "gopkg.in/check.v1"
+
+	"github.com/crewjam/saml/testsaml"
 )
 
 type IdentityProviderTest struct {
@@ -185,7 +186,13 @@ func (test *IdentityProviderTest) TestCanHandleRequestWithNewSession(c *C) {
 
 	requestURL, err := test.SP.MakeRedirectAuthenticationRequest("ThisIsTheRelayState")
 	c.Assert(err, IsNil)
-	c.Assert(requestURL.String(), Equals, "https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJRqxMxEIX%2FypL3NpPQW69hd6HeIhSqlFZ98G3IjjawSdbMrLb%2F3m1VLAilvoaTM985M%2FVqlGPa07eRWKpT7BM3aizJZeTALmEkduLdYfVu6%2Bwc3FCyZJ97Va2YqUjI6SUnHiOVA5XvwdPH%2FbZRR5GBndY8zOmEcehp7nPUjLG3Gj2raj0NDAkvBn%2FloftXr5mzqjbrRoVuBgAWFrCEZ0DwQAaMNQuzNM8GjTdkwVq7sMvpA%2FNIm8SCSRplwTzNjJ2B%2BQDGPb1y8Pqzqna%2Fw7wJqQvpa6NU9YkKX5GmsKqtry7lkWLwTx2qeptLRLkvv7xMeb5cpY6SBDmr9m5tkQQ7FKz1L6q2fj%2BZbNa73Ad%2F%2Fs%2Fl9X3%2B8VIIhRolZSTVPk4rBROHibnWtwRtrW%2Bvqf0ZAAD%2F%2Fw%3D%3D")
+	c.Assert(requestURL.String(), testsaml.EqualsAny, []interface{}{
+		// go1.5, go1.6
+		"https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJRqxMxEIX%2FypL3NpPQW69hd6HeIhSqlFZ98G3IjjawSdbMrLb%2F3m1VLAilvoaTM985M%2FVqlGPa07eRWKpT7BM3aizJZeTALmEkduLdYfVu6%2Bwc3FCyZJ97Va2YqUjI6SUnHiOVA5XvwdPH%2FbZRR5GBndY8zOmEcehp7nPUjLG3Gj2raj0NDAkvBn%2FloftXr5mzqjbrRoVuBgAWFrCEZ0DwQAaMNQuzNM8GjTdkwVq7sMvpA%2FNIm8SCSRplwTzNjJ2B%2BQDGPb1y8Pqzqna%2Fw7wJqQvpa6NU9YkKX5GmsKqtry7lkWLwTx2qeptLRLkvv7xMeb5cpY6SBDmr9m5tkQQ7FKz1L6q2fj%2BZbNa73Ad%2F%2Fs%2Fl9X3%2B8VIIhRolZSTVPk4rBROHibnWtwRtrW%2Bvqf0ZAAD%2F%2Fw%3D%3D",
+
+		// go1.7
+		"https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJRaxQxEMe%2FSpj3u0zC9axhd%2BHsISxUKa364NuQHW1gk6yZWW2%2FvfRULAjlfB1%2B%2FPnNf6Y7rHpfbvnbyqLmIc9FelhbCZUkSSiUWYLGcHd4dx38FsPSqtZYZzAHEW6aarmqRdbM7Y7b9xT54%2B11D%2FeqiwRrZdnyA%2BVl5m2s2Qrl2VuKAubIoqnQU8BfPE3%2F8lakghmPPaRpg4ged7jHSySMyA6ddzu3d5eOXHTs0Xu%2F83swo8jKYxGloj14dBcb5zfoPqALF68Cvv4M5ub3Mm9SmVL52gOYT9zkpOS3CEN3SmnnFEN%2F6gDztrZM%2BjL%2BNEnT5ssJDVw06SMML9aWWWkipc7%2Bshq695R5PN7UOcXH%2FzzePNcfV41JuQdtK8Nwvq02KpK4aGefGwydff5Nw88AAAD%2F%2Fw%3D%3D",
+	})
 
 	r, _ := http.NewRequest("GET", requestURL.String(), nil)
 	test.IDP.ServeSSO(w, r)
@@ -207,8 +214,13 @@ func (test *IdentityProviderTest) TestCanHandleRequestWithExistingSession(c *C) 
 	w := httptest.NewRecorder()
 	requestURL, err := test.SP.MakeRedirectAuthenticationRequest("ThisIsTheRelayState")
 	c.Assert(err, IsNil)
-	c.Assert(requestURL.String(), Equals,
-		"https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJRqxMxEIX%2FypL3NpPQW69hd6HeIhSqlFZ98G3IjjawSdbMrLb%2F3m1VLAilvoaTM985M%2FVqlGPa07eRWKpT7BM3aizJZeTALmEkduLdYfVu6%2Bwc3FCyZJ97Va2YqUjI6SUnHiOVA5XvwdPH%2FbZRR5GBndY8zOmEcehp7nPUjLG3Gj2raj0NDAkvBn%2FloftXr5mzqjbrRoVuBgAWFrCEZ0DwQAaMNQuzNM8GjTdkwVq7sMvpA%2FNIm8SCSRplwTzNjJ2B%2BQDGPb1y8Pqzqna%2Fw7wJqQvpa6NU9YkKX5GmsKqtry7lkWLwTx2qeptLRLkvv7xMeb5cpY6SBDmr9m5tkQQ7FKz1L6q2fj%2BZbNa73Ad%2F%2Fs%2Fl9X3%2B8VIIhRolZSTVPk4rBROHibnWtwRtrW%2Bvqf0ZAAD%2F%2Fw%3D%3D")
+	c.Assert(requestURL.String(), testsaml.EqualsAny, []interface{}{
+		// go1.5, go1.6
+		"https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJRqxMxEIX%2FypL3NpPQW69hd6HeIhSqlFZ98G3IjjawSdbMrLb%2F3m1VLAilvoaTM985M%2FVqlGPa07eRWKpT7BM3aizJZeTALmEkduLdYfVu6%2Bwc3FCyZJ97Va2YqUjI6SUnHiOVA5XvwdPH%2FbZRR5GBndY8zOmEcehp7nPUjLG3Gj2raj0NDAkvBn%2FloftXr5mzqjbrRoVuBgAWFrCEZ0DwQAaMNQuzNM8GjTdkwVq7sMvpA%2FNIm8SCSRplwTzNjJ2B%2BQDGPb1y8Pqzqna%2Fw7wJqQvpa6NU9YkKX5GmsKqtry7lkWLwTx2qeptLRLkvv7xMeb5cpY6SBDmr9m5tkQQ7FKz1L6q2fj%2BZbNa73Ad%2F%2Fs%2Fl9X3%2B8VIIhRolZSTVPk4rBROHibnWtwRtrW%2Bvqf0ZAAD%2F%2Fw%3D%3D",
+
+		// go1.7
+		"https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJRaxQxEMe%2FSpj3u0zC9axhd%2BHsISxUKa364NuQHW1gk6yZWW2%2FvfRULAjlfB1%2B%2FPnNf6Y7rHpfbvnbyqLmIc9FelhbCZUkSSiUWYLGcHd4dx38FsPSqtZYZzAHEW6aarmqRdbM7Y7b9xT54%2B11D%2FeqiwRrZdnyA%2BVl5m2s2Qrl2VuKAubIoqnQU8BfPE3%2F8lakghmPPaRpg4ged7jHSySMyA6ddzu3d5eOXHTs0Xu%2F83swo8jKYxGloj14dBcb5zfoPqALF68Cvv4M5ub3Mm9SmVL52gOYT9zkpOS3CEN3SmnnFEN%2F6gDztrZM%2BjL%2BNEnT5ssJDVw06SMML9aWWWkipc7%2Bshq695R5PN7UOcXH%2FzzePNcfV41JuQdtK8Nwvq02KpK4aGefGwydff5Nw88AAAD%2F%2Fw%3D%3D",
+	})
 
 	r, _ := http.NewRequest("GET", requestURL.String(), nil)
 	test.IDP.ServeSSO(w, r)

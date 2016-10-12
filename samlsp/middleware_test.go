@@ -15,6 +15,7 @@ import (
 	. "gopkg.in/check.v1"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/testsaml"
 )
 
 // Hook up gocheck into the "go test" runner.
@@ -128,8 +129,13 @@ func (test *MiddlewareTest) TestRequireAccountNoCreds(c *C) {
 		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
 			"; Path=/saml2/acs; Max-Age=90")
-	c.Assert(resp.Header().Get("Location"), Equals,
-		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJBj9MwEIX%2FSuR747GVhsVKIpWtkCotsGqAAzfjzLYWiV08E6D%2FHqeA6Am61%2FHMm%2B89T7OZ%2BRj2%2BHVG4uLHNAZqxZyCiZY8mWAnJMPO9Js3D0aXYE4pcnRxFMWGCBP7GO5joHnC1GP65h1%2B2D%2B04sh8IiOlWte1qqqqDIcUv5Q%2BSrLTqKV1JIpt3umDXTT%2BTvjhVHJ%2BoKP%2FXMZ0WAoyb33yI8oFQ8s9Dj6hY9n370Sx27bCDysA0FBBDXdgwQEqUFpVqlZ3yiqnUIPWutJ1HiCacReIbeBWaFDrldIrUO9BmfULAy8%2FieLxt81XPgw%2BHFohio%2BY6EKaYxBdc1FJt0Rm%2FwQlitcxTZb%2F3b5Usp%2BnS6vBwJ7PovtfoBOyHSzbRv4C65q3WWe3fYyjd%2Bdn%2Fuw4xu%2F3CS1jKzjNKLrbgTnZQD5jN%2FKaoGvk9al1PwMAAP%2F%2F")
+	c.Assert(resp.Header().Get("Location"), testsaml.EqualsAny, []interface{}{
+		// go1.5, go1.6
+		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJBj9MwEIX%2FSuR747GVhsVKIpWtkCotsGqAAzfjzLYWiV08E6D%2FHqeA6Am61%2FHMm%2B89T7OZ%2BRj2%2BHVG4uLHNAZqxZyCiZY8mWAnJMPO9Js3D0aXYE4pcnRxFMWGCBP7GO5joHnC1GP65h1%2B2D%2B04sh8IiOlWte1qqqqDIcUv5Q%2BSrLTqKV1JIpt3umDXTT%2BTvjhVHJ%2BoKP%2FXMZ0WAoyb33yI8oFQ8s9Dj6hY9n370Sx27bCDysA0FBBDXdgwQEqUFpVqlZ3yiqnUIPWutJ1HiCacReIbeBWaFDrldIrUO9BmfULAy8%2FieLxt81XPgw%2BHFohio%2BY6EKaYxBdc1FJt0Rm%2FwQlitcxTZb%2F3b5Usp%2BnS6vBwJ7PovtfoBOyHSzbRv4C65q3WWe3fYyjd%2Bdn%2Fuw4xu%2F3CS1jKzjNKLrbgTnZQD5jN%2FKaoGvk9al1PwMAAP%2F%2F",
+
+		// go1.7
+		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJBj9NADIX%2FSjT3ZjyjNCyjJFLZCqnSAqsWOHAzibe1SGbK2AH236MUEHuC7vXp%2Benzs5vNrKe4p68ziRY%2FpjFKa%2BYcQ0JhCREnkqB9OGze3AVfQjjnpKlPoyk2IpSVU7xNUeaJ8oHyN%2B7pw%2F6uNSfVswRr3bquXVVVZTzm9KXkZAWn0VvsxRRbEuWIS8bfCR7OpZKonPhzmfJxEew5pwceyS4Y3u5p4Ey92sPhnSl229bwsAIADxXUcAMIPZAD513lanfj0PWOPHjvK1%2BbYicy0y6KYtTWeHDrlfMrcO%2FBhfWLAC8%2FmeL%2B95qvOA4cj60xxUfKciH1JZiuuaTkayrDP0WZ4nXKE%2Bq%2F7YvCw%2BrhYg0UlfXRdP8rdCLFARUb%2Bwusa97iRLvtfRq5f3zmZccxfb%2FNhEqt0TyT6a4H1oxRmKI29ilB19inr9b9DAAA%2F%2F8%3D",
+	})
 }
 
 func (test *MiddlewareTest) TestRequireAccountCreds(c *C) {
@@ -177,8 +183,13 @@ func (test *MiddlewareTest) TestRequireAccountBadCreds(c *C) {
 		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
 			"; Path=/saml2/acs; Max-Age=90")
-	c.Assert(resp.Header().Get("Location"), Equals,
-		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJBj9MwEIX%2FSuR747GVhsVKIpWtkCotsGqAAzfjzLYWiV08E6D%2FHqeA6Am61%2FHMm%2B89T7OZ%2BRj2%2BHVG4uLHNAZqxZyCiZY8mWAnJMPO9Js3D0aXYE4pcnRxFMWGCBP7GO5joHnC1GP65h1%2B2D%2B04sh8IiOlWte1qqqqDIcUv5Q%2BSrLTqKV1JIpt3umDXTT%2BTvjhVHJ%2BoKP%2FXMZ0WAoyb33yI8oFQ8s9Dj6hY9n370Sx27bCDysA0FBBDXdgwQEqUFpVqlZ3yiqnUIPWutJ1HiCacReIbeBWaFDrldIrUO9BmfULAy8%2FieLxt81XPgw%2BHFohio%2BY6EKaYxBdc1FJt0Rm%2FwQlitcxTZb%2F3b5Usp%2BnS6vBwJ7PovtfoBOyHSzbRv4C65q3WWe3fYyjd%2Bdn%2Fuw4xu%2F3CS1jKzjNKLrbgTnZQD5jN%2FKaoGvk9al1PwMAAP%2F%2F")
+	c.Assert(resp.Header().Get("Location"), testsaml.EqualsAny, []interface{}{
+		// go1.5, go1.6
+		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJBj9MwEIX%2FSuR747GVhsVKIpWtkCotsGqAAzfjzLYWiV08E6D%2FHqeA6Am61%2FHMm%2B89T7OZ%2BRj2%2BHVG4uLHNAZqxZyCiZY8mWAnJMPO9Js3D0aXYE4pcnRxFMWGCBP7GO5joHnC1GP65h1%2B2D%2B04sh8IiOlWte1qqqqDIcUv5Q%2BSrLTqKV1JIpt3umDXTT%2BTvjhVHJ%2BoKP%2FXMZ0WAoyb33yI8oFQ8s9Dj6hY9n370Sx27bCDysA0FBBDXdgwQEqUFpVqlZ3yiqnUIPWutJ1HiCacReIbeBWaFDrldIrUO9BmfULAy8%2FieLxt81XPgw%2BHFohio%2BY6EKaYxBdc1FJt0Rm%2FwQlitcxTZb%2F3b5Usp%2BnS6vBwJ7PovtfoBOyHSzbRv4C65q3WWe3fYyjd%2Bdn%2Fuw4xu%2F3CS1jKzjNKLrbgTnZQD5jN%2FKaoGvk9al1PwMAAP%2F%2F",
+
+		// go1.7
+		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJBj9NADIX%2FSjT3ZjyjNCyjJFLZCqnSAqsWOHAzibe1SGbK2AH236MUEHuC7vXp%2Benzs5vNrKe4p68ziRY%2FpjFKa%2BYcQ0JhCREnkqB9OGze3AVfQjjnpKlPoyk2IpSVU7xNUeaJ8oHyN%2B7pw%2F6uNSfVswRr3bquXVVVZTzm9KXkZAWn0VvsxRRbEuWIS8bfCR7OpZKonPhzmfJxEew5pwceyS4Y3u5p4Ey92sPhnSl229bwsAIADxXUcAMIPZAD513lanfj0PWOPHjvK1%2BbYicy0y6KYtTWeHDrlfMrcO%2FBhfWLAC8%2FmeL%2B95qvOA4cj60xxUfKciH1JZiuuaTkayrDP0WZ4nXKE%2Bq%2F7YvCw%2BrhYg0UlfXRdP8rdCLFARUb%2Bwusa97iRLvtfRq5f3zmZccxfb%2FNhEqt0TyT6a4H1oxRmKI29ilB19inr9b9DAAA%2F%2F8%3D",
+	})
 }
 
 func (test *MiddlewareTest) TestRequireAccountExpiredCreds(c *C) {
@@ -205,8 +216,13 @@ func (test *MiddlewareTest) TestRequireAccountExpiredCreds(c *C) {
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
 			"; Path=/saml2/acs; Max-Age=90")
 
-	c.Assert(resp.Header().Get("Location"), Equals,
-		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJBj9MwEIX%2FSuR747GVhsVKIpWtkCotsGqAAzfjzLYWiV08E6D%2FHqeA6Am61%2FHMm%2B89T7OZ%2BRj2%2BHVG4uLHNAZqxZyCiZY8mWAnJMPO9Js3D0aXYE4pcnRxFMWGCBP7GO5joHnC1GP65h1%2B2D%2B04sh8IiOlWte1qqqqDIcUv5Q%2BSrLTqKV1JIpt3umDXTT%2BTvjhVHJ%2BoKP%2FXMZ0WAoyb33yI8oFQ8s9Dj6hY9n370Sx27bCDysA0FBBDXdgwQEqUFpVqlZ3yiqnUIPWutJ1HiCacReIbeBWaFDrldIrUO9BmfULAy8%2FieLxt81XPgw%2BHFohio%2BY6EKaYxBdc1FJt0Rm%2FwQlitcxTZb%2F3b5Usp%2BnS6vBwJ7PovtfoBOyHSzbRv4C65q3WWe3fYyjd%2Bdn%2Fuw4xu%2F3CS1jKzjNKLrbgTnZQD5jN%2FKaoGvk9al1PwMAAP%2F%2F")
+	c.Assert(resp.Header().Get("Location"), testsaml.EqualsAny, []interface{}{
+		// go1.5, go1.6
+		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJBj9MwEIX%2FSuR747GVhsVKIpWtkCotsGqAAzfjzLYWiV08E6D%2FHqeA6Am61%2FHMm%2B89T7OZ%2BRj2%2BHVG4uLHNAZqxZyCiZY8mWAnJMPO9Js3D0aXYE4pcnRxFMWGCBP7GO5joHnC1GP65h1%2B2D%2B04sh8IiOlWte1qqqqDIcUv5Q%2BSrLTqKV1JIpt3umDXTT%2BTvjhVHJ%2BoKP%2FXMZ0WAoyb33yI8oFQ8s9Dj6hY9n370Sx27bCDysA0FBBDXdgwQEqUFpVqlZ3yiqnUIPWutJ1HiCacReIbeBWaFDrldIrUO9BmfULAy8%2FieLxt81XPgw%2BHFohio%2BY6EKaYxBdc1FJt0Rm%2FwQlitcxTZb%2F3b5Usp%2BnS6vBwJ7PovtfoBOyHSzbRv4C65q3WWe3fYyjd%2Bdn%2Fuw4xu%2F3CS1jKzjNKLrbgTnZQD5jN%2FKaoGvk9al1PwMAAP%2F%2F",
+
+		// go1.7
+		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJBj9NADIX%2FSjT3ZjyjNCyjJFLZCqnSAqsWOHAzibe1SGbK2AH236MUEHuC7vXp%2Benzs5vNrKe4p68ziRY%2FpjFKa%2BYcQ0JhCREnkqB9OGze3AVfQjjnpKlPoyk2IpSVU7xNUeaJ8oHyN%2B7pw%2F6uNSfVswRr3bquXVVVZTzm9KXkZAWn0VvsxRRbEuWIS8bfCR7OpZKonPhzmfJxEew5pwceyS4Y3u5p4Ey92sPhnSl229bwsAIADxXUcAMIPZAD513lanfj0PWOPHjvK1%2BbYicy0y6KYtTWeHDrlfMrcO%2FBhfWLAC8%2FmeL%2B95qvOA4cj60xxUfKciH1JZiuuaTkayrDP0WZ4nXKE%2Bq%2F7YvCw%2BrhYg0UlfXRdP8rdCLFARUb%2Bwusa97iRLvtfRq5f3zmZccxfb%2FNhEqt0TyT6a4H1oxRmKI29ilB19inr9b9DAAA%2F%2F8%3D",
+	})
 }
 
 func (test *MiddlewareTest) TestRequireAccountPanicOnRequestToACS(c *C) {
