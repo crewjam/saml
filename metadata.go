@@ -31,6 +31,21 @@ type Metadata struct {
 	IDPSSODescriptor *IDPSSODescriptor `xml:"IDPSSODescriptor"`
 }
 
+func (m *Metadata) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	type Alias Metadata
+	aux := &struct {
+		ValidUntil RelaxedTime `xml:"validUntil,attr"`
+		*Alias
+	}{
+		Alias: (*Alias)(m),
+	}
+	if err := d.DecodeElement(&aux, &start); err != nil {
+		return err
+	}
+	m.ValidUntil = time.Time(aux.ValidUntil)
+	return nil
+}
+
 // KeyDescriptor represents the XMLSEC object of the same name
 type KeyDescriptor struct {
 	Use               string             `xml:"use,attr"`

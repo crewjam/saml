@@ -24,6 +24,21 @@ type AuthnRequest struct {
 	NameIDPolicy                NameIDPolicy      `xml:"urn:oasis:names:tc:SAML:2.0:protocol NameIDPolicy"`
 }
 
+func (a *AuthnRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	type Alias AuthnRequest
+	aux := &struct {
+		IssueInstant RelaxedTime `xml:",attr"`
+		*Alias
+	}{
+		Alias: (*Alias)(a),
+	}
+	if err := d.DecodeElement(&aux, &start); err != nil {
+		return err
+	}
+	a.IssueInstant = time.Time(aux.IssueInstant)
+	return nil
+}
+
 // Issuer represents the SAML object of the same name.
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
@@ -56,6 +71,21 @@ type Response struct {
 	Status             *Status   `xml:"urn:oasis:names:tc:SAML:2.0:protocol Status"`
 	EncryptedAssertion *EncryptedAssertion
 	Assertion          *Assertion `xml:"urn:oasis:names:tc:SAML:2.0:assertion Assertion"`
+}
+
+func (r *Response) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	type Alias Response
+	aux := &struct {
+		IssueInstant RelaxedTime `xml:",attr"`
+		*Alias
+	}{
+		Alias: (*Alias)(r),
+	}
+	if err := d.DecodeElement(&aux, &start); err != nil {
+		return err
+	}
+	r.IssueInstant = time.Time(aux.IssueInstant)
+	return nil
 }
 
 // Status represents the SAML object of the same name.
@@ -102,6 +132,21 @@ type Assertion struct {
 	AttributeStatement *AttributeStatement
 }
 
+func (a *Assertion) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	type Alias Assertion
+	aux := &struct {
+		IssueInstant RelaxedTime `xml:",attr"`
+		*Alias
+	}{
+		Alias: (*Alias)(a),
+	}
+	if err := d.DecodeElement(&aux, &start); err != nil {
+		return err
+	}
+	a.IssueInstant = time.Time(aux.IssueInstant)
+	return nil
+}
+
 // Subject represents the SAML object of the same name.
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
@@ -139,6 +184,21 @@ type SubjectConfirmationData struct {
 	Recipient    string    `xml:",attr"`
 }
 
+func (s *SubjectConfirmationData) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	type Alias SubjectConfirmationData
+	aux := &struct {
+		NotOnOrAfter RelaxedTime `xml:",attr"`
+		*Alias
+	}{
+		Alias: (*Alias)(s),
+	}
+	if err := d.DecodeElement(&aux, &start); err != nil {
+		return err
+	}
+	s.NotOnOrAfter = time.Time(aux.NotOnOrAfter)
+	return nil
+}
+
 // Conditions represents the SAML object of the same name.
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
@@ -146,6 +206,23 @@ type Conditions struct {
 	NotBefore           time.Time `xml:",attr"`
 	NotOnOrAfter        time.Time `xml:",attr"`
 	AudienceRestriction *AudienceRestriction
+}
+
+func (c *Conditions) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	type Alias Conditions
+	aux := &struct {
+		NotBefore    RelaxedTime `xml:",attr"`
+		NotOnOrAfter RelaxedTime `xml:",attr"`
+		*Alias
+	}{
+		Alias: (*Alias)(c),
+	}
+	if err := d.DecodeElement(&aux, &start); err != nil {
+		return err
+	}
+	c.NotBefore = time.Time(aux.NotBefore)
+	c.NotOnOrAfter = time.Time(aux.NotOnOrAfter)
+	return nil
 }
 
 // AudienceRestriction represents the SAML object of the same name.
@@ -170,6 +247,21 @@ type AuthnStatement struct {
 	SessionIndex    string    `xml:",attr"`
 	SubjectLocality SubjectLocality
 	AuthnContext    AuthnContext
+}
+
+func (a *AuthnStatement) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	type Alias AuthnStatement
+	aux := &struct {
+		AuthnInstant RelaxedTime `xml:",attr"`
+		*Alias
+	}{
+		Alias: (*Alias)(a),
+	}
+	if err := d.DecodeElement(&aux, &start); err != nil {
+		return err
+	}
+	a.AuthnInstant = time.Time(aux.AuthnInstant)
+	return nil
 }
 
 // SubjectLocality represents the SAML object of the same name.

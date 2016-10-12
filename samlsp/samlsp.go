@@ -61,15 +61,18 @@ func New(opts Options) (*Middleware, error) {
 		}
 
 		entity := &saml.Metadata{}
-		err = xml.Unmarshal(data, entity)
-		if err == nil {
+		firstError := xml.Unmarshal(data, entity)
+		if firstError == nil {
 			m.ServiceProvider.IDPMetadata = entity
 			return m, nil
 		}
 		entities := &saml.EntitiesDescriptor{}
-		err = xml.Unmarshal(data, entities)
-		if err != nil {
-			return nil, err
+		secondError := xml.Unmarshal(data, entities)
+		if secondError != nil {
+			if firstError != nil {
+				return nil, firstError
+			}
+			return nil, secondError
 		}
 		for _, entity := range entities.EntityDescriptor {
 			if entity.IDPSSODescriptor != nil {
