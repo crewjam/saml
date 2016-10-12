@@ -61,27 +61,30 @@ func New(opts Options) (*Middleware, error) {
 		}
 
 		entity := &saml.Metadata{}
-		firstError := xml.Unmarshal(data, entity)
-		if firstError == nil {
-			m.ServiceProvider.IDPMetadata = entity
-			return m, nil
-		}
-		entities := &saml.EntitiesDescriptor{}
-		secondError := xml.Unmarshal(data, entities)
-		if secondError != nil {
-			if firstError != nil {
-				return nil, firstError
+
+		err = xml.Unmarshal(data, entity)
+
+		// this comparison is ugly, but it is how the error is generated in encoding/xml
+		if err != nil && err.Error() == "expected element type <EntityDescriptor> but have <EntitiesDescriptor>" {
+			entities := &saml.EntitiesDescriptor{}
+			if err := xml.Unmarshal(data, entities); err != nil {
+				return nil, err
 			}
-			return nil, secondError
-		}
-		for _, entity := range entities.EntityDescriptor {
-			if entity.IDPSSODescriptor != nil {
-				m.ServiceProvider.IDPMetadata = entity
-				return m, nil
+
+			err = fmt.Errorf("no entity found with IDPSSODescriptor")
+			for _, e := range entities.EntityDescriptor {
+				if e.IDPSSODescriptor != nil {
+					entity = e
+					err = nil
+				}
 			}
 		}
-		return nil, fmt.Errorf("no entity returned with IDPSSODescriptor: %#v",
-			entities)
+		if err != nil {
+			return nil, err
+		}
+
+		m.ServiceProvider.IDPMetadata = entity
+		return m, nil
 	}
 
 	panic("unreachable")
