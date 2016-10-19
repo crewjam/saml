@@ -188,17 +188,17 @@ func (test *IdentityProviderTest) TestCanHandleRequestWithNewSession(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(requestURL.String(), testsaml.EqualsAny, []interface{}{
 		// go1.5, go1.6
-		"https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJRqxMxEIX%2FypL3NpPQW69hd6HeIhSqlFZ98G3IjjawSdbMrLb%2F3m1VLAilvoaTM985M%2FVqlGPa07eRWKpT7BM3aizJZeTALmEkduLdYfVu6%2Bwc3FCyZJ97Va2YqUjI6SUnHiOVA5XvwdPH%2FbZRR5GBndY8zOmEcehp7nPUjLG3Gj2raj0NDAkvBn%2FloftXr5mzqjbrRoVuBgAWFrCEZ0DwQAaMNQuzNM8GjTdkwVq7sMvpA%2FNIm8SCSRplwTzNjJ2B%2BQDGPb1y8Pqzqna%2Fw7wJqQvpa6NU9YkKX5GmsKqtry7lkWLwTx2qeptLRLkvv7xMeb5cpY6SBDmr9m5tkQQ7FKz1L6q2fj%2BZbNa73Ad%2F%2Fs%2Fl9X3%2B8VIIhRolZSTVPk4rBROHibnWtwRtrW%2Bvqf0ZAAD%2F%2Fw%3D%3D",
+		"https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJRixMxEMe%2FypL3bSahV8%2Bwu1CviIVTSq%2F64NuYHb3AJlkzs3r37d1rFQtCqa%2Fhl5n%2F%2F5c060ke056%2BT8RSPcUhcaumklxGDuwSRmIn3j2s3987uwA3lizZ50FVa2YqEnK6y4mnSOWByo%2Fg6eP%2BvlWPIiM7rXlc0BPGcaCFz1EzxsFq9KyqzbwwJHwZ8BcP%2Fb%2B8Zs6q2m5aFfoaACwsYQW3gOCBDBhrlmZlbg0ab8iCtXZpV%2FMF5om2iQWTtMqCuamNrcEcwLibVw5ef1bV7neZNyH1IX273PzLCWL37nDY1XvqQyEvqvpEhY8lZkh1zXFvuUYl%2FhGoqre5RJTL%2BMvJbODrEXWUJMiz6i6KjiTYo2CjT6m65sM8ZLvZ5SH45%2F987mHIP%2B8KoVCrpEykuuvTSsHEYc7c6PMEXaPP%2F1%2F3KwAA%2F%2F8%3D",
 
 		// go1.7
-		"https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJRaxQxEMe%2FSpj3u0zC9axhd%2BHsISxUKa364NuQHW1gk6yZWW2%2FvfRULAjlfB1%2B%2FPnNf6Y7rHpfbvnbyqLmIc9FelhbCZUkSSiUWYLGcHd4dx38FsPSqtZYZzAHEW6aarmqRdbM7Y7b9xT54%2B11D%2FeqiwRrZdnyA%2BVl5m2s2Qrl2VuKAubIoqnQU8BfPE3%2F8lakghmPPaRpg4ged7jHSySMyA6ddzu3d5eOXHTs0Xu%2F83swo8jKYxGloj14dBcb5zfoPqALF68Cvv4M5ub3Mm9SmVL52gOYT9zkpOS3CEN3SmnnFEN%2F6gDztrZM%2BjL%2BNEnT5ssJDVw06SMML9aWWWkipc7%2Bshq695R5PN7UOcXH%2FzzePNcfV41JuQdtK8Nwvq02KpK4aGefGwydff5Nw88AAAD%2F%2Fw%3D%3D",
+		"https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJRaxQxEMe%2FSsj7Xibhetawu3D2EBeqHNfTB9%2FG7GgDm2TNzGr77aVXxYJwnK%2FhR%2Bb%2F%2F82020Xu84G%2BL8SiHtKUudNLzb4gR%2FYZE7GX4O%2B272%2B9W4Gfa5ESyqTVlpmqxJJvSuYlUb2j%2BiMG%2Bni47fS9yMzeGJ5X9IBpnmgVSjKMaXIGA2u1I5aY8emDv3gc%2F%2BUNc9Fq2HU6jg0AOFjDBq4BIQBZsM6u7cZeW7TBkgPn3NpttBqYFxoyC2bptAN71VjXgD2C9VevPLz%2BrNX%2Bd5k3MY8xfzvf%2FMszxP7d8bhvDjTGSkG0%2BkSVTyXcCnTfnubWS1TiH4FavS01oZzHn17i2Hw9oZ6yRHnU%2FVnRiQRHFGzNc6q%2B%2FYCJht2%2BTDE8%2Fue6p6n8vKmEQp2WupDuL08rFTNHytKalwn61ry8v%2F5XAAAA%2F%2F8%3D",
 	})
 
 	r, _ := http.NewRequest("GET", requestURL.String(), nil)
 	test.IDP.ServeSSO(w, r)
 	c.Assert(w.Code, Equals, 200)
 	c.Assert(string(w.Body.Bytes()), Equals, ""+
-		"RelayState: ThisIsTheRelayState\nSAMLRequest: <AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AssertionConsumerServiceURL=\"https://sp.example.com/saml2/acs\" Destination=\"https://idp.example.com/saml/sso\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" IssueInstant=\"2015-12-01T01:57:09Z\" ProtocolBinding=\"\" Version=\"2.0\"><Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</Issuer><NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy></AuthnRequest>")
+		"RelayState: ThisIsTheRelayState\nSAMLRequest: <AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AssertionConsumerServiceURL=\"https://sp.example.com/saml2/acs\" Destination=\"https://idp.example.com/saml/sso\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" IssueInstant=\"2015-12-01T01:57:09Z\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect\" Version=\"2.0\"><Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</Issuer><NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy></AuthnRequest>")
 }
 
 func (test *IdentityProviderTest) TestCanHandleRequestWithExistingSession(c *C) {
@@ -216,10 +216,10 @@ func (test *IdentityProviderTest) TestCanHandleRequestWithExistingSession(c *C) 
 	c.Assert(err, IsNil)
 	c.Assert(requestURL.String(), testsaml.EqualsAny, []interface{}{
 		// go1.5, go1.6
-		"https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJRqxMxEIX%2FypL3NpPQW69hd6HeIhSqlFZ98G3IjjawSdbMrLb%2F3m1VLAilvoaTM985M%2FVqlGPa07eRWKpT7BM3aizJZeTALmEkduLdYfVu6%2Bwc3FCyZJ97Va2YqUjI6SUnHiOVA5XvwdPH%2FbZRR5GBndY8zOmEcehp7nPUjLG3Gj2raj0NDAkvBn%2FloftXr5mzqjbrRoVuBgAWFrCEZ0DwQAaMNQuzNM8GjTdkwVq7sMvpA%2FNIm8SCSRplwTzNjJ2B%2BQDGPb1y8Pqzqna%2Fw7wJqQvpa6NU9YkKX5GmsKqtry7lkWLwTx2qeptLRLkvv7xMeb5cpY6SBDmr9m5tkQQ7FKz1L6q2fj%2BZbNa73Ad%2F%2Fs%2Fl9X3%2B8VIIhRolZSTVPk4rBROHibnWtwRtrW%2Bvqf0ZAAD%2F%2Fw%3D%3D",
+		"https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJRixMxEMe%2FypL3bSahV8%2Bwu1CviIVTSq%2F64NuYHb3AJlkzs3r37d1rFQtCqa%2Fhl5n%2F%2F5c060ke056%2BT8RSPcUhcaumklxGDuwSRmIn3j2s3987uwA3lizZ50FVa2YqEnK6y4mnSOWByo%2Fg6eP%2BvlWPIiM7rXlc0BPGcaCFz1EzxsFq9KyqzbwwJHwZ8BcP%2Fb%2B8Zs6q2m5aFfoaACwsYQW3gOCBDBhrlmZlbg0ab8iCtXZpV%2FMF5om2iQWTtMqCuamNrcEcwLibVw5ef1bV7neZNyH1IX273PzLCWL37nDY1XvqQyEvqvpEhY8lZkh1zXFvuUYl%2FhGoqre5RJTL%2BMvJbODrEXWUJMiz6i6KjiTYo2CjT6m65sM8ZLvZ5SH45%2F987mHIP%2B8KoVCrpEykuuvTSsHEYc7c6PMEXaPP%2F1%2F3KwAA%2F%2F8%3D",
 
 		// go1.7
-		"https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJRaxQxEMe%2FSpj3u0zC9axhd%2BHsISxUKa364NuQHW1gk6yZWW2%2FvfRULAjlfB1%2B%2FPnNf6Y7rHpfbvnbyqLmIc9FelhbCZUkSSiUWYLGcHd4dx38FsPSqtZYZzAHEW6aarmqRdbM7Y7b9xT54%2B11D%2FeqiwRrZdnyA%2BVl5m2s2Qrl2VuKAubIoqnQU8BfPE3%2F8lakghmPPaRpg4ged7jHSySMyA6ddzu3d5eOXHTs0Xu%2F83swo8jKYxGloj14dBcb5zfoPqALF68Cvv4M5ub3Mm9SmVL52gOYT9zkpOS3CEN3SmnnFEN%2F6gDztrZM%2BjL%2BNEnT5ssJDVw06SMML9aWWWkipc7%2Bshq695R5PN7UOcXH%2FzzePNcfV41JuQdtK8Nwvq02KpK4aGefGwydff5Nw88AAAD%2F%2Fw%3D%3D",
+		"https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJRaxQxEMe%2FSsj7Xibhetawu3D2EBeqHNfTB9%2FG7GgDm2TNzGr77aVXxYJwnK%2FhR%2Bb%2F%2F82020Xu84G%2BL8SiHtKUudNLzb4gR%2FYZE7GX4O%2B272%2B9W4Gfa5ESyqTVlpmqxJJvSuYlUb2j%2BiMG%2Bni47fS9yMzeGJ5X9IBpnmgVSjKMaXIGA2u1I5aY8emDv3gc%2F%2BUNc9Fq2HU6jg0AOFjDBq4BIQBZsM6u7cZeW7TBkgPn3NpttBqYFxoyC2bptAN71VjXgD2C9VevPLz%2BrNX%2Bd5k3MY8xfzvf%2FMszxP7d8bhvDjTGSkG0%2BkSVTyXcCnTfnubWS1TiH4FavS01oZzHn17i2Hw9oZ6yRHnU%2FVnRiQRHFGzNc6q%2B%2FYCJht2%2BTDE8%2Fue6p6n8vKmEQp2WupDuL08rFTNHytKalwn61ry8v%2F5XAAAA%2F%2F8%3D",
 	})
 
 	r, _ := http.NewRequest("GET", requestURL.String(), nil)
