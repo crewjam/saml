@@ -118,8 +118,15 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 			panic("don't wrap Middleware with RequireAccount")
 		}
 
-		req, err := m.ServiceProvider.MakeAuthenticationRequest(
-			m.ServiceProvider.GetSSOBindingLocation(saml.HTTPRedirectBinding))
+
+		binding := saml.HTTPRedirectBinding
+		bindingLocation := m.ServiceProvider.GetSSOBindingLocation(binding)
+		if bindingLocation == "" {
+			binding = saml.HTTPPostBinding
+			bindingLocation = m.ServiceProvider.GetSSOBindingLocation(binding)
+		}
+
+		req, err := m.ServiceProvider.MakeAuthenticationRequest(bindingLocation)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -148,11 +155,26 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 			HttpOnly: false,
 			Path:     acsURL.Path,
 		})
-		redirectURL := req.Redirect(relayState)
 
-		w.Header().Add("Location", redirectURL.String())
-		w.WriteHeader(http.StatusFound)
-		return
+		if binding == saml.HTTPRedirectBinding {
+			redirectURL := req.Redirect(relayState)
+			w.Header().Add("Location", redirectURL.String())
+			w.WriteHeader(http.StatusFound)
+			return
+		}
+		if binding == saml.HTTPPostBinding {
+			w.Header().Set("Content-Security-Policy", ""+
+				"default-src; "+
+				"script-src 'sha256-D8xB+y+rJ90RmLdP72xBqEEc0NUatn7yuCND0orkrgk='; "+
+				"reflected-xss block; "+
+				"referrer no-referrer; ")
+			w.Header().Add("Content-type", "text/html")
+			w.Write([]byte(`<!DOCTYPE html><html><body>`))
+			w.Write(req.Post(relayState))
+			w.Write([]byte(`</body></html>`))
+			return
+		}
+		panic("not reached")
 	}
 	return http.HandlerFunc(fn)
 }
