@@ -53,10 +53,12 @@ import (
 type Middleware struct {
 	ServiceProvider   saml.ServiceProvider
 	AllowIDPInitiated bool
+	CookieName        string
+	CookieMaxAge      time.Duration
 }
 
-const cookieMaxAge = time.Hour // TODO(ross): must be configurable
-const cookieName = "token"
+const defaultCookieMaxAge = time.Hour
+const defaultCookieName = "token"
 
 func randomBytes(n int) []byte {
 	rv := make([]byte, n)
@@ -246,7 +248,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 	claims := TokenClaims{}
 	claims.Audience = m.ServiceProvider.Metadata().EntityID
 	claims.IssuedAt = assertion.IssueInstant.Unix()
-	claims.ExpiresAt = now.Add(cookieMaxAge).Unix()
+	claims.ExpiresAt = now.Add(m.CookieMaxAge).Unix()
 	claims.NotBefore = now.Unix()
 	if sub := assertion.Subject; sub != nil {
 		if nameID := sub.NameID; nameID != nil {
@@ -272,9 +274,9 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 	}
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     cookieName,
+		Name:     m.CookieName,
 		Value:    signedToken,
-		MaxAge:   int(cookieMaxAge.Seconds()),
+		MaxAge:   int(m.CookieMaxAge.Seconds()),
 		HttpOnly: false,
 		Path:     "/",
 	})
@@ -294,7 +296,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 // It is an error for this function to be invoked with a request containing
 // any headers starting with X-Saml. This function will panic if you do.
 func (m *Middleware) IsAuthorized(r *http.Request) bool {
-	cookie, err := r.Cookie(cookieName)
+	cookie, err := r.Cookie(m.CookieName)
 	if err != nil {
 		return false
 	}

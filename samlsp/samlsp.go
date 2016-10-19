@@ -34,6 +34,8 @@ func New(opts Options) (*Middleware, error) {
 			IDPMetadata: opts.IDPMetadata,
 		},
 		AllowIDPInitiated: opts.AllowIDPInitiated,
+		CookieName:        defaultCookieName,
+		CookieMaxAge:      defaultCookieMaxAge,
 	}
 
 	// fetch the IDP metadata if needed.

@@ -45,7 +45,7 @@ func (tr *testRandomReader) Read(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-const expectedToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovLzE1NjYxNDQ0Lm5ncm9rLmlvL3NhbWwyL21ldGFkYXRhIiwiZXhwIjoxNDQ4OTM4NjI5LCJpYXQiOjE0NDg5MzQ5ODEsIm5iZiI6MTQ0ODkzNTAyOSwic3ViIjoiXzQxYmQyOTU5NzZkYWRkNzBlMTQ4MGYzMThlNzcyODQxIiwiYXR0ciI6eyJjbiI6WyJNZSBNeXNlbGYgQW5kIEkiXSwiZWR1UGVyc29uQWZmaWxpYXRpb24iOlsiTWVtYmVyIiwiU3RhZmYiXSwiZWR1UGVyc29uRW50aXRsZW1lbnQiOlsidXJuOm1hY2U6ZGlyOmVudGl0bGVtZW50OmNvbW1vbi1saWItdGVybXMiXSwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6WyJteXNlbGZAdGVzdHNoaWIub3JnIl0sImVkdVBlcnNvblNjb3BlZEFmZmlsaWF0aW9uIjpbIk1lbWJlckB0ZXN0c2hpYi5vcmciLCJTdGFmZkB0ZXN0c2hpYi5vcmciXSwiZWR1UGVyc29uVGFyZ2V0ZWRJRCI6WyIiXSwiZ2l2ZW5OYW1lIjpbIk1lIE15c2VsZiJdLCJzbiI6WyJBbmQgSSJdLCJ0ZWxlcGhvbmVOdW1iZXIiOlsiNTU1LTU1NTUiXSwidWlkIjpbIm15c2VsZiJdfX0.f1IAdyQ8cfaHp-5avNDdwJv57Qoii7RE_L7qIENiDdo"
+const expectedToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovLzE1NjYxNDQ0Lm5ncm9rLmlvL3NhbWwyL21ldGFkYXRhIiwiZXhwIjoxNDQ4OTQyMjI5LCJpYXQiOjE0NDg5MzQ5ODEsIm5iZiI6MTQ0ODkzNTAyOSwic3ViIjoiXzQxYmQyOTU5NzZkYWRkNzBlMTQ4MGYzMThlNzcyODQxIiwiYXR0ciI6eyJjbiI6WyJNZSBNeXNlbGYgQW5kIEkiXSwiZWR1UGVyc29uQWZmaWxpYXRpb24iOlsiTWVtYmVyIiwiU3RhZmYiXSwiZWR1UGVyc29uRW50aXRsZW1lbnQiOlsidXJuOm1hY2U6ZGlyOmVudGl0bGVtZW50OmNvbW1vbi1saWItdGVybXMiXSwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6WyJteXNlbGZAdGVzdHNoaWIub3JnIl0sImVkdVBlcnNvblNjb3BlZEFmZmlsaWF0aW9uIjpbIk1lbWJlckB0ZXN0c2hpYi5vcmciLCJTdGFmZkB0ZXN0c2hpYi5vcmciXSwiZWR1UGVyc29uVGFyZ2V0ZWRJRCI6WyIiXSwiZ2l2ZW5OYW1lIjpbIk1lIE15c2VsZiJdLCJzbiI6WyJBbmQgSSJdLCJ0ZWxlcGhvbmVOdW1iZXIiOlsiNTU1LTU1NTUiXSwidWlkIjpbIm15c2VsZiJdfX0.owRdm3bcXkYV4ePjcJw3qHILRLDhNHAdG3gddLOBJPw"
 
 func (test *MiddlewareTest) SetUpTest(c *C) {
 	saml.TimeNow = func() time.Time {
@@ -69,6 +69,8 @@ func (test *MiddlewareTest) SetUpTest(c *C) {
 			AcsURL:      "https://15661444.ngrok.io/saml2/acs",
 			IDPMetadata: &saml.Metadata{},
 		},
+		CookieName:   "ttt",
+		CookieMaxAge: time.Hour * 2,
 	}
 	err := xml.Unmarshal([]byte(test.IDPMetadata), &test.Middleware.ServiceProvider.IDPMetadata)
 	c.Assert(err, IsNil)
@@ -199,8 +201,8 @@ func (test *MiddlewareTest) TestRequireAccountCreds(c *C) {
 
 	req, _ := http.NewRequest("GET", "/frob", nil)
 	req.Header.Set("Cookie", ""+
-		"token="+expectedToken+"; "+
-		"Path=/; Max-Age=3600")
+		"ttt="+expectedToken+"; "+
+		"Path=/; Max-Age=7200")
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
@@ -215,8 +217,8 @@ func (test *MiddlewareTest) TestRequireAccountBadCreds(c *C) {
 
 	req, _ := http.NewRequest("GET", "/frob", nil)
 	req.Header.Set("Cookie", ""+
-		"token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.yejJbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; "+
-		"Path=/; Max-Age=3600")
+		"ttt=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.yejJbiI6Ik1lIE15c2VsZiBBbmQgSSIsImVkdVBlcnNvbkFmZmlsaWF0aW9uIjoiU3RhZmYiLCJlZHVQZXJzb25FbnRpdGxlbWVudCI6InVybjptYWNlOmRpcjplbnRpdGxlbWVudDpjb21tb24tbGliLXRlcm1zIiwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6Im15c2VsZkB0ZXN0c2hpYi5vcmciLCJlZHVQZXJzb25TY29wZWRBZmZpbGlhdGlvbiI6IlN0YWZmQHRlc3RzaGliLm9yZyIsImVkdVBlcnNvblRhcmdldGVkSUQiOiIiLCJleHAiOjE0NDg5Mzg2MjksImdpdmVuTmFtZSI6Ik1lIE15c2VsZiIsInNuIjoiQW5kIEkiLCJ0ZWxlcGhvbmVOdW1iZXIiOiI1NTUtNTU1NSIsInVpZCI6Im15c2VsZiJ9.SqeTkbGG35oFj_9H-d9oVdV-Hb7Vqam6LvZLcmia7FY; "+
+		"Path=/; Max-Age=7200")
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
@@ -247,8 +249,8 @@ func (test *MiddlewareTest) TestRequireAccountExpiredCreds(c *C) {
 
 	req, _ := http.NewRequest("GET", "/frob", nil)
 	req.Header.Set("Cookie", ""+
-		"token="+expectedToken+"; "+
-		"Path=/; Max-Age=3600")
+		"ttt="+expectedToken+"; "+
+		"Path=/; Max-Age=7200")
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
@@ -285,8 +287,8 @@ func (test *MiddlewareTest) TestRejectRequestWithMagicHeader(c *C) {
 
 	req, _ := http.NewRequest("GET", "/frob", nil)
 	req.Header.Set("Cookie", ""+
-		"token="+expectedToken+"; "+
-		"Path=/; Max-Age=3600")
+		"ttt="+expectedToken+"; "+
+		"Path=/; Max-Age=7200")
 	req.Header.Set("X-Saml-Uid", "root") // ... evil
 	resp := httptest.NewRecorder()
 	c.Assert(func() { handler.ServeHTTP(resp, req) }, Panics,
@@ -302,8 +304,8 @@ func (test *MiddlewareTest) TestRequireAttribute(c *C) {
 
 	req, _ := http.NewRequest("GET", "/frob", nil)
 	req.Header.Set("Cookie", ""+
-		"token="+expectedToken+"; "+
-		"Path=/; Max-Age=3600")
+		"ttt="+expectedToken+"; "+
+		"Path=/; Max-Age=7200")
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
@@ -319,8 +321,8 @@ func (test *MiddlewareTest) TestRequireAttributeWrongValue(c *C) {
 
 	req, _ := http.NewRequest("GET", "/frob", nil)
 	req.Header.Set("Cookie", ""+
-		"token="+expectedToken+"; "+
-		"Path=/; Max-Age=3600")
+		"ttt="+expectedToken+"; "+
+		"Path=/; Max-Age=7200")
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
@@ -336,8 +338,8 @@ func (test *MiddlewareTest) TestRequireAttributeNotPresent(c *C) {
 
 	req, _ := http.NewRequest("GET", "/frob", nil)
 	req.Header.Set("Cookie", ""+
-		"token="+expectedToken+"; "+
-		"Path=/; Max-Age=3600")
+		"ttt="+expectedToken+"; "+
+		"Path=/; Max-Age=7200")
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
@@ -352,8 +354,8 @@ func (test *MiddlewareTest) TestRequireAttributeMissingAccount(c *C) {
 
 	req, _ := http.NewRequest("GET", "/frob", nil)
 	req.Header.Set("Cookie", ""+
-		"token="+expectedToken+"; "+
-		"Path=/; Max-Age=3600")
+		"ttt="+expectedToken+"; "+
+		"Path=/; Max-Age=7200")
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
@@ -377,8 +379,8 @@ func (test *MiddlewareTest) TestCanParseResponse(c *C) {
 	c.Assert(resp.Header().Get("Location"), Equals, "/frob")
 	c.Assert(resp.Header()["Set-Cookie"], DeepEquals, []string{
 		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6=",
-		"token=" + expectedToken + "; " +
-			"Path=/; Max-Age=3600",
+		"ttt=" + expectedToken + "; " +
+			"Path=/; Max-Age=7200",
 	})
 }
 
