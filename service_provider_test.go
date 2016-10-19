@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	. "gopkg.in/check.v1"
-
 	"github.com/crewjam/saml/testsaml"
+
+	. "gopkg.in/check.v1"
 )
 
 // Hook up gocheck into the "go test" runner.
@@ -117,12 +117,11 @@ func (test *ServiceProviderTest) TestCanProduceRedirectRequest(c *C) {
 	redirectURL, err := s.MakeRedirectAuthenticationRequest("relayState")
 	c.Assert(err, IsNil)
 
-	c.Assert(redirectURL.String(), testsaml.EqualsAny, []interface{}{
-		// go1.5, go1.6
-		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=relayState&SAMLRequest=lJLRb9MwEMb%2FlcjvjX0miyYriVRWISoNqJrCA2%2Bec2stErv4LsD%2Be5yOiT2N8Xr%2B7r7ffb5mPfMp7PH7jMTFr2kM1Io5BRMteTLBTkiGnenXH26NLpU5p8jRxVEUayJM7GO4iYHmCVOP6Yd3%2BHl%2F24oT85mMlHBV11BVVRmOKX4rfZRkp1FL60gUm%2Bzpg11m%2FO3ww7nk%2FEAnf1fGdFwKMrve%2BxHlgqHlHgef0LHs%2B0%2Bi2G5a4YeVUkqrStXqWlnlFIICDRXUcA0WHKBWWutK17mBaMZtILaBW6EVXK1ArxQcFJg3YDR8FcXuz5pvfRh8OL6cyd2jiMz7w2G3eqITxRdMdNkti0TXXHzTa0K2T9GK4l1Mk%2BWX5UslJ3B%2FkRoM7PlBdP%2F6ggnZDpZtIx%2FBuuZjnrPd7OLo3cN%2F3sI4xp83CS1jKzjNKLrXA3OygXzGbuRzgq6Rz4%2Bz%2Bx0AAP%2F%2F",
-		// go1.7
-		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=relayState&SAMLRequest=lJJfb9MwFMW%2FSuT3xH%2FIoslKIpVViEoDqrbwwNudc9dekdjF9wbYt0fpmNjTGK9Hx%2FbvHJ92Ncsp7vD7jCzFr2mM3Kk5R5%2BAiX2ECdlL8PvVh1vvKuPPOUkKaVTFihmzUIo3KfI8Yd5j%2FkEBP%2B9uO3USObPX2l41ja3ruorHnL5VlDTDNDoNgVWxRhaKsNzx9wQN50qQhU90V6V8XAR9zumeRtQLhtM7HChjEL3ff1LFZt0pGkpjjDO1acy1ARMMWmOdrW1jry3YYNEZ51ztGlVsmGfcRBaI0iln7FVpXWnswVj%2Fxnpnv6pi%2ByfmW4oDxePLndw9mti%2FPxy25ROdKr5g5ks2VxnVt5d382tKhqdqVfEu5QnkZfui0FDeX6weo5A8qP5fXzChwAACrX4E69uPMOFmvU0jhYf%2F3MI4pp83GUGwU5JnVP3rgSVDZMIorX5O0Lf6%2BTj73wEAAP%2F%2F",
-	})
+	decodedRequest, err := testsaml.ParseRedirectRequest(redirectURL)
+	c.Assert(err, IsNil)
+	c.Assert(redirectURL.Host, Equals, "idp.testshib.org")
+	c.Assert(redirectURL.Path, Equals, "/idp/profile/SAML2/Redirect/SSO")
+	c.Assert(string(decodedRequest), Equals, "<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AssertionConsumerServiceURL=\"https://15661444.ngrok.io/saml2/acs\" Destination=\"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" IssueInstant=\"2015-12-01T01:31:21Z\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect\" Version=\"2.0\"><Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://15661444.ngrok.io/saml2/metadata</Issuer><NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy></AuthnRequest>")
 }
 
 func (test *ServiceProviderTest) TestCanProducePostRequest(c *C) {

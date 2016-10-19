@@ -132,13 +132,12 @@ func (test *MiddlewareTest) TestRequireAccountNoCreds(c *C) {
 		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
 			"; Path=/saml2/acs; Max-Age=90")
-	c.Assert(resp.Header().Get("Location"), testsaml.EqualsAny, []interface{}{
-		// go1.5, go1.6
-		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJLRb9MwEMb%2Flcjvjc9WGoaVRCqrEJUGVG3hgTfPubUWiV18F2D%2FPU7HxJ7G9nr%2B7r7ffb5mNfEp7PDHhMTF73EI1IopBRMteTLBjkiGndmvPt4YXYI5p8jRxUEUKyJM7GO4joGmEdMe00%2Fv8MvuphUn5jMZKdWyrlVVVWU4pvi99FGSHQctrSNRrLOnD3ae8a%2FD9%2BeS8wOd%2FG0Z03EuyOx65weUM4aWO%2Bx9Qsdyv%2F8sis26Fb5fAICGCmq4AgsOUIHSqlK1ulJWOYUatNaVrnMD0YSbQGwDt0KDWi6UXoA6gDLLNwbefhPF9u%2Ba73zofTg%2Bn8ntg4jMh8Nhu3ikE8VXTHTZLYtE11x800tCto%2FRiuJ9TKPl5%2BVzJSdwd5EaDOz5XnT%2F%2B4IR2faWbSMfwLrmU56zWW%2Fj4N39K29hGOKv64SWsRWcJhTdy4E52UA%2BYzfyKUHXyKfH2f0JAAD%2F%2Fw%3D%3D",
 
-		// go1.7
-		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJRb9MwFIX%2FSuT3xNdWGoaVRCqrEJUGVG3hgTfPuWuvSOziewPs36N2TOxpbK9Hx%2FZ3jk%2B7nOUYt%2FhjRpbi9zRG7tSco0ueiV30E7KT4HbLjzfOVuBOOUkKaVTFkhmzUIrXKfI8Yd5h%2FkkBv2xvOnUUObHT2iyaxtR1XcVDTt8rSpr9NFrtA6tihSwU%2FfmOfydoOFWCLHyk2yrlw1nQp5zuaER9xrB6iwNlDKJ3u8%2BqWK86RUMJABZqaOAKPARAA8aa2jTmyngTDFqw1ta2UcWaecZ1ZPFROmXBLEpjSzB7MG7xxsHbb6rY%2FI35juJA8fB8J7cPJnYf9vtN%2BUiniq%2BY%2BZLNVqD69vJufknJ%2FrFaVbxPefLyvP2s0FDeXawOo5Dcq%2F5%2FXzCh%2BMGLb%2FUDWN9%2B8hOuV5s0Urh%2F5RbGMf26zugFOyV5RtW%2FHFiyj0wYpdVPCfpWPx1n%2FycAAP%2F%2F",
-	})
+	redirectURL, err := url.Parse(resp.Header().Get("Location"))
+	c.Assert(err, IsNil)
+	decodedRequest, err := testsaml.ParseRedirectRequest(redirectURL)
+	c.Assert(err, IsNil)
+	c.Assert(string(decodedRequest), Equals, "<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AssertionConsumerServiceURL=\"https://15661444.ngrok.io/saml2/acs\" Destination=\"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" IssueInstant=\"2015-12-01T01:57:09Z\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect\" Version=\"2.0\"><Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://15661444.ngrok.io/saml2/metadata</Issuer><NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy></AuthnRequest>")
 }
 
 func (test *MiddlewareTest) TestRequireAccountNoCredsPostBinding(c *C) {
@@ -227,13 +226,12 @@ func (test *MiddlewareTest) TestRequireAccountBadCreds(c *C) {
 		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
 			"; Path=/saml2/acs; Max-Age=90")
-	c.Assert(resp.Header().Get("Location"), testsaml.EqualsAny, []interface{}{
-		// go1.5, go1.6
-		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJLRb9MwEMb%2Flcjvjc9WGoaVRCqrEJUGVG3hgTfPubUWiV18F2D%2FPU7HxJ7G9nr%2B7r7ffb5mNfEp7PDHhMTF73EI1IopBRMteTLBjkiGndmvPt4YXYI5p8jRxUEUKyJM7GO4joGmEdMe00%2Fv8MvuphUn5jMZKdWyrlVVVWU4pvi99FGSHQctrSNRrLOnD3ae8a%2FD9%2BeS8wOd%2FG0Z03EuyOx65weUM4aWO%2Bx9Qsdyv%2F8sis26Fb5fAICGCmq4AgsOUIHSqlK1ulJWOYUatNaVrnMD0YSbQGwDt0KDWi6UXoA6gDLLNwbefhPF9u%2Ba73zofTg%2Bn8ntg4jMh8Nhu3ikE8VXTHTZLYtE11x800tCto%2FRiuJ9TKPl5%2BVzJSdwd5EaDOz5XnT%2F%2B4IR2faWbSMfwLrmU56zWW%2Fj4N39K29hGOKv64SWsRWcJhTdy4E52UA%2BYzfyKUHXyKfH2f0JAAD%2F%2Fw%3D%3D",
+	redirectURL, err := url.Parse(resp.Header().Get("Location"))
+	c.Assert(err, IsNil)
+	decodedRequest, err := testsaml.ParseRedirectRequest(redirectURL)
+	c.Assert(err, IsNil)
+	c.Assert(string(decodedRequest), Equals, "<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AssertionConsumerServiceURL=\"https://15661444.ngrok.io/saml2/acs\" Destination=\"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" IssueInstant=\"2015-12-01T01:57:09Z\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect\" Version=\"2.0\"><Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://15661444.ngrok.io/saml2/metadata</Issuer><NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy></AuthnRequest>")
 
-		// go1.7
-		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJRb9MwFIX%2FSuT3xNdWGoaVRCqrEJUGVG3hgTfPuWuvSOziewPs36N2TOxpbK9Hx%2FZ3jk%2B7nOUYt%2FhjRpbi9zRG7tSco0ueiV30E7KT4HbLjzfOVuBOOUkKaVTFkhmzUIrXKfI8Yd5h%2FkkBv2xvOnUUObHT2iyaxtR1XcVDTt8rSpr9NFrtA6tihSwU%2FfmOfydoOFWCLHyk2yrlw1nQp5zuaER9xrB6iwNlDKJ3u8%2BqWK86RUMJABZqaOAKPARAA8aa2jTmyngTDFqw1ta2UcWaecZ1ZPFROmXBLEpjSzB7MG7xxsHbb6rY%2FI35juJA8fB8J7cPJnYf9vtN%2BUiniq%2BY%2BZLNVqD69vJufknJ%2FrFaVbxPefLyvP2s0FDeXawOo5Dcq%2F5%2FXzCh%2BMGLb%2FUDWN9%2B8hOuV5s0Urh%2F5RbGMf26zugFOyV5RtW%2FHFiyj0wYpdVPCfpWPx1n%2FycAAP%2F%2F",
-	})
 }
 
 func (test *MiddlewareTest) TestRequireAccountExpiredCreds(c *C) {
@@ -260,13 +258,11 @@ func (test *MiddlewareTest) TestRequireAccountExpiredCreds(c *C) {
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
 			"; Path=/saml2/acs; Max-Age=90")
 
-	c.Assert(resp.Header().Get("Location"), testsaml.EqualsAny, []interface{}{
-		// go1.5, go1.6
-		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJLRb9MwEMb%2Flcjvjc9WGoaVRCqrEJUGVG3hgTfPubUWiV18F2D%2FPU7HxJ7G9nr%2B7r7ffb5mNfEp7PDHhMTF73EI1IopBRMteTLBjkiGndmvPt4YXYI5p8jRxUEUKyJM7GO4joGmEdMe00%2Fv8MvuphUn5jMZKdWyrlVVVWU4pvi99FGSHQctrSNRrLOnD3ae8a%2FD9%2BeS8wOd%2FG0Z03EuyOx65weUM4aWO%2Bx9Qsdyv%2F8sis26Fb5fAICGCmq4AgsOUIHSqlK1ulJWOYUatNaVrnMD0YSbQGwDt0KDWi6UXoA6gDLLNwbefhPF9u%2Ba73zofTg%2Bn8ntg4jMh8Nhu3ikE8VXTHTZLYtE11x800tCto%2FRiuJ9TKPl5%2BVzJSdwd5EaDOz5XnT%2F%2B4IR2faWbSMfwLrmU56zWW%2Fj4N39K29hGOKv64SWsRWcJhTdy4E52UA%2BYzfyKUHXyKfH2f0JAAD%2F%2Fw%3D%3D",
-
-		// go1.7
-		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJRb9MwFIX%2FSuT3xNdWGoaVRCqrEJUGVG3hgTfPuWuvSOziewPs36N2TOxpbK9Hx%2FZ3jk%2B7nOUYt%2FhjRpbi9zRG7tSco0ueiV30E7KT4HbLjzfOVuBOOUkKaVTFkhmzUIrXKfI8Yd5h%2FkkBv2xvOnUUObHT2iyaxtR1XcVDTt8rSpr9NFrtA6tihSwU%2FfmOfydoOFWCLHyk2yrlw1nQp5zuaER9xrB6iwNlDKJ3u8%2BqWK86RUMJABZqaOAKPARAA8aa2jTmyngTDFqw1ta2UcWaecZ1ZPFROmXBLEpjSzB7MG7xxsHbb6rY%2FI35juJA8fB8J7cPJnYf9vtN%2BUiniq%2BY%2BZLNVqD69vJufknJ%2FrFaVbxPefLyvP2s0FDeXawOo5Dcq%2F5%2FXzCh%2BMGLb%2FUDWN9%2B8hOuV5s0Urh%2F5RbGMf26zugFOyV5RtW%2FHFiyj0wYpdVPCfpWPx1n%2FycAAP%2F%2F",
-	})
+	redirectURL, err := url.Parse(resp.Header().Get("Location"))
+	c.Assert(err, IsNil)
+	decodedRequest, err := testsaml.ParseRedirectRequest(redirectURL)
+	c.Assert(err, IsNil)
+	c.Assert(string(decodedRequest), Equals, "<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AssertionConsumerServiceURL=\"https://15661444.ngrok.io/saml2/acs\" Destination=\"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" IssueInstant=\"2015-12-01T01:57:09Z\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect\" Version=\"2.0\"><Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://15661444.ngrok.io/saml2/metadata</Issuer><NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy></AuthnRequest>")
 }
 
 func (test *MiddlewareTest) TestRequireAccountPanicOnRequestToACS(c *C) {
