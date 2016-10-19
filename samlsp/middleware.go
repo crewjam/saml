@@ -118,7 +118,6 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 			panic("don't wrap Middleware with RequireAccount")
 		}
 
-
 		binding := saml.HTTPRedirectBinding
 		bindingLocation := m.ServiceProvider.GetSSOBindingLocation(binding)
 		if bindingLocation == "" {
@@ -167,7 +166,7 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 				"default-src; "+
 				"script-src 'sha256-D8xB+y+rJ90RmLdP72xBqEEc0NUatn7yuCND0orkrgk='; "+
 				"reflected-xss block; "+
-				"referrer no-referrer; ")
+				"referrer no-referrer;")
 			w.Header().Add("Content-type", "text/html")
 			w.Write([]byte(`<!DOCTYPE html><html><body>`))
 			w.Write(req.Post(relayState))

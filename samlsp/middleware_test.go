@@ -2,6 +2,7 @@ package samlsp
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/xml"
 	"io/ioutil"
@@ -138,6 +139,47 @@ func (test *MiddlewareTest) TestRequireAccountNoCreds(c *C) {
 		// go1.7
 		"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO?RelayState=KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6&SAMLRequest=lJJRb9MwFIX%2FSuT3xNdWGoaVRCqrEJUGVG3hgTfPuWuvSOziewPs36N2TOxpbK9Hx%2FZ3jk%2B7nOUYt%2FhjRpbi9zRG7tSco0ueiV30E7KT4HbLjzfOVuBOOUkKaVTFkhmzUIrXKfI8Yd5h%2FkkBv2xvOnUUObHT2iyaxtR1XcVDTt8rSpr9NFrtA6tihSwU%2FfmOfydoOFWCLHyk2yrlw1nQp5zuaER9xrB6iwNlDKJ3u8%2BqWK86RUMJABZqaOAKPARAA8aa2jTmyngTDFqw1ta2UcWaecZ1ZPFROmXBLEpjSzB7MG7xxsHbb6rY%2FI35juJA8fB8J7cPJnYf9vtN%2BUiniq%2BY%2BZLNVqD69vJufknJ%2FrFaVbxPefLyvP2s0FDeXawOo5Dcq%2F5%2FXzCh%2BMGLb%2FUDWN9%2B8hOuV5s0Urh%2F5RbGMf26zugFOyV5RtW%2FHFiyj0wYpdVPCfpWPx1n%2FycAAP%2F%2F",
 	})
+}
+
+func (test *MiddlewareTest) TestRequireAccountNoCredsPostBinding(c *C) {
+	test.Middleware.ServiceProvider.IDPMetadata.IDPSSODescriptor.SingleSignOnService = test.Middleware.ServiceProvider.IDPMetadata.IDPSSODescriptor.SingleSignOnService[1:2]
+	c.Assert("", Equals, test.Middleware.ServiceProvider.GetSSOBindingLocation(saml.HTTPRedirectBinding))
+
+	handler := test.Middleware.RequireAccount(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			panic("not reached")
+		}))
+
+	req, _ := http.NewRequest("GET", "/frob", nil)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	c.Assert(resp.Code, Equals, http.StatusOK)
+	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
+		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
+			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
+			"; Path=/saml2/acs; Max-Age=90")
+	c.Assert(string(resp.Body.Bytes()), Equals, ""+
+		"<!DOCTYPE html>"+
+		"<html>"+
+		"<body>"+
+		"<form method=\"post\" action=\"https://idp.testshib.org/idp/profile/SAML2/POST/SSO\" id=\"SAMLRequestForm\">"+
+		"<input type=\"hidden\" name=\"SAMLRequest\" value=\"PEF1dGhuUmVxdWVzdCB4bWxucz0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOnByb3RvY29sIiBBc3NlcnRpb25Db25zdW1lclNlcnZpY2VVUkw9Imh0dHBzOi8vMTU2NjE0NDQubmdyb2suaW8vc2FtbDIvYWNzIiBEZXN0aW5hdGlvbj0iaHR0cHM6Ly9pZHAudGVzdHNoaWIub3JnL2lkcC9wcm9maWxlL1NBTUwyL1BPU1QvU1NPIiBJRD0iaWQtMDAwMjA0MDYwODBhMGMwZTEwMTIxNDE2MTgxYTFjMWUyMDIyMjQyNiIgSXNzdWVJbnN0YW50PSIyMDE1LTEyLTAxVDAxOjU3OjA5WiIgUHJvdG9jb2xCaW5kaW5nPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6YmluZGluZ3M6SFRUUC1QT1NUIiBWZXJzaW9uPSIyLjAiPjxJc3N1ZXIgeG1sbnM9InVybjpvYXNpczpuYW1lczp0YzpTQU1MOjIuMDphc3NlcnRpb24iIEZvcm1hdD0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOm5hbWVpZC1mb3JtYXQ6ZW50aXR5Ij5odHRwczovLzE1NjYxNDQ0Lm5ncm9rLmlvL3NhbWwyL21ldGFkYXRhPC9Jc3N1ZXI&#43;PE5hbWVJRFBvbGljeSB4bWxucz0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOnByb3RvY29sIiBBbGxvd0NyZWF0ZT0idHJ1ZSI&#43;dXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOm5hbWVpZC1mb3JtYXQ6dHJhbnNpZW50PC9OYW1lSURQb2xpY3k&#43;PC9BdXRoblJlcXVlc3Q&#43;\" />"+
+		"<input type=\"hidden\" name=\"RelayState\" value=\"KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6\" />"+
+		"<input type=\"submit\" value=\"Submit\" />"+
+		"</form>"+
+		"<script>document.getElementById('SAMLRequestForm').submit();</script>"+
+		"</body>"+
+		"</html>")
+
+	// check that the CSP script hash is set correctly
+	scriptContent := "document.getElementById('SAMLRequestForm').submit();"
+	scriptSum := sha256.Sum256([]byte(scriptContent))
+	scriptHash := base64.StdEncoding.EncodeToString(scriptSum[:])
+	c.Assert(resp.Header().Get("Content-Security-Policy"), Equals,
+		"default-src; script-src 'sha256-"+scriptHash+"'; reflected-xss block; referrer no-referrer;")
+
+	c.Assert(resp.Header().Get("Content-type"), Equals, "text/html")
 }
 
 func (test *MiddlewareTest) TestRequireAccountCreds(c *C) {
