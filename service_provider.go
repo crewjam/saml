@@ -110,13 +110,10 @@ func (sp *ServiceProvider) MakeRedirectAuthenticationRequest(relayState string) 
 
 // Redirect returns a URL suitable for using the redirect binding with the request
 func (req *AuthnRequest) Redirect(relayState string) *url.URL {
-	reqCopy := *req
-	reqCopy.ProtocolBinding = HTTPRedirectBinding
-
 	w := &bytes.Buffer{}
 	w1 := base64.NewEncoder(base64.StdEncoding, w)
 	w2, _ := flate.NewWriter(w1, 9)
-	if err := xml.NewEncoder(w2).Encode(reqCopy); err != nil {
+	if err := xml.NewEncoder(w2).Encode(req); err != nil {
 		panic(err)
 	}
 	w2.Close()
@@ -186,6 +183,7 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string) (*AuthnReque
 	req := AuthnRequest{
 		AssertionConsumerServiceURL: sp.AcsURL,
 		Destination:                 idpURL,
+		ProtocolBinding:             HTTPPostBinding, // default binding for the response
 		ID:                          fmt.Sprintf("id-%x", randomBytes(20)),
 		IssueInstant:                TimeNow(),
 		Version:                     "2.0",
@@ -217,10 +215,7 @@ func (sp *ServiceProvider) MakePostAuthenticationRequest(relayState string) ([]b
 
 // Post returns an HTML form suitable for using the HTTP-POST binding with the request
 func (req *AuthnRequest) Post(relayState string) []byte {
-	reqCopy := *req
-	reqCopy.ProtocolBinding = HTTPPostBinding
-
-	reqBuf, err := xml.Marshal(reqCopy)
+	reqBuf, err := xml.Marshal(req)
 	if err != nil {
 		panic(err)
 	}

@@ -12,16 +12,22 @@ import (
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
 type AuthnRequest struct {
-	XMLName                     xml.Name          `xml:"urn:oasis:names:tc:SAML:2.0:protocol AuthnRequest"`
-	AssertionConsumerServiceURL string            `xml:",attr"`
-	Destination                 string            `xml:",attr"`
-	ID                          string            `xml:",attr"`
-	IssueInstant                time.Time         `xml:",attr"`
-	ProtocolBinding             string            `xml:",attr"`
-	Version                     string            `xml:",attr"`
-	Issuer                      Issuer            `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
-	Signature                   *xmlsec.Signature `xml:"http://www.w3.org/2000/09/xmldsig# Signature"`
-	NameIDPolicy                NameIDPolicy      `xml:"urn:oasis:names:tc:SAML:2.0:protocol NameIDPolicy"`
+	XMLName                     xml.Name  `xml:"urn:oasis:names:tc:SAML:2.0:protocol AuthnRequest"`
+	AssertionConsumerServiceURL string    `xml:",attr"`
+	Destination                 string    `xml:",attr"`
+	ID                          string    `xml:",attr"`
+	IssueInstant                time.Time `xml:",attr"`
+
+	// Protocol binding is a URI reference that identifies a SAML protocol binding to be used when returning
+	// the <Response> message. See [SAMLBind] for more information about protocol bindings and URI references
+	// defined for them. This attribute is mutually exclusive with the AssertionConsumerServiceIndex attribute
+	// and is typically accompanied by the AssertionConsumerServiceURL attribute.
+	ProtocolBinding string `xml:",attr"`
+
+	Version      string            `xml:",attr"`
+	Issuer       Issuer            `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
+	Signature    *xmlsec.Signature `xml:"http://www.w3.org/2000/09/xmldsig# Signature"`
+	NameIDPolicy NameIDPolicy      `xml:"urn:oasis:names:tc:SAML:2.0:protocol NameIDPolicy"`
 }
 
 func (a *AuthnRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
