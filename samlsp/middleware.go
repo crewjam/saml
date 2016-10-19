@@ -206,6 +206,11 @@ func (m *Middleware) getPossibleRequestIDs(r *http.Request) []string {
 	return rv
 }
 
+type TokenClaims struct {
+	jwt.StandardClaims
+	Attributes map[string][]string `json:"attr"`
+}
+
 // Authorize is invoked by ServeHTTP when we have a new, valid SAML assertion.
 // It sets a cookie that contains a signed JWT containing the assertion attributes.
 // It then redirects the user's browser to the original URL contained in RelayState.
@@ -238,21 +243,31 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 		http.SetCookie(w, stateCookie)
 	}
 
-	token := jwt.New(jwt.GetSigningMethod("HS256"))
-	claims := token.Claims.(jwt.MapClaims)
-	for _, attr := range assertion.AttributeStatement.Attributes {
-		valueStrings := []string{}
-		for _, v := range attr.Values {
-			valueStrings = append(valueStrings, v.Value)
+	now := saml.TimeNow()
+	claims := TokenClaims{}
+	claims.Audience = m.ServiceProvider.Metadata().EntityID
+	claims.IssuedAt = assertion.IssueInstant.Unix()
+	claims.ExpiresAt = now.Add(cookieMaxAge).Unix()
+	claims.NotBefore = now.Unix()
+	if sub := assertion.Subject; sub != nil {
+		if nameID := sub.NameID; nameID != nil {
+			claims.StandardClaims.Subject = nameID.Value
 		}
-		claimName := attr.FriendlyName
-		if claimName == "" {
-			claimName = attr.Name
-		}
-		claims[claimName] = valueStrings
 	}
-	claims["exp"] = saml.TimeNow().Add(cookieMaxAge).Unix()
-	signedToken, err := token.SignedString(secretBlock.Bytes)
+	if assertion.AttributeStatement != nil {
+		claims.Attributes = map[string][]string{}
+		for _, attr := range assertion.AttributeStatement.Attributes {
+			claimName := attr.FriendlyName
+			if claimName == "" {
+				claimName = attr.Name
+			}
+			for _, value := range attr.Values {
+				claims.Attributes[claimName] = append(claims.Attributes[claimName], value.Value)
+			}
+		}
+	}
+	signedToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256,
+		claims).SignedString(secretBlock.Bytes)
 	if err != nil {
 		panic(err)
 	}
@@ -284,11 +299,22 @@ func (m *Middleware) IsAuthorized(r *http.Request) bool {
 	if err != nil {
 		return false
 	}
-	token, err := jwt.Parse(cookie.Value, func(t *jwt.Token) (interface{}, error) {
+
+	tokenClaims := TokenClaims{}
+	token, err := jwt.ParseWithClaims(cookie.Value, &tokenClaims, func(t *jwt.Token) (interface{}, error) {
 		secretBlock, _ := pem.Decode([]byte(m.ServiceProvider.Key))
 		return secretBlock.Bytes, nil
 	})
 	if err != nil || !token.Valid {
+		log.Printf("ERROR: invalid token: %s", err)
+		return false
+	}
+	if err := tokenClaims.StandardClaims.Valid(); err != nil {
+		log.Printf("ERROR: invalid token claims: %s", err)
+		return false
+	}
+	if tokenClaims.Audience != m.ServiceProvider.Metadata().EntityID {
+		log.Printf("ERROR: invalid audience: %s", err)
 		return false
 	}
 
@@ -301,15 +327,13 @@ func (m *Middleware) IsAuthorized(r *http.Request) bool {
 		}
 	}
 
-	claims := token.Claims.(jwt.MapClaims)
-	for claimName, claimValue := range claims {
-		if claimName == "exp" {
-			continue
-		}
-		for _, claimValueStr := range claimValue.([]interface{}) {
-			r.Header.Add(fmt.Sprintf("X-Saml-%s", claimName), claimValueStr.(string))
+	for claimName, claimValues := range tokenClaims.Attributes {
+		for _, claimValue := range claimValues {
+			r.Header.Add("X-Saml-"+claimName, claimValue)
 		}
 	}
+	r.Header.Set("X-Saml-Subject", tokenClaims.Subject)
+
 	return true
 }
 
