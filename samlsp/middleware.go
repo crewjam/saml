@@ -223,25 +223,31 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 		stateCookie, err := r.Cookie(fmt.Sprintf("saml_%s", r.Form.Get("RelayState")))
 		if err != nil {
 			log.Printf("cannot find corresponding cookie: %s", fmt.Sprintf("saml_%s", r.Form.Get("RelayState")))
-			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-			return
-		}
+			// If not allowing IDP initiated return an error since this cookie should exist
+			if !m.AllowIDPInitiated {
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
+			// If IDP initiated auth is allowed then RelayState is probably actually
+			// the URL that we should be redirecting to on successful auth
+			redirectURI = r.Form.Get("RelayState")
+		} else {
+			state, err := jwt.Parse(stateCookie.Value, func(t *jwt.Token) (interface{}, error) {
+				return secretBlock.Bytes, nil
+			})
+			if err != nil || !state.Valid {
+				log.Printf("Cannot decode state JWT: %s (%s)", err, stateCookie.Value)
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
+			claims := state.Claims.(jwt.MapClaims)
+			redirectURI = claims["uri"].(string)
 
-		state, err := jwt.Parse(stateCookie.Value, func(t *jwt.Token) (interface{}, error) {
-			return secretBlock.Bytes, nil
-		})
-		if err != nil || !state.Valid {
-			log.Printf("Cannot decode state JWT: %s (%s)", err, stateCookie.Value)
-			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-			return
+			// delete the cookie
+			stateCookie.Value = ""
+			stateCookie.Expires = time.Time{}
+			http.SetCookie(w, stateCookie)
 		}
-		claims := state.Claims.(jwt.MapClaims)
-		redirectURI = claims["uri"].(string)
-
-		// delete the cookie
-		stateCookie.Value = ""
-		stateCookie.Expires = time.Time{}
-		http.SetCookie(w, stateCookie)
 	}
 
 	now := saml.TimeNow()
