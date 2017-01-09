@@ -42,9 +42,17 @@ func New(opts Options) (*Middleware, error) {
 	if opts.IDPMetadataURL == "" {
 		return m, nil
 	}
+	c := http.DefaultClient
+	req, err := http.NewRequest("GET", opts.IDPMetadataURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	// Some providers (like OneLogin) do not work properly unless the User-Agent header is specified.
+	// Setting the user agent prevents the 403 Forbidden errors.
+	req.Header.Set("User-Agent", "Golang")
 
 	for i := 0; true; i++ {
-		resp, err := http.Get(opts.IDPMetadataURL)
+		resp, err := c.Do(req)
 		if err == nil && resp.StatusCode != http.StatusOK {
 			err = fmt.Errorf("%d %s", resp.StatusCode, resp.Status)
 		}
