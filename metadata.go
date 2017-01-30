@@ -104,6 +104,7 @@ type SPSSODescriptor struct {
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-metadata-2.0-os.pdf section 2.4.3
 type IDPSSODescriptor struct {
 	XMLName                    xml.Name        `xml:"urn:oasis:names:tc:SAML:2.0:metadata IDPSSODescriptor"`
+	WantAuthnRequestsSigned    bool            `xml:",attr"`
 	ProtocolSupportEnumeration string          `xml:"protocolSupportEnumeration,attr"`
 	KeyDescriptor              []KeyDescriptor `xml:"KeyDescriptor"`
 	NameIDFormat               []string        `xml:"NameIDFormat"`
