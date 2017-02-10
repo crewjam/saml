@@ -16,6 +16,14 @@ import (
 	"github.com/crewjam/go-xmlsec"
 )
 
+type NameIDFormat string
+
+const (
+	UnspecifiedNameIDFormat  NameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:unspecified"
+	TransientNameIDFormat    NameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
+	EmailAddressNameIDFormat NameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:emailAddress"
+)
+
 // ServiceProvider implements SAML Service provider.
 //
 // In SAML, service providers delegate responsibility for identifying
@@ -42,6 +50,10 @@ type ServiceProvider struct {
 
 	// IDPMetadata is the metadata from the identity provider.
 	IDPMetadata *Metadata
+
+	// AuthnNameIDFormat is the format used in the NameIDPolicy for
+	// authentication requests
+	AuthnNameIDFormat NameIDFormat
 }
 
 // MaxIssueDelay is the longest allowed time between when a SAML assertion is
@@ -180,6 +192,17 @@ func (sp *ServiceProvider) getIDPSigningCert() []byte {
 
 // MakeAuthenticationRequest produces a new AuthnRequest object for idpURL.
 func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string) (*AuthnRequest, error) {
+	var nameIDFormat NameIDFormat
+	switch sp.AuthnNameIDFormat {
+	case "":
+		// To maintain library back-compat, use "transient" if unset.
+		nameIDFormat = TransientNameIDFormat
+	case UnspecifiedNameIDFormat:
+		// Spec defines an empty value as "unspecified" so don't set one.
+	default:
+		nameIDFormat = sp.AuthnNameIDFormat
+	}
+
 	req := AuthnRequest{
 		AssertionConsumerServiceURL: sp.AcsURL,
 		Destination:                 idpURL,
@@ -196,7 +219,7 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string) (*AuthnReque
 			// TODO(ross): figure out exactly policy we need
 			// urn:mace:shibboleth:1.0:nameIdentifier
 			// urn:oasis:names:tc:SAML:2.0:nameid-format:transient
-			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+			Format: string(nameIDFormat),
 		},
 	}
 	return &req, nil
