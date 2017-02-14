@@ -54,6 +54,10 @@ type ServiceProvider struct {
 	// AuthnNameIDFormat is the format used in the NameIDPolicy for
 	// authentication requests
 	AuthnNameIDFormat NameIDFormat
+
+	// MetadataValidDuration is a duration used to calculate validUntil
+	// attribute in the metadata endpoint
+	MetadataValidDuration time.Duration
 }
 
 // MaxIssueDelay is the longest allowed time between when a SAML assertion is
@@ -73,9 +77,14 @@ func (sp *ServiceProvider) Metadata() *Metadata {
 		sp.Certificate = base64.StdEncoding.EncodeToString(cert.Bytes)
 	}
 
+	validDuration := DefaultValidDuration
+	if sp.MetadataValidDuration > 0 {
+		validDuration = sp.MetadataValidDuration
+	}
+
 	return &Metadata{
-		EntityID:   sp.MetadataURL,
-		ValidUntil: TimeNow().Add(DefaultValidDuration),
+		EntityID:      sp.MetadataURL,
+		ValidUntil:    TimeNow().Add(validDuration),
 		SPSSODescriptor: &SPSSODescriptor{
 			AuthnRequestsSigned:        false,
 			WantAssertionsSigned:       true,
