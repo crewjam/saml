@@ -30,6 +30,18 @@ type AuthnRequest struct {
 	NameIDPolicy NameIDPolicy      `xml:"urn:oasis:names:tc:SAML:2.0:protocol NameIDPolicy"`
 }
 
+func (a *AuthnRequest) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	type Alias AuthnRequest
+	aux := &struct {
+		IssueInstant RelaxedTime `xml:",attr"`
+		*Alias
+	}{
+		IssueInstant: RelaxedTime(a.IssueInstant),
+		Alias:        (*Alias)(a),
+	}
+	return e.Encode(aux)
+}
+
 func (a *AuthnRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias AuthnRequest
 	aux := &struct {
@@ -77,6 +89,18 @@ type Response struct {
 	Status             *Status   `xml:"urn:oasis:names:tc:SAML:2.0:protocol Status"`
 	EncryptedAssertion *EncryptedAssertion
 	Assertion          *Assertion `xml:"urn:oasis:names:tc:SAML:2.0:assertion Assertion"`
+}
+
+func (r *Response) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	type Alias Response
+	aux := &struct {
+		IssueInstant RelaxedTime `xml:",attr"`
+		*Alias
+	}{
+		IssueInstant: RelaxedTime(r.IssueInstant),
+		Alias:        (*Alias)(r),
+	}
+	return e.Encode(aux)
 }
 
 func (r *Response) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
@@ -138,6 +162,18 @@ type Assertion struct {
 	AttributeStatement *AttributeStatement
 }
 
+func (a *Assertion) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	type Alias Assertion
+	aux := &struct {
+		IssueInstant RelaxedTime `xml:",attr"`
+		*Alias
+	}{
+		IssueInstant: RelaxedTime(a.IssueInstant),
+		Alias:        (*Alias)(a),
+	}
+	return e.Encode(aux)
+}
+
 func (a *Assertion) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias Assertion
 	aux := &struct {
@@ -190,6 +226,18 @@ type SubjectConfirmationData struct {
 	Recipient    string    `xml:",attr"`
 }
 
+func (s *SubjectConfirmationData) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	type Alias SubjectConfirmationData
+	aux := &struct {
+		NotOnOrAfter RelaxedTime `xml:",attr"`
+		*Alias
+	}{
+		NotOnOrAfter: RelaxedTime(s.NotOnOrAfter),
+		Alias:        (*Alias)(s),
+	}
+	return e.EncodeElement(aux, start)
+}
+
 func (s *SubjectConfirmationData) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias SubjectConfirmationData
 	aux := &struct {
@@ -212,6 +260,20 @@ type Conditions struct {
 	NotBefore           time.Time `xml:",attr"`
 	NotOnOrAfter        time.Time `xml:",attr"`
 	AudienceRestriction *AudienceRestriction
+}
+
+func (c *Conditions) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	type Alias Conditions
+	aux := &struct {
+		NotBefore    RelaxedTime `xml:",attr"`
+		NotOnOrAfter RelaxedTime `xml:",attr"`
+		*Alias
+	}{
+		NotBefore:    RelaxedTime(c.NotBefore),
+		NotOnOrAfter: RelaxedTime(c.NotOnOrAfter),
+		Alias:        (*Alias)(c),
+	}
+	return e.EncodeElement(aux, start)
 }
 
 func (c *Conditions) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
@@ -253,6 +315,18 @@ type AuthnStatement struct {
 	SessionIndex    string    `xml:",attr"`
 	SubjectLocality SubjectLocality
 	AuthnContext    AuthnContext
+}
+
+func (a *AuthnStatement) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	type Alias AuthnStatement
+	aux := &struct {
+		AuthnInstant RelaxedTime `xml:",attr"`
+		*Alias
+	}{
+		AuthnInstant: RelaxedTime(a.AuthnInstant),
+		Alias:        (*Alias)(a),
+	}
+	return e.EncodeElement(aux, start)
 }
 
 func (a *AuthnStatement) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {

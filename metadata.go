@@ -31,6 +31,18 @@ type Metadata struct {
 	IDPSSODescriptor *IDPSSODescriptor `xml:"IDPSSODescriptor"`
 }
 
+func (m *Metadata) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	type Alias Metadata
+	aux := &struct {
+		ValidUntil RelaxedTime `xml:"validUntil,attr"`
+		*Alias
+	}{
+		ValidUntil: RelaxedTime(m.ValidUntil),
+		Alias:      (*Alias)(m),
+	}
+	return e.Encode(aux)
+}
+
 func (m *Metadata) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias Metadata
 	aux := &struct {
