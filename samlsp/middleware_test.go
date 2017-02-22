@@ -167,8 +167,9 @@ func (test *MiddlewareTest) TestRequireAccountNoCredsPostBinding(c *C) {
 		"<form method=\"post\" action=\"https://idp.testshib.org/idp/profile/SAML2/POST/SSO\" id=\"SAMLRequestForm\">"+
 		"<input type=\"hidden\" name=\"SAMLRequest\" value=\"PEF1dGhuUmVxdWVzdCB4bWxucz0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOnByb3RvY29sIiBJc3N1ZUluc3RhbnQ9IjIwMTUtMTItMDFUMDE6NTc6MDkuMTIzWiIgQXNzZXJ0aW9uQ29uc3VtZXJTZXJ2aWNlVVJMPSJodHRwczovLzE1NjYxNDQ0Lm5ncm9rLmlvL3NhbWwyL2FjcyIgRGVzdGluYXRpb249Imh0dHBzOi8vaWRwLnRlc3RzaGliLm9yZy9pZHAvcHJvZmlsZS9TQU1MMi9QT1NUL1NTTyIgSUQ9ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiIFByb3RvY29sQmluZGluZz0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOmJpbmRpbmdzOkhUVFAtUE9TVCIgVmVyc2lvbj0iMi4wIj48SXNzdWVyIHhtbG5zPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6YXNzZXJ0aW9uIiBGb3JtYXQ9InVybjpvYXNpczpuYW1lczp0YzpTQU1MOjIuMDpuYW1laWQtZm9ybWF0OmVudGl0eSI&#43;aHR0cHM6Ly8xNTY2MTQ0NC5uZ3Jvay5pby9zYW1sMi9tZXRhZGF0YTwvSXNzdWVyPjxOYW1lSURQb2xpY3kgeG1sbnM9InVybjpvYXNpczpuYW1lczp0YzpTQU1MOjIuMDpwcm90b2NvbCIgQWxsb3dDcmVhdGU9InRydWUiPnVybjpvYXNpczpuYW1lczp0YzpTQU1MOjIuMDpuYW1laWQtZm9ybWF0OnRyYW5zaWVudDwvTmFtZUlEUG9saWN5PjwvQXV0aG5SZXF1ZXN0Pg==\" />"+
 		"<input type=\"hidden\" name=\"RelayState\" value=\"KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6\" />"+
-		"<input type=\"submit\" value=\"Submit\" />"+
+		"<input id=\"SAMLSubmitButton\" type=\"submit\" value=\"Submit\" />"+
 		"</form>"+
+		"<script>document.getElementByID('SAMLSubmitButton').style.visibility=\"hidden\";</script>"+
 		"<script>document.getElementById('SAMLRequestForm').submit();</script>"+
 		"</body>"+
 		"</html>")
