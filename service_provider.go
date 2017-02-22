@@ -262,8 +262,9 @@ func (req *AuthnRequest) Post(relayState string) []byte {
 		`<form method="post" action="{{.URL}}" id="SAMLRequestForm">` +
 		`<input type="hidden" name="SAMLRequest" value="{{.SAMLRequest}}" />` +
 		`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
-		`<input type="submit" value="Submit" />` +
+		`<input id="SAMLSubmitButton" type="submit" value="Submit" />` +
 		`</form>` +
+		`<script>document.getElementByID('SAMLSubmitButton').style.visibility="hidden";</script>` +
 		`<script>document.getElementById('SAMLRequestForm').submit();</script>`))
 	data := struct {
 		URL         string
