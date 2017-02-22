@@ -13,7 +13,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/crewjam/go-xmlsec"
+	xmlsec "github.com/crewjam/go-xmlsec"
 )
 
 type NameIDFormat string
@@ -61,9 +61,14 @@ type ServiceProvider struct {
 }
 
 // MaxIssueDelay is the longest allowed time between when a SAML assertion is
-// issued by the IDP and the time it is received by ParseResponse. (In practice
-// this is the maximum allowed clock drift between the SP and the IDP).
+// issued by the IDP and the time it is received by ParseResponse. This is used
+// to prevent old responses from being replayed (while allowing for some clock
+// drift between the SP and IDP).
 const MaxIssueDelay = time.Second * 90
+
+// ClockSkew allows for leeway for clock skew between the IDP and SP when
+// validating assertions. It defaults to 180 seconds (matches shibboleth).
+var ClockSkew = time.Second * 180
 
 // DefaultValidDuration is how long we assert that the SP metadata is valid.
 const DefaultValidDuration = time.Hour * 24 * 2
@@ -83,8 +88,8 @@ func (sp *ServiceProvider) Metadata() *Metadata {
 	}
 
 	return &Metadata{
-		EntityID:      sp.MetadataURL,
-		ValidUntil:    TimeNow().Add(validDuration),
+		EntityID:   sp.MetadataURL,
+		ValidUntil: TimeNow().Add(validDuration),
 		SPSSODescriptor: &SPSSODescriptor{
 			AuthnRequestsSigned:        false,
 			WantAssertionsSigned:       true,
@@ -450,13 +455,13 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if assertion.Subject.SubjectConfirmation.SubjectConfirmationData.Recipient != sp.AcsURL {
 		return fmt.Errorf("SubjectConfirmation Recipient is not %s", sp.AcsURL)
 	}
-	if assertion.Subject.SubjectConfirmation.SubjectConfirmationData.NotOnOrAfter.Before(now) {
+	if assertion.Subject.SubjectConfirmation.SubjectConfirmationData.NotOnOrAfter.Add(ClockSkew).Before(now) {
 		return fmt.Errorf("SubjectConfirmationData is expired")
 	}
-	if assertion.Conditions.NotBefore.After(now) {
+	if assertion.Conditions.NotBefore.Add(-ClockSkew).After(now) {
 		return fmt.Errorf("Conditions is not yet valid")
 	}
-	if assertion.Conditions.NotOnOrAfter.Before(now) {
+	if assertion.Conditions.NotOnOrAfter.Add(ClockSkew).Before(now) {
 		return fmt.Errorf("Conditions is expired")
 	}
 	if assertion.Conditions.AudienceRestriction.Audience.Value != sp.MetadataURL {
