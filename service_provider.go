@@ -66,9 +66,9 @@ type ServiceProvider struct {
 // drift between the SP and IDP).
 const MaxIssueDelay = time.Second * 90
 
-// ClockSkew allows for leeway for clock skew between the IDP and SP when
+// MaxClockSkew allows for leeway for clock skew between the IDP and SP when
 // validating assertions. It defaults to 180 seconds (matches shibboleth).
-var ClockSkew = time.Second * 180
+var MaxClockSkew = time.Second * 180
 
 // DefaultValidDuration is how long we assert that the SP metadata is valid.
 const DefaultValidDuration = time.Hour * 24 * 2
@@ -455,13 +455,13 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if assertion.Subject.SubjectConfirmation.SubjectConfirmationData.Recipient != sp.AcsURL {
 		return fmt.Errorf("SubjectConfirmation Recipient is not %s", sp.AcsURL)
 	}
-	if assertion.Subject.SubjectConfirmation.SubjectConfirmationData.NotOnOrAfter.Add(ClockSkew).Before(now) {
+	if assertion.Subject.SubjectConfirmation.SubjectConfirmationData.NotOnOrAfter.Add(MaxClockSkew).Before(now) {
 		return fmt.Errorf("SubjectConfirmationData is expired")
 	}
-	if assertion.Conditions.NotBefore.Add(-ClockSkew).After(now) {
+	if assertion.Conditions.NotBefore.Add(-MaxClockSkew).After(now) {
 		return fmt.Errorf("Conditions is not yet valid")
 	}
-	if assertion.Conditions.NotOnOrAfter.Add(ClockSkew).Before(now) {
+	if assertion.Conditions.NotOnOrAfter.Add(MaxClockSkew).Before(now) {
 		return fmt.Errorf("Conditions is expired")
 	}
 	if assertion.Conditions.AudienceRestriction.Audience.Value != sp.MetadataURL {
