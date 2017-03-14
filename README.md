@@ -110,3 +110,7 @@ The SAML specification is a collection of PDFs (sadly):
 - [SAMLConformance](http://docs.oasis-open.org/security/saml/v2.0/saml-conformance-2.0-os.pdf) includes a support matrix for various parts of the protocol.
 
 [TestShib](http://www.testshib.org/) is a testing ground for SAML service and identity providers.
+
+## Security Issues
+
+Please do not report security issues in the issue tracker. Rather, please contact me directly at ross@kndr.org ([PGP Key `8EA205C01C425FF195A5E9A43FA0768F26FD2554`](https://keybase.io/crewjam)).
