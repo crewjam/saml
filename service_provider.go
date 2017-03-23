@@ -385,25 +385,36 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 
 	var assertion *Assertion
 	if resp.EncryptedAssertion == nil {
+		if resp.Assertion == nil || resp.Assertion.Signature == nil {
+			retErr.PrivateErr = fmt.Errorf("response assertion signature is nil")
+			return nil, retErr
+		}
+		plaintextAssertion, err := xml.MarshalIndent(resp.Assertion, "", "    ")
+		if err != nil {
+			retErr.PrivateErr = fmt.Errorf("unable to marshal response assertion: %s", err)
+			return nil, retErr
+		}
+		retErr.Response = string(plaintextAssertion)
+
 		if err := xmlsec.Verify(sp.getIDPSigningCert(), rawResponseBuf,
 			xmlsec.SignatureOptions{
 				XMLID: []xmlsec.XMLIDOption{{
-					ElementName:      "Response",
-					ElementNamespace: "urn:oasis:names:tc:SAML:2.0:protocol",
+					ElementName:      "Assertion",
+					ElementNamespace: "urn:oasis:names:tc:SAML:2.0:assertion",
 					AttributeName:    "ID",
 				}},
 			}); err != nil {
-			retErr.PrivateErr = fmt.Errorf("failed to verify signature on response: %s", err)
+			retErr.PrivateErr = fmt.Errorf("failed to verify signature on assertion: %s", err)
 			return nil, retErr
 		}
 		assertion = resp.Assertion
 	}
 
-	// decrypt the response
+	// decrypt the assertion in response
 	if resp.EncryptedAssertion != nil {
 		plaintextAssertion, err := xmlsec.Decrypt([]byte(sp.Key), resp.EncryptedAssertion.EncryptedData)
 		if err != nil {
-			retErr.PrivateErr = fmt.Errorf("failed to decrypt response: %s", err)
+			retErr.PrivateErr = fmt.Errorf("failed to decrypt response assertion: %s", err)
 			return nil, retErr
 		}
 		retErr.Response = string(plaintextAssertion)
@@ -416,7 +427,7 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 					AttributeName:    "ID",
 				}},
 			}); err != nil {
-			retErr.PrivateErr = fmt.Errorf("failed to verify signature on response: %s", err)
+			retErr.PrivateErr = fmt.Errorf("failed to verify signature on decrypted assertion: %s", err)
 			return nil, retErr
 		}
 
