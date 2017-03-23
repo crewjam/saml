@@ -393,36 +393,31 @@ func (sp *ServiceProvider) ValidateResponse(rawResponseBuf []byte, possibleReque
 
 	var assertion *Assertion
 	if resp.EncryptedAssertion == nil {
-		if resp.Assertion == nil || resp.Assertion.Signature == nil {
-			retErr.PrivateErr = fmt.Errorf("response assertion signature is nil")
-			return nil, retErr
+		elementName := "Response"
+		elementNs := "urn:oasis:names:tc:SAML:2.0:protocol"
+		if resp.Assertion != nil && resp.Assertion.Signature != nil {
+			elementName = "Assertion"
+			elementNs = "urn:oasis:names:tc:SAML:2.0:assertion"
 		}
-		plaintextAssertion, err := xml.MarshalIndent(resp.Assertion, "", "    ")
-		if err != nil {
-			retErr.PrivateErr = fmt.Errorf("unable to marshal response assertion: %s", err)
-			return nil, retErr
-		}
-		retErr.Response = string(plaintextAssertion)
-
 		if err := xmlsec.Verify(sp.getIDPSigningCert(), rawResponseBuf,
 			xmlsec.SignatureOptions{
 				XMLID: []xmlsec.XMLIDOption{{
-					ElementName:      "Assertion",
-					ElementNamespace: "urn:oasis:names:tc:SAML:2.0:assertion",
+					ElementName:      elementName,
+					ElementNamespace: elementNs,
 					AttributeName:    "ID",
 				}},
 			}); err != nil {
-			retErr.PrivateErr = fmt.Errorf("failed to verify signature on assertion: %s", err)
+			retErr.PrivateErr = fmt.Errorf("failed to verify signature on %s: %s", elementName, err)
 			return nil, retErr
 		}
 		assertion = resp.Assertion
 	}
 
-	// decrypt the assertion in response
+	// decrypt the response
 	if resp.EncryptedAssertion != nil {
 		plaintextAssertion, err := xmlsec.Decrypt([]byte(sp.Key), resp.EncryptedAssertion.EncryptedData)
 		if err != nil {
-			retErr.PrivateErr = fmt.Errorf("failed to decrypt response assertion: %s", err)
+			retErr.PrivateErr = fmt.Errorf("failed to decrypt response: %s", err)
 			return nil, retErr
 		}
 		retErr.Response = string(plaintextAssertion)
@@ -435,7 +430,7 @@ func (sp *ServiceProvider) ValidateResponse(rawResponseBuf []byte, possibleReque
 					AttributeName:    "ID",
 				}},
 			}); err != nil {
-			retErr.PrivateErr = fmt.Errorf("failed to verify signature on decrypted assertion: %s", err)
+			retErr.PrivateErr = fmt.Errorf("failed to verify signature on response: %s", err)
 			return nil, retErr
 		}
 
