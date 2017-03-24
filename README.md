@@ -13,9 +13,9 @@ Let us assume we have a simple web appliation to protect. We'll modify this appl
 
     import "net/http"
 
-     func hello(w http.ResponseWriter, r *http.Request) {
+    func hello(w http.ResponseWriter, r *http.Request) {
         fmt.Fprintf(w, "Hello, World!")
-    })
+    }
 
     func main() {
         app := http.HandlerFunc(hello)
