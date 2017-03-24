@@ -169,7 +169,7 @@ func (test *MiddlewareTest) TestRequireAccountNoCredsPostBinding(c *C) {
 		"<input type=\"hidden\" name=\"RelayState\" value=\"KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6\" />"+
 		"<input id=\"SAMLSubmitButton\" type=\"submit\" value=\"Submit\" />"+
 		"</form>"+
-		"<script>document.getElementByID('SAMLSubmitButton').style.visibility=\"hidden\";</script>"+
+		"<script>document.getElementById('SAMLSubmitButton').style.visibility=\"hidden\";</script>"+
 		"<script>document.getElementById('SAMLRequestForm').submit();</script>"+
 		"</body>"+
 		"</html>")

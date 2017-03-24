@@ -179,7 +179,7 @@ func (test *ServiceProviderTest) TestCanProducePostRequest(c *C) {
 		`<input type="hidden" name="SAMLRequest" value="PEF1dGhuUmVxdWVzdCB4bWxucz0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOnByb3RvY29sIiBJc3N1ZUluc3RhbnQ9IjIwMTUtMTItMDFUMDE6MzE6MjFaIiBBc3NlcnRpb25Db25zdW1lclNlcnZpY2VVUkw9Imh0dHBzOi8vMTU2NjE0NDQubmdyb2suaW8vc2FtbDIvYWNzIiBEZXN0aW5hdGlvbj0iaHR0cHM6Ly9pZHAudGVzdHNoaWIub3JnL2lkcC9wcm9maWxlL1NBTUwyL1BPU1QvU1NPIiBJRD0iaWQtMDAwMjA0MDYwODBhMGMwZTEwMTIxNDE2MTgxYTFjMWUyMDIyMjQyNiIgUHJvdG9jb2xCaW5kaW5nPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6YmluZGluZ3M6SFRUUC1QT1NUIiBWZXJzaW9uPSIyLjAiPjxJc3N1ZXIgeG1sbnM9InVybjpvYXNpczpuYW1lczp0YzpTQU1MOjIuMDphc3NlcnRpb24iIEZvcm1hdD0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOm5hbWVpZC1mb3JtYXQ6ZW50aXR5Ij5odHRwczovLzE1NjYxNDQ0Lm5ncm9rLmlvL3NhbWwyL21ldGFkYXRhPC9Jc3N1ZXI&#43;PE5hbWVJRFBvbGljeSB4bWxucz0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOnByb3RvY29sIiBBbGxvd0NyZWF0ZT0idHJ1ZSI&#43;dXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOm5hbWVpZC1mb3JtYXQ6dHJhbnNpZW50PC9OYW1lSURQb2xpY3k&#43;PC9BdXRoblJlcXVlc3Q&#43;" />`+
 		`<input type="hidden" name="RelayState" value="relayState" />`+
 		`<input id="SAMLSubmitButton" type="submit" value="Submit" /></form>`+
-		`<script>document.getElementByID('SAMLSubmitButton').style.visibility="hidden";</script>`+
+		`<script>document.getElementById('SAMLSubmitButton').style.visibility="hidden";</script>`+
 		`<script>document.getElementById('SAMLRequestForm').submit();</script>`)
 }
 
