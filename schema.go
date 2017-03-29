@@ -72,7 +72,7 @@ type Issuer struct {
 type NameIDPolicy struct {
 	XMLName     xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol NameIDPolicy"`
 	AllowCreate bool     `xml:",attr"`
-	Format      string   `xml:",chardata"`
+	Format      string   `xml:",attr"`
 }
 
 // Response represents the SAML object of the same name.
