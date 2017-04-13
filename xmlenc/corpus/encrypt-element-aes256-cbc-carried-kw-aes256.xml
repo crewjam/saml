@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PurchaseOrder xmlns="urn:example:po">
+  <Items>
+    <Item Code="001-001-001" Quantity="1">
+      spade
+    </Item>
+    <Item Code="001-001-002" Quantity="1">
+      shovel
+    </Item>
+  </Items>
+  <ShippingAddress>
+    Dig PLC, 1 First Ave, Dublin 1, Ireland
+  </ShippingAddress>
+  <EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#" Type="http://www.w3.org/2001/04/xmlenc#Element">
+    <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes256-cbc" />
+    <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+      <KeyName>Foo Key</KeyName>
+    </KeyInfo>
+    <CipherData>
+      <CipherValue>
+        pdDtiyd7XQ/BFEEN0PMJuHnLUfCY+bJlsW+q04OiKSPnRd4/dS1tjaTfj5dPpGXe
+        cY3fJvRsq9QP1CJiwyEC/EQ1zSLbzwOtZ+NtxtsFgYvPBJ9t86ZcXIjlErQ85z3L
+        wnb8rSHpE9tu4tJ1rjgf2i6NCbdFnSMXLSDgLEs48+gkX0cJCmKxzRaSE4cV0OSl
+        hBWND4EYzX1M679VlSYrI0de+lSPO3Vx+y/TuZ5Vo+uu9+YP+ce0LRkx2BicjjsP
+        QO9sp+yjHPNDIV1Z7VHsDIWqqmBaNQo3GuzF5WzWgaXTKnPv/IgUQn+1t3EtgHyb
+        JhnfR/1em16z/Zaf9Uy1Lfd//yfEJ9BCjqwe1UjwN6ytu1v2BHd+8bVjD2o+Dg8V
+        7ayOLlkWOTOLvtJMPOXPqw==
+      </CipherValue>
+    </CipherData>
+  </EncryptedData>
+  <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+    <EncryptedKey xmlns="http://www.w3.org/2001/04/xmlenc#" Recipient="someone else">
+      <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#kw-aes256" />
+      <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+        <KeyName>ned</KeyName>
+      </KeyInfo>
+      <CipherData>
+        <CipherValue>
+          EWlIkFPGrkeW4cyjWSznLVoClVh/OEC7Klya9d9o7R6wll6JswZb2w==
+        </CipherValue>
+      </CipherData>
+      <CarriedKeyName>Foo Key</CarriedKeyName>
+    </EncryptedKey>
+    <EncryptedKey xmlns="http://www.w3.org/2001/04/xmlenc#" Recipient="you">
+      <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#kw-aes256" />
+      <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+        <KeyName>jed</KeyName>
+      </KeyInfo>
+      <CipherData>
+        <CipherValue>
+          bsL63D0hPN6EOyzdgfEmKsAAvoJiGM+Wp9a9KZM92IKdl7s3YSntRg==
+        </CipherValue>
+      </CipherData>
+      <CarriedKeyName>Foo Key</CarriedKeyName>
+    </EncryptedKey>
+  </KeyInfo>
+</PurchaseOrder>

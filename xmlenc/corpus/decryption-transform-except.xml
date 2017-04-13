@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PurchaseOrder xmlns="urn:example:po">
+  <Items>
+    <Item Code="001-001-001" Quantity="1">
+      spade
+    </Item>
+    <Item Code="001-001-002" Quantity="1">
+      shovel
+    </Item>
+  </Items>
+  <ShippingAddress>
+    Dig PLC, 1 First Ave, Dublin 1, Ireland
+  </ShippingAddress>
+  <PaymentInfo>
+    <EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#" Id="encrypt-data-0" Type="http://www.w3.org/2001/04/xmlenc#Content">
+      <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes256-cbc" />
+      <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+        <KeyName>jed</KeyName>
+      </KeyInfo>
+      <CipherData>
+        <CipherValue>
+          cX6lnfgmvWuxyiQgNhzAq1lYggW2M5GziFgNBQju3xcnDqlzf5LSjeyBnbL0Q7ws
+          8XhySFCrdwIi5mVxyfdFkVrTlzQQ0viaqTDgi9PQRgZMOImGGWij3wbmf9XseHHt
+          6q8V7LPjMFQAnsLDQgKf4gzzOnhtKf15GfTEpGvUnNn2dLDxw+hDcD1N54/bjSQs
+          uTiL7PgGQ5g4u4eaXRRLWeAGsIf5QgdQG3GLiOZIX1LJ5bREKgXeKrtJJI97xUX3
+          3vaF+tKRcSFBFIMjFrw271bFj4vvvQZfSS6xX+BKXHOUu8C4NH9Le8pA9o4NgCB8
+          tWA8W3iI5/BGEZve0Me9byvPHYjRXlbG+YqysVTmzfw=
+        </CipherValue>
+      </CipherData>
+    </EncryptedData>
+    <EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#" Id="encrypt-data-1">
+      <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes256-cbc" />
+      <CipherData>
+        <CipherValue>
+          x3aR5pJ5pepFFH5ENv61pZG4pVwNKaM+H9oyY4qG6d8l/C0J1iGv6c8dyLp0YQ2k
+        </CipherValue>
+      </CipherData>
+    </EncryptedData>
+  </PaymentInfo>
+  <Signature xmlns="http://www.w3.org/2000/09/xmldsig#">
+    <SignedInfo>
+      <CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315" />
+      <SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#dsa-sha1" />
+      <Reference URI="">
+        <Transforms>
+          <Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature" />
+          <Transform Algorithm="http://www.w3.org/2001/04/decrypt#">
+            <Except xmlns="http://www.w3.org/2001/04/decrypt#" URI="#encrypt-data-1" />
+          </Transform>
+        </Transforms>
+        <DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256" />
+        <DigestValue>5Oe9qba6preOZG1NZAYK2/6pu9RCon9vRJ9hVLDpeng=</DigestValue>
+      </Reference>
+    </SignedInfo>
+    <SignatureValue>
+      LuHrz9+WG7/c4Q81tFboNZg2cktWbZcRfp08XrmgKy1GDm9xSfTYCA==
+    </SignatureValue>
+    <KeyInfo>
+      <KeyValue>
+        <DSAKeyValue>
+          <P>
+            imup6lmki4rAmUstKb/xdBRMWNtQ+pDN97ZnLA9X3lKbkEHtYFyjQ3uActgVSJ75
+            iVRuKxz4Cb5RzVm25EaKmKq8rif1MtBIi6jjDJxmIdNaEKG9zVTf9giJx1N9I0t3
+            oh1fAVZDSrzKzJGQ2WvDfIfFHdJMtB3C0VKGmLZR7Xk=
+          </P>
+          <Q>
+            xDve3j7sEnh4rIzM5gK+5/gxxFU=
+          </Q>
+          <G>
+            NLugAf6IZJxo3BCOi5yrGEVwtlEzXcnndXhd0Tz38CnQKc4SEupm4PyP5TmLvK64
+            TDfOD7sno/W5oI1KZdimfW2c4r/6waNzZSvicMOWhLYY621Nn6njBc8VNwoxWpzC
+            XhKm70b8+D4YZMn/eU5DN8dvhTv/bNK21FfJqjp033U=
+          </G>
+          <Y>
+            W7dOmH/vWqocVCiqaxj6soxVXfR8XpMdY2Zv4Amjr3n81geyOLb6IZ+l7MUbdp85
+            29DQzuoVTthVpB9X4JKCprZIzifOTM1PFflTBzjx7egJwJWAIVdWyiIPjke6Va+w
+            uV2n4Rl/cgCvrXK5cTov5C/Bpaf6o+qrrDGFBLLZTF4=
+          </Y>
+        </DSAKeyValue>
+      </KeyValue>
+    </KeyInfo>
+  </Signature>
+</PurchaseOrder>

@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PurchaseOrder xmlns="urn:example:po">
+  <Items>
+    <Item Code="001-001-001" Quantity="1">
+      spade
+    </Item>
+    <Item Code="001-001-002" Quantity="1">
+      shovel
+    </Item>
+  </Items>
+  <ShippingAddress>
+    Dig PLC, 1 First Ave, Dublin 1, Ireland
+  </ShippingAddress>
+  <PaymentInfo>
+    <EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#" Type="http://www.w3.org/2001/04/xmlenc#Content">
+      <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes192-cbc" />
+      <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+        <AgreementMethod xmlns="http://www.w3.org/2001/04/xmlenc#" Algorithm="http://www.w3.org/2001/04/xmlenc#dh">
+          <KA-Nonce>
+            bm9uY2U=
+          </KA-Nonce>
+          <DigestMethod xmlns="http://www.w3.org/2000/09/xmldsig#" Algorithm="http://www.w3.org/2001/04/xmlenc#sha512" />
+          <OriginatorKeyInfo>
+            <KeyValue xmlns="http://www.w3.org/2000/09/xmldsig#">
+              <DHKeyValue xmlns="http://www.w3.org/2001/04/xmlenc#">
+                <P>
+                  plygl2uMNc+jYtAZeKCZxPsmqa2z8DrOUa7L455iszN4SdPnL+LsZD47VJayvQY8
+                  6D1J5arkwrbUzmhMAjBZsENPBgffRwwEBTjoq+gjSyZNIbxqsqnJdEyUElzn4kGE
+                  whECkJGnOaScacpjZg11h+gd0iBfY091bGHrCZrvr/8=
+                </P>
+                <Q>
+                  9jJXQijNovoq6QUBFcEUYwUvyTM=
+                </Q>
+                <Generator>
+                  PerUZgMEMDTegMdTBRG9DPY5EHmwDxwzladdRcfvfdfU/9wlPzz5BUotMm730J9d
+                  lF6avWr929fzYsnIOUDeUOJpltXmrTYnvz5Bi6yuUu6bVwSfv7u4S+I/EM9ZB+eY
+                  3fdF5TAMHD4tK86lw5APDrN2QnO1UMCwIvjOFatSOI0=
+                </Generator>
+                <Public>
+                  Ulu6B1lCwajtIBnolqqgU+R1oxfye63DnI/iLM/Oe+Y8I/LMMaEmo3LmCU30m82r
+                  NyOUqgfnm97S0bT8ZhI8gvw0EyQJ87vhlUz4WcmddU/YlTi3gJHUClr2olmBmRCt
+                  m2vKo/BpoLGJ0Wg1eyWfo54+gCqbeNez/DmBGcBEEhM=
+                </Public>
+              </DHKeyValue>
+            </KeyValue>
+            <X509Data xmlns="http://www.w3.org/2000/09/xmldsig#">
+              <X509Certificate>
+                MIIDvjCCA36gAwIBAgIGAOxN39MIMAkGByqGSM44BAMwbjELMAkGA1UEBhMCSUUx
+                DzANBgNVBAgTBkR1YmxpbjEkMCIGA1UEChMbQmFsdGltb3JlIFRlY2hub2xvZ2ll
+                cyBMdGQuMREwDwYDVQQLEwhYL1NlY3VyZTEVMBMGA1UEAxMMVHJhbnNpZW50IENB
+                MB4XDTAyMDIyODE3NTMxNloXDTAzMDIyODE3NTI1NFowbzELMAkGA1UEBhMCSUUx
+                DzANBgNVBAgTBkR1YmxpbjEkMCIGA1UEChMbQmFsdGltb3JlIFRlY2hub2xvZ2ll
+                cyBMdGQuMREwDwYDVQQLEwhYL1NlY3VyZTEWMBQGA1UEAxMNTWVybGluIEh1Z2hl
+                czCCAiUwggGaBgcqhkjOPgIBMIIBjQKBgQCmXKCXa4w1z6Ni0Bl4oJnE+yaprbPw
+                Os5RrsvjnmKzM3hJ0+cv4uxkPjtUlrK9BjzoPUnlquTCttTOaEwCMFmwQ08GB99H
+                DAQFOOir6CNLJk0hvGqyqcl0TJQSXOfiQYTCEQKQkac5pJxpymNmDXWH6B3SIF9j
+                T3VsYesJmu+v/wKBgD3q1GYDBDA03oDHUwURvQz2ORB5sA8cM5WnXUXH733X1P/c
+                JT88+QVKLTJu99CfXZRemr1q/dvX82LJyDlA3lDiaZbV5q02J78+QYusrlLum1cE
+                n7+7uEviPxDPWQfnmN33ReUwDBw+LSvOpcOQDw6zdkJztVDAsCL4zhWrUjiNAhUA
+                9jJXQijNovoq6QUBFcEUYwUvyTMCbQCs/HkLusCqHmY71JxUOFzy5fuWkPpWXJzx
+                qU3oz1BfMZtPUqjpBnqU97M7VUEg+5pRG2txaHP8XNmB1bY0DCE88riDmHP7HqZB
+                Z2gbaH2LxXDQDayb5GcPfn38eDcWvVAaKP9fJ8wG5RUu3AoDgYQAAoGAUlu6B1lC
+                wajtIBnolqqgU+R1oxfye63DnI/iLM/Oe+Y8I/LMMaEmo3LmCU30m82rNyOUqgfn
+                m97S0bT8ZhI8gvw0EyQJ87vhlUz4WcmddU/YlTi3gJHUClr2olmBmRCtm2vKo/Bp
+                oLGJ0Wg1eyWfo54+gCqbeNez/DmBGcBEEhOjOjA4MA4GA1UdDwEB/wQEAwIDCDAR
+                BgNVHQ4ECgQIgUAwB+9f1oIwEwYDVR0jBAwwCoAIgjqisiZ1WVswCQYHKoZIzjgE
+                AwMvADAsAhQ41mCUsFhmxI58tytV8XEVZOCuUwIUVMe/HbUAH5PJ7aRoCNqa3fCI
+                cU0=
+              </X509Certificate>
+            </X509Data>
+          </OriginatorKeyInfo>
+          <RecipientKeyInfo>
+            <X509Data xmlns="http://www.w3.org/2000/09/xmldsig#">
+              <X509Certificate>
+                MIIDvjCCA36gAwIBAgIGAOxN3+EMMAkGByqGSM44BAMwbjELMAkGA1UEBhMCSUUx
+                DzANBgNVBAgTBkR1YmxpbjEkMCIGA1UEChMbQmFsdGltb3JlIFRlY2hub2xvZ2ll
+                cyBMdGQuMREwDwYDVQQLEwhYL1NlY3VyZTEVMBMGA1UEAxMMVHJhbnNpZW50IENB
+                MB4XDTAyMDIyODE3NTMxOVoXDTAzMDIyODE3NTI1NFowbzELMAkGA1UEBhMCSUUx
+                DzANBgNVBAgTBkR1YmxpbjEkMCIGA1UEChMbQmFsdGltb3JlIFRlY2hub2xvZ2ll
+                cyBMdGQuMREwDwYDVQQLEwhYL1NlY3VyZTEWMBQGA1UEAxMNTmlscmVtIFNlaGd1
+                aDCCAiUwggGaBgcqhkjOPgIBMIIBjQKBgQCmXKCXa4w1z6Ni0Bl4oJnE+yaprbPw
+                Os5RrsvjnmKzM3hJ0+cv4uxkPjtUlrK9BjzoPUnlquTCttTOaEwCMFmwQ08GB99H
+                DAQFOOir6CNLJk0hvGqyqcl0TJQSXOfiQYTCEQKQkac5pJxpymNmDXWH6B3SIF9j
+                T3VsYesJmu+v/wKBgD3q1GYDBDA03oDHUwURvQz2ORB5sA8cM5WnXUXH733X1P/c
+                JT88+QVKLTJu99CfXZRemr1q/dvX82LJyDlA3lDiaZbV5q02J78+QYusrlLum1cE
+                n7+7uEviPxDPWQfnmN33ReUwDBw+LSvOpcOQDw6zdkJztVDAsCL4zhWrUjiNAhUA
+                9jJXQijNovoq6QUBFcEUYwUvyTMCbQCs/HkLusCqHmY71JxUOFzy5fuWkPpWXJzx
+                qU3oz1BfMZtPUqjpBnqU97M7VUEg+5pRG2txaHP8XNmB1bY0DCE88riDmHP7HqZB
+                Z2gbaH2LxXDQDayb5GcPfn38eDcWvVAaKP9fJ8wG5RUu3AoDgYQAAoGAGSYT19Pb
+                VCxMt06cAP7zQZ6AC5eXp3zeAweIevV96ryA1mB03qhB9X2lVowAUOFc24aVRTz7
+                wRoRjNQ20atzSy21C7yXDkvZ4uxfdrpIqpIVrI28e7XL+6CrhnAk621OvdeyEz5H
+                orA21hPXoCNdnUPG5Ib20oopM87ptF5dwiWjOjA4MA4GA1UdDwEB/wQEAwIDCDAR
+                BgNVHQ4ECgQIiDCSQ3FB/oEwEwYDVR0jBAwwCoAIgjqisiZ1WVswCQYHKoZIzjgE
+                AwMvADAsAhQMtZ98TyqVkVqUJ3RJqaU7l2xqKgIUX997qRqeMjAkK88NHeNd95/2
+                Yos=
+              </X509Certificate>
+            </X509Data>
+          </RecipientKeyInfo>
+        </AgreementMethod>
+      </KeyInfo>
+      <CipherData>
+        <CipherValue>
+          5jIlxXZGhx8vUNbL0ZvdRry6mPapX8qLYlDgy3tE6nRbnBRWACviYQAXBqvDfn1R
+          TKmBWZ5NoJobM8lXWOk2nNQIuSQojcFYRuvcWU7DffDVX7dUCAVRJp6PS/5V1IHR
+          JJ2WBagWSW1lFW9mqjfe0ZflEZGYI3/5kUYQIpbMvEuXoF8129VGiKalZsCVTRxd
+          /IsdT8x/7L57GlGq0OzCMI5zG3QrBV7wUOoqBu5SxS8QUvUPucH8hsD4Bq4BwVEa
+          GlUVAj7H3HYYo7fviTO4i2lTMunGW9rcJVnKXjDM/Mds3oM4zbBo/Ao3m3rmpUUz
+          AwSe6ofh6ML418+cyCaRUoVQOlG+VwkHEKUiYYGhsKY=
+        </CipherValue>
+      </CipherData>
+    </EncryptedData>
+  </PaymentInfo>
+</PurchaseOrder>

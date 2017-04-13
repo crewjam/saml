@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#" MimeType="text/plain">
+  <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes128-cbc" />
+  <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+    <KeyName>job</KeyName>
+  </KeyInfo>
+  <CipherData>
+    <CipherValue>
+      QMpxhXq1DtBeyC9KfSaMQWrEtefe+e935gF/x62spvmL6IW0XeS0W4Kk31OgWzN0
+    </CipherValue>
+  </CipherData>
+</EncryptedData>

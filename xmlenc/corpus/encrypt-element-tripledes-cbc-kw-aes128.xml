@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE test [
+<!ATTLIST PaymentInfo Id ID #IMPLIED>
+]>
+<PurchaseOrder xmlns="urn:example:po">
+  <Items>
+    <Item Code="001-001-001" Quantity="1">
+      spade
+    </Item>
+    <Item Code="001-001-002" Quantity="1">
+      shovel
+    </Item>
+  </Items>
+  <ShippingAddress>
+    Dig PLC, 1 First Ave, Dublin 1, Ireland
+  </ShippingAddress>
+  <EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#" Type="http://www.w3.org/2001/04/xmlenc#Element">
+    <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#tripledes-cbc" />
+    <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+      <EncryptedKey xmlns="http://www.w3.org/2001/04/xmlenc#">
+        <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#kw-aes128" />
+        <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+          <KeyName>job</KeyName>
+        </KeyInfo>
+        <CipherData>
+          <CipherValue>
+            dV45TUpJbidb9iKa34xj1WVtTZ036cnqvym2TBJWR5c=
+          </CipherValue>
+        </CipherData>
+      </EncryptedKey>
+    </KeyInfo>
+    <CipherData>
+      <CipherValue>
+        bmExbDyrUQtsGjNBU7TRpMhOC76O/wBDWVMQML43lWNP0xp7QwVPce1XdbB4AVUn
+        xxAuJh18jOd9UzPTzrJHrKWvsWP8Xp1m/HL3A1XhOUe+MEcFyJB9fXazhDmyaSYU
+        SvieaPXcpzKWiHhZE8RKUyAYw9nU9wf2SEUgCVRuRPfsrXg4Uyr83VTn84LPe9sL
+        dd2hMj4jhgHL86b7PTYBWdtrYXq0Jwzptuw+TZ1C706BAZDYNAiSTdx3J17Ey3ex
+        IeIFBBIq8D8Gp7XiH4UxiDB6rtA2czox6+FCvaIsrGFaaw9XdzvhiZ3HxYROjprz
+        qiXcJlZzG6j8yRdpHSjsDkN3w7XjEgRODieGx110rBytZcwtqb0zc6JTZH5DzoJy
+      </CipherValue>
+    </CipherData>
+  </EncryptedData>
+</PurchaseOrder>

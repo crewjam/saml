@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#" MimeType="text/plain">
+  <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes256-cbc" />
+  <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+    <EncryptedKey xmlns="http://www.w3.org/2001/04/xmlenc#">
+      <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#kw-tripledes" />
+      <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+        <KeyName>bob</KeyName>
+      </KeyInfo>
+      <CipherData>
+        <CipherValue>
+          ZyJbVsjRM4MEsswwwHz57aUz1eMqZHuEIoEPGS47CcmLvhuCtlzWZ9S/WcVJZIpz
+        </CipherValue>
+      </CipherData>
+    </EncryptedKey>
+  </KeyInfo>
+  <CipherData>
+    <CipherValue>
+      Lp2ZWyJERT05icmHvWWbEtCCfmB2jvSlSclhS0oj3A3PU90aE6v+bFFQxrHw7VUd
+    </CipherValue>
+  </CipherData>
+</EncryptedData>
