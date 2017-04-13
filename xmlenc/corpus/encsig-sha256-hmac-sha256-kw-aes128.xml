@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">
+  <SignedInfo>
+    <CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315" />
+    <SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#hmac-sha256" />
+    <Reference URI="http://www.w3.org/TR/xml-stylesheet">
+      <DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256" />
+      <DigestValue>eI1OLVStn6Z4q7Byq8XGUJ4bce1LMSlanI6o+SvYzt0=</DigestValue>
+    </Reference>
+  </SignedInfo>
+  <SignatureValue>
+    cOQGJE3d3fXi1BIfdvr1v6tz/4lt9xGznfyDPXEvc4Q=
+  </SignatureValue>
+  <KeyInfo>
+    <EncryptedKey xmlns="http://www.w3.org/2001/04/xmlenc#">
+      <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#kw-aes128" />
+      <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+        <KeyName>job</KeyName>
+      </KeyInfo>
+      <CipherData>
+        <CipherValue>
+          rPnY/XoSGCbuwy7vpslf29rs9dbvSCmGFOjEs3LT6g/qyZjfDA+2fQ==
+        </CipherValue>
+      </CipherData>
+    </EncryptedKey>
+  </KeyInfo>
+</Signature>

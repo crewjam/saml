@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PurchaseOrder xmlns="urn:example:po">
+  <Items>
+    <Item Code="001-001-001" Quantity="1">
+      spade
+    </Item>
+    <Item Code="001-001-002" Quantity="1">
+      shovel
+    </Item>
+  </Items>
+  <ShippingAddress>
+    Dig PLC, 1 First Ave, Dublin 1, Ireland
+  </ShippingAddress>
+  <PaymentInfo>
+    <BillingAddress>
+      Dig PLC, 1 First Ave, Dublin 1, Ireland
+    </BillingAddress>
+    <CreditCard Type="Amex">
+      <Name>Foo B Baz</Name>
+      <Number>1234 567890 12345</Number>
+      <Expires Month="1" Year="2005" />
+    </CreditCard>
+  </PaymentInfo>
+</PurchaseOrder>
