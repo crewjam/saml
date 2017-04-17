@@ -240,7 +240,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 
 		// delete the cookie
 		stateCookie.Value = ""
-		stateCookie.Expires = time.Time{}
+		stateCookie.Expires = time.Date(2016, 1, 1, 0, 0, 0, 0, time.UTC) // any time in the past, but not the zero time
 		http.SetCookie(w, stateCookie)
 	}
 
