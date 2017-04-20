@@ -11,7 +11,11 @@ func (m RelaxedTime) MarshalText() ([]byte, error) {
 	// other applications to handle time resolution finer than a millisecond.
 	//
 	// The time MUST be expressed in UTC.
-	return []byte(time.Time(m).UTC().Format(timeFormat)), nil
+	return []byte(m.String()), nil
+}
+
+func (m RelaxedTime) String() string {
+	return time.Time(m).UTC().Format(timeFormat)
 }
 
 func (m *RelaxedTime) UnmarshalText(text []byte) error {

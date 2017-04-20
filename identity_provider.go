@@ -3,6 +3,7 @@ package saml
 import (
 	"bytes"
 	"compress/flate"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/pem"
 	"encoding/xml"
@@ -16,7 +17,9 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/crewjam/go-xmlsec"
+	"github.com/beevik/etree"
+	"github.com/crewjam/saml/xmlenc"
+	dsig "github.com/russellhaering/goxmldsig"
 )
 
 // Session represents a user session. It is returned by the
@@ -338,7 +341,7 @@ func (req *IdpAuthnRequest) Validate() error {
 // MakeAssertion produces a SAML assertion for the
 // given request and assigns it to req.Assertion.
 func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
-	signatureTemplate := xmlsec.DefaultSignature([]byte(req.IDP.Certificate))
+
 	attributes := []Attribute{}
 	if session.UserName != "" {
 		attributes = append(attributes, Attribute{
@@ -422,7 +425,6 @@ func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
 			Format: "XXX",
 			Value:  req.IDP.Metadata().EntityID,
 		},
-		Signature: &signatureTemplate,
 		Subject: &Subject{
 			NameID: &NameID{
 				Format:          "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
@@ -470,56 +472,79 @@ func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
 // MarshalAssertion sets `AssertionBuffer` to a signed, encrypted
 // version of `Assertion`.
 func (req *IdpAuthnRequest) MarshalAssertion() error {
-	buf, err := xml.Marshal(req.Assertion)
+	keyPair, err := tls.X509KeyPair([]byte(req.IDP.Certificate), []byte(req.IDP.Key))
+	if err != nil {
+		return err
+	}
+	keyStore := dsig.TLSCertKeyStore(keyPair)
+
+	signingContext := dsig.NewDefaultSigningContext(keyStore)
+	if err = signingContext.SetSignatureMethod(dsig.RSASHA1SignatureMethod); err != nil {
+		return err
+	}
+
+	assertionEl, err := marshalEtreeHack(req.Assertion)
 	if err != nil {
 		return err
 	}
 
-	buf, err = xmlsec.Sign([]byte(req.IDP.Key),
-		buf, xmlsec.SignatureOptions{})
+	signedAssertionEl, err := signingContext.SignEnveloped(assertionEl)
 	if err != nil {
 		return err
 	}
 
-	buf, err = xmlsec.Encrypt(getSPEncryptionCert(req.ServiceProviderMetadata),
-		buf, xmlsec.EncryptOptions{})
-	if err != nil {
-		return err
-	}
-
-	req.AssertionBuffer = buf
-	return nil
-}
-
-// MakeResponse creates and assigns a new SAML response in Response. `Assertion` must
-// be non-nill. If MarshalAssertion() has not been called, this function calls it for
-// you.
-func (req *IdpAuthnRequest) MakeResponse() error {
-	if req.AssertionBuffer == nil {
-		if err := req.MarshalAssertion(); err != nil {
+	var signedAssertionBuf []byte
+	{
+		doc := etree.NewDocument()
+		doc.SetRoot(signedAssertionEl)
+		signedAssertionBuf, err = doc.WriteToBytes()
+		if err != nil {
 			return err
 		}
 	}
-	req.Response = &Response{
-		Destination:  req.ACSEndpoint.Location,
-		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
-		InResponseTo: req.Request.ID,
-		IssueInstant: TimeNow(),
-		Version:      "2.0",
-		Issuer: &Issuer{
-			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
-			Value:  req.IDP.MetadataURL,
-		},
-		Status: &Status{
-			StatusCode: StatusCode{
-				Value: StatusSuccess,
-			},
-		},
-		EncryptedAssertion: &EncryptedAssertion{
-			EncryptedData: req.AssertionBuffer,
-		},
+
+	encryptor := xmlenc.OAEP()
+	encryptor.BlockCipher = xmlenc.AES128CBC
+	encryptor.DigestMethod = &xmlenc.SHA1
+	certBuf, err := getSPEncryptionCert(req.ServiceProviderMetadata)
+	if err != nil {
+		return err
+	}
+	encryptedDataEl, err := encryptor.Encrypt(certBuf, signedAssertionBuf)
+	if err != nil {
+		return err
+	}
+	encryptedDataEl.CreateAttr("Type", "http://www.w3.org/2001/04/xmlenc#Element")
+
+	{
+		encryptedAssertionEl := etree.NewElement("saml2:EncryptedAssertion")
+		encryptedAssertionEl.CreateAttr("xmlns:saml2", "urn:oasis:names:tc:SAML:2.0:protocol")
+		encryptedAssertionEl.AddChild(encryptedDataEl)
+		doc := etree.NewDocument()
+		doc.SetRoot(encryptedAssertionEl)
+		req.AssertionBuffer, err = doc.WriteToBytes()
+		if err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// marshalEtreeHack returns an etree.Element for the value v.
+//
+// This is a hack -- it first users xml.Marshal and then loads the
+// resulting buffer into an etree.
+func marshalEtreeHack(v interface{}) (*etree.Element, error) {
+	buf, err := xml.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(buf); err != nil {
+		return nil, err
+	}
+	return doc.Root(), nil
 }
 
 // WriteResponse writes the `Response` to the http.ResponseWriter. If
@@ -574,7 +599,7 @@ func (req *IdpAuthnRequest) WriteResponse(w http.ResponseWriter) error {
 
 // getSPEncryptionCert returns the certificate which we can use to encrypt things
 // to the SP in PEM format, or nil if no such certificate is found.
-func getSPEncryptionCert(sp *Metadata) []byte {
+func getSPEncryptionCert(sp *Metadata) ([]byte, error) {
 	cert := ""
 	for _, keyDescriptor := range sp.SPSSODescriptor.KeyDescriptor {
 		if keyDescriptor.Use == "encryption" {
@@ -595,14 +620,58 @@ func getSPEncryptionCert(sp *Metadata) []byte {
 	}
 
 	if cert == "" {
-		return nil
+		return nil, fmt.Errorf("cannot find a certificate for encryption in the service provider SSO descriptor")
 	}
 
 	// cleanup whitespace and re-encode a PEM
-	cert = regexp.MustCompile("\\s+").ReplaceAllString(cert, "")
-	certBytes, _ := base64.StdEncoding.DecodeString(cert)
-	certBytes = pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: certBytes})
-	return certBytes
+	cert = regexp.MustCompile(`\s+`).ReplaceAllString(cert, "")
+	certBytes, err := base64.StdEncoding.DecodeString(cert)
+	if err != nil {
+		return nil, err
+	}
+	return certBytes, nil
+}
+
+// unmarshalEtreeHack parses `el` and sets values in the structure `v`.
+//
+// This is a hack -- it first serializes the element, then uses xml.Unmarshal.
+func unmarshalEtreeHack(el *etree.Element, v interface{}) error {
+	doc := etree.NewDocument()
+	doc.SetRoot(el)
+	buf, err := doc.WriteToBytes()
+	if err != nil {
+		return err
+	}
+	return xml.Unmarshal(buf, v)
+}
+
+// MakeResponse creates and assigns a new SAML response in Response. `Assertion` must
+// be non-nill. If MarshalAssertion() has not been called, this function calls it for
+// you.
+func (req *IdpAuthnRequest) MakeResponse() error {
+	if req.AssertionBuffer == nil {
+		if err := req.MarshalAssertion(); err != nil {
+			return err
+		}
+	}
+	req.Response = &Response{
+		Destination:  req.ACSEndpoint.Location,
+		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
+		InResponseTo: req.Request.ID,
+		IssueInstant: TimeNow(),
+		Version:      "2.0",
+		Issuer: &Issuer{
+			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
+			Value:  req.IDP.MetadataURL,
+		},
+		Status: &Status{
+			StatusCode: StatusCode{
+				Value: StatusSuccess,
+			},
+		},
+		EncryptedAssertion: &EncryptedAssertion{
+			EncryptedData: req.AssertionBuffer,
+		},
+	}
+	return nil
 }

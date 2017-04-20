@@ -3,9 +3,12 @@ package saml
 import (
 	"bytes"
 	"compress/flate"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -13,7 +16,9 @@ import (
 	"regexp"
 	"time"
 
-	xmlsec "github.com/crewjam/go-xmlsec"
+	"github.com/beevik/etree"
+	"github.com/crewjam/saml/xmlenc"
+	dsig "github.com/russellhaering/goxmldsig"
 )
 
 type NameIDFormat string
@@ -170,38 +175,42 @@ func (sp *ServiceProvider) GetSSOBindingLocation(binding string) string {
 
 // getIDPSigningCert returns the certificate which we can use to verify things
 // signed by the IDP in PEM format, or nil if no such certificate is found.
-func (sp *ServiceProvider) getIDPSigningCert() []byte {
-	cert := ""
-
+func (sp *ServiceProvider) getIDPSigningCert() (*x509.Certificate, error) {
+	certStr := ""
 	for _, keyDescriptor := range sp.IDPMetadata.IDPSSODescriptor.KeyDescriptor {
 		if keyDescriptor.Use == "signing" {
-			cert = keyDescriptor.KeyInfo.Certificate
+			certStr = keyDescriptor.KeyInfo.Certificate
 			break
 		}
 	}
 
 	// If there are no explicitly signing certs, just return the first
 	// non-empty cert we find.
-	if cert == "" {
+	if certStr == "" {
 		for _, keyDescriptor := range sp.IDPMetadata.IDPSSODescriptor.KeyDescriptor {
 			if keyDescriptor.Use == "" && keyDescriptor.KeyInfo.Certificate != "" {
-				cert = keyDescriptor.KeyInfo.Certificate
+				certStr = keyDescriptor.KeyInfo.Certificate
 				break
 			}
 		}
 	}
 
-	if cert == "" {
-		return nil
+	if certStr == "" {
+		return nil, errors.New("cannot find any signing certificate in the IDP SSO descriptor")
 	}
 
-	// cleanup whitespace and re-encode a PEM
-	cert = regexp.MustCompile("\\s+").ReplaceAllString(cert, "")
-	certBytes, _ := base64.StdEncoding.DecodeString(cert)
-	certBytes = pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: certBytes})
-	return certBytes
+	// cleanup whitespace
+	certStr = regexp.MustCompile(`\s+`).ReplaceAllString(certStr, "")
+	certBytes, err := base64.StdEncoding.DecodeString(certStr)
+	if err != nil {
+		return nil, err
+	}
+
+	parsedCert, err := x509.ParseCertificate(certBytes)
+	if err != nil {
+		return nil, err
+	}
+	return parsedCert, nil
 }
 
 // MakeAuthenticationRequest produces a new AuthnRequest object for idpURL.
@@ -385,43 +394,113 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 
 	var assertion *Assertion
 	if resp.EncryptedAssertion == nil {
-		if err := xmlsec.Verify(sp.getIDPSigningCert(), rawResponseBuf,
-			xmlsec.SignatureOptions{
-				XMLID: []xmlsec.XMLIDOption{{
-					ElementName:      "Response",
-					ElementNamespace: "urn:oasis:names:tc:SAML:2.0:protocol",
-					AttributeName:    "ID",
-				}},
-			}); err != nil {
+		cert, err := sp.getIDPSigningCert()
+		if err != nil {
+			retErr.PrivateErr = err
+			return nil, retErr
+		}
+
+		certificateStore := dsig.MemoryX509CertificateStore{
+			Roots: []*x509.Certificate{cert},
+		}
+
+		validationContext := dsig.NewDefaultValidationContext(&certificateStore)
+		validationContext.IdAttribute = "ID"
+		if Clock != nil {
+			validationContext.Clock = Clock
+		}
+
+		doc := etree.NewDocument()
+		if err := doc.ReadFromBytes(rawResponseBuf); err != nil {
+			retErr.PrivateErr = err
+			return nil, retErr
+		}
+
+		// TODO(ross): verify that the namespace is urn:oasis:names:tc:SAML:2.0:protocol
+		responseEl := doc.Root()
+		if responseEl.Tag != "Response" {
+			retErr.PrivateErr = fmt.Errorf("expected to find a response object, not %s", doc.Root().Tag)
+			return nil, retErr
+		}
+
+		el := doc.Root()
+		_, err = validationContext.Validate(el)
+		if err != nil {
 			retErr.PrivateErr = fmt.Errorf("failed to verify signature on response: %s", err)
 			return nil, retErr
 		}
+
 		assertion = resp.Assertion
 	}
 
 	// decrypt the response
 	if resp.EncryptedAssertion != nil {
-		plaintextAssertion, err := xmlsec.Decrypt([]byte(sp.Key), resp.EncryptedAssertion.EncryptedData)
+		doc := etree.NewDocument()
+		if err := doc.ReadFromBytes(rawResponseBuf); err != nil {
+			retErr.PrivateErr = err
+			return nil, retErr
+		}
+		el := doc.FindElement("//EncryptedAssertion/EncryptedData")
+		var key *rsa.PrivateKey
+		{
+			b, _ := pem.Decode([]byte(sp.Key))
+			if b == nil {
+				retErr.PrivateErr = errors.New("cannot decode key")
+				return nil, retErr
+			}
+			key, err = x509.ParsePKCS1PrivateKey(b.Bytes)
+			if err != nil {
+				retErr.PrivateErr = err
+				return nil, retErr
+			}
+		}
+		plaintextAssertion, err := xmlenc.Decrypt(key, el)
 		if err != nil {
 			retErr.PrivateErr = fmt.Errorf("failed to decrypt response: %s", err)
 			return nil, retErr
 		}
 		retErr.Response = string(plaintextAssertion)
 
-		if err := xmlsec.Verify(sp.getIDPSigningCert(), plaintextAssertion,
-			xmlsec.SignatureOptions{
-				XMLID: []xmlsec.XMLIDOption{{
-					ElementName:      "Assertion",
-					ElementNamespace: "urn:oasis:names:tc:SAML:2.0:assertion",
-					AttributeName:    "ID",
-				}},
-			}); err != nil {
-			retErr.PrivateErr = fmt.Errorf("failed to verify signature on response: %s", err)
-			return nil, retErr
+		{
+			cert, err := sp.getIDPSigningCert()
+			if err != nil {
+				retErr.PrivateErr = err
+				return nil, retErr
+			}
+			certificateStore := dsig.MemoryX509CertificateStore{
+				Roots: []*x509.Certificate{cert},
+			}
+
+			validationContext := dsig.NewDefaultValidationContext(&certificateStore)
+			validationContext.IdAttribute = "ID"
+			if Clock != nil {
+				validationContext.Clock = Clock
+			}
+
+			doc := etree.NewDocument()
+			if err := doc.ReadFromBytes(plaintextAssertion); err != nil {
+				retErr.PrivateErr = err
+				return nil, retErr
+			}
+
+			// TODO(ross): verify that the namespace is "urn:oasis:names:tc:SAML:2.0:assertion"
+			assertionEl := doc.Root()
+			if assertionEl.Tag != "Assertion" {
+				retErr.PrivateErr = fmt.Errorf("expected an Assertion element, not %s", assertionEl.Tag)
+				return nil, retErr
+			}
+			_, err = validationContext.Validate(assertionEl)
+			if err != nil {
+				retErr.PrivateErr = fmt.Errorf("failed to verify signature on response: %s", err)
+				return nil, retErr
+			}
 		}
 
 		assertion = &Assertion{}
-		xml.Unmarshal(plaintextAssertion, assertion)
+		if err := xml.Unmarshal(plaintextAssertion, assertion); err != nil {
+			retErr.PrivateErr = err
+			return nil, retErr
+		}
 	}
 
 	if err := sp.validateAssertion(assertion, possibleRequestIDs, now); err != nil {

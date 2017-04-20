@@ -1,13 +1,6 @@
 language: go
 
-addons:
-  apt:
-    packages:
-    - libxml2-dev
-    - libxmlsec1-dev
-
 go:
-  - 1.6
   - 1.7
   - 1.8
   - tip
