@@ -188,14 +188,14 @@ func (test *IdentityProviderTest) TestCanHandleRequestWithNewSession(c *C) {
 
 	decodedRequest, err := testsaml.ParseRedirectRequest(requestURL)
 	c.Assert(err, IsNil)
-	c.Assert(string(decodedRequest), Equals, "<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" IssueInstant=\"2015-12-01T01:57:09Z\" AssertionConsumerServiceURL=\"https://sp.example.com/saml2/acs\" Destination=\"https://idp.example.com/saml/sso\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Version=\"2.0\"><Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</Issuer><NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy></AuthnRequest>")
+	c.Assert(string(decodedRequest), Equals, "<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" IssueInstant=\"2015-12-01T01:57:09Z\" AssertionConsumerServiceURL=\"https://sp.example.com/saml2/acs\" Destination=\"https://idp.example.com/saml/sso\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Version=\"2.0\"><Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</Issuer><NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AllowCreate=\"true\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\"></NameIDPolicy></AuthnRequest>")
 	c.Assert(requestURL.Query().Get("RelayState"), Equals, "ThisIsTheRelayState")
 
 	r, _ := http.NewRequest("GET", requestURL.String(), nil)
 	test.IDP.ServeSSO(w, r)
 	c.Assert(w.Code, Equals, 200)
 	c.Assert(string(w.Body.Bytes()), Equals, ""+
-		"RelayState: ThisIsTheRelayState\nSAMLRequest: <AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" IssueInstant=\"2015-12-01T01:57:09Z\" AssertionConsumerServiceURL=\"https://sp.example.com/saml2/acs\" Destination=\"https://idp.example.com/saml/sso\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Version=\"2.0\"><Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</Issuer><NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy></AuthnRequest>")
+		"RelayState: ThisIsTheRelayState\nSAMLRequest: <AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" IssueInstant=\"2015-12-01T01:57:09Z\" AssertionConsumerServiceURL=\"https://sp.example.com/saml2/acs\" Destination=\"https://idp.example.com/saml/sso\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Version=\"2.0\"><Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</Issuer><NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AllowCreate=\"true\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\"></NameIDPolicy></AuthnRequest>")
 }
 
 func (test *IdentityProviderTest) TestCanHandleRequestWithExistingSession(c *C) {
@@ -214,7 +214,7 @@ func (test *IdentityProviderTest) TestCanHandleRequestWithExistingSession(c *C) 
 
 	decodedRequest, err := testsaml.ParseRedirectRequest(requestURL)
 	c.Assert(err, IsNil)
-	c.Assert(string(decodedRequest), Equals, "<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" IssueInstant=\"2015-12-01T01:57:09Z\" AssertionConsumerServiceURL=\"https://sp.example.com/saml2/acs\" Destination=\"https://idp.example.com/saml/sso\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Version=\"2.0\"><Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</Issuer><NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy></AuthnRequest>")
+	c.Assert(string(decodedRequest), Equals, "<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" IssueInstant=\"2015-12-01T01:57:09Z\" AssertionConsumerServiceURL=\"https://sp.example.com/saml2/acs\" Destination=\"https://idp.example.com/saml/sso\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Version=\"2.0\"><Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</Issuer><NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" AllowCreate=\"true\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\"></NameIDPolicy></AuthnRequest>")
 
 	r, _ := http.NewRequest("GET", requestURL.String(), nil)
 	test.IDP.ServeSSO(w, r)
@@ -308,7 +308,7 @@ func (test *IdentityProviderTest) TestCanValidate(c *C) {
 			"  <Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" " +
 			"    Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</Issuer>" +
 			"  <NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
-			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
+			"    AllowCreate=\"true\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\"></NameIDPolicy>" +
 			"</AuthnRequest>"),
 	}
 	c.Assert(req.Validate(), IsNil)
@@ -334,7 +334,7 @@ func (test *IdentityProviderTest) TestCanValidate(c *C) {
 			"  <Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" " +
 			"    Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</Issuer>" +
 			"  <NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
-			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
+			"    AllowCreate=\"true\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\"></NameIDPolicy>" +
 			"</AuthnRequest>"),
 	}
 	c.Assert(req.Validate(), ErrorMatches, "expected destination to be \"https://idp.example.com/saml/sso\", not \"https://idp.wrongDestination.com/saml/sso\"")
@@ -351,7 +351,7 @@ func (test *IdentityProviderTest) TestCanValidate(c *C) {
 			"  <Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" " +
 			"    Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</Issuer>" +
 			"  <NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
-			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
+			"    AllowCreate=\"true\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\"></NameIDPolicy>" +
 			"</AuthnRequest>"),
 	}
 	c.Assert(req.Validate(), ErrorMatches, "request expired at 2014\\-12\\-01 01:58:39 \\+0000 UTC")
@@ -368,7 +368,7 @@ func (test *IdentityProviderTest) TestCanValidate(c *C) {
 			"  <Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" " +
 			"    Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</Issuer>" +
 			"  <NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
-			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
+			"    AllowCreate=\"true\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\"></NameIDPolicy>" +
 			"</AuthnRequest>"),
 	}
 	c.Assert(req.Validate(), ErrorMatches, "expected SAML request version 2, got \"4.2\"")
@@ -385,7 +385,7 @@ func (test *IdentityProviderTest) TestCanValidate(c *C) {
 			"  <Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" " +
 			"    Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://unknownSP.example.com/saml2/metadata</Issuer>" +
 			"  <NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
-			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
+			"    AllowCreate=\"true\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\"></NameIDPolicy>" +
 			"</AuthnRequest>"),
 	}
 	c.Assert(req.Validate(), ErrorMatches, "cannot handle request from unknown service provider https://unknownSP.example.com/saml2/metadata")
@@ -402,7 +402,7 @@ func (test *IdentityProviderTest) TestCanValidate(c *C) {
 			"  <Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" " +
 			"    Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</Issuer>" +
 			"  <NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
-			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
+			"    AllowCreate=\"true\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\"></NameIDPolicy>" +
 			"</AuthnRequest>"),
 	}
 	c.Assert(req.Validate(), ErrorMatches, "invalid ACS url specified in request: https://unknown.example.com/saml2/acs")
@@ -422,7 +422,7 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 			"  <Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" " +
 			"    Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</Issuer>" +
 			"  <NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
-			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
+			"    AllowCreate=\"true\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\"></NameIDPolicy>" +
 			"</AuthnRequest>"),
 	}
 	req.HTTPRequest, _ = http.NewRequest("POST", "http://idp.example.com/saml/sso", nil)
@@ -604,7 +604,7 @@ func (test *IdentityProviderTest) TestMarshalAssertion(c *C) {
 			"  <Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" " +
 			"    Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</Issuer>" +
 			"  <NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
-			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
+			"    AllowCreate=\"true\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\"></NameIDPolicy>" +
 			"</AuthnRequest>"),
 	}
 	req.HTTPRequest, _ = http.NewRequest("POST", "http://idp.example.com/saml/sso", nil)
@@ -636,7 +636,7 @@ func (test *IdentityProviderTest) TestMakeResponse(c *C) {
 			"  <Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" " +
 			"    Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</Issuer>" +
 			"  <NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
-			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
+			"    AllowCreate=\"true\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\"></NameIDPolicy>" +
 			"</AuthnRequest>"),
 	}
 	req.HTTPRequest, _ = http.NewRequest("POST", "http://idp.example.com/saml/sso", nil)
@@ -689,7 +689,7 @@ func (test *IdentityProviderTest) TestWriteResponse(c *C) {
 			"  <Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" " +
 			"    Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</Issuer>" +
 			"  <NameIDPolicy xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
-			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
+			"    AllowCreate=\"true\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\"></NameIDPolicy>" +
 			"</AuthnRequest>"),
 		Response: &Response{ID: "THIS_IS_THE_SAML_RESPONSE"},
 	}

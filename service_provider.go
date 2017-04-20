@@ -346,6 +346,14 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 		retErr.PrivateErr = fmt.Errorf("cannot parse base64: %s", err)
 		return nil, retErr
 	}
+
+	return sp.ValidateResponse(rawResponseBuf, possibleRequestIDs, now)
+}
+
+func (sp *ServiceProvider) ValidateResponse(rawResponseBuf []byte, possibleRequestIDs []string, now time.Time) (*Assertion, error) {
+	retErr := &InvalidResponseError{
+		Now: now,
+	}
 	retErr.Response = string(rawResponseBuf)
 
 	// do some validation first before we decrypt
@@ -385,15 +393,21 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 
 	var assertion *Assertion
 	if resp.EncryptedAssertion == nil {
+		elementName := "Response"
+		elementNs := "urn:oasis:names:tc:SAML:2.0:protocol"
+		if resp.Assertion != nil && resp.Assertion.Signature != nil {
+			elementName = "Assertion"
+			elementNs = "urn:oasis:names:tc:SAML:2.0:assertion"
+		}
 		if err := xmlsec.Verify(sp.getIDPSigningCert(), rawResponseBuf,
 			xmlsec.SignatureOptions{
 				XMLID: []xmlsec.XMLIDOption{{
-					ElementName:      "Response",
-					ElementNamespace: "urn:oasis:names:tc:SAML:2.0:protocol",
+					ElementName:      elementName,
+					ElementNamespace: elementNs,
 					AttributeName:    "ID",
 				}},
 			}); err != nil {
-			retErr.PrivateErr = fmt.Errorf("failed to verify signature on response: %s", err)
+			retErr.PrivateErr = fmt.Errorf("failed to verify signature on %s: %s", elementName, err)
 			return nil, retErr
 		}
 		assertion = resp.Assertion
