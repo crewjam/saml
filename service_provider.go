@@ -388,8 +388,8 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 		if err := xmlsec.Verify(sp.getIDPSigningCert(), rawResponseBuf,
 			xmlsec.SignatureOptions{
 				XMLID: []xmlsec.XMLIDOption{{
-					ElementName:      "Response",
-					ElementNamespace: "urn:oasis:names:tc:SAML:2.0:protocol",
+					ElementName:      "Assertion",
+					ElementNamespace: "urn:oasis:names:tc:SAML:2.0:assertion",
 					AttributeName:    "ID",
 				}},
 			}); err != nil {
