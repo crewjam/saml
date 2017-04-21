@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -19,6 +20,7 @@ import (
 	"github.com/beevik/etree"
 	"github.com/crewjam/saml/xmlenc"
 	dsig "github.com/russellhaering/goxmldsig"
+	"github.com/russellhaering/goxmldsig/etreeutils"
 )
 
 type NameIDFormat string
@@ -203,7 +205,7 @@ func (sp *ServiceProvider) getIDPSigningCert() (*x509.Certificate, error) {
 	certStr = regexp.MustCompile(`\s+`).ReplaceAllString(certStr, "")
 	certBytes, err := base64.StdEncoding.DecodeString(certStr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("cannot parse certificate: %s", err)
 	}
 
 	parsedCert, err := x509.ParseCertificate(certBytes)
@@ -394,21 +396,6 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 
 	var assertion *Assertion
 	if resp.EncryptedAssertion == nil {
-		cert, err := sp.getIDPSigningCert()
-		if err != nil {
-			retErr.PrivateErr = err
-			return nil, retErr
-		}
-
-		certificateStore := dsig.MemoryX509CertificateStore{
-			Roots: []*x509.Certificate{cert},
-		}
-
-		validationContext := dsig.NewDefaultValidationContext(&certificateStore)
-		validationContext.IdAttribute = "ID"
-		if Clock != nil {
-			validationContext.Clock = Clock
-		}
 
 		doc := etree.NewDocument()
 		if err := doc.ReadFromBytes(rawResponseBuf); err != nil {
@@ -423,10 +410,8 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 			return nil, retErr
 		}
 
-		el := doc.Root()
-		_, err = validationContext.Validate(el)
-		if err != nil {
-			retErr.PrivateErr = fmt.Errorf("failed to verify signature on response: %s", err)
+		if err = sp.validateSigned(responseEl); err != nil {
+			retErr.PrivateErr = err
 			return nil, retErr
 		}
 
@@ -461,39 +446,15 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 		}
 		retErr.Response = string(plaintextAssertion)
 
-		{
-			cert, err := sp.getIDPSigningCert()
-			if err != nil {
-				retErr.PrivateErr = err
-				return nil, retErr
-			}
-			certificateStore := dsig.MemoryX509CertificateStore{
-				Roots: []*x509.Certificate{cert},
-			}
+		doc = etree.NewDocument()
+		if err := doc.ReadFromBytes(plaintextAssertion); err != nil {
+			retErr.PrivateErr = fmt.Errorf("cannot parse plaintext response %v", err)
+			return nil, retErr
+		}
 
-			validationContext := dsig.NewDefaultValidationContext(&certificateStore)
-			validationContext.IdAttribute = "ID"
-			if Clock != nil {
-				validationContext.Clock = Clock
-			}
-
-			doc := etree.NewDocument()
-			if err := doc.ReadFromBytes(plaintextAssertion); err != nil {
-				retErr.PrivateErr = err
-				return nil, retErr
-			}
-
-			// TODO(ross): verify that the namespace is "urn:oasis:names:tc:SAML:2.0:assertion"
-			assertionEl := doc.Root()
-			if assertionEl.Tag != "Assertion" {
-				retErr.PrivateErr = fmt.Errorf("expected an Assertion element, not %s", assertionEl.Tag)
-				return nil, retErr
-			}
-			_, err = validationContext.Validate(assertionEl)
-			if err != nil {
-				retErr.PrivateErr = fmt.Errorf("failed to verify signature on response: %s", err)
-				return nil, retErr
-			}
+		if err := sp.validateSigned(doc.Root()); err != nil {
+			retErr.PrivateErr = err
+			return nil, retErr
 		}
 
 		assertion = &Assertion{}
@@ -548,4 +509,135 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 		return fmt.Errorf("Conditions AudienceRestriction is not %q", sp.MetadataURL)
 	}
 	return nil
+}
+
+func findChild(parentEl *etree.Element, childNS string, childTag string) (*etree.Element, error) {
+	for _, childEl := range parentEl.ChildElements() {
+		if childEl.Tag != childTag {
+			continue
+		}
+
+		ctx, err := etreeutils.NSBuildParentContext(childEl)
+		if err != nil {
+			return nil, err
+		}
+		ctx, err = ctx.SubContext(childEl)
+		if err != nil {
+			return nil, err
+		}
+
+		ns, err := ctx.LookupPrefix(childEl.Space)
+		if err != nil {
+
+			d2 := etree.NewDocument()
+			d2.SetRoot(parentEl.Copy())
+			fmt.Println(d2.WriteToString())
+			return nil, fmt.Errorf("[%s]:%s cannot find prefix %s: %v", childNS, childTag, childEl.Space, err)
+		}
+		if ns != childNS {
+			continue
+		}
+
+		return childEl, nil
+	}
+	return nil, nil
+}
+
+// validateSigned returns a nil error iff each of the signatures on the Response and Assertion elements
+// are valid and there is at least one signature.
+func (sp *ServiceProvider) validateSigned(responseEl *etree.Element) error {
+	haveSignature := false
+
+	// Some SAML responses have the signature on the Response object, and some on the Assertion
+	// object, and some on both. We will require that at least one signature be present and that
+	// all signatures be valid
+	sigEl, err := findChild(responseEl, "http://www.w3.org/2000/09/xmldsig#", "Signature")
+	if err != nil {
+		return err
+	}
+	if sigEl != nil {
+		if err = sp.validateSignature(responseEl); err != nil {
+			return fmt.Errorf("cannot validate signature on Response: %v", err)
+		}
+		haveSignature = true
+	}
+
+	assertionEl, err := findChild(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "Assertion")
+	if err != nil {
+		return err
+	}
+	if assertionEl != nil {
+		sigEl, err := findChild(assertionEl, "http://www.w3.org/2000/09/xmldsig#", "Signature")
+		if err != nil {
+			return err
+		}
+		if sigEl != nil {
+			if err = sp.validateSignature(assertionEl); err != nil {
+				return fmt.Errorf("cannot validate signature on Response: %v", err)
+			}
+			haveSignature = true
+		}
+	}
+
+	if !haveSignature {
+		return errors.New("either the Response or Assertion must be signed")
+	}
+	return nil
+}
+
+// validateSignature returns nill iff the Signature embedded in the element is valid
+func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
+	cert, err := sp.getIDPSigningCert()
+	if err != nil {
+		return err
+	}
+
+	certificateStore := dsig.MemoryX509CertificateStore{
+		Roots: []*x509.Certificate{cert},
+	}
+
+	validationContext := dsig.NewDefaultValidationContext(&certificateStore)
+	validationContext.IdAttribute = "ID"
+	if Clock != nil {
+		validationContext.Clock = Clock
+	}
+	log.Printf("cert: now: %s, notbefore: %s, not after: %s", validationContext.Clock.Now(), cert.NotBefore, cert.NotAfter)
+
+	// Some SAML responses contain a RSAKeyValue element. One of two things is happening here:
+	//
+	// (1) We're getting something signed by a key we already know about -- the public key
+	//     of the signing cert provided in the metadata.
+	// (2) We're getting something signed by a key we *don't* know about, and which we have
+	//     no ability to verify.
+	//
+	// The best course of action is to just remove the KeyInfo so that dsig falls back to
+	// verifying against the public key provided in the metadata.
+	if el.FindElement("./Signature/KeyInfo/X509Data/X509Certificate") == nil {
+		if sigEl := el.FindElement("./Signature"); sigEl != nil {
+			if keyInfo := sigEl.FindElement("KeyInfo"); keyInfo != nil {
+				log.Printf("removed Signature/KeyInfo")
+				sigEl.RemoveChild(keyInfo)
+			}
+		}
+	}
+
+	ctx, err := etreeutils.NSBuildParentContext(el)
+	if err != nil {
+		return err
+	}
+	ctx, err = ctx.SubContext(el)
+	if err != nil {
+		return err
+	}
+	el, err = etreeutils.NSDetatch(ctx, el)
+	if err != nil {
+		return err
+	}
+
+	d2 := etree.NewDocument()
+	d2.SetRoot(el.Copy())
+	fmt.Println(d2.WriteToString())
+
+	_, err = validationContext.Validate(el)
+	return err
 }
