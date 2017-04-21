@@ -139,6 +139,7 @@ func (test *ServiceProviderTest) TestCanProduceRedirectRequest(c *C) {
 		rv, _ := time.Parse("Mon Jan 2 15:04:05.999999999 UTC 2006", "Mon Dec 1 01:31:21.123456789 UTC 2015")
 		return rv
 	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
 	s := ServiceProvider{
 		Key:         test.Key,
 		Certificate: test.Certificate,
@@ -572,6 +573,7 @@ func (test *ServiceProviderTest) TestInvalidResponses(c *C) {
 		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Nov 30 20:57:09 UTC 2016")
 		return rv
 	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "IssueInstant expired at 2015-12-01 01:57:51.375 +0000 UTC")
@@ -579,6 +581,7 @@ func (test *ServiceProviderTest) TestInvalidResponses(c *C) {
 		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Dec 1 01:57:09 UTC 2015")
 		return rv
 	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
 
 	s.IDPMetadata.EntityID = "http://snakeoil.com"
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
@@ -602,12 +605,12 @@ func (test *ServiceProviderTest) TestInvalidResponses(c *C) {
 	s.IDPMetadata.IDPSSODescriptor.KeyDescriptor[0].KeyInfo.Certificate = "invalid"
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
-	c.Assert(err.(*InvalidResponseError).PrivateErr, ErrorMatches, "illegal base64 data at input byte 4")
+	c.Assert(err.(*InvalidResponseError).PrivateErr, ErrorMatches, "cannot validate signature on Response: cannot parse certificate: illegal base64 data at input byte 4")
 
 	s.IDPMetadata.IDPSSODescriptor.KeyDescriptor[0].KeyInfo.Certificate = "aW52YWxpZA=="
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
-	c.Assert(err.(*InvalidResponseError).PrivateErr, ErrorMatches, "asn1: structure error: tags don't match .*")
+	c.Assert(err.(*InvalidResponseError).PrivateErr, ErrorMatches, "cannot validate signature on Response: asn1: structure error: tags don't match .*")
 }
 
 func (test *ServiceProviderTest) TestInvalidAssertions(c *C) {
@@ -677,4 +680,125 @@ func (test *ServiceProviderTest) TestInvalidAssertions(c *C) {
 	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
 	c.Assert(err.Error(), Equals, "Conditions AudienceRestriction is not \"https://15661444.ngrok.io/saml2/metadata\"")
 	xml.Unmarshal(assertionBuf, &assertion)
+}
+
+func (test *ServiceProviderTest) TestRealWorldKeyInfoHasRSAPublicKeyNotX509Cert(c *C) {
+	// This is a real world SAML response that we observed. It contains <ds:RSAKeyValue> elements
+	idpMetadata := `<?xml version="1.0" encoding="UTF-8"?><md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://idp.secureworks.com/SAML2"><md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"><md:KeyDescriptor use="signing"><ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:X509Data><ds:X509Certificate>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</ds:X509Certificate></ds:X509Data></ds:KeyInfo></md:KeyDescriptor><md:NameIDFormat>urn:oasis:names:tc:SAML:2.0:nameid-format:transient</md:NameIDFormat><md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://idp.secureworks.com/SAML2/SSO/POST"/></md:IDPSSODescriptor></md:EntityDescriptor>`
+	respStr := `<?xml version="1.0" encoding="UTF-8"?><saml2p:Response xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol" Destination="https://preview.docrocket-ross.test.octolabs.io/saml/acs" ID="28338c8c-39ab-4b94-bcdc-46f68f99d962" InResponseTo="id-3992f74e652d89c3cf1efd6c7e472abaac9bc917" IssueInstant="2017-04-21T13:12:50.830Z" Version="2.0"><saml2:Issuer xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">https://idp.secureworks.com/SAML2</saml2:Issuer><ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:SignedInfo><ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/><ds:SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"/><ds:Reference URI="#28338c8c-39ab-4b94-bcdc-46f68f99d962"><ds:Transforms><ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/><ds:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/></ds:Transforms><ds:DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"/><ds:DigestValue>/6iPSzUnncXDbwrXiqZZVSaHt/Q=</ds:DigestValue></ds:Reference></ds:SignedInfo><ds:SignatureValue>hpJLvXp7DN5qhYkR0+TfvzAHDTIEmOnjA7QGKxbuqUcLxL+xpLqEiPiyCT3DZ5r4eoUlGSTS4tZ2c/A3wnvzEy+f0Pf5D2dUWCL5RfVp7Q6cndEpqlXjZ3lhymTA+go/SdY9VQFKOBsS6ElT56Pr/QRtqqRP2JQK6pP96voeYqWT0YKCdrBkYZ6fJGQ32AD+mQ62hiMzOu9PvriNJzw2no7xyK1U0+MBNPzCcJ6yOrGqX8/yVB8d1hL9IjstZRbMaszdJnnGGMN/JoOtcFxg6v+a5EFC63uXAUL/inxvdNreZMGnuPJJ7HnuDe8yY089Xzwisy6dts6YJ/doEPFOJQ==</ds:SignatureValue><ds:KeyInfo><ds:KeyValue><ds:RSAKeyValue><ds:Modulus>zZlTNJ+QcTp2yGH1ECXO3ry4GHhcs1CW3I6GPiPvtO+P6lyWxYdQd2RK/Hk9Kap6qpm/qom0rTwb
+FU2I67Y2JdQ3T5QBJjGHbGHU1uMxVWkhJluoa0Lpm381zNCJTZp8PetoB8dnIGua9y1aL75v04CG
+TzJ14I9/sW+apTkWj7xVQXutvVKETdn4kAy+L33HpriZjQNlcuAbqQj6OWsN4tGkLvNFZT40jQzp
+/8/tOQE6n2+zn3I8hUePwjPQROUmCeK86CkF0yVCPQ/vOTsC00Uaeu/SPOUu5ot+/75NPyE8w5Ry
+DgefdDXhYNmeuQtwGtcu/FI66atQMNTDoChXJQ==</ds:Modulus><ds:Exponent>AQAB</ds:Exponent></ds:RSAKeyValue></ds:KeyValue></ds:KeyInfo></ds:Signature><saml2p:Status><saml2p:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/><saml2p:StatusMessage>Authentication success.</saml2p:StatusMessage></saml2p:Status><saml2:Assertion xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion" ID="e5afbcaa-be69-4b41-ac48-2f23538accdb" IssueInstant="2017-04-21T13:12:50.830Z" Version="2.0"><saml2:Issuer>https://idp.secureworks.com/SAML2</saml2:Issuer><ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:SignedInfo><ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/><ds:SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"/><ds:Reference URI="#e5afbcaa-be69-4b41-ac48-2f23538accdb"><ds:Transforms><ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/><ds:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/></ds:Transforms><ds:DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"/><ds:DigestValue>BMN0lUblP0gYGcw2PCyhwFZzkxY=</ds:DigestValue></ds:Reference></ds:SignedInfo><ds:SignatureValue>F/2aaOQ3J/S6ULUd+gAuIclVueHEC2UfmtO2eR2oYb/YXub9E22yZe7eQgj2wdhYOvacVXN28QJJJG+K3Njwvi6b7mqf+T8N1YwaJW1fYAm28ayg4dEOTjHnjbRMZ6L+3cZPmPcFyE+edhCHEMnTLSqSvBnSyc1cwGdO9PmfWmt6PzUwf2nr2P5577Yc1FEQ9OtTx7ugWN3iPmjtLeTcpZfIDQX9+gSsh0KT+t61uWaYz+PJhtKnZQFeyr3uIxBTxv4wQ90FnmE4PiDvMksin5CDMfiMwd7pn7rNbk4EVHiDgSMkY6P4h8eWQwiqglOrQSZZr4BJgCoUbcNfZCq/7A==</ds:SignatureValue><ds:KeyInfo><ds:KeyValue><ds:RSAKeyValue><ds:Modulus>zZlTNJ+QcTp2yGH1ECXO3ry4GHhcs1CW3I6GPiPvtO+P6lyWxYdQd2RK/Hk9Kap6qpm/qom0rTwb
+FU2I67Y2JdQ3T5QBJjGHbGHU1uMxVWkhJluoa0Lpm381zNCJTZp8PetoB8dnIGua9y1aL75v04CG
+TzJ14I9/sW+apTkWj7xVQXutvVKETdn4kAy+L33HpriZjQNlcuAbqQj6OWsN4tGkLvNFZT40jQzp
+/8/tOQE6n2+zn3I8hUePwjPQROUmCeK86CkF0yVCPQ/vOTsC00Uaeu/SPOUu5ot+/75NPyE8w5Ry
+DgefdDXhYNmeuQtwGtcu/FI66atQMNTDoChXJQ==</ds:Modulus><ds:Exponent>AQAB</ds:Exponent></ds:RSAKeyValue></ds:KeyValue></ds:KeyInfo></ds:Signature><saml2:Subject><saml2:NameID>rkinder@secureworks.com</saml2:NameID><saml2:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"><saml2:SubjectConfirmationData InResponseTo="id-3992f74e652d89c3cf1efd6c7e472abaac9bc917" NotBefore="2017-04-21T13:12:50.830Z" NotOnOrAfter="2017-04-21T13:17:50.830Z" Recipient="https://preview.docrocket-ross.test.octolabs.io/saml/acs"/></saml2:SubjectConfirmation></saml2:Subject><saml2:Conditions NotBefore="2017-04-21T13:12:50.830Z" NotOnOrAfter="2017-04-21T13:17:50.830Z"><saml2:AudienceRestriction><saml2:Audience>https://preview.docrocket-ross.test.octolabs.io/saml/metadata</saml2:Audience></saml2:AudienceRestriction></saml2:Conditions><saml2:AuthnStatement AuthnInstant="2017-04-21T13:12:50.830Z" SessionIndex="undefined"><saml2:AuthnContext><saml2:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:unspecified</saml2:AuthnContextClassRef></saml2:AuthnContext></saml2:AuthnStatement></saml2:Assertion></saml2p:Response>
+`
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Fri Apr 21 13:12:51 UTC 2017")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
+	s := ServiceProvider{
+		Key:         key2017,
+		Certificate: cert2017,
+		MetadataURL: "https://preview.docrocket-ross.test.octolabs.io/saml/metadata",
+		AcsURL:      "https://preview.docrocket-ross.test.octolabs.io/saml/acs",
+		IDPMetadata: &Metadata{},
+	}
+	err := xml.Unmarshal([]byte(idpMetadata), &s.IDPMetadata)
+	c.Assert(err, IsNil)
+
+	req := http.Request{PostForm: url.Values{}}
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(respStr)))
+	_, err = s.ParseResponse(&req, []string{"id-3992f74e652d89c3cf1efd6c7e472abaac9bc917"})
+	if err != nil {
+		c.Assert(err.(*InvalidResponseError).PrivateErr, IsNil)
+	}
+	c.Assert(err, IsNil)
+}
+
+const key2017 = `-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEAnu2wAmonitRkVP/lKO+gDWalAEL4qJ1x6EyxMVb/2Xvdw+dg
+2G2c1771Lyfvp4XYBK4TAAo3nGhcM/b3vLhk45GeSi4/yOJhmOo0dNyQT0t68zxg
+6lM9WiOGr6uruGJDIwXqkmQE+B26iVyycGDXzyOf+g2Z2bMhpLfdCI05noUZcsq3
+f8Vqmxx5rSCrxrjrAqEUVCZbyL4wap1JKLbnlzTllkvkfTimUM2gYS8RLk6zFKNt
+nj7b3grzec5egZIQ9+w7hdRM5GWvKKzSn9/do1SCii555OmEP0ajakYdi9qGO6zH
+041tnt6BzTt0mggBWOBoxK/5TCp+nGMBTvTXywIDAQABAoIBAGc853TqGD2qsnI0
+uFvbLREHeG+vEXAWtoO8Le5rIU/ZkrlLeDGfIp9TQFodiyQ7YZPIsDb6bB2B/UMU
+TuGctozNbxGo8W5BAD0hBmpTTLr1wSx4MEyHPfdr1HYRAj+INSxvD22A42l5hk7s
+lE1D22yHK8h3RVWRc21YspB3jNJXhYq4qHU8ZIOK+I7wEy8AZYP5kI4ZUC/nXFik
+SwMeVN7U6TT+53Q6n08pos5Nupq0+3cAvZgneV2PP2fGCLIi9VU8Oh7N1WQMYzBt
+rYQwnWR6e2Mo0uH4eaaBlPW/3t4HXbS1b26RULC+i5MU3ZUy02w76liHGuuKAWOy
+6p6CkoECgYEAzpnt/9S+HKknCFwKMkvMxZ7xI3TxyG5gd41NYm+w8hPk3QlXzcva
+RqM1p2nacok4t8HEeAotkz8sP28GmcB4Egh33fUdhKQAkFrQ/OncWcRfzrhnrAMa
+gaNT/DT1QTOvfmnle3QLnZhgEDk6plgujvPmJ104/4TjIUOqru0DebsCgYEAxO20
+Biq5Bjfot8HxQE+Ur1VPEyZkYUQ9Xmx/exyMTBLy2bUMvZq40TMDEgGMzYvbOvgR
+d7/1X2SVvl3sl2mlRJ3nfSEO/Blq+EovdOi0liUYo5LT4IGx+uToBlfmTPNrTYBp
+P7JqH97DKYdM4eujwYkiPaAHkFYsnJi/jEU9cTECgYAssS3D9uB9ULYp38cw5CbS
+5TQiyGx5QC9MDVwdHC4538XVbuz4js2UFEBKC+L+feKwFZGLqh/7x2GqAzl5TyJq
+PDy53glZpSSeFZc57tkE7i8Ph+KdWjqEqrFDUK1xQl4HSZ8j2pGcsNavC8I9M7w2
+nlo+T7NByxxbGMk2d/0VewKBgQCJvr7qhV2wRNEqH6VxV3jn/2L1QSh7hLDsaDXv
+VjOoTqTBtUs5II1f/y+Jm73yVH4/TB9jxMiMNh4r7yS7cDEiwtSWCNajbeAN1k5F
+lzQhxcbrO5uqcO2eUhkdvsQfVTDcIBL+c/yZWEbouHQFnr6HdDWYJ2TDCBPiYVGy
+ewgUMQKBgQCIgGzau6+hH8z6aWTnozGA4m8sWFq+t+ug4Gq6v3IAxBOQ2NhmQMRQ
+L3BkCfCGAx5JckBROqEiAvPLftof0bVJoxBKfslDrhJocEUJwjXUxmD5RRLr7SXU
+P4hDC736Y0DH3nzRlUZ2IP4mhqSECOEYAuz2VuJBTCbd0VEzpnxVfg==
+-----END RSA PRIVATE KEY-----`
+const cert2017 = `-----BEGIN CERTIFICATE-----
+MIIDRTCCAi2gAwIBAgIJANke+OUVRk19MA0GCSqGSIb3DQEBBQUAMCAxHjAcBgNV
+BAMTFW15c2VydmljZS5leGFtcGxlLmNvbTAeFw0xNzA0MTkxOTU2MTNaFw0xODA0
+MTkxOTU2MTNaMCAxHjAcBgNVBAMTFW15c2VydmljZS5leGFtcGxlLmNvbTCCASIw
+DQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAJ7tsAJqJ4rUZFT/5SjvoA1mpQBC
++KidcehMsTFW/9l73cPnYNhtnNe+9S8n76eF2ASuEwAKN5xoXDP297y4ZOORnkou
+P8jiYZjqNHTckE9LevM8YOpTPVojhq+rq7hiQyMF6pJkBPgduolcsnBg188jn/oN
+mdmzIaS33QiNOZ6FGXLKt3/Fapscea0gq8a46wKhFFQmW8i+MGqdSSi255c05ZZL
+5H04plDNoGEvES5OsxSjbZ4+294K83nOXoGSEPfsO4XUTORlryis0p/f3aNUgoou
+eeTphD9Go2pGHYvahjusx9ONbZ7egc07dJoIAVjgaMSv+UwqfpxjAU7018sCAwEA
+AaOBgTB/MB0GA1UdDgQWBBSYE9Nwp/eUqfRQ11rqwoowNFHNyTBQBgNVHSMESTBH
+gBSYE9Nwp/eUqfRQ11rqwoowNFHNyaEkpCIwIDEeMBwGA1UEAxMVbXlzZXJ2aWNl
+LmV4YW1wbGUuY29tggkA2R745RVGTX0wDAYDVR0TBAUwAwEB/zANBgkqhkiG9w0B
+AQUFAAOCAQEAVJmpMg1ZpDGweoCU4k66RVDpPzSuPJ+9H9L2jcaA38itDtXmG9Iz
+dbOLpNF9fDbU60P421SgS0nF/s7zkxkYJWOoZaced/vUO6H9TdWEZay+uywAjvoZ
+GwkZ9HxYMqKMVld4EwW/OwT67UVBdtgkSfI1O7ojqDOFx7U4+HJWxUEwGOc0pOPz
+NyLSYCsAkQt2CZU7dN72L96Ka8xxklNaVcUaUH+zOWF1JBamV9s6M2umcdBot8MO
+3m1zQTkXzBKM3f+Yvk+dRjO4TSW90h2oQqot8xrkPhy+DgOqJj3/lKmZXjqE5mAE
+hpQB0uVPekPvKN89hCnkPo2EvXKPf7VZgg==
+-----END CERTIFICATE-----
+`
+
+func (test *ServiceProviderTest) TestRealWorldAssertionSignedNotResponse(c *C) {
+	// This is a real world SAML response that we observed. It contains <ds:RSAKeyValue> elements rather than
+	// a certificate in the response.
+	idpMetadata := `<?xml version="1.0" encoding="UTF-8"?><md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://idp.secureworks.com/SAML2"><md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"><md:KeyDescriptor use="signing"><ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:X509Data><ds:X509Certificate>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</ds:X509Certificate></ds:X509Data></ds:KeyInfo></md:KeyDescriptor><md:NameIDFormat>urn:oasis:names:tc:SAML:2.0:nameid-format:transient</md:NameIDFormat><md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://idp.secureworks.com/SAML2/SSO/POST"/></md:IDPSSODescriptor></md:EntityDescriptor>`
+	respStr := `<?xml version="1.0" encoding="UTF-8"?><saml2p:Response xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol" Destination="https://preview.docrocket-ross.test.octolabs.io/saml/acs" ID="28338c8c-39ab-4b94-bcdc-46f68f99d962" InResponseTo="id-3992f74e652d89c3cf1efd6c7e472abaac9bc917" IssueInstant="2017-04-21T13:12:50.830Z" Version="2.0"><saml2:Issuer xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">https://idp.secureworks.com/SAML2</saml2:Issuer><saml2p:Status><saml2p:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/><saml2p:StatusMessage>Authentication success.</saml2p:StatusMessage></saml2p:Status><saml2:Assertion xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion" ID="e5afbcaa-be69-4b41-ac48-2f23538accdb" IssueInstant="2017-04-21T13:12:50.830Z" Version="2.0"><saml2:Issuer>https://idp.secureworks.com/SAML2</saml2:Issuer><ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:SignedInfo><ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/><ds:SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"/><ds:Reference URI="#e5afbcaa-be69-4b41-ac48-2f23538accdb"><ds:Transforms><ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/><ds:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/></ds:Transforms><ds:DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"/><ds:DigestValue>BMN0lUblP0gYGcw2PCyhwFZzkxY=</ds:DigestValue></ds:Reference></ds:SignedInfo><ds:SignatureValue>F/2aaOQ3J/S6ULUd+gAuIclVueHEC2UfmtO2eR2oYb/YXub9E22yZe7eQgj2wdhYOvacVXN28QJJJG+K3Njwvi6b7mqf+T8N1YwaJW1fYAm28ayg4dEOTjHnjbRMZ6L+3cZPmPcFyE+edhCHEMnTLSqSvBnSyc1cwGdO9PmfWmt6PzUwf2nr2P5577Yc1FEQ9OtTx7ugWN3iPmjtLeTcpZfIDQX9+gSsh0KT+t61uWaYz+PJhtKnZQFeyr3uIxBTxv4wQ90FnmE4PiDvMksin5CDMfiMwd7pn7rNbk4EVHiDgSMkY6P4h8eWQwiqglOrQSZZr4BJgCoUbcNfZCq/7A==</ds:SignatureValue><ds:KeyInfo><ds:KeyValue><ds:RSAKeyValue><ds:Modulus>zZlTNJ+QcTp2yGH1ECXO3ry4GHhcs1CW3I6GPiPvtO+P6lyWxYdQd2RK/Hk9Kap6qpm/qom0rTwb
+FU2I67Y2JdQ3T5QBJjGHbGHU1uMxVWkhJluoa0Lpm381zNCJTZp8PetoB8dnIGua9y1aL75v04CG
+TzJ14I9/sW+apTkWj7xVQXutvVKETdn4kAy+L33HpriZjQNlcuAbqQj6OWsN4tGkLvNFZT40jQzp
+/8/tOQE6n2+zn3I8hUePwjPQROUmCeK86CkF0yVCPQ/vOTsC00Uaeu/SPOUu5ot+/75NPyE8w5Ry
+DgefdDXhYNmeuQtwGtcu/FI66atQMNTDoChXJQ==</ds:Modulus><ds:Exponent>AQAB</ds:Exponent></ds:RSAKeyValue></ds:KeyValue></ds:KeyInfo></ds:Signature><saml2:Subject><saml2:NameID>rkinder@secureworks.com</saml2:NameID><saml2:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"><saml2:SubjectConfirmationData InResponseTo="id-3992f74e652d89c3cf1efd6c7e472abaac9bc917" NotBefore="2017-04-21T13:12:50.830Z" NotOnOrAfter="2017-04-21T13:17:50.830Z" Recipient="https://preview.docrocket-ross.test.octolabs.io/saml/acs"/></saml2:SubjectConfirmation></saml2:Subject><saml2:Conditions NotBefore="2017-04-21T13:12:50.830Z" NotOnOrAfter="2017-04-21T13:17:50.830Z"><saml2:AudienceRestriction><saml2:Audience>https://preview.docrocket-ross.test.octolabs.io/saml/metadata</saml2:Audience></saml2:AudienceRestriction></saml2:Conditions><saml2:AuthnStatement AuthnInstant="2017-04-21T13:12:50.830Z" SessionIndex="undefined"><saml2:AuthnContext><saml2:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:unspecified</saml2:AuthnContextClassRef></saml2:AuthnContext></saml2:AuthnStatement></saml2:Assertion></saml2p:Response>
+`
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Fri Apr 21 13:12:51 UTC 2017")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
+
+	s := ServiceProvider{
+		Key:         key2017,
+		Certificate: cert2017,
+		MetadataURL: "https://preview.docrocket-ross.test.octolabs.io/saml/metadata",
+		AcsURL:      "https://preview.docrocket-ross.test.octolabs.io/saml/acs",
+		IDPMetadata: &Metadata{},
+	}
+	err := xml.Unmarshal([]byte(idpMetadata), &s.IDPMetadata)
+	c.Assert(err, IsNil)
+
+	req := http.Request{PostForm: url.Values{}}
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(respStr)))
+	_, err = s.ParseResponse(&req, []string{"id-3992f74e652d89c3cf1efd6c7e472abaac9bc917"})
+	if err != nil {
+		c.Assert(err.(*InvalidResponseError).PrivateErr, IsNil)
+	}
+	c.Assert(err, IsNil)
 }
