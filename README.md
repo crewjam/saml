@@ -63,7 +63,8 @@ Next we'll have to register our service provider with the identiy provider to es
 
     mdpath=saml-test-$USER-$HOST.xml
     curl localhost:8000/saml/metadata > $mdpath
-    curl -i -F userfile=@$mdpath https://www.testshib.org/procupload.php
+
+Naviate to https://www.testshib.org/register.html and upload the file you fetched. 
 
 Now you should be able to authenticate. The flow should look like this:
 
