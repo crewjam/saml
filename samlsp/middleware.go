@@ -60,6 +60,8 @@ type Middleware struct {
 const defaultCookieMaxAge = time.Hour
 const defaultCookieName = "token"
 
+var jwtSigningMethod = jwt.SigningMethodHS256
+
 func randomBytes(n int) []byte {
 	rv := make([]byte, n)
 	if _, err := saml.RandReader.Read(rv); err != nil {
@@ -139,7 +141,7 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 		relayState := base64.URLEncoding.EncodeToString(randomBytes(42))
 
 		secretBlock, _ := pem.Decode([]byte(m.ServiceProvider.Key))
-		state := jwt.New(jwt.GetSigningMethod("HS256"))
+		state := jwt.New(jwtSigningMethod)
 		claims := state.Claims.(jwt.MapClaims)
 		claims["id"] = req.ID
 		claims["uri"] = r.URL.String()
@@ -187,7 +189,11 @@ func (m *Middleware) getPossibleRequestIDs(r *http.Request) []string {
 			continue
 		}
 		log.Printf("getPossibleRequestIDs: cookie: %s", cookie.String())
-		token, err := jwt.Parse(cookie.Value, func(t *jwt.Token) (interface{}, error) {
+
+		jwtParser := jwt.Parser{
+			ValidMethods: []string{jwtSigningMethod.Name},
+		}
+		token, err := jwtParser.Parse(cookie.Value, func(t *jwt.Token) (interface{}, error) {
 			secretBlock, _ := pem.Decode([]byte(m.ServiceProvider.Key))
 			return secretBlock.Bytes, nil
 		})
@@ -227,7 +233,10 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 			return
 		}
 
-		state, err := jwt.Parse(stateCookie.Value, func(t *jwt.Token) (interface{}, error) {
+		jwtParser := jwt.Parser{
+			ValidMethods: []string{jwtSigningMethod.Name},
+		}
+		state, err := jwtParser.Parse(stateCookie.Value, func(t *jwt.Token) (interface{}, error) {
 			return secretBlock.Bytes, nil
 		})
 		if err != nil || !state.Valid {
