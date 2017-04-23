@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -528,10 +527,6 @@ func findChild(parentEl *etree.Element, childNS string, childTag string) (*etree
 
 		ns, err := ctx.LookupPrefix(childEl.Space)
 		if err != nil {
-
-			d2 := etree.NewDocument()
-			d2.SetRoot(parentEl.Copy())
-			fmt.Println(d2.WriteToString())
 			return nil, fmt.Errorf("[%s]:%s cannot find prefix %s: %v", childNS, childTag, childEl.Space, err)
 		}
 		if ns != childNS {
@@ -601,7 +596,6 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	if Clock != nil {
 		validationContext.Clock = Clock
 	}
-	log.Printf("cert: now: %s, notbefore: %s, not after: %s", validationContext.Clock.Now(), cert.NotBefore, cert.NotAfter)
 
 	// Some SAML responses contain a RSAKeyValue element. One of two things is happening here:
 	//
@@ -615,7 +609,6 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	if el.FindElement("./Signature/KeyInfo/X509Data/X509Certificate") == nil {
 		if sigEl := el.FindElement("./Signature"); sigEl != nil {
 			if keyInfo := sigEl.FindElement("KeyInfo"); keyInfo != nil {
-				log.Printf("removed Signature/KeyInfo")
 				sigEl.RemoveChild(keyInfo)
 			}
 		}
@@ -633,10 +626,6 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	if err != nil {
 		return err
 	}
-
-	d2 := etree.NewDocument()
-	d2.SetRoot(el.Copy())
-	fmt.Println(d2.WriteToString())
 
 	_, err = validationContext.Validate(el)
 	return err
