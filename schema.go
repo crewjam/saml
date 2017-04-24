@@ -388,16 +388,3 @@ type AttributeValue struct {
 	Value  string `xml:",chardata"`
 	NameID *NameID
 }
-
-// MarshalXML marhsals the AttributeValue type to custom XML to add short names
-// for the http://www.w3.org/2001/XMLSchema-instance and http://www.w3.org/2001/XMLSchema
-// XML namespaces.
-func (a *AttributeValue) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
-	start.Attr = []xml.Attr{
-		xml.Attr{Name: xml.Name{Space: "", Local: "xmlns:xsi"}, Value: "http://www.w3.org/2001/XMLSchema-instance"},
-		xml.Attr{Name: xml.Name{Space: "", Local: "xmlns:xs"}, Value: "http://www.w3.org/2001/XMLSchema"},
-		xml.Attr{Name: xml.Name{Space: "", Local: "xsi:type"}, Value: a.Type},
-	}
-
-	return e.EncodeElement(a.Value, start)
-}
