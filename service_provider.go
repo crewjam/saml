@@ -275,6 +275,9 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string) (*AuthnReque
 			Value:  sp.MetadataURL.String(),
 		},
 		NameIDPolicy: &NameIDPolicy{
+			XMLName: xml.Name{
+				Local: "NameIDPolicy",
+			},
 			AllowCreate: &allowCreate,
 			// TODO(ross): figure out exactly policy we need
 			// urn:mace:shibboleth:1.0:nameIdentifier

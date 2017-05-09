@@ -215,6 +215,10 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 			return
 		}
 		claims := state.Claims.(jwt.MapClaims)
+		if claims == nil {
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
 		redirectURI = claims["uri"].(string)
 
 		// delete the cookie

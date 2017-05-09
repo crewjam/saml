@@ -160,13 +160,12 @@ func (a *Issuer) Element() *etree.Element {
 }
 
 // NameIDPolicy represents the SAML object of the same name.
-//
-// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+//PingIDP changes: mattbird library
 type NameIDPolicy struct {
 	XMLName         xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol NameIDPolicy"`
-	Format          *string  `xml:",attr"`
+	Format          *string  `xml:"Format,attr"`
 	SPNameQualifier *string  `xml:",attr"`
-	AllowCreate     *bool    `xml:",attr"`
+	AllowCreate     *bool    `xml:"AllowCreate,attr"`
 }
 
 // Element returns an etree.Element representing the object in XML form.
