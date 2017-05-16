@@ -34,7 +34,7 @@ func (test *ServerTest) TestServicesCrud(c *C) {
 	c.Assert(w.Code, Equals, http.StatusOK)
 	c.Assert(string(w.Body.Bytes()), Equals, "{\"services\":[\"sp\"]}\n")
 
-	c.Assert(test.Server.IDP.ServiceProviders, HasLen, 2)
+	c.Assert(test.Server.serviceProviders, HasLen, 2)
 
 	w = httptest.NewRecorder()
 	r, _ = http.NewRequest("DELETE", "https://idp.example.com/services/sp", nil)
@@ -46,5 +46,5 @@ func (test *ServerTest) TestServicesCrud(c *C) {
 	test.Server.ServeHTTP(w, r)
 	c.Assert(w.Code, Equals, http.StatusOK)
 	c.Assert(string(w.Body.Bytes()), Equals, "{\"services\":[]}\n")
-	c.Assert(test.Server.IDP.ServiceProviders, HasLen, 1)
+	c.Assert(test.Server.serviceProviders, HasLen, 1)
 }

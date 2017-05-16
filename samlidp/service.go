@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/crewjam/saml"
 	"github.com/zenazn/goji/web"
@@ -18,6 +19,20 @@ type Service struct {
 
 	// Metdata is the XML metadata of the service provider.
 	Metadata saml.Metadata
+}
+
+// GetServiceProvider returns the Service Provider metadata for the
+// service provider ID, which is typically the service provider's
+// metadata URL. If an appropriate service provider cannot be found then
+// the returned error must be os.ErrNotExist.
+func (s *Server) GetServiceProvider(r *http.Request, serviceProviderID string) (*saml.Metadata, error) {
+	s.idpConfigMu.RLock()
+	defer s.idpConfigMu.RUnlock()
+	rv, ok := s.serviceProviders[serviceProviderID]
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	return rv, nil
 }
 
 // HandleListServices handles the `GET /services/` request and responds with a JSON formatted list
@@ -66,7 +81,7 @@ func (s *Server) HandlePutService(c web.C, w http.ResponseWriter, r *http.Reques
 	}
 
 	s.idpConfigMu.Lock()
-	s.IDP.ServiceProviders[service.Metadata.EntityID] = &service.Metadata
+	s.serviceProviders[service.Metadata.EntityID] = &service.Metadata
 	s.idpConfigMu.Unlock()
 
 	w.WriteHeader(http.StatusNoContent)
@@ -89,7 +104,7 @@ func (s *Server) HandleDeleteService(c web.C, w http.ResponseWriter, r *http.Req
 	}
 
 	s.idpConfigMu.Lock()
-	delete(s.IDP.ServiceProviders, service.Metadata.EntityID)
+	delete(s.serviceProviders, service.Metadata.EntityID)
 	s.idpConfigMu.Unlock()
 
 	w.WriteHeader(http.StatusNoContent)
@@ -109,7 +124,7 @@ func (s *Server) initializeServices() error {
 		}
 
 		s.idpConfigMu.Lock()
-		s.IDP.ServiceProviders[service.Metadata.EntityID] = &service.Metadata
+		s.serviceProviders[service.Metadata.EntityID] = &service.Metadata
 		s.idpConfigMu.Unlock()
 	}
 	return nil
