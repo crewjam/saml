@@ -5,6 +5,7 @@ import (
 	"compress/flate"
 	"crypto"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/xml"
 	"fmt"
@@ -13,11 +14,10 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"text/template"
 	"time"
-
-	"crypto/x509"
 
 	"github.com/beevik/etree"
 	"github.com/crewjam/saml/xmlenc"
@@ -53,6 +53,16 @@ type SessionProvider interface {
 	GetSession(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session
 }
 
+// ServiceProviderProvider is an interface used by IdentityProvider to look up
+// service provider metadata for a request.
+type ServiceProviderProvider interface {
+	// GetServiceProvider returns the Service Provider metadata for the
+	// service provider ID, which is typically the service provider's
+	// metadata URL. If an appropriate service provider cannot be found then
+	// the returned error must be os.ErrNotExist.
+	GetServiceProvider(r *http.Request, serviceProviderID string) (*Metadata, error)
+}
+
 // IdentityProvider implements the SAML Identity Provider role (IDP).
 //
 // An identity provider receives SAML assertion requests and responds
@@ -61,19 +71,19 @@ type SessionProvider interface {
 // You must provide a keypair that is used to
 // sign assertions.
 //
-// For each service provider that is able to use this
-// IDP you must add their metadata to the ServiceProviders map.
+// You must provide an implementation of ServiceProviderProvider which
+// returns
 //
 // You must provide an implementation of the SessionProvider which
 // handles the actual authentication (i.e. prompting for a username
 // and password).
 type IdentityProvider struct {
-	Key              crypto.PrivateKey
-	Certificate      *x509.Certificate
-	MetadataURL      url.URL
-	SSOURL           url.URL
-	ServiceProviders map[string]*Metadata
-	SessionProvider  SessionProvider
+	Key                     crypto.PrivateKey
+	Certificate             *x509.Certificate
+	MetadataURL             url.URL
+	SSOURL                  url.URL
+	ServiceProviderProvider ServiceProviderProvider
+	SessionProvider         SessionProvider
 }
 
 // Metadata returns the metadata structure for this identity provider.
@@ -206,11 +216,15 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	var ok bool
-	req.ServiceProviderMetadata, ok = idp.ServiceProviders[serviceProviderID]
-	if !ok {
+	var err error
+	req.ServiceProviderMetadata, err = idp.ServiceProviderProvider.GetServiceProvider(r, serviceProviderID)
+	if err == os.ErrNotExist {
 		log.Printf("cannot find service provider: %s", serviceProviderID)
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		return
+	} else if err != nil {
+		log.Printf("cannot find service provider %s: %v", serviceProviderID, err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
@@ -303,10 +317,12 @@ func (req *IdpAuthnRequest) Validate() error {
 	}
 
 	// find the service provider
-	serviceProvider, serviceProviderFound := req.IDP.ServiceProviders[req.Request.Issuer.Value]
-	if !serviceProviderFound {
-		return fmt.Errorf("cannot handle request from unknown service provider %s",
-			req.Request.Issuer.Value)
+	serviceProviderID := req.Request.Issuer.Value
+	serviceProvider, err := req.IDP.ServiceProviderProvider.GetServiceProvider(req.HTTPRequest, serviceProviderID)
+	if err == os.ErrNotExist {
+		return fmt.Errorf("cannot handle request from unknown service provider %s", serviceProviderID)
+	} else if err != nil {
+		return fmt.Errorf("cannot find service provider %s: %v", serviceProviderID, err)
 	}
 	req.ServiceProviderMetadata = serviceProvider
 

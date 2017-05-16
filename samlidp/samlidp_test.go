@@ -139,7 +139,7 @@ OwJlNCASPZRH/JmF8tX0hoHuAQ==
 	c.Assert(err, IsNil)
 
 	test.SP.IDPMetadata = test.Server.IDP.Metadata()
-	test.Server.IDP.ServiceProviders["https://sp.example.com/saml2/metadata"] = test.SP.Metadata()
+	test.Server.serviceProviders["https://sp.example.com/saml2/metadata"] = test.SP.Metadata()
 }
 
 func (test *ServerTest) TestHTTPCanHandleMetadataRequest(c *C) {

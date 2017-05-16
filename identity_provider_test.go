@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"os"
+
 	"github.com/beevik/etree"
 	"github.com/crewjam/saml/testsaml"
 	"github.com/crewjam/saml/xmlenc"
@@ -121,11 +123,18 @@ OwJlNCASPZRH/JmF8tX0hoHuAQ==
 	test.Certificate = mustParseCertificate("-----BEGIN CERTIFICATE-----\nMIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJV\nUzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0\nMB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMx\nCzAJBgNVBAgMAkdBMQwwCgYDVQQKDANmb28xEjAQBgNVBAMMCWxvY2FsaG9zdDCB\nnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA1PMHYmhZj308kWLhZVT4vOulqx/9\nibm5B86fPWwUKKQ2i12MYtz07tzukPymisTDhQaqyJ8Kqb/6JjhmeMnEOdTvSPmH\nO8m1ZVveJU6NoKRn/mP/BD7FW52WhbrUXLSeHVSKfWkNk6S4hk9MV9TswTvyRIKv\nRsw0X/gfnqkroJcCAwEAATANBgkqhkiG9w0BAQUFAAOBgQCMMlIO+GNcGekevKgk\nakpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeT\nQLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvn\nOwJlNCASPZRH/JmF8tX0hoHuAQ==\n-----END CERTIFICATE-----\n")
 
 	test.IDP = IdentityProvider{
-		Key:              test.Key,
-		Certificate:      test.Certificate,
-		MetadataURL:      mustParseURL("https://idp.example.com/saml/metadata"),
-		SSOURL:           mustParseURL("https://idp.example.com/saml/sso"),
-		ServiceProviders: map[string]*Metadata{},
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("https://idp.example.com/saml/metadata"),
+		SSOURL:      mustParseURL("https://idp.example.com/saml/sso"),
+		ServiceProviderProvider: &mockServiceProviderProvider{
+			GetServiceProviderFunc: func(r *http.Request, serviceProviderID string) (*Metadata, error) {
+				if serviceProviderID == test.SP.MetadataURL.String() {
+					return test.SP.Metadata(), nil
+				}
+				return nil, os.ErrNotExist
+			},
+		},
 		SessionProvider: &mockSessionProvider{
 			GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
 				return nil
@@ -135,7 +144,6 @@ OwJlNCASPZRH/JmF8tX0hoHuAQ==
 
 	// bind the service provider and the IDP
 	test.SP.IDPMetadata = test.IDP.Metadata()
-	test.IDP.ServiceProviders[test.SP.MetadataURL.String()] = test.SP.Metadata()
 }
 
 type mockSessionProvider struct {
@@ -144,6 +152,14 @@ type mockSessionProvider struct {
 
 func (msp *mockSessionProvider) GetSession(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
 	return msp.GetSessionFunc(w, r, req)
+}
+
+type mockServiceProviderProvider struct {
+	GetServiceProviderFunc func(r *http.Request, serviceProviderID string) (*Metadata, error)
+}
+
+func (mspp *mockServiceProviderProvider) GetServiceProvider(r *http.Request, serviceProviderID string) (*Metadata, error) {
+	return mspp.GetServiceProviderFunc(r, serviceProviderID)
 }
 
 func (test *IdentityProviderTest) TestCanProduceMetadata(c *C) {

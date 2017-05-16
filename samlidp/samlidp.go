@@ -34,9 +34,10 @@ type Options struct {
 //     /shortcuts    - RESTful interface to Shortcut objects
 type Server struct {
 	http.Handler
-	idpConfigMu sync.RWMutex          // protects calls into the IDP
-	IDP         saml.IdentityProvider // the underlying IDP
-	Store       Store                 // the data store
+	idpConfigMu      sync.RWMutex // protects calls into the IDP
+	serviceProviders map[string]*saml.Metadata
+	IDP              saml.IdentityProvider // the underlying IDP
+	Store            Store                 // the data store
 }
 
 // New returns a new Server
@@ -46,16 +47,17 @@ func New(opts Options) (*Server, error) {
 	ssoURL := opts.URL
 	ssoURL.Path = ssoURL.Path + "/sso"
 	s := &Server{
+		serviceProviders: map[string]*saml.Metadata{},
 		IDP: saml.IdentityProvider{
-			Key:              opts.Key,
-			Certificate:      opts.Certificate,
-			MetadataURL:      metadataURL,
-			SSOURL:           ssoURL,
-			ServiceProviders: map[string]*saml.Metadata{},
+			Key:         opts.Key,
+			Certificate: opts.Certificate,
+			MetadataURL: metadataURL,
+			SSOURL:      ssoURL,
 		},
 		Store: opts.Store,
 	}
 	s.IDP.SessionProvider = s
+	s.IDP.ServiceProviderProvider = s
 
 	if err := s.initializeServices(); err != nil {
 		return nil, err
