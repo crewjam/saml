@@ -2,16 +2,16 @@ package samlsp
 
 import (
 	"encoding/base64"
-	"encoding/pem"
 	"encoding/xml"
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
+
+	"crypto/x509"
 
 	"github.com/crewjam/saml"
 )
@@ -74,16 +74,14 @@ func randomBytes(n int) []byte {
 // on the URIs specified by m.ServiceProvider.MetadataURL and
 // m.ServiceProvider.AcsURL.
 func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	metadataURL, _ := url.Parse(m.ServiceProvider.MetadataURL)
-	if r.URL.Path == metadataURL.Path {
+	if r.URL.Path == m.ServiceProvider.MetadataURL.Path {
 		buf, _ := xml.MarshalIndent(m.ServiceProvider.Metadata(), "", "  ")
 		w.Header().Set("Content-Type", "application/samlmetadata+xml")
 		w.Write(buf)
 		return
 	}
 
-	acsURL, _ := url.Parse(m.ServiceProvider.AcsURL)
-	if r.URL.Path == acsURL.Path {
+	if r.URL.Path == m.ServiceProvider.AcsURL.Path {
 		r.ParseForm()
 		assertion, err := m.ServiceProvider.ParseResponse(r, m.getPossibleRequestIDs(r))
 		if err != nil {
@@ -117,8 +115,7 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 		// end up in a loop. This is a programming error, so we panic here. In
 		// general this means a 500 to the user, which is preferable to a
 		// redirect loop.
-		acsURL, _ := url.Parse(m.ServiceProvider.AcsURL)
-		if r.URL.Path == acsURL.Path {
+		if r.URL.Path == m.ServiceProvider.AcsURL.Path {
 			panic("don't wrap Middleware with RequireAccount")
 		}
 
@@ -140,12 +137,12 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 		// we set a cookie that corresponds to the state
 		relayState := base64.URLEncoding.EncodeToString(randomBytes(42))
 
-		secretBlock, _ := pem.Decode([]byte(m.ServiceProvider.Key))
+		secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
 		state := jwt.New(jwtSigningMethod)
 		claims := state.Claims.(jwt.MapClaims)
 		claims["id"] = req.ID
 		claims["uri"] = r.URL.String()
-		signedState, err := state.SignedString(secretBlock.Bytes)
+		signedState, err := state.SignedString(secretBlock)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -156,7 +153,7 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 			Value:    signedState,
 			MaxAge:   int(saml.MaxIssueDelay.Seconds()),
 			HttpOnly: false,
-			Path:     acsURL.Path,
+			Path:     m.ServiceProvider.AcsURL.Path,
 		})
 
 		if binding == saml.HTTPRedirectBinding {
@@ -194,8 +191,8 @@ func (m *Middleware) getPossibleRequestIDs(r *http.Request) []string {
 			ValidMethods: []string{jwtSigningMethod.Name},
 		}
 		token, err := jwtParser.Parse(cookie.Value, func(t *jwt.Token) (interface{}, error) {
-			secretBlock, _ := pem.Decode([]byte(m.ServiceProvider.Key))
-			return secretBlock.Bytes, nil
+			secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
+			return secretBlock, nil
 		})
 		if err != nil || !token.Valid {
 			log.Printf("... invalid token %s", err)
@@ -222,7 +219,7 @@ type TokenClaims struct {
 // It sets a cookie that contains a signed JWT containing the assertion attributes.
 // It then redirects the user's browser to the original URL contained in RelayState.
 func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion *saml.Assertion) {
-	secretBlock, _ := pem.Decode([]byte(m.ServiceProvider.Key))
+	secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
 
 	redirectURI := "/"
 	if r.Form.Get("RelayState") != "" {
@@ -237,7 +234,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 			ValidMethods: []string{jwtSigningMethod.Name},
 		}
 		state, err := jwtParser.Parse(stateCookie.Value, func(t *jwt.Token) (interface{}, error) {
-			return secretBlock.Bytes, nil
+			return secretBlock, nil
 		})
 		if err != nil || !state.Valid {
 			log.Printf("Cannot decode state JWT: %s (%s)", err, stateCookie.Value)
@@ -277,7 +274,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 		}
 	}
 	signedToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256,
-		claims).SignedString(secretBlock.Bytes)
+		claims).SignedString(secretBlock)
 	if err != nil {
 		panic(err)
 	}
@@ -312,8 +309,8 @@ func (m *Middleware) IsAuthorized(r *http.Request) bool {
 
 	tokenClaims := TokenClaims{}
 	token, err := jwt.ParseWithClaims(cookie.Value, &tokenClaims, func(t *jwt.Token) (interface{}, error) {
-		secretBlock, _ := pem.Decode([]byte(m.ServiceProvider.Key))
-		return secretBlock.Bytes, nil
+		secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
+		return secretBlock, nil
 	})
 	if err != nil || !token.Valid {
 		log.Printf("ERROR: invalid token: %s", err)

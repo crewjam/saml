@@ -1,23 +1,23 @@
 package main
 
 import (
+	"crypto"
+	"encoding/pem"
 	"flag"
 	"log"
+	"net/url"
 
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/zenazn/goji"
 
+	"crypto/x509"
+
 	"github.com/crewjam/saml/samlidp"
 )
 
-func main() {
-	baseURL := flag.String("idp", "", "The URL to the IDP")
-	flag.Parse()
-
-	idpServer, err := samlidp.New(samlidp.Options{
-		URL: *baseURL,
-		Key: `-----BEGIN RSA PRIVATE KEY-----
+var key = func() crypto.PrivateKey {
+	b, _ := pem.Decode([]byte(`-----BEGIN RSA PRIVATE KEY-----
 MIIEpAIBAAKCAQEA0OhbMuizgtbFOfwbK7aURuXhZx6VRuAs3nNibiuifwCGz6u9
 yy7bOR0P+zqN0YkjxaokqFgra7rXKCdeABmoLqCC0U+cGmLNwPOOA0PaD5q5xKhQ
 4Me3rt/R9C4Ca6k3/OnkxnKwnogcsmdgs2l8liT3qVHP04Oc7Uymq2v09bGb6nPu
@@ -43,8 +43,13 @@ ErrOOy6EqH3rNWHvlxChuP50cFQJuYOueO6QggyCyruSOnDDuc0BM0SGq6+5g5s7
 H++S/wKBgQDIkqBtFr9UEf8d6JpkxS0RXDlhSMjkXmkQeKGFzdoJcYVFIwq8jTNB
 nJrVIGs3GcBkqGic+i7rTO1YPkquv4dUuiIn+vKZVoO6b54f+oPBXd4S0BnuEqFE
 rdKNuCZhiaE2XD9L/O9KP1fh5bfEcKwazQ23EvpJHBMm8BGC+/YZNw==
------END RSA PRIVATE KEY-----`,
-		Certificate: `-----BEGIN CERTIFICATE-----
+-----END RSA PRIVATE KEY-----`))
+	k, _ := x509.ParsePKCS1PrivateKey(b.Bytes)
+	return k
+}()
+
+var cert = func() *x509.Certificate {
+	b, _ := pem.Decode([]byte(`-----BEGIN CERTIFICATE-----
 MIIDBzCCAe+gAwIBAgIJAPr/Mrlc8EGhMA0GCSqGSIb3DQEBBQUAMBoxGDAWBgNV
 BAMMD3d3dy5leGFtcGxlLmNvbTAeFw0xNTEyMjgxOTE5NDVaFw0yNTEyMjUxOTE5
 NDVaMBoxGDAWBgNVBAMMD3d3dy5leGFtcGxlLmNvbTCCASIwDQYJKoZIhvcNAQEB
@@ -62,8 +67,25 @@ y/+1gHg2pxjGnhRBN6el/gSaDiySIMKbilDrffuvxiCfbpPN0NRRiPJhd2ay9KuL
 /RxQRl1gl9cHaWiouWWba1bSBb2ZPhv2rPMUsFo98ntkGCObDX6Y1SpkqmoTbrsb
 GFsTG2DLxnvr4GdN1BSr0Uu/KV3adj47WkXVPeMYQti/bQmxQB8tRFhrw80qakTL
 UzreO96WzlBBMtY=
------END CERTIFICATE-----`,
-		Store: &samlidp.MemoryStore{},
+-----END CERTIFICATE-----`))
+	c, _ := x509.ParseCertificate(b.Bytes)
+	return c
+}()
+
+func main() {
+	baseURLstr := flag.String("idp", "", "The URL to the IDP")
+	flag.Parse()
+
+	baseURL, err := url.Parse(*baseURLstr)
+	if err != nil {
+		log.Fatalf("cannot parse base URL: %v", err)
+	}
+
+	idpServer, err := samlidp.New(samlidp.Options{
+		URL:         *baseURL,
+		Key:         key,
+		Certificate: cert,
+		Store:       &samlidp.MemoryStore{},
 	})
 	if err != nil {
 		log.Fatalf("%s", err)

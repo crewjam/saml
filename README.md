@@ -44,13 +44,30 @@ We will use `samlsp.Middleware` to wrap the endpoint we want to protect. Middlew
     }
 
     func main() {
-        key, _ := ioutil.ReadFile("myservice.key")
-        cert, _ := ioutil.ReadFile("myservice.cert")
+        keyPair, err := tls.LoadX509KeyPair("myservice.cert", "myservice.key")
+        if err != nil {
+            panic(err) // TODO handle error
+        }
+        keyPair.Leaf, err = x509.ParseCertificate(keyPair.Certificate[0])
+        if err != nil {
+            panic(err) // TODO handle error
+        }
+
+        idpMetadataURL, err := url.Parse("https://www.testshib.org/metadata/testshib-providers.xml")
+        if err != nil {
+            panic(err) // TODO handle error
+        }
+
+        rootURL, err := url.Parse("http://localhost:8000")
+        if err != nil {
+            panic(err) // TODO handle error
+        }
+
         samlSP, _ := samlsp.New(samlsp.Options{
-            IDPMetadataURL: "https://www.testshib.org/metadata/testshib-providers.xml",
-            URL:            "http://localhost:8000",
-            Key:            string(key),
-            Certificate:    string(cert),
+            URL:            *rootURL,
+            Key:            kp.PrivateKey.(*rsa.PrivateKey),
+            Certificate:    kp.Leaf,
+            IDPMetadataURL: idpMetadataURL,
         })
         app := http.HandlerFunc(hello)
         http.Handle("/hello", samlSP.RequireAccount(app))

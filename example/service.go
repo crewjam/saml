@@ -3,11 +3,15 @@ package main
 
 import (
 	"bytes"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/xml"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/dchest/uniuri"
@@ -62,14 +66,8 @@ func ListLinks(c web.C, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func main() {
-	baseURL := flag.String("url", "https://962766ce.ngrok.io", "The base URL of this service")
-	idpMetadataURL := flag.String("idp", "https://516becc2.ngrok.io/metadata", "The metadata URL for the IDP")
-	flag.Parse()
-
-	samlSP, err := samlsp.New(samlsp.Options{
-		URL: *baseURL,
-		Key: `-----BEGIN RSA PRIVATE KEY-----
+var (
+	key = []byte(`-----BEGIN RSA PRIVATE KEY-----
 MIICXgIBAAKBgQDU8wdiaFmPfTyRYuFlVPi866WrH/2JubkHzp89bBQopDaLXYxi
 3PTu3O6Q/KaKxMOFBqrInwqpv/omOGZ4ycQ51O9I+Yc7ybVlW94lTo2gpGf+Y/8E
 PsVbnZaFutRctJ4dVIp9aQ2TpLiGT0xX1OzBO/JEgq9GzDRf+B+eqSuglwIDAQAB
@@ -84,8 +82,8 @@ yfjNVUNVaIbQTzEbRlRvT6MqR+PTCefC072NF9aJWR93JimspGZMR7viY6IM4lrr
 vBkm0F5yXKaYtoiiDMzlOQJADqmEwXl0D72ZG/2KDg8b4QZEmC9i5gidpQwJXUc6
 hU+IVQoLxRq0fBib/36K9tcrrO5Ba4iEvDcNY+D8yGbUtA==
 -----END RSA PRIVATE KEY-----
-`,
-		Certificate: `-----BEGIN CERTIFICATE-----
+`)
+	cert = []byte(`-----BEGIN CERTIFICATE-----
 MIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJV
 UzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0
 MB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMx
@@ -98,9 +96,39 @@ akpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeT
 QLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvn
 OwJlNCASPZRH/JmF8tX0hoHuAQ==
 -----END CERTIFICATE-----
-`,
+`)
+)
+
+func main() {
+	rootURLstr := flag.String("url", "https://962766ce.ngrok.io", "The base URL of this service")
+	idpMetadataURLstr := flag.String("idp", "https://516becc2.ngrok.io/metadata", "The metadata URL for the IDP")
+	flag.Parse()
+
+	keyPair, err := tls.X509KeyPair(cert, key)
+	if err != nil {
+		panic(err) // TODO handle error
+	}
+	keyPair.Leaf, err = x509.ParseCertificate(keyPair.Certificate[0])
+	if err != nil {
+		panic(err) // TODO handle error
+	}
+
+	idpMetadataURL, err := url.Parse(*idpMetadataURLstr)
+	if err != nil {
+		panic(err) // TODO handle error
+	}
+
+	rootURL, err := url.Parse(*rootURLstr)
+	if err != nil {
+		panic(err) // TODO handle error
+	}
+
+	samlSP, err := samlsp.New(samlsp.Options{
+		URL:               *rootURL,
+		Key:               keyPair.PrivateKey.(*rsa.PrivateKey),
+		Certificate:       keyPair.Leaf,
 		AllowIDPInitiated: true,
-		IDPMetadataURL:    *idpMetadataURL,
+		IDPMetadataURL:    idpMetadataURL,
 	})
 	if err != nil {
 		log.Fatalf("%s", err)
@@ -108,8 +136,10 @@ OwJlNCASPZRH/JmF8tX0hoHuAQ==
 
 	// register with the service provider
 	spMetadataBuf, _ := xml.MarshalIndent(samlSP.ServiceProvider.Metadata(), "", "  ")
-	http.Post(strings.Replace(*idpMetadataURL, "/metadata", "/services/sp", 1),
-		"text/xml", bytes.NewReader(spMetadataBuf))
+
+	spURL := *idpMetadataURL
+	spURL.Path = "/services/sp"
+	http.Post(spURL.String(), "text/xml", bytes.NewReader(spMetadataBuf))
 
 	goji.Handle("/saml/*", samlSP)
 
