@@ -6,7 +6,6 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/pem"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -41,18 +40,18 @@ const (
 // the service provider interface.
 type ServiceProvider struct {
 	// Key is the RSA private key we use to sign requests.
-	Key string
+	Key *rsa.PrivateKey
 
 	// Certificate is the RSA public part of Key.
-	Certificate string
+	Certificate *x509.Certificate
 
 	// MetadataURL is the full URL to the metadata endpoint on this host,
 	// i.e. https://example.com/saml/metadata
-	MetadataURL string
+	MetadataURL url.URL
 
 	// AcsURL is the full URL to the SAML Assertion Customer Service endpoint
 	// on this host, i.e. https://example.com/saml/acs
-	AcsURL string
+	AcsURL url.URL
 
 	// IDPMetadata is the metadata from the identity provider.
 	IDPMetadata *Metadata
@@ -84,17 +83,13 @@ const DefaultCacheDuration = time.Hour * 24 * 1
 
 // Metadata returns the service provider metadata
 func (sp *ServiceProvider) Metadata() *Metadata {
-	if cert, _ := pem.Decode([]byte(sp.Certificate)); cert != nil {
-		sp.Certificate = base64.StdEncoding.EncodeToString(cert.Bytes)
-	}
-
 	validDuration := DefaultValidDuration
 	if sp.MetadataValidDuration > 0 {
 		validDuration = sp.MetadataValidDuration
 	}
 
 	return &Metadata{
-		EntityID:   sp.MetadataURL,
+		EntityID:   sp.MetadataURL.String(),
 		ValidUntil: TimeNow().Add(validDuration),
 		SPSSODescriptor: &SPSSODescriptor{
 			AuthnRequestsSigned:        false,
@@ -104,13 +99,13 @@ func (sp *ServiceProvider) Metadata() *Metadata {
 				{
 					Use: "signing",
 					KeyInfo: KeyInfo{
-						Certificate: sp.Certificate,
+						Certificate: base64.StdEncoding.EncodeToString(sp.Certificate.Raw),
 					},
 				},
 				{
 					Use: "encryption",
 					KeyInfo: KeyInfo{
-						Certificate: sp.Certificate,
+						Certificate: base64.StdEncoding.EncodeToString(sp.Certificate.Raw),
 					},
 					EncryptionMethods: []EncryptionMethod{
 						{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
@@ -122,7 +117,7 @@ func (sp *ServiceProvider) Metadata() *Metadata {
 			},
 			AssertionConsumerService: []IndexedEndpoint{{
 				Binding:  HTTPPostBinding,
-				Location: sp.AcsURL,
+				Location: sp.AcsURL.String(),
 				Index:    1,
 			}},
 		},
@@ -228,7 +223,7 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string) (*AuthnReque
 	}
 
 	req := AuthnRequest{
-		AssertionConsumerServiceURL: sp.AcsURL,
+		AssertionConsumerServiceURL: sp.AcsURL.String(),
 		Destination:                 idpURL,
 		ProtocolBinding:             HTTPPostBinding, // default binding for the response
 		ID:                          fmt.Sprintf("id-%x", randomBytes(20)),
@@ -236,7 +231,7 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string) (*AuthnReque
 		Version:                     "2.0",
 		Issuer: Issuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
-			Value:  sp.MetadataURL,
+			Value:  sp.MetadataURL.String(),
 		},
 		NameIDPolicy: NameIDPolicy{
 			AllowCreate: true,
@@ -364,8 +359,8 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 		retErr.PrivateErr = fmt.Errorf("cannot unmarshal response: %s", err)
 		return nil, retErr
 	}
-	if resp.Destination != sp.AcsURL {
-		retErr.PrivateErr = fmt.Errorf("`Destination` does not match AcsURL (expected %q)", sp.AcsURL)
+	if resp.Destination != sp.AcsURL.String() {
+		retErr.PrivateErr = fmt.Errorf("`Destination` does not match AcsURL (expected %q)", sp.AcsURL.String())
 		return nil, retErr
 	}
 
@@ -425,20 +420,7 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 			return nil, retErr
 		}
 		el := doc.FindElement("//EncryptedAssertion/EncryptedData")
-		var key *rsa.PrivateKey
-		{
-			b, _ := pem.Decode([]byte(sp.Key))
-			if b == nil {
-				retErr.PrivateErr = errors.New("cannot decode key")
-				return nil, retErr
-			}
-			key, err = x509.ParsePKCS1PrivateKey(b.Bytes)
-			if err != nil {
-				retErr.PrivateErr = err
-				return nil, retErr
-			}
-		}
-		plaintextAssertion, err := xmlenc.Decrypt(key, el)
+		plaintextAssertion, err := xmlenc.Decrypt(sp.Key, el)
 		if err != nil {
 			retErr.PrivateErr = fmt.Errorf("failed to decrypt response: %s", err)
 			return nil, retErr
@@ -492,8 +474,8 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if !requestIDvalid {
 		return fmt.Errorf("SubjectConfirmation one of the possible request IDs (%v)", possibleRequestIDs)
 	}
-	if assertion.Subject.SubjectConfirmation.SubjectConfirmationData.Recipient != sp.AcsURL {
-		return fmt.Errorf("SubjectConfirmation Recipient is not %s", sp.AcsURL)
+	if assertion.Subject.SubjectConfirmation.SubjectConfirmationData.Recipient != sp.AcsURL.String() {
+		return fmt.Errorf("SubjectConfirmation Recipient is not %s", sp.AcsURL.String())
 	}
 	if assertion.Subject.SubjectConfirmation.SubjectConfirmationData.NotOnOrAfter.Add(MaxClockSkew).Before(now) {
 		return fmt.Errorf("SubjectConfirmationData is expired")
@@ -504,8 +486,8 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if assertion.Conditions.NotOnOrAfter.Add(MaxClockSkew).Before(now) {
 		return fmt.Errorf("Conditions is expired")
 	}
-	if assertion.Conditions.AudienceRestriction.Audience.Value != sp.MetadataURL {
-		return fmt.Errorf("Conditions AudienceRestriction is not %q", sp.MetadataURL)
+	if assertion.Conditions.AudienceRestriction.Audience.Value != sp.MetadataURL.String() {
+		return fmt.Errorf("Conditions AudienceRestriction is not %q", sp.MetadataURL.String())
 	}
 	return nil
 }

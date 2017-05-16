@@ -8,29 +8,39 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"time"
+
+	"crypto/rsa"
+	"crypto/x509"
 
 	"github.com/crewjam/saml"
 )
 
 // Options represents the parameters for creating a new middleware
 type Options struct {
-	URL               string
-	Key               string
-	Certificate       string
+	URL               url.URL
+	Key               *rsa.PrivateKey
+	Certificate       *x509.Certificate
 	AllowIDPInitiated bool
 	IDPMetadata       *saml.Metadata
-	IDPMetadataURL    string
+	IDPMetadataURL    *url.URL
 }
 
 // New creates a new Middleware
 func New(opts Options) (*Middleware, error) {
+
+	metadataURL := opts.URL
+	metadataURL.Path = metadataURL.Path + "/saml/metadata"
+	acsURL := opts.URL
+	acsURL.Path = acsURL.Path + "/saml/acs"
+
 	m := &Middleware{
 		ServiceProvider: saml.ServiceProvider{
 			Key:         opts.Key,
 			Certificate: opts.Certificate,
-			MetadataURL: opts.URL + "/saml/metadata",
-			AcsURL:      opts.URL + "/saml/acs",
+			MetadataURL: metadataURL,
+			AcsURL:      acsURL,
 			IDPMetadata: opts.IDPMetadata,
 		},
 		AllowIDPInitiated: opts.AllowIDPInitiated,
@@ -39,12 +49,12 @@ func New(opts Options) (*Middleware, error) {
 	}
 
 	// fetch the IDP metadata if needed.
-	if opts.IDPMetadataURL == "" {
+	if opts.IDPMetadataURL == nil {
 		return m, nil
 	}
 
 	c := http.DefaultClient
-	req, err := http.NewRequest("GET", opts.IDPMetadataURL, nil)
+	req, err := http.NewRequest("GET", opts.IDPMetadataURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}

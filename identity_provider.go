@@ -3,9 +3,9 @@ package saml
 import (
 	"bytes"
 	"compress/flate"
+	"crypto"
 	"crypto/tls"
 	"encoding/base64"
-	"encoding/pem"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -16,6 +16,8 @@ import (
 	"regexp"
 	"text/template"
 	"time"
+
+	"crypto/x509"
 
 	"github.com/beevik/etree"
 	"github.com/crewjam/saml/xmlenc"
@@ -66,24 +68,20 @@ type SessionProvider interface {
 // handles the actual authentication (i.e. prompting for a username
 // and password).
 type IdentityProvider struct {
-	Key              string
-	Certificate      string
-	MetadataURL      string
-	SSOURL           string
+	Key              crypto.PrivateKey
+	Certificate      *x509.Certificate
+	MetadataURL      url.URL
+	SSOURL           url.URL
 	ServiceProviders map[string]*Metadata
 	SessionProvider  SessionProvider
 }
 
 // Metadata returns the metadata structure for this identity provider.
 func (idp *IdentityProvider) Metadata() *Metadata {
-	cert, _ := pem.Decode([]byte(idp.Certificate))
-	if cert == nil {
-		panic("invalid IDP certificate")
-	}
-	certStr := base64.StdEncoding.EncodeToString(cert.Bytes)
+	certStr := base64.StdEncoding.EncodeToString(idp.Certificate.Raw)
 
 	return &Metadata{
-		EntityID:      idp.MetadataURL,
+		EntityID:      idp.MetadataURL.String(),
 		ValidUntil:    TimeNow().Add(DefaultValidDuration),
 		CacheDuration: DefaultValidDuration,
 		IDPSSODescriptor: &IDPSSODescriptor{
@@ -114,11 +112,11 @@ func (idp *IdentityProvider) Metadata() *Metadata {
 			SingleSignOnService: []Endpoint{
 				{
 					Binding:  HTTPRedirectBinding,
-					Location: idp.SSOURL,
+					Location: idp.SSOURL.String(),
 				},
 				{
 					Binding:  HTTPPostBinding,
-					Location: idp.SSOURL,
+					Location: idp.SSOURL.String(),
 				},
 			},
 		},
@@ -129,18 +127,8 @@ func (idp *IdentityProvider) Metadata() *Metadata {
 // URLs
 func (idp *IdentityProvider) Handler() http.Handler {
 	mux := http.NewServeMux()
-
-	metadataURL, err := url.Parse(idp.MetadataURL)
-	if err != nil {
-		panic(err)
-	}
-	mux.HandleFunc(metadataURL.Path, idp.ServeMetadata)
-
-	ssoURL, err := url.Parse(idp.SSOURL)
-	if err != nil {
-		panic(err)
-	}
-	mux.HandleFunc(ssoURL.Path, idp.ServeSSO)
+	mux.HandleFunc(idp.MetadataURL.Path, idp.ServeMetadata)
+	mux.HandleFunc(idp.SSOURL.Path, idp.ServeSSO)
 	return mux
 }
 
@@ -302,9 +290,9 @@ func (req *IdpAuthnRequest) Validate() error {
 
 	// TODO(ross): is this supposed to be the metdata URL? or the target URL?
 	//   i.e. should idp.SSOURL actually be idp.Metadata().EntityID?
-	if req.Request.Destination != req.IDP.SSOURL {
+	if req.Request.Destination != req.IDP.SSOURL.String() {
 		return fmt.Errorf("expected destination to be %q, not %q",
-			req.IDP.SSOURL, req.Request.Destination)
+			req.IDP.SSOURL.String(), req.Request.Destination)
 	}
 	if req.Request.IssueInstant.Add(MaxIssueDelay).Before(TimeNow()) {
 		return fmt.Errorf("request expired at %s",
@@ -472,14 +460,15 @@ func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
 // MarshalAssertion sets `AssertionBuffer` to a signed, encrypted
 // version of `Assertion`.
 func (req *IdpAuthnRequest) MarshalAssertion() error {
-	keyPair, err := tls.X509KeyPair([]byte(req.IDP.Certificate), []byte(req.IDP.Key))
-	if err != nil {
-		return err
+	keyPair := tls.Certificate{
+		Certificate: [][]byte{req.IDP.Certificate.Raw},
+		PrivateKey:  req.IDP.Key,
+		Leaf:        req.IDP.Certificate,
 	}
 	keyStore := dsig.TLSCertKeyStore(keyPair)
 
 	signingContext := dsig.NewDefaultSigningContext(keyStore)
-	if err = signingContext.SetSignatureMethod(dsig.RSASHA1SignatureMethod); err != nil {
+	if err := signingContext.SetSignatureMethod(dsig.RSASHA1SignatureMethod); err != nil {
 		return err
 	}
 
@@ -662,7 +651,7 @@ func (req *IdpAuthnRequest) MakeResponse() error {
 		Version:      "2.0",
 		Issuer: &Issuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
-			Value:  req.IDP.MetadataURL,
+			Value:  req.IDP.MetadataURL.String(),
 		},
 		Status: &Status{
 			StatusCode: StatusCode{
