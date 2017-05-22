@@ -3,24 +3,24 @@
 package samlsp
 
 import (
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/xml"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
 	"time"
 
-	"crypto/rsa"
-	"crypto/x509"
-
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/logger"
 )
 
 // Options represents the parameters for creating a new middleware
 type Options struct {
 	URL               url.URL
 	Key               *rsa.PrivateKey
+	Logger            logger.Interface
 	Certificate       *x509.Certificate
 	AllowIDPInitiated bool
 	IDPMetadata       *saml.Metadata
@@ -34,10 +34,15 @@ func New(opts Options) (*Middleware, error) {
 	metadataURL.Path = metadataURL.Path + "/saml/metadata"
 	acsURL := opts.URL
 	acsURL.Path = acsURL.Path + "/saml/acs"
+	logr := opts.Logger
+	if logr == nil {
+		logr = logger.DefaultLogger
+	}
 
 	m := &Middleware{
 		ServiceProvider: saml.ServiceProvider{
 			Key:         opts.Key,
+			Logger:      logr,
 			Certificate: opts.Certificate,
 			MetadataURL: metadataURL,
 			AcsURL:      acsURL,
@@ -76,7 +81,7 @@ func New(opts Options) (*Middleware, error) {
 			if i > 10 {
 				return nil, err
 			}
-			log.Printf("ERROR: %s: %s (will retry)", opts.IDPMetadataURL, err)
+			logr.Printf("ERROR: %s: %s (will retry)", opts.IDPMetadataURL, err)
 			time.Sleep(5 * time.Second)
 			continue
 		}

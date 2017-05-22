@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 
@@ -40,7 +39,7 @@ func (s *Server) GetServiceProvider(r *http.Request, serviceProviderID string) (
 func (s *Server) HandleListServices(c web.C, w http.ResponseWriter, r *http.Request) {
 	services, err := s.Store.List("/services/")
 	if err != nil {
-		log.Printf("ERROR: %s", err)
+		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -56,7 +55,7 @@ func (s *Server) HandleGetService(c web.C, w http.ResponseWriter, r *http.Reques
 	service := Service{}
 	err := s.Store.Get(fmt.Sprintf("/services/%s", c.URLParams["id"]), &service)
 	if err != nil {
-		log.Printf("ERROR: %s", err)
+		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -68,14 +67,14 @@ func (s *Server) HandleGetService(c web.C, w http.ResponseWriter, r *http.Reques
 func (s *Server) HandlePutService(c web.C, w http.ResponseWriter, r *http.Request) {
 	service := Service{}
 	if err := xml.NewDecoder(r.Body).Decode(&service.Metadata); err != nil {
-		log.Printf("ERROR: %s", err)
+		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
 	err := s.Store.Put(fmt.Sprintf("/services/%s", c.URLParams["id"]), &service)
 	if err != nil {
-		log.Printf("ERROR: %s", err)
+		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -92,13 +91,13 @@ func (s *Server) HandleDeleteService(c web.C, w http.ResponseWriter, r *http.Req
 	service := Service{}
 	err := s.Store.Get(fmt.Sprintf("/services/%s", c.URLParams["id"]), &service)
 	if err != nil {
-		log.Printf("ERROR: %s", err)
+		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
 	if err := s.Store.Delete(fmt.Sprintf("/services/%s", c.URLParams["id"])); err != nil {
-		log.Printf("ERROR: %s", err)
+		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}

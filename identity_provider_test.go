@@ -18,6 +18,7 @@ import (
 	"os"
 
 	"github.com/beevik/etree"
+	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/testsaml"
 	"github.com/crewjam/saml/xmlenc"
 	"github.com/dgrijalva/jwt-go"
@@ -125,6 +126,7 @@ OwJlNCASPZRH/JmF8tX0hoHuAQ==
 	test.IDP = IdentityProvider{
 		Key:         test.Key,
 		Certificate: test.Certificate,
+		Logger:      logger.DefaultLogger,
 		MetadataURL: mustParseURL("https://idp.example.com/saml/metadata"),
 		SSOURL:      mustParseURL("https://idp.example.com/saml/sso"),
 		ServiceProviderProvider: &mockServiceProviderProvider{

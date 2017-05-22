@@ -1,19 +1,16 @@
 package samlsp
 
 import (
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/xml"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/dgrijalva/jwt-go"
-
-	"crypto/x509"
-
 	"github.com/crewjam/saml"
+	"github.com/dgrijalva/jwt-go"
 )
 
 // Middleware implements middleware than allows a web application
@@ -86,7 +83,7 @@ func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		assertion, err := m.ServiceProvider.ParseResponse(r, m.getPossibleRequestIDs(r))
 		if err != nil {
 			if parseErr, ok := err.(*saml.InvalidResponseError); ok {
-				log.Printf("RESPONSE: ===\n%s\n===\nNOW: %s\nERROR: %s",
+				m.ServiceProvider.Logger.Printf("RESPONSE: ===\n%s\n===\nNOW: %s\nERROR: %s",
 					parseErr.Response, parseErr.Now, parseErr.PrivateErr)
 			}
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
@@ -185,7 +182,7 @@ func (m *Middleware) getPossibleRequestIDs(r *http.Request) []string {
 		if !strings.HasPrefix(cookie.Name, "saml_") {
 			continue
 		}
-		log.Printf("getPossibleRequestIDs: cookie: %s", cookie.String())
+		m.ServiceProvider.Logger.Printf("getPossibleRequestIDs: cookie: %s", cookie.String())
 
 		jwtParser := jwt.Parser{
 			ValidMethods: []string{jwtSigningMethod.Name},
@@ -195,7 +192,7 @@ func (m *Middleware) getPossibleRequestIDs(r *http.Request) []string {
 			return secretBlock, nil
 		})
 		if err != nil || !token.Valid {
-			log.Printf("... invalid token %s", err)
+			m.ServiceProvider.Logger.Printf("... invalid token %s", err)
 			continue
 		}
 		claims := token.Claims.(jwt.MapClaims)
@@ -225,7 +222,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 	if r.Form.Get("RelayState") != "" {
 		stateCookie, err := r.Cookie(fmt.Sprintf("saml_%s", r.Form.Get("RelayState")))
 		if err != nil {
-			log.Printf("cannot find corresponding cookie: %s", fmt.Sprintf("saml_%s", r.Form.Get("RelayState")))
+			m.ServiceProvider.Logger.Printf("cannot find corresponding cookie: %s", fmt.Sprintf("saml_%s", r.Form.Get("RelayState")))
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
@@ -237,7 +234,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 			return secretBlock, nil
 		})
 		if err != nil || !state.Valid {
-			log.Printf("Cannot decode state JWT: %s (%s)", err, stateCookie.Value)
+			m.ServiceProvider.Logger.Printf("Cannot decode state JWT: %s (%s)", err, stateCookie.Value)
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
@@ -313,15 +310,15 @@ func (m *Middleware) IsAuthorized(r *http.Request) bool {
 		return secretBlock, nil
 	})
 	if err != nil || !token.Valid {
-		log.Printf("ERROR: invalid token: %s", err)
+		m.ServiceProvider.Logger.Printf("ERROR: invalid token: %s", err)
 		return false
 	}
 	if err := tokenClaims.StandardClaims.Valid(); err != nil {
-		log.Printf("ERROR: invalid token claims: %s", err)
+		m.ServiceProvider.Logger.Printf("ERROR: invalid token claims: %s", err)
 		return false
 	}
 	if tokenClaims.Audience != m.ServiceProvider.Metadata().EntityID {
-		log.Printf("ERROR: invalid audience: %s", err)
+		m.ServiceProvider.Logger.Printf("ERROR: invalid audience: %s", err)
 		return false
 	}
 

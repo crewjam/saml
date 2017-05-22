@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,6 +19,7 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
+	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/xmlenc"
 	dsig "github.com/russellhaering/goxmldsig"
 )
@@ -79,6 +79,7 @@ type ServiceProviderProvider interface {
 // and password).
 type IdentityProvider struct {
 	Key                     crypto.PrivateKey
+	Logger                  logger.Interface
 	Certificate             *x509.Certificate
 	MetadataURL             url.URL
 	SSOURL                  url.URL
@@ -169,13 +170,13 @@ func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, r *http.Reques
 func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 	req, err := NewIdpAuthnRequest(idp, r)
 	if err != nil {
-		log.Printf("failed to parse request: %s", err)
+		idp.Logger.Printf("failed to parse request: %s", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
 	if err := req.Validate(); err != nil {
-		log.Printf("failed to validate request: %s", err)
+		idp.Logger.Printf("failed to validate request: %s", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
@@ -190,12 +191,12 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 
 	// we have a valid session and must make a SAML assertion
 	if err := req.MakeAssertion(session); err != nil {
-		log.Printf("failed to make assertion: %s", err)
+		idp.Logger.Printf("failed to make assertion: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	if err := req.WriteResponse(w); err != nil {
-		log.Printf("failed to write response: %s", err)
+		idp.Logger.Printf("failed to write response: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -219,11 +220,11 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 	var err error
 	req.ServiceProviderMetadata, err = idp.ServiceProviderProvider.GetServiceProvider(r, serviceProviderID)
 	if err == os.ErrNotExist {
-		log.Printf("cannot find service provider: %s", serviceProviderID)
+		idp.Logger.Printf("cannot find service provider: %s", serviceProviderID)
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		return
 	} else if err != nil {
-		log.Printf("cannot find service provider %s: %v", serviceProviderID, err)
+		idp.Logger.Printf("cannot find service provider %s: %v", serviceProviderID, err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -234,12 +235,12 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 	}
 
 	if err := req.MakeAssertion(session); err != nil {
-		log.Printf("failed to make assertion: %s", err)
+		idp.Logger.Printf("failed to make assertion: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	if err := req.WriteResponse(w); err != nil {
-		log.Printf("failed to write response: %s", err)
+		idp.Logger.Printf("failed to write response: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
