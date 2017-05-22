@@ -2,18 +2,15 @@ package main
 
 import (
 	"crypto"
+	"crypto/x509"
 	"encoding/pem"
 	"flag"
-	"log"
 	"net/url"
 
-	"golang.org/x/crypto/bcrypt"
-
-	"github.com/zenazn/goji"
-
-	"crypto/x509"
-
+	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/samlidp"
+	"github.com/zenazn/goji"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var key = func() crypto.PrivateKey {
@@ -73,22 +70,24 @@ UzreO96WzlBBMtY=
 }()
 
 func main() {
+	logr := logger.DefaultLogger
 	baseURLstr := flag.String("idp", "", "The URL to the IDP")
 	flag.Parse()
 
 	baseURL, err := url.Parse(*baseURLstr)
 	if err != nil {
-		log.Fatalf("cannot parse base URL: %v", err)
+		logr.Fatalf("cannot parse base URL: %v", err)
 	}
 
 	idpServer, err := samlidp.New(samlidp.Options{
 		URL:         *baseURL,
 		Key:         key,
+		Logger:      logr,
 		Certificate: cert,
 		Store:       &samlidp.MemoryStore{},
 	})
 	if err != nil {
-		log.Fatalf("%s", err)
+		logr.Fatalf("%s", err)
 	}
 
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("hunter2"), bcrypt.DefaultCost)
@@ -101,7 +100,7 @@ func main() {
 		GivenName:      "Alice",
 	})
 	if err != nil {
-		log.Fatalf("%s", err)
+		logr.Fatalf("%s", err)
 	}
 
 	err = idpServer.Store.Put("/users/bob", samlidp.User{
@@ -114,7 +113,7 @@ func main() {
 		GivenName:      "Bob",
 	})
 	if err != nil {
-		log.Fatalf("%s", err)
+		logr.Fatalf("%s", err)
 	}
 
 	goji.Handle("/*", idpServer)

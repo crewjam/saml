@@ -9,7 +9,6 @@ import (
 	"encoding/xml"
 	"flag"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,6 +18,7 @@ import (
 	"github.com/zenazn/goji"
 	"github.com/zenazn/goji/web"
 
+	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/samlsp"
 )
 
@@ -100,6 +100,7 @@ OwJlNCASPZRH/JmF8tX0hoHuAQ==
 )
 
 func main() {
+	logr := logger.DefaultLogger
 	rootURLstr := flag.String("url", "https://962766ce.ngrok.io", "The base URL of this service")
 	idpMetadataURLstr := flag.String("idp", "https://516becc2.ngrok.io/metadata", "The metadata URL for the IDP")
 	flag.Parse()
@@ -126,12 +127,13 @@ func main() {
 	samlSP, err := samlsp.New(samlsp.Options{
 		URL:               *rootURL,
 		Key:               keyPair.PrivateKey.(*rsa.PrivateKey),
+		Logger:            logr,
 		Certificate:       keyPair.Leaf,
 		AllowIDPInitiated: true,
 		IDPMetadataURL:    idpMetadataURL,
 	})
 	if err != nil {
-		log.Fatalf("%s", err)
+		logr.Fatalf("%s", err)
 	}
 
 	// register with the service provider

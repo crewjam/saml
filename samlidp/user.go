@@ -3,7 +3,6 @@ package samlidp
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 
 	"github.com/zenazn/goji/web"
@@ -28,7 +27,7 @@ type User struct {
 func (s *Server) HandleListUsers(c web.C, w http.ResponseWriter, r *http.Request) {
 	users, err := s.Store.List("/users/")
 	if err != nil {
-		log.Printf("ERROR: %s", err)
+		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -44,7 +43,7 @@ func (s *Server) HandleGetUser(c web.C, w http.ResponseWriter, r *http.Request) 
 	user := User{}
 	err := s.Store.Get(fmt.Sprintf("/users/%s", c.URLParams["id"]), &user)
 	if err != nil {
-		log.Printf("ERROR: %s", err)
+		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -59,7 +58,7 @@ func (s *Server) HandleGetUser(c web.C, w http.ResponseWriter, r *http.Request) 
 func (s *Server) HandlePutUser(c web.C, w http.ResponseWriter, r *http.Request) {
 	user := User{}
 	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
-		log.Printf("ERROR: %s", err)
+		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
@@ -69,7 +68,7 @@ func (s *Server) HandlePutUser(c web.C, w http.ResponseWriter, r *http.Request) 
 		var err error
 		user.HashedPassword, err = bcrypt.GenerateFromPassword([]byte(*user.PlaintextPassword), bcrypt.DefaultCost)
 		if err != nil {
-			log.Printf("ERROR: %s", err)
+			s.logger.Printf("ERROR: %s", err)
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
@@ -82,7 +81,7 @@ func (s *Server) HandlePutUser(c web.C, w http.ResponseWriter, r *http.Request) 
 		case err == ErrNotFound:
 			// nop
 		default:
-			log.Printf("ERROR: %s", err)
+			s.logger.Printf("ERROR: %s", err)
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
@@ -91,7 +90,7 @@ func (s *Server) HandlePutUser(c web.C, w http.ResponseWriter, r *http.Request) 
 
 	err := s.Store.Put(fmt.Sprintf("/users/%s", c.URLParams["id"]), &user)
 	if err != nil {
-		log.Printf("ERROR: %s", err)
+		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -102,7 +101,7 @@ func (s *Server) HandlePutUser(c web.C, w http.ResponseWriter, r *http.Request) 
 func (s *Server) HandleDeleteUser(c web.C, w http.ResponseWriter, r *http.Request) {
 	err := s.Store.Delete(fmt.Sprintf("/users/%s", c.URLParams["id"]))
 	if err != nil {
-		log.Printf("ERROR: %s", err)
+		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}

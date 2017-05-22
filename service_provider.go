@@ -16,13 +16,16 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
+	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/xmlenc"
 	dsig "github.com/russellhaering/goxmldsig"
 	"github.com/russellhaering/goxmldsig/etreeutils"
 )
 
+// NameIDFormat is the format of the id
 type NameIDFormat string
 
+// Name ID formats
 const (
 	UnspecifiedNameIDFormat  NameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:unspecified"
 	TransientNameIDFormat    NameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
@@ -63,6 +66,9 @@ type ServiceProvider struct {
 	// MetadataValidDuration is a duration used to calculate validUntil
 	// attribute in the metadata endpoint
 	MetadataValidDuration time.Duration
+
+	// Logger is used to log messages for example in the event of errors
+	Logger logger.Interface
 }
 
 // MaxIssueDelay is the longest allowed time between when a SAML assertion is

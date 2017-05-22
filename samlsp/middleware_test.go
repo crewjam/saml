@@ -20,6 +20,7 @@ import (
 	"crypto/x509"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/testsaml"
 )
 
@@ -73,6 +74,7 @@ func (test *MiddlewareTest) SetUpTest(c *C) {
 			MetadataURL: mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
 			AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
 			IDPMetadata: &saml.Metadata{},
+			Logger:      logger.DefaultLogger,
 		},
 		CookieName:   "ttt",
 		CookieMaxAge: time.Hour * 2,

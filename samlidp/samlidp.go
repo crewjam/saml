@@ -4,13 +4,13 @@ package samlidp
 
 import (
 	"crypto"
+	"crypto/x509"
 	"net/http"
 	"net/url"
 	"sync"
 
-	"crypto/x509"
-
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/logger"
 	"github.com/zenazn/goji/web"
 )
 
@@ -18,6 +18,7 @@ import (
 type Options struct {
 	URL         url.URL
 	Key         crypto.PrivateKey
+	Logger      logger.Interface
 	Certificate *x509.Certificate
 	Store       Store
 }
@@ -35,6 +36,7 @@ type Options struct {
 type Server struct {
 	http.Handler
 	idpConfigMu      sync.RWMutex // protects calls into the IDP
+	logger           logger.Interface
 	serviceProviders map[string]*saml.Metadata
 	IDP              saml.IdentityProvider // the underlying IDP
 	Store            Store                 // the data store
@@ -46,16 +48,24 @@ func New(opts Options) (*Server, error) {
 	metadataURL.Path = metadataURL.Path + "/metadata"
 	ssoURL := opts.URL
 	ssoURL.Path = ssoURL.Path + "/sso"
+	logr := opts.Logger
+	if logr == nil {
+		logr = logger.DefaultLogger
+	}
+
 	s := &Server{
 		serviceProviders: map[string]*saml.Metadata{},
 		IDP: saml.IdentityProvider{
 			Key:         opts.Key,
+			Logger:      logr,
 			Certificate: opts.Certificate,
 			MetadataURL: metadataURL,
 			SSOURL:      ssoURL,
 		},
-		Store: opts.Store,
+		logger: logr,
+		Store:  opts.Store,
 	}
+
 	s.IDP.SessionProvider = s
 	s.IDP.ServiceProviderProvider = s
 
