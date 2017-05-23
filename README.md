@@ -1,3 +1,21 @@
+
+## Breaking Changes from 0.2.0 to master.
+
+Note: between version 0.2.0 and the current master include changes to the API
+that will break your existing code a little.
+
+This change turned some fields from pointers to a single optional struct into
+the more correct slice of struct, and to pluralize the field name. For example,
+`IDPSSODescriptor *IDPSSODescriptor` has become 
+`IDPSSODescriptors []IDPSSODescriptor`. This more accurately reflects the 
+standard.
+
+The struct `Metadata` has been renamed to `EntityDescriptor`. In 0.2.0 and before, 
+every struct derived from the standard has the same name as in the standard, 
+*except* for `Metadata` which should always have been called `EntityDescriptor`. 
+
+## Introduction
+
 Package saml contains a partial implementation of the SAML standard in golang.
 SAML is a standard for identity federation, i.e. either allowing a third party to authenticate your users or allowing third parties to rely on us to authenticate their users.
 
@@ -81,7 +99,7 @@ Next we'll have to register our service provider with the identiy provider to es
     mdpath=saml-test-$USER-$HOST.xml
     curl localhost:8000/saml/metadata > $mdpath
 
-Naviate to https://www.testshib.org/register.html and upload the file you fetched. 
+Naviate to https://www.testshib.org/register.html and upload the file you fetched.
 
 Now you should be able to authenticate. The flow should look like this:
 
