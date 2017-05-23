@@ -17,14 +17,14 @@ type Service struct {
 	Name string
 
 	// Metdata is the XML metadata of the service provider.
-	Metadata saml.Metadata
+	Metadata saml.EntityDescriptor
 }
 
 // GetServiceProvider returns the Service Provider metadata for the
 // service provider ID, which is typically the service provider's
 // metadata URL. If an appropriate service provider cannot be found then
 // the returned error must be os.ErrNotExist.
-func (s *Server) GetServiceProvider(r *http.Request, serviceProviderID string) (*saml.Metadata, error) {
+func (s *Server) GetServiceProvider(r *http.Request, serviceProviderID string) (*saml.EntityDescriptor, error) {
 	s.idpConfigMu.RLock()
 	defer s.idpConfigMu.RUnlock()
 	rv, ok := s.serviceProviders[serviceProviderID]

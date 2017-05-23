@@ -258,9 +258,9 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 			claims.StandardClaims.Subject = nameID.Value
 		}
 	}
-	if assertion.AttributeStatement != nil {
+	for _, attributeStatement := range assertion.AttributeStatements {
 		claims.Attributes = map[string][]string{}
-		for _, attr := range assertion.AttributeStatement.Attributes {
+		for _, attr := range attributeStatement.Attributes {
 			claimName := attr.FriendlyName
 			if claimName == "" {
 				claimName = attr.Name
