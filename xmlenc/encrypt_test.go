@@ -6,6 +6,8 @@ import (
 	"math/rand"
 	"strings"
 
+	"crypto/x509"
+
 	"github.com/beevik/etree"
 	"github.com/kr/pretty"
 	. "gopkg.in/check.v1"
@@ -47,9 +49,9 @@ func (test *EncryptTest) SetUpTest(c *C) {
 }
 
 func (test *EncryptTest) TestCanEncryptOAEP(c *C) {
-	var err error
 	pemBlock, _ := pem.Decode([]byte(testCertificate))
-	certificate := []byte(pemBlock.Bytes)
+	certificate, err := x509.ParseCertificate(pemBlock.Bytes)
+	c.Assert(err, IsNil)
 
 	e := OAEP()
 	e.BlockCipher = AES128CBC
