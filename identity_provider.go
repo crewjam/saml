@@ -657,8 +657,7 @@ func (req *IdpAuthnRequest) MakeAssertionEl() error {
 	}
 	encryptedDataEl.CreateAttr("Type", "http://www.w3.org/2001/04/xmlenc#Element")
 
-	encryptedAssertionEl := etree.NewElement("saml2:EncryptedAssertion")
-	encryptedAssertionEl.CreateAttr("xmlns:saml2", "urn:oasis:names:tc:SAML:2.0:protocol")
+	encryptedAssertionEl := etree.NewElement("saml:EncryptedAssertion")
 	encryptedAssertionEl.AddChild(encryptedDataEl)
 	req.AssertionEl = encryptedAssertionEl
 
