@@ -495,7 +495,7 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 
 	c.Assert(req.Validate(), IsNil)
 
-	err := req.MakeAssertion(&Session{
+	err := DefaultAssertionMaker{}.MakeAssertion(&req, &Session{
 		ID:       "f00df00df00d",
 		UserName: "alice",
 	})
@@ -561,7 +561,7 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 			},
 		},
 	})
-	err = req.MakeAssertion(&Session{
+	err = DefaultAssertionMaker{}.MakeAssertion(&req, &Session{
 		ID:             "f00df00df00d",
 		CreateTime:     TimeNow(),
 		ExpireTime:     TimeNow().Add(time.Hour),
@@ -673,7 +673,7 @@ func (test *IdentityProviderTest) TestMarshalAssertion(c *C) {
 	req.HTTPRequest, _ = http.NewRequest("POST", "http://idp.example.com/saml/sso", nil)
 	err := req.Validate()
 	c.Assert(err, IsNil)
-	err = req.MakeAssertion(&Session{
+	err = DefaultAssertionMaker{}.MakeAssertion(&req, &Session{
 		ID:       "f00df00df00d",
 		UserName: "alice",
 	})
@@ -720,7 +720,7 @@ func (test *IdentityProviderTest) TestMakeResponse(c *C) {
 	req.HTTPRequest, _ = http.NewRequest("POST", "http://idp.example.com/saml/sso", nil)
 	err := req.Validate()
 	c.Assert(err, IsNil)
-	err = req.MakeAssertion(&Session{
+	err = DefaultAssertionMaker{}.MakeAssertion(&req, &Session{
 		ID:       "f00df00df00d",
 		UserName: "alice",
 	})
@@ -863,7 +863,7 @@ func (test *IdentityProviderTest) TestCanHandleUnencryptedResponse(c *C) {
 	req.HTTPRequest, _ = http.NewRequest("POST", "http://idp.example.com/saml/sso", nil)
 	err = req.Validate()
 	c.Assert(err, IsNil)
-	err = req.MakeAssertion(&Session{
+	err = DefaultAssertionMaker{}.MakeAssertion(&req, &Session{
 		ID:       "f00df00df00d",
 		UserName: "alice",
 	})
@@ -958,7 +958,7 @@ func (test *IdentityProviderTest) TestRequestedAttributes(c *C) {
 	req.ACSEndpoint = &metadata.SPSSODescriptors[0].AssertionConsumerServices[0]
 	req.SPSSODescriptor = &metadata.SPSSODescriptors[0]
 	c.Assert(err, IsNil)
-	err = req.MakeAssertion(&Session{
+	err = DefaultAssertionMaker{}.MakeAssertion(req, &Session{
 		ID:             "f00df00df00d",
 		UserName:       "alice",
 		UserEmail:      "alice@example.com",
