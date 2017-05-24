@@ -63,10 +63,9 @@ func New(opts Options) (*Middleware, error) {
 	c := http.DefaultClient
 	if opts.TLS != nil {
 		//Support for custom TLS certificate trusts
-		tr := http.Transport{
+		c.Transport = &http.Transport{
 			TLSClientConfig: opts.TLS,
 		}
-		c.Transport = &tr
 	}
 	req, err := http.NewRequest("GET", opts.IDPMetadataURL.String(), nil)
 	if err != nil {
