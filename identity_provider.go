@@ -545,7 +545,7 @@ func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
 		IssueInstant: TimeNow(),
 		Version:      "2.0",
 		Issuer: Issuer{
-			Format: "XXX",
+			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
 			Value:  req.IDP.Metadata().EntityID,
 		},
 		Subject: &Subject{
