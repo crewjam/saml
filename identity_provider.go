@@ -64,6 +64,15 @@ type ServiceProviderProvider interface {
 	GetServiceProvider(r *http.Request, serviceProviderID string) (*EntityDescriptor, error)
 }
 
+// AssertionMaker is an interface used by IdentityProvider to construct the
+// assertion for a request. The default implementation is DefaultAssertionMaker,
+// which is used if not AssertionMaker is specified.
+type AssertionMaker interface {
+	// MakeAssertion constructs an assertion from session and the request and
+	// assigns it to req.Assertion.
+	MakeAssertion(req *IdpAuthnRequest, session *Session) error
+}
+
 // IdentityProvider implements the SAML Identity Provider role (IDP).
 //
 // An identity provider receives SAML assertion requests and responds
@@ -86,6 +95,7 @@ type IdentityProvider struct {
 	SSOURL                  url.URL
 	ServiceProviderProvider ServiceProviderProvider
 	SessionProvider         SessionProvider
+	AssertionMaker          AssertionMaker
 }
 
 // Metadata returns the metadata structure for this identity provider.
@@ -194,8 +204,11 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// we have a valid session and must make a SAML assertion
-	if err := req.MakeAssertion(session); err != nil {
+	assertionMaker := idp.AssertionMaker
+	if assertionMaker == nil {
+		assertionMaker = DefaultAssertionMaker{}
+	}
+	if err := assertionMaker.MakeAssertion(req, session); err != nil {
 		idp.Logger.Printf("failed to make assertion: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
@@ -255,7 +268,11 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if err := req.MakeAssertion(session); err != nil {
+	assertionMaker := idp.AssertionMaker
+	if assertionMaker == nil {
+		assertionMaker = DefaultAssertionMaker{}
+	}
+	if err := assertionMaker.MakeAssertion(req, session); err != nil {
 		idp.Logger.Printf("failed to make assertion: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
@@ -385,9 +402,14 @@ func (req *IdpAuthnRequest) getACSEndpoint() error {
 	return os.ErrNotExist // no ACS url found or specified
 }
 
-// MakeAssertion produces a SAML assertion for the
+// DefaultAssertionMaker produces a SAML assertion for the
 // given request and assigns it to req.Assertion.
-func (req *IdpAuthnRequest) MakeAssertion(session *Session) error {
+type DefaultAssertionMaker struct {
+}
+
+// MakeAssertion implements AssertionMaker. It produces a SAML assertion from the
+// given request and assigns it to req.Assertion.
+func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Session) error {
 	attributes := []Attribute{}
 
 	var attributeConsumingService *AttributeConsumingService
