@@ -821,6 +821,32 @@ func (req *IdpAuthnRequest) MakeResponse() error {
 	responseEl := response.Element()
 	responseEl.AddChild(req.AssertionEl) // AssertionEl either an EncryptedAssertion or Assertion element
 
+	// Sign the response element (we've already signed the Assertion element)
+	{
+		keyPair := tls.Certificate{
+			Certificate: [][]byte{req.IDP.Certificate.Raw},
+			PrivateKey:  req.IDP.Key,
+			Leaf:        req.IDP.Certificate,
+		}
+		keyStore := dsig.TLSCertKeyStore(keyPair)
+
+		signingContext := dsig.NewDefaultSigningContext(keyStore)
+		signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
+		if err := signingContext.SetSignatureMethod(dsig.RSASHA1SignatureMethod); err != nil {
+			return err
+		}
+
+		signedResponseEl, err := signingContext.SignEnveloped(responseEl)
+		if err != nil {
+			return err
+		}
+
+		sigEl := signedResponseEl.ChildElements()[len(signedResponseEl.ChildElements())-1]
+		response.Signature = sigEl
+		responseEl = response.Element()
+		responseEl.AddChild(req.AssertionEl)
+	}
+
 	req.ResponseEl = responseEl
 	return nil
 }
