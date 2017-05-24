@@ -4,7 +4,6 @@ package samlsp
 
 import (
 	"crypto/rsa"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/xml"
 	"fmt"
@@ -26,7 +25,7 @@ type Options struct {
 	AllowIDPInitiated bool
 	IDPMetadata       *saml.EntityDescriptor
 	IDPMetadataURL    *url.URL
-	TLS               *tls.Config
+	HTTPClient        *http.Client
 }
 
 // New creates a new Middleware
@@ -60,12 +59,9 @@ func New(opts Options) (*Middleware, error) {
 		return m, nil
 	}
 
-	c := http.DefaultClient
-	if opts.TLS != nil {
-		//Support for custom TLS certificate trusts
-		c.Transport = &http.Transport{
-			TLSClientConfig: opts.TLS,
-		}
+	c := opts.HTTPClient
+	if c == nil {
+		c = http.DefaultClient
 	}
 	req, err := http.NewRequest("GET", opts.IDPMetadataURL.String(), nil)
 	if err != nil {
