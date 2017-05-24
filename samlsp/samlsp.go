@@ -25,6 +25,7 @@ type Options struct {
 	AllowIDPInitiated bool
 	IDPMetadata       *saml.EntityDescriptor
 	IDPMetadataURL    *url.URL
+	HTTPClient        *http.Client
 }
 
 // New creates a new Middleware
@@ -58,7 +59,10 @@ func New(opts Options) (*Middleware, error) {
 		return m, nil
 	}
 
-	c := http.DefaultClient
+	c := opts.HTTPClient
+	if c == nil {
+		c = http.DefaultClient
+	}
 	req, err := http.NewRequest("GET", opts.IDPMetadataURL.String(), nil)
 	if err != nil {
 		return nil, err
