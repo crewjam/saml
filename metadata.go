@@ -83,7 +83,7 @@ func (m *EntityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 	}{
 		Alias: (*Alias)(m),
 	}
-	if err := d.DecodeElement(&aux, &start); err != nil {
+	if err := d.DecodeElement(aux, &start); err != nil {
 		return err
 	}
 	m.ValidUntil = time.Time(aux.ValidUntil)
