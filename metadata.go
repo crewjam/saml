@@ -62,11 +62,13 @@ type EntityDescriptor struct {
 func (m *EntityDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type Alias EntityDescriptor
 	aux := &struct {
-		ValidUntil RelaxedTime `xml:"validUntil,attr,omitempty"`
+		ValidUntil    RelaxedTime `xml:"validUntil,attr,omitempty"`
+		CacheDuration Duration    `xml:"cacheDuration,attr,omitempty"`
 		*Alias
 	}{
-		ValidUntil: RelaxedTime(m.ValidUntil),
-		Alias:      (*Alias)(m),
+		ValidUntil:    RelaxedTime(m.ValidUntil),
+		CacheDuration: Duration(m.CacheDuration),
+		Alias:         (*Alias)(m),
 	}
 	return e.Encode(aux)
 }
@@ -75,7 +77,8 @@ func (m *EntityDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElement) er
 func (m *EntityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias EntityDescriptor
 	aux := &struct {
-		ValidUntil RelaxedTime `xml:"validUntil,attr,omitempty"`
+		ValidUntil    RelaxedTime `xml:"validUntil,attr,omitempty"`
+		CacheDuration Duration    `xml:"cacheDuration,attr,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -84,6 +87,7 @@ func (m *EntityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 		return err
 	}
 	m.ValidUntil = time.Time(aux.ValidUntil)
+	m.CacheDuration = time.Duration(aux.CacheDuration)
 	return nil
 }
 
