@@ -59,7 +59,7 @@ type EntityDescriptor struct {
 }
 
 // MarshalXML implements xml.Marshaler
-func (m *EntityDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+func (m EntityDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type Alias EntityDescriptor
 	aux := &struct {
 		ValidUntil    RelaxedTime `xml:"validUntil,attr,omitempty"`
@@ -68,7 +68,7 @@ func (m *EntityDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElement) er
 	}{
 		ValidUntil:    RelaxedTime(m.ValidUntil),
 		CacheDuration: Duration(m.CacheDuration),
-		Alias:         (*Alias)(m),
+		Alias:         (*Alias)(&m),
 	}
 	return e.Encode(aux)
 }
