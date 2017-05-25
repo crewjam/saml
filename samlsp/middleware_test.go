@@ -217,6 +217,30 @@ func (test *MiddlewareTest) TestRequireAccountCreds(c *C) {
 	c.Assert(resp.Code, Equals, http.StatusTeapot)
 }
 
+func (test *MiddlewareTest) TestFiltersSpecialHeadersInRequest(c *C) {
+	handler := test.Middleware.RequireAccount(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			panic("not reached")
+		}))
+
+	{
+		req, _ := http.NewRequest("GET", "/frob", nil)
+		req.Header.Set("X-Saml-Uid", "root") // evil
+		req.Header.Set("Cookie", "ttt="+expectedToken+"; Path=/; Max-Age=7200")
+		resp := httptest.NewRecorder()
+		c.Assert(func() { handler.ServeHTTP(resp, req) }, PanicMatches, "X-Saml-\\* headers should not exist when this function is called")
+	}
+
+	// make sure case folding works
+	{
+		req, _ := http.NewRequest("GET", "/frob", nil)
+		req.Header.Set("x-SAML-uId", "root") // evil
+		req.Header.Set("Cookie", "ttt="+expectedToken+"; Path=/; Max-Age=7200")
+		resp := httptest.NewRecorder()
+		c.Assert(func() { handler.ServeHTTP(resp, req) }, PanicMatches, "X-Saml-\\* headers should not exist when this function is called")
+	}
+}
+
 func (test *MiddlewareTest) TestRequireAccountBadCreds(c *C) {
 	handler := test.Middleware.RequireAccount(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
