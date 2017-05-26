@@ -47,8 +47,8 @@ func (d Duration) MarshalText() ([]byte, error) {
 
 const (
 	day   = 24 * time.Hour
-	month = 30 * day   // Assumed to be 30 days.
-	year  = 12 * month // Assumed to be non-leap year.
+	month = 30 * day  // Assumed to be 30 days.
+	year  = 365 * day // Assumed to be non-leap year.
 )
 
 var (
