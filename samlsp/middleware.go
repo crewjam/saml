@@ -195,6 +195,11 @@ func (m *Middleware) getPossibleRequestIDs(r *http.Request) []string {
 			m.ServiceProvider.Logger.Printf("... invalid token %s", err)
 			continue
 		}
+		// Validate token signing method
+		if token.Method != jwt.SigningMethodHS256 {
+			log.Printf("EROR: invalid jwt signing method: %s", token.Method)
+			continue
+		}
 		claims := token.Claims.(jwt.MapClaims)
 		rv = append(rv, claims["id"].(string))
 	}
@@ -235,6 +240,12 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 		})
 		if err != nil || !state.Valid {
 			m.ServiceProvider.Logger.Printf("Cannot decode state JWT: %s (%s)", err, stateCookie.Value)
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+		// Validate token signing method
+		if state.Method != jwt.SigningMethodHS256 {
+			log.Printf("EROR: invalid jwt signing method: %s (%s)", state.Method, stateCookie.Value)
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
@@ -311,6 +322,11 @@ func (m *Middleware) IsAuthorized(r *http.Request) bool {
 	})
 	if err != nil || !token.Valid {
 		m.ServiceProvider.Logger.Printf("ERROR: invalid token: %s", err)
+		return false
+	}
+	// Validate token signing method
+	if token.Method != jwt.SigningMethodHS256 {
+		log.Printf("EROR: invalid jwt signing method: %s", token.Method)
 		return false
 	}
 	if err := tokenClaims.StandardClaims.Valid(); err != nil {
