@@ -386,6 +386,14 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 		retErr.PrivateErr = fmt.Errorf("cannot parse base64: %s", err)
 		return nil, retErr
 	}
+
+	return sp.ValidateResponse(rawResponseBuf, possibleRequestIDs, now)
+}
+
+func (sp *ServiceProvider) ValidateResponse(rawResponseBuf []byte, possibleRequestIDs []string, now time.Time) (*Assertion, error) {
+	retErr := &InvalidResponseError{
+		Now: now,
+	}
 	retErr.Response = string(rawResponseBuf)
 
 	// do some validation first before we decrypt
