@@ -66,13 +66,17 @@ func (s *Server) HandleGetService(c web.C, w http.ResponseWriter, r *http.Reques
 // service metadata in the request body and stores it.
 func (s *Server) HandlePutService(c web.C, w http.ResponseWriter, r *http.Request) {
 	service := Service{}
-	if err := xml.NewDecoder(r.Body).Decode(&service.Metadata); err != nil {
+
+	metadata, err := getSPMetadata(r.Body)
+	if err != nil {
 		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
-	err := s.Store.Put(fmt.Sprintf("/services/%s", c.URLParams["id"]), &service)
+	service.Metadata = *metadata
+
+	err = s.Store.Put(fmt.Sprintf("/services/%s", c.URLParams["id"]), &service)
 	if err != nil {
 		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
