@@ -88,8 +88,10 @@ func validateRSAKey(key interface{}, encryptedKey *etree.Element) (*rsa.PrivateK
 	// extract and verify that the public key matches the certificate
 	// TODO(ross): I'm not sure why this is needed, but perhaps the certificate is
 	//   included in case there is more than one key or something?
-	{
-		el := encryptedKey.FindElement("./KeyInfo/X509Data/X509Certificate")
+	// TODO(Bryce) it does look like this section is included to either
+	// a) let the service know up front if the key will work
+	// b) let the service provider know which key to use to decrypt the message
+	if el := encryptedKey.FindElement("./KeyInfo/X509Data/X509Certificate"); el != nil {
 		if el == nil {
 			return nil, ErrCannotFindRequiredElement("X509Certificate")
 		}
@@ -110,6 +112,14 @@ func validateRSAKey(key interface{}, encryptedKey *etree.Element) (*rsa.PrivateK
 		if rsaKey.N.Cmp(pubKey.N) != 0 || rsaKey.E != pubKey.E {
 			return nil, fmt.Errorf("certificate does not match provided key")
 		}
+	} else if el = encryptedKey.FindElement("./KeyInfo/X509Data/X509IssuerSerial"); el != nil {
+		//TODO determine how to validate the issuer serial information
+		//The service is given information about the X509 certificate, but we only have the rsa.Key in this
+		//skope
+		//If it is necessary that we verify the certificate, it will be necessary to refactor the xmlenc package
+		//to provide the X509 certificate instead of just the rsa Private Key
+	} else {
+		return nil, ErrCannotFindRequiredElement("X509Certificate or X509IssuerSerial")
 	}
 	return rsaKey, nil
 }
