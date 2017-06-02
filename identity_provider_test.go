@@ -286,7 +286,7 @@ func (test *IdentityProviderTest) TestCanHandleRequestWithExistingSession(c *C) 
 	test.IDP.ServeSSO(w, r)
 	c.Assert(w.Code, Equals, 200)
 	c.Assert(string(w.Body.Bytes()), Matches,
-		"^<html><form method=\"post\" action=\"https://sp\\.example\\.com/saml2/acs\" id=\"SAMLResponseForm\"><input type=\"hidden\" name=\"SAMLResponse\" value=\".*\" /><input type=\"hidden\" name=\"RelayState\" value=\"ThisIsTheRelayState\" /><input type=\"submit\" value=\"Continue\" /></form><script>document\\.getElementById\\('SAMLResponseForm'\\)\\.submit\\(\\);</script></html>$")
+		"^<html><form method=\"post\" action=\"https://sp\\.example\\.com/saml2/acs\" id=\"SAMLResponseForm\"><input type=\"hidden\" name=\"SAMLResponse\" value=\".*\" /><input type=\"hidden\" name=\"RelayState\" value=\"ThisIsTheRelayState\" /><input id=\"SAMLSubmitButton\" type=\"submit\" value=\"Continue\" /></form><script>document\\.getElementById\\('SAMLSubmitButton'\\)\\.style\\.visibility='hidden';</script><script>document\\.getElementById\\('SAMLResponseForm'\\)\\.submit\\(\\);</script></html>$")
 }
 
 func (test *IdentityProviderTest) TestCanHandlePostRequestWithExistingSession(c *C) {
@@ -315,7 +315,7 @@ func (test *IdentityProviderTest) TestCanHandlePostRequestWithExistingSession(c 
 	test.IDP.ServeSSO(w, r)
 	c.Assert(w.Code, Equals, 200)
 	c.Assert(string(w.Body.Bytes()), Matches,
-		"^<html><form method=\"post\" action=\"https://sp\\.example\\.com/saml2/acs\" id=\"SAMLResponseForm\"><input type=\"hidden\" name=\"SAMLResponse\" value=\".*\" /><input type=\"hidden\" name=\"RelayState\" value=\"ThisIsTheRelayState\" /><input type=\"submit\" value=\"Continue\" /></form><script>document\\.getElementById\\('SAMLResponseForm'\\)\\.submit\\(\\);</script></html>$")
+		"^<html><form method=\"post\" action=\"https://sp\\.example\\.com/saml2/acs\" id=\"SAMLResponseForm\"><input type=\"hidden\" name=\"SAMLResponse\" value=\".*\" /><input type=\"hidden\" name=\"RelayState\" value=\"ThisIsTheRelayState\" /><input id=\"SAMLSubmitButton\" type=\"submit\" value=\"Continue\" /></form><script>document\\.getElementById\\('SAMLSubmitButton'\\)\\.style\\.visibility='hidden';</script><script>document\\.getElementById\\('SAMLResponseForm'\\)\\.submit\\(\\);</script></html>$")
 }
 
 func (test *IdentityProviderTest) TestRejectsInvalidRequest(c *C) {
@@ -796,7 +796,7 @@ func (test *IdentityProviderTest) TestWriteResponse(c *C) {
 	err = req.WriteResponse(w)
 	c.Assert(err, IsNil)
 	c.Assert(w.Code, Equals, 200)
-	c.Assert(string(w.Body.Bytes()), Equals, "<html><form method=\"post\" action=\"https://sp.example.com/saml2/acs\" id=\"SAMLResponseForm\"><input type=\"hidden\" name=\"SAMLResponse\" value=\"PFRISVNfSVNfVEhFX1NBTUxfUkVTUE9OU0UvPg==\" /><input type=\"hidden\" name=\"RelayState\" value=\"THIS_IS_THE_RELAY_STATE\" /><input type=\"submit\" value=\"Continue\" /></form><script>document.getElementById('SAMLResponseForm').submit();</script></html>")
+	c.Assert(string(w.Body.Bytes()), Equals, "<html><form method=\"post\" action=\"https://sp.example.com/saml2/acs\" id=\"SAMLResponseForm\"><input type=\"hidden\" name=\"SAMLResponse\" value=\"PFRISVNfSVNfVEhFX1NBTUxfUkVTUE9OU0UvPg==\" /><input type=\"hidden\" name=\"RelayState\" value=\"THIS_IS_THE_RELAY_STATE\" /><input id=\"SAMLSubmitButton\" type=\"submit\" value=\"Continue\" /></form><script>document.getElementById('SAMLSubmitButton').style.visibility='hidden';</script><script>document.getElementById('SAMLResponseForm').submit();</script></html>")
 }
 
 func (test *IdentityProviderTest) TestIDPInitiatedNewSession(c *C) {
@@ -829,7 +829,7 @@ func (test *IdentityProviderTest) TestIDPInitiatedExistingSession(c *C) {
 	test.IDP.ServeIDPInitiated(w, r, test.SP.MetadataURL.String(), "ThisIsTheRelayState")
 	c.Assert(w.Code, Equals, 200)
 	c.Assert(string(w.Body.Bytes()), Matches,
-		"^<html><form method=\"post\" action=\"https://sp\\.example\\.com/saml2/acs\" id=\"SAMLResponseForm\"><input type=\"hidden\" name=\"SAMLResponse\" value=\".*\" /><input type=\"hidden\" name=\"RelayState\" value=\"ThisIsTheRelayState\" /><input type=\"submit\" value=\"Continue\" /></form><script>document\\.getElementById\\('SAMLResponseForm'\\)\\.submit\\(\\);</script></html>$")
+		"^<html><form method=\"post\" action=\"https://sp\\.example\\.com/saml2/acs\" id=\"SAMLResponseForm\"><input type=\"hidden\" name=\"SAMLResponse\" value=\".*\" /><input type=\"hidden\" name=\"RelayState\" value=\"ThisIsTheRelayState\" /><input id=\"SAMLSubmitButton\" type=\"submit\" value=\"Continue\" /></form><script>document\\.getElementById\\('SAMLSubmitButton'\\)\\.style\\.visibility='hidden';</script><script>document\\.getElementById\\('SAMLResponseForm'\\)\\.submit\\(\\);</script></html>$")
 }
 
 func (test *IdentityProviderTest) TestIDPInitiatedBadServiceProvider(c *C) {

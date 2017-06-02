@@ -709,8 +709,9 @@ func (req *IdpAuthnRequest) WriteResponse(w http.ResponseWriter) error {
 			`<form method="post" action="{{.URL}}" id="SAMLResponseForm">` +
 			`<input type="hidden" name="SAMLResponse" value="{{.SAMLResponse}}" />` +
 			`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
-			`<input type="submit" value="Continue" />` +
+			`<input id="SAMLSubmitButton" type="submit" value="Continue" />` +
 			`</form>` +
+			`<script>document.getElementById('SAMLSubmitButton').style.visibility='hidden';</script>` +
 			`<script>document.getElementById('SAMLResponseForm').submit();</script>` +
 			`</html>`))
 		data := struct {
