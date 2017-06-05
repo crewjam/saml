@@ -4,7 +4,7 @@ import "time"
 
 type RelaxedTime time.Time
 
-const timeFormat = "2006-01-02T15:04:05.999Z07:00"
+const timeFormat = "2006-01-02T15:04:05.999Z"
 
 func (m RelaxedTime) MarshalText() ([]byte, error) {
 	// According to section 1.2.2 of the OASIS SAML 1.1 spec, we can't trust
