@@ -562,6 +562,15 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 		})
 	}
 
+	// allow for some clock skew in the validity period using the
+	// issuer's apparent clock.
+	notBefore := TimeNow().Add(-1 * MaxClockSkew)
+	notOnOrAfterAfter := notBefore.Add(MaxClockSkew).Add(MaxIssueDelay)
+	if notBefore.Before(req.Request.IssueInstant) {
+		notBefore = req.Request.IssueInstant
+		notOnOrAfterAfter = notBefore.Add(MaxIssueDelay)
+	}
+
 	req.Assertion = &Assertion{
 		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
 		IssueInstant: TimeNow(),
@@ -590,8 +599,8 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 			},
 		},
 		Conditions: &Conditions{
-			NotBefore:    TimeNow(),
-			NotOnOrAfter: TimeNow().Add(MaxIssueDelay),
+			NotBefore:    notBefore,
+			NotOnOrAfter: notOnOrAfterAfter,
 			AudienceRestrictions: []AudienceRestriction{
 				AudienceRestriction{
 					Audience: Audience{Value: req.ServiceProviderMetadata.EntityID},
