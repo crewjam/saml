@@ -1111,3 +1111,49 @@ func (test *IdentityProviderTest) TestRequestedAttributes(c *C) {
 			},
 		}}})
 }
+
+func (test *IdentityProviderTest) TestNoDestination(c *C) {
+	test.IDP.SessionProvider = &mockSessionProvider{
+		GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
+			return &Session{ID: "f00df00df00d", UserName: "alice"}
+		},
+	}
+
+	metadata := EntityDescriptor{}
+	err := xml.Unmarshal([]byte(`<?xml version='1.0' encoding='UTF-8'?><md:EntityDescriptor ID='_97e2ce01-fa34-4c09-9126-4f7595ef6bf8' entityID='https://gitlab.example.com/users/auth/saml/metadata' xmlns:md='urn:oasis:names:tc:SAML:2.0:metadata' xmlns:saml='urn:oasis:names:tc:SAML:2.0:assertion'><md:SPSSODescriptor AuthnRequestsSigned='false' WantAssertionsSigned='false' protocolSupportEnumeration='urn:oasis:names:tc:SAML:2.0:protocol'><md:AssertionConsumerService Binding='urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST' Location='https://gitlab.example.com/users/auth/saml/callback' index='0' isDefault='true'/><md:AttributeConsumingService index='1' isDefault='true'><md:ServiceName xml:lang='en'>Required attributes</md:ServiceName><md:RequestedAttribute FriendlyName='Email address' Name='email' NameFormat='urn:oasis:names:tc:SAML:2.0:attrname-format:basic'/><md:RequestedAttribute FriendlyName='Full name' Name='name' NameFormat='urn:oasis:names:tc:SAML:2.0:attrname-format:basic'/><md:RequestedAttribute FriendlyName='Given name' Name='first_name' NameFormat='urn:oasis:names:tc:SAML:2.0:attrname-format:basic'/><md:RequestedAttribute FriendlyName='Family name' Name='last_name' NameFormat='urn:oasis:names:tc:SAML:2.0:attrname-format:basic'/></md:AttributeConsumingService></md:SPSSODescriptor></md:EntityDescriptor>`), &metadata)
+	c.Assert(err, IsNil)
+	test.IDP.ServiceProviderProvider = &mockServiceProviderProvider{
+		GetServiceProviderFunc: func(r *http.Request, serviceProviderID string) (*EntityDescriptor, error) {
+			if serviceProviderID == "https://gitlab.example.com/users/saml/metadata" {
+				return &metadata, nil
+			}
+			return nil, os.ErrNotExist
+		},
+	}
+
+	req := IdpAuthnRequest{
+		IDP: &test.IDP,
+		RequestBuffer: []byte("" +
+			"<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
+			"  AssertionConsumerServiceURL=\"https://gitlab.example.com/users/auth/saml/callback\" " +
+			"  ID=\"id-00020406080a0c0e10121416181a1c1e\" " +
+			"  IssueInstant=\"2015-12-01T01:57:09Z\" ProtocolBinding=\"\" " +
+			"  Version=\"2.0\">" +
+			"  <Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" " +
+			"    Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://gitlab.example.com/users/saml/metadata</Issuer>" +
+			"</AuthnRequest>"),
+	}
+	req.HTTPRequest, _ = http.NewRequest("POST", "http://idp.example.com/saml/sso", nil)
+	err = req.Validate()
+	c.Assert(err, IsNil)
+	err = DefaultAssertionMaker{}.MakeAssertion(&req, &Session{
+		ID:       "f00df00df00d",
+		UserName: "alice",
+	})
+	c.Assert(err, IsNil)
+	err = req.MakeAssertionEl()
+	c.Assert(err, IsNil)
+
+	err = req.MakeResponse()
+	c.Assert(err, IsNil)
+}

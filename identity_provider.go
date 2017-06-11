@@ -343,11 +343,38 @@ func (req *IdpAuthnRequest) Validate() error {
 		return err
 	}
 
-	// TODO(ross): is this supposed to be the metdata URL? or the target URL?
-	//   i.e. should idp.SSOURL actually be idp.Metadata().EntityID?
-	if req.Request.Destination != req.IDP.SSOURL.String() {
-		return fmt.Errorf("expected destination to be %q, not %q", req.IDP.SSOURL.String(), req.Request.Destination)
+	// We always have exactly one IDP SSO descriptor
+	if len(req.IDP.Metadata().IDPSSODescriptors) != 1 {
+		panic("expected exactly one IDP SSO descriptor in IDP metadata")
 	}
+	idpSsoDescriptor := req.IDP.Metadata().IDPSSODescriptors[0]
+
+	// TODO(ross): support signed authn requests
+	// For now we do the safe thing and fail in the case where we think
+	// requests might be signed.
+	if idpSsoDescriptor.WantAuthnRequestsSigned != nil && *idpSsoDescriptor.WantAuthnRequestsSigned {
+		return fmt.Errorf("Authn request signature checking is not currently supported")
+	}
+
+	// In http://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf §3.4.5.2
+	// we get a description of the Destination attribute:
+	//
+	//   If the message is signed, the Destination XML attribute in the root SAML
+	//   element of the protocol message MUST contain the URL to which the sender
+	//   has instructed the user agent to deliver the message. The recipient MUST
+	//   then verify that the value matches the location at which the message has
+	//   been received.
+	//
+	// We require the destination be correct either (a) if signing is enabled or
+	// (b) if it was provided.
+	mustHaveDestination := idpSsoDescriptor.WantAuthnRequestsSigned != nil && *idpSsoDescriptor.WantAuthnRequestsSigned
+	mustHaveDestination = mustHaveDestination || req.Request.Destination != ""
+	if mustHaveDestination {
+		if req.Request.Destination != req.IDP.SSOURL.String() {
+			return fmt.Errorf("expected destination to be %q, not %q", req.IDP.SSOURL.String(), req.Request.Destination)
+		}
+	}
+
 	if req.Request.IssueInstant.Add(MaxIssueDelay).Before(TimeNow()) {
 		return fmt.Errorf("request expired at %s",
 			req.Request.IssueInstant.Add(MaxIssueDelay))
