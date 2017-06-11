@@ -345,7 +345,7 @@ func (req *IdpAuthnRequest) Validate() error {
 
 	// TODO(ross): is this supposed to be the metdata URL? or the target URL?
 	//   i.e. should idp.SSOURL actually be idp.Metadata().EntityID?
-	if req.Request.Destination != req.IDP.SSOURL.String() {
+	if len(req.Request.Destination) > 0 && req.Request.Destination != req.IDP.SSOURL.String() {
 		return fmt.Errorf("expected destination to be %q, not %q", req.IDP.SSOURL.String(), req.Request.Destination)
 	}
 	if req.Request.IssueInstant.Add(MaxIssueDelay).Before(TimeNow()) {
