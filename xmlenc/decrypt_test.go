@@ -3,6 +3,7 @@ package xmlenc
 import (
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 	"testing"
 
 	"github.com/beevik/etree"
@@ -46,8 +47,6 @@ func (test *DecryptTest) TestCanDecrypt(c *C) {
 	//s, _ := doc.WriteToString()
 	//fmt.Println(s)
 
-	//edElement := doc.Root().FindElement("//EncryptedData")
-
 	keyPEM := "-----BEGIN RSA PRIVATE KEY-----\nMIICXgIBAAKBgQDU8wdiaFmPfTyRYuFlVPi866WrH/2JubkHzp89bBQopDaLXYxi\n3PTu3O6Q/KaKxMOFBqrInwqpv/omOGZ4ycQ51O9I+Yc7ybVlW94lTo2gpGf+Y/8E\nPsVbnZaFutRctJ4dVIp9aQ2TpLiGT0xX1OzBO/JEgq9GzDRf+B+eqSuglwIDAQAB\nAoGBAMuy1eN6cgFiCOgBsB3gVDdTKpww87Qk5ivjqEt28SmXO13A1KNVPS6oQ8SJ\nCT5Azc6X/BIAoJCURVL+LHdqebogKljhH/3yIel1kH19vr4E2kTM/tYH+qj8afUS\nJEmArUzsmmK8ccuNqBcllqdwCZjxL4CHDUmyRudFcHVX9oyhAkEA/OV1OkjM3CLU\nN3sqELdMmHq5QZCUihBmk3/N5OvGdqAFGBlEeewlepEVxkh7JnaNXAXrKHRVu/f/\nfbCQxH+qrwJBANeQERF97b9Sibp9xgolb749UWNlAdqmEpmlvmS202TdcaaT1msU\n4rRLiQN3X9O9mq4LZMSVethrQAdX1whawpkCQQDk1yGf7xZpMJ8F4U5sN+F4rLyM\nRq8Sy8p2OBTwzCUXXK+fYeXjybsUUMr6VMYTRP2fQr/LKJIX+E5ZxvcIyFmDAkEA\nyfjNVUNVaIbQTzEbRlRvT6MqR+PTCefC072NF9aJWR93JimspGZMR7viY6IM4lrr\nvBkm0F5yXKaYtoiiDMzlOQJADqmEwXl0D72ZG/2KDg8b4QZEmC9i5gidpQwJXUc6\nhU+IVQoLxRq0fBib/36K9tcrrO5Ba4iEvDcNY+D8yGbUtA==\n-----END RSA PRIVATE KEY-----\n"
 	b, _ := pem.Decode([]byte(keyPEM))
 	key, err := x509.ParsePKCS1PrivateKey(b.Bytes)
@@ -62,26 +61,32 @@ func (test *DecryptTest) TestCanDecrypt(c *C) {
 	buf, err = Decrypt(key, el)
 	c.Assert(err, IsNil)
 	c.Assert(string(buf), DeepEquals, expectedPlaintext)
+}
 
-	/*
-		algorithm := edElement.FindElement("./EncryptionMethod").SelectAttrValue("Algorithm", "")
-		fmt.Println(algorithm)
-		switch algorithm {
-		case "http://www.w3.org/2001/04/xmlenc#aes128-cbc":
-			// ok
-		default:
-			panic("unknown algorithm")
-		}
+// TODO(ross): remove 'Failing' from the function name when PR #80 lands
+func (test *DecryptTest) FailingTestCanDecryptWithoutCertificate(c *C) {
+	doc := etree.NewDocument()
+	err := doc.ReadFromString(input)
+	c.Assert(err, IsNil)
 
-		keyInfoEl := edElement.FindElement("./KeyInfo")
-		if encryptedKey :=
+	el := doc.FindElement("//ds:X509Certificate")
+	el.Parent().RemoveChild(el)
 
+	s, _ := doc.WriteToString()
+	fmt.Println(s)
 
+	keyPEM := "-----BEGIN RSA PRIVATE KEY-----\nMIICXgIBAAKBgQDU8wdiaFmPfTyRYuFlVPi866WrH/2JubkHzp89bBQopDaLXYxi\n3PTu3O6Q/KaKxMOFBqrInwqpv/omOGZ4ycQ51O9I+Yc7ybVlW94lTo2gpGf+Y/8E\nPsVbnZaFutRctJ4dVIp9aQ2TpLiGT0xX1OzBO/JEgq9GzDRf+B+eqSuglwIDAQAB\nAoGBAMuy1eN6cgFiCOgBsB3gVDdTKpww87Qk5ivjqEt28SmXO13A1KNVPS6oQ8SJ\nCT5Azc6X/BIAoJCURVL+LHdqebogKljhH/3yIel1kH19vr4E2kTM/tYH+qj8afUS\nJEmArUzsmmK8ccuNqBcllqdwCZjxL4CHDUmyRudFcHVX9oyhAkEA/OV1OkjM3CLU\nN3sqELdMmHq5QZCUihBmk3/N5OvGdqAFGBlEeewlepEVxkh7JnaNXAXrKHRVu/f/\nfbCQxH+qrwJBANeQERF97b9Sibp9xgolb749UWNlAdqmEpmlvmS202TdcaaT1msU\n4rRLiQN3X9O9mq4LZMSVethrQAdX1whawpkCQQDk1yGf7xZpMJ8F4U5sN+F4rLyM\nRq8Sy8p2OBTwzCUXXK+fYeXjybsUUMr6VMYTRP2fQr/LKJIX+E5ZxvcIyFmDAkEA\nyfjNVUNVaIbQTzEbRlRvT6MqR+PTCefC072NF9aJWR93JimspGZMR7viY6IM4lrr\nvBkm0F5yXKaYtoiiDMzlOQJADqmEwXl0D72ZG/2KDg8b4QZEmC9i5gidpQwJXUc6\nhU+IVQoLxRq0fBib/36K9tcrrO5Ba4iEvDcNY+D8yGbUtA==\n-----END RSA PRIVATE KEY-----\n"
+	b, _ := pem.Decode([]byte(keyPEM))
+	key, err := x509.ParsePKCS1PrivateKey(b.Bytes)
+	c.Assert(err, IsNil)
 
-		cipherDataEl := edElement.FindElement("./CipherData")
+	el = doc.Root().FindElement("//EncryptedKey")
+	buf, err := Decrypt(key, el)
+	c.Assert(err, IsNil)
+	c.Assert(buf, DeepEquals, []byte{0xc, 0x70, 0xa2, 0xc8, 0x15, 0x74, 0x89, 0x3f, 0x36, 0xd2, 0x7c, 0x14, 0x2a, 0x9b, 0xaa, 0xd9})
 
-
-		//ki := edElement.FindElement("//KeyInfo")
-	*/
-	//fmt.Println(expectedPlaintext)
+	el = doc.Root().FindElement("//EncryptedData")
+	buf, err = Decrypt(key, el)
+	c.Assert(err, IsNil)
+	c.Assert(string(buf), DeepEquals, expectedPlaintext)
 }
