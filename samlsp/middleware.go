@@ -327,6 +327,11 @@ func (m *Middleware) IsAuthorized(r *http.Request) bool {
 		return false
 	}
 
+	//Get any existing context from the http request
+	ctx := r.Context()
+	ctx = context.WithValue(ctx, SamlContextKey("saml-claims"), tokenClaims)
+
+	//TODO remove this if we don't want to continue using headers.  Remove until the next TODO
 	// It is an error for the request to include any X-SAML* headers,
 	// because those might be confused with ours. If we encounter any
 	// such headers, we abort the request, so there is no confustion.
@@ -336,18 +341,13 @@ func (m *Middleware) IsAuthorized(r *http.Request) bool {
 		}
 	}
 
-	//Get any existing context from the http request
-	ctx := r.Context()
-	ctx = context.WithValue(ctx, SamlContextKey("saml-claims"), tokenClaims)
-
 	for claimName, claimValues := range tokenClaims.Attributes {
-		//TODO remove this if we don't want to continue using headers
 		for _, claimValue := range claimValues {
 			r.Header.Add("X-Saml-"+claimName, claimValue)
 		}
 	}
-	//TODO remove this if we don't want to continue using headers
 	r.Header.Set("X-Saml-Subject", tokenClaims.Subject)
+	//TODO finish removing here
 
 	//Overwrite the underlying http request to include the context
 	*r = *r.WithContext(ctx)
