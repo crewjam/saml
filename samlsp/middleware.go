@@ -338,16 +338,15 @@ func (m *Middleware) IsAuthorized(r *http.Request) bool {
 
 	//Get any existing context from the http request
 	ctx := r.Context()
+	ctx = context.WithValue(ctx, SamlContextKey("saml-claims"), tokenClaims)
 
 	for claimName, claimValues := range tokenClaims.Attributes {
-		ctx = context.WithValue(ctx, SamlContextKey(claimName), claimValues)
 		//TODO remove this if we don't want to continue using headers
 		for _, claimValue := range claimValues {
 			r.Header.Add("X-Saml-"+claimName, claimValue)
 		}
 	}
 	//TODO remove this if we don't want to continue using headers
-	ctx = context.WithValue(ctx, SamlContextKey("Subject"), tokenClaims.Subject)
 	r.Header.Set("X-Saml-Subject", tokenClaims.Subject)
 
 	//Overwrite the underlying http request to include the context
