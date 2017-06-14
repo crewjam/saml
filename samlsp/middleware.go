@@ -289,6 +289,9 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 	http.Redirect(w, r, redirectURI, http.StatusFound)
 }
 
+//SamlContextKey is used to give a named type for the keys of the context
+type SamlContextKey string
+
 // IsAuthorized is invoked by RequireAccount to determine if the request
 // is already authorized or if the user's browser should be redirected to the
 // SAML login flow. If the request is authorized, then the request headers
@@ -337,14 +340,14 @@ func (m *Middleware) IsAuthorized(r *http.Request) bool {
 	ctx := r.Context()
 
 	for claimName, claimValues := range tokenClaims.Attributes {
-		ctx = context.WithValue(claimName, claimValues)
+		ctx = context.WithValue(ctx, SamlContextKey(claimName), claimValues)
 		//TODO remove this if we don't want to continue using headers
 		for _, claimValue := range claimValues {
 			r.Header.Add("X-Saml-"+claimName, claimValue)
 		}
 	}
 	//TODO remove this if we don't want to continue using headers
-	ctx = context.WithValue("Subject", tokenClaims.Subject)
+	ctx = context.WithValue(ctx, SamlContextKey("Subject"), tokenClaims.Subject)
 	r.Header.Set("X-Saml-Subject", tokenClaims.Subject)
 
 	//Overwrite the underlying http request to include the context
