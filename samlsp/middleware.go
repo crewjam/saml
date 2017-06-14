@@ -1,6 +1,7 @@
 package samlsp
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/xml"
@@ -207,6 +208,7 @@ func (m *Middleware) getPossibleRequestIDs(r *http.Request) []string {
 	return rv
 }
 
+//TokenClaims are claims that are stored in the jwt
 type TokenClaims struct {
 	jwt.StandardClaims
 	Attributes map[string][]string `json:"attr"`
@@ -243,7 +245,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 
 		// delete the cookie
 		stateCookie.Value = ""
-		stateCookie.Expires = time.Unix(1,0) // past time as close to epoch as possible, but not zero time.Time{}
+		stateCookie.Expires = time.Unix(1, 0) // past time as close to epoch as possible, but not zero time.Time{}
 		http.SetCookie(w, stateCookie)
 	}
 
@@ -331,12 +333,22 @@ func (m *Middleware) IsAuthorized(r *http.Request) bool {
 		}
 	}
 
+	//Get any existing context from the http request
+	ctx := r.Context()
+
 	for claimName, claimValues := range tokenClaims.Attributes {
+		ctx = context.WithValue(claimName, claimValues)
+		//TODO remove this if we don't want to continue using headers
 		for _, claimValue := range claimValues {
 			r.Header.Add("X-Saml-"+claimName, claimValue)
 		}
 	}
+	//TODO remove this if we don't want to continue using headers
+	ctx = context.WithValue("Subject", tokenClaims.Subject)
 	r.Header.Set("X-Saml-Subject", tokenClaims.Subject)
+
+	//Overwrite the underlying http request to include the context
+	*r = *r.WithContext(ctx)
 
 	return true
 }
