@@ -63,8 +63,7 @@ func (test *DecryptTest) TestCanDecrypt(c *C) {
 	c.Assert(string(buf), DeepEquals, expectedPlaintext)
 }
 
-// TODO(ross): remove 'Failing' from the function name when PR #80 lands
-func (test *DecryptTest) FailingTestCanDecryptWithoutCertificate(c *C) {
+func (test *DecryptTest) TestCanDecryptWithoutCertificate(c *C) {
 	doc := etree.NewDocument()
 	err := doc.ReadFromString(input)
 	c.Assert(err, IsNil)
