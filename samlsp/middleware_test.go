@@ -176,13 +176,13 @@ func (test *MiddlewareTest) TestRequireAccountNoCredsPostBinding(c *C) {
 		"<input type=\"hidden\" name=\"RelayState\" value=\"KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6\" />"+
 		"<input id=\"SAMLSubmitButton\" type=\"submit\" value=\"Submit\" />"+
 		"</form>"+
-		"<script>document.getElementById('SAMLSubmitButton').style.visibility=\"hidden\";</script>"+
-		"<script>document.getElementById('SAMLRequestForm').submit();</script>"+
+		"<script>document.getElementById('SAMLSubmitButton').style.visibility=\"hidden\";"+
+		"document.getElementById('SAMLRequestForm').submit();</script>"+
 		"</body>"+
 		"</html>")
 
 	// check that the CSP script hash is set correctly
-	scriptContent := "document.getElementById('SAMLRequestForm').submit();"
+	scriptContent := "document.getElementById('SAMLSubmitButton').style.visibility=\"hidden\";document.getElementById('SAMLRequestForm').submit();"
 	scriptSum := sha256.Sum256([]byte(scriptContent))
 	scriptHash := base64.StdEncoding.EncodeToString(scriptSum[:])
 	c.Assert(resp.Header().Get("Content-Security-Policy"), Equals,

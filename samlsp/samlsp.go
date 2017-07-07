@@ -90,29 +90,32 @@ func New(opts Options) (*Middleware, error) {
 			continue
 		}
 
-		entity := &saml.EntityDescriptor{}
+		entity := new(saml.EntityDescriptor)
 		err = xml.Unmarshal(data, entity)
 
 		// this comparison is ugly, but it is how the error is generated in encoding/xml
 		if err != nil && err.Error() == "expected element type <EntityDescriptor> but have <EntitiesDescriptor>" {
-			entities := &saml.EntitiesDescriptor{}
-			if err := xml.Unmarshal(data, entities); err != nil {
+			entities := new(saml.EntitiesDescriptor)
+			if err = xml.Unmarshal(data, entities); err != nil {
 				return nil, err
 			}
 
 			err = fmt.Errorf("no entity found with IDPSSODescriptor")
-			for _, e := range entities.EntityDescriptors {
+			for j := range entities.EntityDescriptors {
+				e := entities.EntityDescriptors[j]
 				if len(e.IDPSSODescriptors) > 0 {
 					entity = &e
 					err = nil
 				}
 			}
 		}
+
+		m.ServiceProvider.IDPMetadata = entity
+
 		if err != nil {
 			return nil, err
 		}
 
-		m.ServiceProvider.IDPMetadata = entity
 		return m, nil
 	}
 
