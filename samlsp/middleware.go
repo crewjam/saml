@@ -52,6 +52,7 @@ type Middleware struct {
 	AllowIDPInitiated bool
 	CookieName        string
 	CookieMaxAge      time.Duration
+	CookieDomain      string
 }
 
 const defaultCookieMaxAge = time.Hour
@@ -243,7 +244,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 
 		// delete the cookie
 		stateCookie.Value = ""
-		stateCookie.Expires = time.Unix(1,0) // past time as close to epoch as possible, but not zero time.Time{}
+		stateCookie.Expires = time.Unix(1, 0) // past time as close to epoch as possible, but not zero time.Time{}
 		http.SetCookie(w, stateCookie)
 	}
 
@@ -278,6 +279,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     m.CookieName,
+		Domain:   m.CookieDomain,
 		Value:    signedToken,
 		MaxAge:   int(m.CookieMaxAge.Seconds()),
 		HttpOnly: false,
