@@ -58,6 +58,12 @@ type ServiceProvider struct {
 	// i.e. https://example.com/saml/metadata
 	MetadataURL url.URL
 
+	// EntityID - An entity ID is a globally unique name for a SAML entity.
+	// It could be either an Identity Provider (IdP) or a Service Provider (SP).
+	// Set this to override default entity ID which is usually set to your
+	// metadata URL.
+	EntityID string
+
 	// AcsURL is the full URL to the SAML Assertion Customer Service endpoint
 	// on this host, i.e. https://example.com/saml/acs
 	AcsURL url.URL
@@ -100,10 +106,17 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 		validDuration = sp.MetadataValidDuration
 	}
 
+	// Entity id should be set if set by the user.
+	// if not default to metadata URL.
+	entityID := sp.EntityID
+	if entityID == "" {
+		entityID = sp.MetadataURL.String()
+	}
+
 	authnRequestsSigned := false
 	wantAssertionsSigned := true
 	return &EntityDescriptor{
-		EntityID:   sp.MetadataURL.String(),
+		EntityID:   entityID,
 		ValidUntil: TimeNow().Add(validDuration),
 
 		SPSSODescriptors: []SPSSODescriptor{
