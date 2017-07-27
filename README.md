@@ -1,23 +1,23 @@
 
-## Breaking Changes 
+## Breaking Changes
 
 Note: between version 0.2.0 and the current master include changes to the API
 that will break your existing code a little.
 
 This change turned some fields from pointers to a single optional struct into
 the more correct slice of struct, and to pluralize the field name. For example,
-`IDPSSODescriptor *IDPSSODescriptor` has become 
-`IDPSSODescriptors []IDPSSODescriptor`. This more accurately reflects the 
+`IDPSSODescriptor *IDPSSODescriptor` has become
+`IDPSSODescriptors []IDPSSODescriptor`. This more accurately reflects the
 standard.
 
-The struct `Metadata` has been renamed to `EntityDescriptor`. In 0.2.0 and before, 
-every struct derived from the standard has the same name as in the standard, 
-*except* for `Metadata` which should always have been called `EntityDescriptor`. 
+The struct `Metadata` has been renamed to `EntityDescriptor`. In 0.2.0 and before,
+every struct derived from the standard has the same name as in the standard,
+*except* for `Metadata` which should always have been called `EntityDescriptor`.
 
 In various places `url.URL` is now used where `string` was used <= version 0.1.0.
 
-In various places where keys and certificates were modeled as `string` 
-<= version 0.1.0 (what was I thinking?!) they are now modeled as 
+In various places where keys and certificates were modeled as `string`
+<= version 0.1.0 (what was I thinking?!) they are now modeled as
 `*rsa.PrivateKey`, `*x509.Certificate`, or `crypto.PrivateKey` as appropriate.
 
 ## Introduction
@@ -89,8 +89,8 @@ We will use `samlsp.Middleware` to wrap the endpoint we want to protect. Middlew
 
         samlSP, _ := samlsp.New(samlsp.Options{
             URL:            *rootURL,
-            Key:            kp.PrivateKey.(*rsa.PrivateKey),
-            Certificate:    kp.Leaf,
+            Key:            keyPair.PrivateKey.(*rsa.PrivateKey),
+            Certificate:    keyPair.Leaf,
             IDPMetadataURL: idpMetadataURL,
         })
         app := http.HandlerFunc(hello)

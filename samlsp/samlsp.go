@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -42,12 +43,13 @@ func New(opts Options) (*Middleware, error) {
 
 	m := &Middleware{
 		ServiceProvider: saml.ServiceProvider{
-			Key:         opts.Key,
-			Logger:      logr,
-			Certificate: opts.Certificate,
-			MetadataURL: metadataURL,
-			AcsURL:      acsURL,
-			IDPMetadata: opts.IDPMetadata,
+			Key:          opts.Key,
+			Logger:       logr,
+			Certificate:  opts.Certificate,
+			MetadataURL:  metadataURL,
+			AcsURL:       acsURL,
+			IDPMetadata:  opts.IDPMetadata,
+			IDPMetadatas: map[string]saml.EntityDescriptor{},
 		},
 		AllowIDPInitiated: opts.AllowIDPInitiated,
 		CookieName:        defaultCookieName,
@@ -59,13 +61,21 @@ func New(opts Options) (*Middleware, error) {
 		return m, nil
 	}
 
-	c := opts.HTTPClient
+	if err := m.FetchIDPMetadata(opts.HTTPClient, opts.IDPMetadataURL); err != nil {
+		return nil, err
+	}
+
+	return m, nil
+}
+
+// FetchIDPMetadata fetches the IdP Metadata from the given url.
+func (m *Middleware) FetchIDPMetadata(c *http.Client, iDPMetadataURL *url.URL) error {
 	if c == nil {
 		c = http.DefaultClient
 	}
-	req, err := http.NewRequest("GET", opts.IDPMetadataURL.String(), nil)
+	req, err := http.NewRequest("GET", iDPMetadataURL.String(), nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	// Some providers (like OneLogin) do not work properly unless the User-Agent header is specified.
 	// Setting the user agent prevents the 403 Forbidden errors.
@@ -83,9 +93,9 @@ func New(opts Options) (*Middleware, error) {
 		}
 		if err != nil {
 			if i > 10 {
-				return nil, err
+				return err
 			}
-			logr.Printf("ERROR: %s: %s (will retry)", opts.IDPMetadataURL, err)
+			m.ServiceProvider.Logger.Printf("ERROR: %s: %s (will retry)", iDPMetadataURL, err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
@@ -97,7 +107,7 @@ func New(opts Options) (*Middleware, error) {
 		if err != nil && err.Error() == "expected element type <EntityDescriptor> but have <EntitiesDescriptor>" {
 			entities := &saml.EntitiesDescriptor{}
 			if err := xml.Unmarshal(data, entities); err != nil {
-				return nil, err
+				return err
 			}
 
 			err = fmt.Errorf("no entity found with IDPSSODescriptor")
@@ -109,12 +119,15 @@ func New(opts Options) (*Middleware, error) {
 			}
 		}
 		if err != nil {
-			return nil, err
+			return err
 		}
 
+		// TODO keeping this only for making it backward compatible
 		m.ServiceProvider.IDPMetadata = entity
-		return m, nil
+
+		m.ServiceProvider.IDPMetadatas[entity.EntityID] = *entity
+		return nil
 	}
 
-	panic("unreachable")
+	return errors.New("metadata fetch retry limit is reached")
 }
