@@ -65,6 +65,9 @@ type ServiceProvider struct {
 	// IDPMetadata is the metadata from the identity provider.
 	IDPMetadata *EntityDescriptor
 
+	// IDPMetadata is the metadata from the identity provider.
+	IDPMetadatas map[string]EntityDescriptor
+
 	// AuthnNameIDFormat is the format used in the NameIDPolicy for
 	// authentication requests
 	AuthnNameIDFormat NameIDFormat
