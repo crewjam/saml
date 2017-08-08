@@ -104,7 +104,7 @@ type Organization struct {
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-metadata-2.0-os.pdf §2.2.4
 type LocalizedName struct {
-	Lang  string `xml:"xml lang,attr"`
+	Lang  string `xml:"http://www.w3.org/XML/1998/namespace lang,attr"`
 	Value string `xml:",chardata"`
 }
 
@@ -112,7 +112,7 @@ type LocalizedName struct {
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-metadata-2.0-os.pdf §2.2.5
 type LocalizedURI struct {
-	Lang  string `xml:"xml lang,attr"`
+	Lang  string `xml:"http://www.w3.org/XML/1998/namespace lang,attr"`
 	Value string `xml:",chardata"`
 }
 
