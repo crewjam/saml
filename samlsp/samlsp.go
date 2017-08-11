@@ -60,6 +60,9 @@ func New(opts Options) (*Middleware, error) {
 		if _, ok := opts.SigningMethod.(*jwt.SigningMethodHMAC); ok {
 			jwtPrivateKey = x509.MarshalPKCS1PrivateKey(opts.Key)
 			jwtPublicKey = x509.MarshalPKCS1PrivateKey(opts.Key)
+		} else if _, ok := opts.SigningMethod.(*jwt.SigningMethodRSA); ok {
+			jwtPrivateKey = opts.Key
+			jwtPublicKey = opts.Certificate.PublicKey
 		} else {
 			return nil, fmt.Errorf("SAML ServiceProvider Middleware: Unsupported jwt signing method %f", opts.SigningMethod.Alg())
 		}

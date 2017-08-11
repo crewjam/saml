@@ -212,6 +212,38 @@ type TokenClaims struct {
 	Attributes map[string][]string `json:"attr"`
 }
 
+func (m *Middleware) getSignedToken(assertion *saml.Assertion) (string, error) {
+	now := saml.TimeNow()
+	claims := TokenClaims{}
+	claims.Audience = m.ServiceProvider.Metadata().EntityID
+	claims.IssuedAt = assertion.IssueInstant.Unix()
+	claims.ExpiresAt = now.Add(m.CookieMaxAge).Unix()
+	claims.NotBefore = now.Unix()
+	if sub := assertion.Subject; sub != nil {
+		if nameID := sub.NameID; nameID != nil {
+			claims.StandardClaims.Subject = nameID.Value
+		}
+	}
+	for _, attributeStatement := range assertion.AttributeStatements {
+		claims.Attributes = map[string][]string{}
+		for _, attr := range attributeStatement.Attributes {
+			claimName := attr.FriendlyName
+			if claimName == "" {
+				claimName = attr.Name
+			}
+			for _, value := range attr.Values {
+				claims.Attributes[claimName] = append(claims.Attributes[claimName], value.Value)
+			}
+		}
+	}
+	signedToken, err := jwt.NewWithClaims(m.JwtSigningMethod,
+		claims).SignedString(m.JwtSigningKey)
+	if err != nil {
+		return "", err
+	}
+	return signedToken, nil
+}
+
 // Authorize is invoked by ServeHTTP when we have a new, valid SAML assertion.
 // It sets a cookie that contains a signed JWT containing the assertion attributes.
 // It then redirects the user's browser to the original URL contained in RelayState.
@@ -245,31 +277,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 		http.SetCookie(w, stateCookie)
 	}
 
-	now := saml.TimeNow()
-	claims := TokenClaims{}
-	claims.Audience = m.ServiceProvider.Metadata().EntityID
-	claims.IssuedAt = assertion.IssueInstant.Unix()
-	claims.ExpiresAt = now.Add(m.CookieMaxAge).Unix()
-	claims.NotBefore = now.Unix()
-	if sub := assertion.Subject; sub != nil {
-		if nameID := sub.NameID; nameID != nil {
-			claims.StandardClaims.Subject = nameID.Value
-		}
-	}
-	for _, attributeStatement := range assertion.AttributeStatements {
-		claims.Attributes = map[string][]string{}
-		for _, attr := range attributeStatement.Attributes {
-			claimName := attr.FriendlyName
-			if claimName == "" {
-				claimName = attr.Name
-			}
-			for _, value := range attr.Values {
-				claims.Attributes[claimName] = append(claims.Attributes[claimName], value.Value)
-			}
-		}
-	}
-	signedToken, err := jwt.NewWithClaims(m.JwtSigningMethod,
-		claims).SignedString(m.JwtSigningKey)
+	signedToken, err := m.getSignedToken(assertion)
 	if err != nil {
 		panic(err)
 	}

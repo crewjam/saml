@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
-	dsig "github.com/russellhaering/goxmldsig"
+	"github.com/russellhaering/goxmldsig"
 	. "gopkg.in/check.v1"
 
 	"crypto/x509"
@@ -451,4 +451,48 @@ func (test *MiddlewareTest) TestHandlesInvalidResponse(c *C) {
 	c.Assert(string(respBody), Equals, "Forbidden\n")
 	c.Assert(resp.Header().Get("Location"), Equals, "")
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals, "")
+}
+
+func (test *MiddlewareTest) TestRSAKey(c *C) {
+
+	test.Middleware.JwtSigningKey = test.Middleware.ServiceProvider.Key
+	test.Middleware.JwtVerifyKey = test.Middleware.ServiceProvider.Certificate.PublicKey
+	test.Middleware.JwtSigningMethod = jwt.SigningMethodRS256
+
+	token, err := test.Middleware.getSignedToken(&saml.Assertion{})
+	c.Assert(err, IsNil)
+
+	r := httptest.NewRequest("GET", "/", nil)
+	cookie := &http.Cookie{
+		Name:     test.Middleware.CookieName,
+		Value:    token,
+		MaxAge:   int(10),
+		HttpOnly: false,
+		Path:     "/",
+	}
+	r.AddCookie(cookie)
+	authorized := test.Middleware.IsAuthorized(r)
+	c.Assert(authorized, Equals, true)
+}
+
+func (test *MiddlewareTest) TestHMACKey(c *C) {
+
+	test.Middleware.JwtSigningKey = x509.MarshalPKCS1PrivateKey(test.Middleware.ServiceProvider.Key)
+	test.Middleware.JwtVerifyKey = x509.MarshalPKCS1PrivateKey(test.Middleware.ServiceProvider.Key)
+	test.Middleware.JwtSigningMethod = jwt.SigningMethodHS256
+
+	token, err := test.Middleware.getSignedToken(&saml.Assertion{})
+	c.Assert(err, IsNil)
+
+	r := httptest.NewRequest("GET", "/", nil)
+	cookie := &http.Cookie{
+		Name:     test.Middleware.CookieName,
+		Value:    token,
+		MaxAge:   int(10),
+		HttpOnly: false,
+		Path:     "/",
+	}
+	r.AddCookie(cookie)
+	authorized := test.Middleware.IsAuthorized(r)
+	c.Assert(authorized, Equals, true)
 }
