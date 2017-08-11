@@ -55,6 +55,7 @@ type Middleware struct {
 	CookieDomain      string
 	JwtSigningMethod  jwt.SigningMethod
 	JwtSigningKey     crypto.PrivateKey
+	JwtVerifyKey      crypto.PublicKey
 }
 
 const defaultCookieMaxAge = time.Hour
@@ -188,7 +189,7 @@ func (m *Middleware) getPossibleRequestIDs(r *http.Request) []string {
 			ValidMethods: []string{m.JwtSigningMethod.Alg()},
 		}
 		token, err := jwtParser.Parse(cookie.Value, func(t *jwt.Token) (interface{}, error) {
-			return m.JwtSigningKey, nil
+			return m.JwtVerifyKey, nil
 		})
 		if err != nil || !token.Valid {
 			m.ServiceProvider.Logger.Printf("... invalid token %s", err)
@@ -228,7 +229,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 			ValidMethods: []string{m.JwtSigningMethod.Alg()},
 		}
 		state, err := jwtParser.Parse(stateCookie.Value, func(t *jwt.Token) (interface{}, error) {
-			return m.JwtSigningKey, nil
+			return m.JwtVerifyKey, nil
 		})
 		if err != nil || !state.Valid {
 			m.ServiceProvider.Logger.Printf("Cannot decode state JWT: %s (%s)", err, stateCookie.Value)
@@ -305,7 +306,7 @@ func (m *Middleware) IsAuthorized(r *http.Request) bool {
 
 	tokenClaims := TokenClaims{}
 	token, err := jwt.ParseWithClaims(cookie.Value, &tokenClaims, func(t *jwt.Token) (interface{}, error) {
-		return m.JwtSigningKey, nil
+		return m.JwtVerifyKey, nil
 	})
 	if err != nil || !token.Valid {
 		m.ServiceProvider.Logger.Printf("ERROR: invalid token: %s", err)

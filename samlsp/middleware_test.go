@@ -79,6 +79,8 @@ func (test *MiddlewareTest) SetUpTest(c *C) {
 		CookieName:       "ttt",
 		CookieMaxAge:     time.Hour * 2,
 		JwtSigningMethod: jwt.SigningMethodHS256,
+		JwtSigningKey:    x509.MarshalPKCS1PrivateKey(test.Key),
+		JwtVerifyKey:     x509.MarshalPKCS1PrivateKey(test.Key),
 	}
 	err := xml.Unmarshal([]byte(test.IDPMetadata), &test.Middleware.ServiceProvider.IDPMetadata)
 	c.Assert(err, IsNil)

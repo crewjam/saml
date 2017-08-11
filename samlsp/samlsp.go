@@ -54,11 +54,15 @@ func New(opts Options) (*Middleware, error) {
 		opts.SigningMethod = jwt.SigningMethodHS256
 	}
 
-	var jwtKey crypto.PrivateKey
-	if _, ok := opts.SigningMethod.(*jwt.SigningMethodHMAC); ok {
-		jwtKey = x509.MarshalPKCS1PrivateKey(opts.Key)
-	} else {
-		return nil, fmt.Errorf("SAML ServiceProvider Middleware: Unsupported jwt signing method %f", opts.SigningMethod.Alg())
+	var jwtPrivateKey crypto.PrivateKey
+	var jwtPublicKey crypto.PublicKey
+	if opts.Key != nil {
+		if _, ok := opts.SigningMethod.(*jwt.SigningMethodHMAC); ok {
+			jwtPrivateKey = x509.MarshalPKCS1PrivateKey(opts.Key)
+			jwtPublicKey = x509.MarshalPKCS1PrivateKey(opts.Key)
+		} else {
+			return nil, fmt.Errorf("SAML ServiceProvider Middleware: Unsupported jwt signing method %f", opts.SigningMethod.Alg())
+		}
 	}
 
 	m := &Middleware{
@@ -76,7 +80,8 @@ func New(opts Options) (*Middleware, error) {
 		CookieMaxAge:      cookieMaxAge,
 		CookieDomain:      opts.URL.Host,
 		JwtSigningMethod:  opts.SigningMethod,
-		JwtSigningKey:     jwtKey,
+		JwtSigningKey:     jwtPrivateKey,
+		JwtVerifyKey:      jwtPublicKey,
 	}
 
 	// fetch the IDP metadata if needed.
