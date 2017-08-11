@@ -14,6 +14,7 @@ import (
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/logger"
+	"github.com/dgrijalva/jwt-go"
 )
 
 // Options represents the parameters for creating a new middleware
@@ -61,6 +62,7 @@ func New(opts Options) (*Middleware, error) {
 		CookieName:        defaultCookieName,
 		CookieMaxAge:      cookieMaxAge,
 		CookieDomain:      opts.URL.Host,
+		JwtSigningMethod:  jwt.SigningMethodHS256,
 	}
 
 	// fetch the IDP metadata if needed.

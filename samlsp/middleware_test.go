@@ -76,8 +76,9 @@ func (test *MiddlewareTest) SetUpTest(c *C) {
 			IDPMetadata: &saml.EntityDescriptor{},
 			Logger:      logger.DefaultLogger,
 		},
-		CookieName:   "ttt",
-		CookieMaxAge: time.Hour * 2,
+		CookieName:       "ttt",
+		CookieMaxAge:     time.Hour * 2,
+		JwtSigningMethod: jwt.SigningMethodHS256,
 	}
 	err := xml.Unmarshal([]byte(test.IDPMetadata), &test.Middleware.ServiceProvider.IDPMetadata)
 	c.Assert(err, IsNil)
