@@ -3,6 +3,7 @@
 package samlsp
 
 import (
+	"crypto"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/xml"
@@ -29,6 +30,7 @@ type Options struct {
 	HTTPClient        *http.Client
 	CookieMaxAge      time.Duration
 	ForceAuthn        bool
+	SigningMethod     jwt.SigningMethod
 }
 
 // New creates a new Middleware
@@ -48,6 +50,17 @@ func New(opts Options) (*Middleware, error) {
 		cookieMaxAge = defaultCookieMaxAge
 	}
 
+	if opts.SigningMethod == nil {
+		opts.SigningMethod = jwt.SigningMethodHS256
+	}
+
+	var jwtKey crypto.PrivateKey
+	if _, ok := opts.SigningMethod.(*jwt.SigningMethodHMAC); ok {
+		jwtKey = x509.MarshalPKCS1PrivateKey(opts.Key)
+	} else {
+		return nil, fmt.Errorf("SAML ServiceProvider Middleware: Unsupported jwt signing method %f", opts.SigningMethod.Alg())
+	}
+
 	m := &Middleware{
 		ServiceProvider: saml.ServiceProvider{
 			Key:         opts.Key,
@@ -62,8 +75,8 @@ func New(opts Options) (*Middleware, error) {
 		CookieName:        defaultCookieName,
 		CookieMaxAge:      cookieMaxAge,
 		CookieDomain:      opts.URL.Host,
-		JwtSigningMethod:  jwt.SigningMethodHS256,
-		JwtSigningKey:     x509.MarshalPKCS1PrivateKey(opts.Key),
+		JwtSigningMethod:  opts.SigningMethod,
+		JwtSigningKey:     jwtKey,
 	}
 
 	// fetch the IDP metadata if needed.

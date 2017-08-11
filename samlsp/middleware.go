@@ -1,14 +1,13 @@
 package samlsp
 
 import (
+	"crypto"
 	"encoding/base64"
 	"encoding/xml"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
-
-	"crypto"
 
 	"github.com/crewjam/saml"
 	"github.com/dgrijalva/jwt-go"
