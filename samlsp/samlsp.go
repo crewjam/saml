@@ -63,6 +63,7 @@ func New(opts Options) (*Middleware, error) {
 		CookieMaxAge:      cookieMaxAge,
 		CookieDomain:      opts.URL.Host,
 		JwtSigningMethod:  jwt.SigningMethodHS256,
+		JwtSigningKey:     x509.MarshalPKCS1PrivateKey(opts.Key),
 	}
 
 	// fetch the IDP metadata if needed.

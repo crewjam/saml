@@ -1,13 +1,14 @@
 package samlsp
 
 import (
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/xml"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
+
+	"crypto"
 
 	"github.com/crewjam/saml"
 	"github.com/dgrijalva/jwt-go"
@@ -54,6 +55,7 @@ type Middleware struct {
 	CookieMaxAge      time.Duration
 	CookieDomain      string
 	JwtSigningMethod  jwt.SigningMethod
+	JwtSigningKey     crypto.PrivateKey
 }
 
 const defaultCookieMaxAge = time.Hour
@@ -134,12 +136,11 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 		// we set a cookie that corresponds to the state
 		relayState := base64.URLEncoding.EncodeToString(randomBytes(42))
 
-		secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
 		state := jwt.New(m.JwtSigningMethod)
 		claims := state.Claims.(jwt.MapClaims)
 		claims["id"] = req.ID
 		claims["uri"] = r.URL.String()
-		signedState, err := state.SignedString(secretBlock)
+		signedState, err := state.SignedString(m.JwtSigningKey)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -188,8 +189,7 @@ func (m *Middleware) getPossibleRequestIDs(r *http.Request) []string {
 			ValidMethods: []string{m.JwtSigningMethod.Alg()},
 		}
 		token, err := jwtParser.Parse(cookie.Value, func(t *jwt.Token) (interface{}, error) {
-			secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
-			return secretBlock, nil
+			return m.JwtSigningKey, nil
 		})
 		if err != nil || !token.Valid {
 			m.ServiceProvider.Logger.Printf("... invalid token %s", err)
@@ -216,8 +216,6 @@ type TokenClaims struct {
 // It sets a cookie that contains a signed JWT containing the assertion attributes.
 // It then redirects the user's browser to the original URL contained in RelayState.
 func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion *saml.Assertion) {
-	secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
-
 	redirectURI := "/"
 	if r.Form.Get("RelayState") != "" {
 		stateCookie, err := r.Cookie(fmt.Sprintf("saml_%s", r.Form.Get("RelayState")))
@@ -231,7 +229,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 			ValidMethods: []string{m.JwtSigningMethod.Alg()},
 		}
 		state, err := jwtParser.Parse(stateCookie.Value, func(t *jwt.Token) (interface{}, error) {
-			return secretBlock, nil
+			return m.JwtSigningKey, nil
 		})
 		if err != nil || !state.Valid {
 			m.ServiceProvider.Logger.Printf("Cannot decode state JWT: %s (%s)", err, stateCookie.Value)
@@ -271,7 +269,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 		}
 	}
 	signedToken, err := jwt.NewWithClaims(m.JwtSigningMethod,
-		claims).SignedString(secretBlock)
+		claims).SignedString(m.JwtSigningKey)
 	if err != nil {
 		panic(err)
 	}
@@ -308,8 +306,7 @@ func (m *Middleware) IsAuthorized(r *http.Request) bool {
 
 	tokenClaims := TokenClaims{}
 	token, err := jwt.ParseWithClaims(cookie.Value, &tokenClaims, func(t *jwt.Token) (interface{}, error) {
-		secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
-		return secretBlock, nil
+		return m.JwtSigningKey, nil
 	})
 	if err != nil || !token.Valid {
 		m.ServiceProvider.Logger.Printf("ERROR: invalid token: %s", err)
