@@ -271,7 +271,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 			}
 		}
 	}
-	signedToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256,
+	signedToken, err := jwt.NewWithClaims(jwtSigningMethod,
 		claims).SignedString(secretBlock)
 	if err != nil {
 		panic(err)
