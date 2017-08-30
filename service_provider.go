@@ -36,6 +36,7 @@ const (
 	UnspecifiedNameIDFormat  NameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:unspecified"
 	TransientNameIDFormat    NameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
 	EmailAddressNameIDFormat NameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:emailAddress"
+	PersistentNameIDFormat   NameIDForamt = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
 )
 
 // ServiceProvider implements SAML Service provider.
