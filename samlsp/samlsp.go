@@ -105,6 +105,7 @@ func New(opts Options) (*Middleware, error) {
 				if len(e.IDPSSODescriptors) > 0 {
 					entity = &e
 					err = nil
+					break
 				}
 			}
 		}
