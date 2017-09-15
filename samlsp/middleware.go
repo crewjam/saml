@@ -243,7 +243,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 
 		// delete the cookie
 		stateCookie.Value = ""
-		stateCookie.Expires = time.Unix(1,0) // past time as close to epoch as possible, but not zero time.Time{}
+		stateCookie.Expires = time.Unix(1, 0) // past time as close to epoch as possible, but not zero time.Time{}
 		http.SetCookie(w, stateCookie)
 	}
 
@@ -333,7 +333,8 @@ func (m *Middleware) IsAuthorized(r *http.Request) bool {
 
 	for claimName, claimValues := range tokenClaims.Attributes {
 		for _, claimValue := range claimValues {
-			r.Header.Add("X-Saml-"+claimName, claimValue)
+			cn := strings.Split(claimName, "/")
+			r.Header.Add("X-Saml-"+cn[len(cn)-1], claimValue)
 		}
 	}
 	r.Header.Set("X-Saml-Subject", tokenClaims.Subject)
