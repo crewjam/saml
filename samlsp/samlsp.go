@@ -103,7 +103,7 @@ func New(opts Options) (*Middleware, error) {
 			err = fmt.Errorf("no entity found with IDPSSODescriptor")
 			for _, e := range entities.EntityDescriptors {
 				if len(e.IDPSSODescriptors) > 0 {
-					entity = &e
+					*entity = e
 					err = nil
 				}
 			}
