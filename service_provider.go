@@ -32,10 +32,11 @@ func (n NameIDFormat) Element() *etree.Element {
 }
 
 // Name ID formats
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
 const (
-	UnspecifiedNameIDFormat  NameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:unspecified"
+	UnspecifiedNameIDFormat  NameIDFormat = "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
 	TransientNameIDFormat    NameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
-	EmailAddressNameIDFormat NameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:emailAddress"
+	EmailAddressNameIDFormat NameIDFormat = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
 )
 
 // ServiceProvider implements SAML Service provider.
