@@ -103,6 +103,29 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 
 	authnRequestsSigned := false
 	wantAssertionsSigned := true
+	keyDescriptorSlice := []KeyDescriptor{}
+	if sp.Certificate != nil {
+		keyDescriptorSlice = []KeyDescriptor{
+			{
+				Use: "signing",
+				KeyInfo: KeyInfo{
+					Certificate: base64.StdEncoding.EncodeToString(sp.Certificate.Raw),
+				},
+			},
+			{
+				Use: "encryption",
+				KeyInfo: KeyInfo{
+					Certificate: base64.StdEncoding.EncodeToString(sp.Certificate.Raw),
+				},
+				EncryptionMethods: []EncryptionMethod{
+					{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
+					{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
+					{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
+					{Algorithm: "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"},
+				},
+			},
+		}
+	}
 	return &EntityDescriptor{
 		EntityID:   sp.MetadataURL.String(),
 		ValidUntil: TimeNow().Add(validDuration),
@@ -112,26 +135,7 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 				SSODescriptor: SSODescriptor{
 					RoleDescriptor: RoleDescriptor{
 						ProtocolSupportEnumeration: "urn:oasis:names:tc:SAML:2.0:protocol",
-						KeyDescriptors: []KeyDescriptor{
-							{
-								Use: "signing",
-								KeyInfo: KeyInfo{
-									Certificate: base64.StdEncoding.EncodeToString(sp.Certificate.Raw),
-								},
-							},
-							{
-								Use: "encryption",
-								KeyInfo: KeyInfo{
-									Certificate: base64.StdEncoding.EncodeToString(sp.Certificate.Raw),
-								},
-								EncryptionMethods: []EncryptionMethod{
-									{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
-									{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
-									{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
-									{Algorithm: "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"},
-								},
-							},
-						},
+						KeyDescriptors:             keyDescriptorSlice,
 					},
 				},
 				AuthnRequestsSigned:  &authnRequestsSigned,
