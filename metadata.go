@@ -43,7 +43,7 @@ type EntityDescriptor struct {
 	XMLName                       xml.Name      `xml:"urn:oasis:names:tc:SAML:2.0:metadata EntityDescriptor"`
 	EntityID                      string        `xml:"entityID,attr"`
 	ID                            string        `xml:",attr,omitempty"`
-	ValidUntil                    time.Time     `xml:"validUntil,attr,omitempty"`
+	ValidUntil                    *time.Time    `xml:"validUntil,attr,omitempty"`
 	CacheDuration                 time.Duration `xml:"cacheDuration,attr,omitempty"`
 	Signature                     *etree.Element
 	RoleDescriptors               []RoleDescriptor               `xml:"RoleDescriptor"`
@@ -61,12 +61,17 @@ type EntityDescriptor struct {
 // MarshalXML implements xml.Marshaler
 func (m EntityDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type Alias EntityDescriptor
+	var validUntilPtr *RelaxedTime
+	if m.ValidUntil != nil {
+		validUntil := RelaxedTime(*m.ValidUntil)
+		validUntilPtr = &validUntil
+	}
 	aux := &struct {
-		ValidUntil    RelaxedTime `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration    `xml:"cacheDuration,attr,omitempty"`
+		ValidUntil    *RelaxedTime `xml:"validUntil,attr,omitempty"`
+		CacheDuration Duration     `xml:"cacheDuration,attr,omitempty"`
 		*Alias
 	}{
-		ValidUntil:    RelaxedTime(m.ValidUntil),
+		ValidUntil:    validUntilPtr,
 		CacheDuration: Duration(m.CacheDuration),
 		Alias:         (*Alias)(&m),
 	}
@@ -86,7 +91,8 @@ func (m *EntityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 	if err := d.DecodeElement(aux, &start); err != nil {
 		return err
 	}
-	m.ValidUntil = time.Time(aux.ValidUntil)
+	validUntil := time.Time(aux.ValidUntil)
+	m.ValidUntil = &validUntil
 	m.CacheDuration = time.Duration(aux.CacheDuration)
 	return nil
 }
@@ -133,7 +139,7 @@ type ContactPerson struct {
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-metadata-2.0-os.pdf §2.4.1
 type RoleDescriptor struct {
 	ID                         string        `xml:",attr,omitempty"`
-	ValidUntil                 time.Time     `xml:"validUntil,attr,omitempty"`
+	ValidUntil                 *time.Time    `xml:"validUntil,attr,omitempty"`
 	CacheDuration              time.Duration `xml:"cacheDuration,attr,omitempty"`
 	ProtocolSupportEnumeration string        `xml:"protocolSupportEnumeration,attr"`
 	ErrorURL                   string        `xml:"errorURL,attr,omitempty"`

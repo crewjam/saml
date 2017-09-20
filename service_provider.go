@@ -96,9 +96,10 @@ const DefaultCacheDuration = time.Hour * 24 * 1
 
 // Metadata returns the service provider metadata
 func (sp *ServiceProvider) Metadata() *EntityDescriptor {
-	validDuration := DefaultValidDuration
+	var validUntilPtr *time.Time
 	if sp.MetadataValidDuration > 0 {
-		validDuration = sp.MetadataValidDuration
+		validUntil := TimeNow().Add(sp.MetadataValidDuration)
+		validUntilPtr = &validUntil
 	}
 
 	authnRequestsSigned := false
@@ -128,7 +129,7 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 	}
 	return &EntityDescriptor{
 		EntityID:   sp.MetadataURL.String(),
-		ValidUntil: TimeNow().Add(validDuration),
+		ValidUntil: validUntilPtr,
 
 		SPSSODescriptors: []SPSSODescriptor{
 			SPSSODescriptor{

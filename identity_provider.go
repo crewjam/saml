@@ -101,10 +101,11 @@ type IdentityProvider struct {
 // Metadata returns the metadata structure for this identity provider.
 func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 	certStr := base64.StdEncoding.EncodeToString(idp.Certificate.Raw)
+	validUntil := TimeNow().Add(DefaultValidDuration)
 
 	return &EntityDescriptor{
 		EntityID:      idp.MetadataURL.String(),
-		ValidUntil:    TimeNow().Add(DefaultValidDuration),
+		ValidUntil:    &validUntil,
 		CacheDuration: DefaultValidDuration,
 		IDPSSODescriptors: []IDPSSODescriptor{
 			IDPSSODescriptor{
