@@ -363,6 +363,39 @@ func (ivr *InvalidResponseError) Error() string {
 	return fmt.Sprintf("Authentication failed")
 }
 
+func responseContainsSignature(response *etree.Document) (bool, error) {
+	signatureElement, err := findChild(response.Root(), "http://www.w3.org/2000/09/xmldsig#", "Signature")
+	if err != nil {
+		return false, err
+	}
+	if signatureElement == nil {
+		return false, nil
+	}
+	return true, nil
+}
+
+func (sp *ServiceProvider) validateDestination(response []byte, responseDom *Response) error {
+	// A response MUST contain a Destination attribute if the SAML request is signed.
+	responseXml := etree.NewDocument()
+	err := responseXml.ReadFromBytes(response)
+	if err != nil {
+		return err
+	}
+
+	present, err := responseContainsSignature(responseXml)
+	if err != nil {
+		return err
+	}
+
+	if present {
+		if responseDom.Destination != sp.AcsURL.String() {
+			return fmt.Errorf("`Destination` does not match AcsURL (expected %q, actual %q)", sp.AcsURL.String(), responseDom.Destination)
+		}
+	}
+
+	return nil
+}
+
 // ParseResponse extracts the SAML IDP response received in req, validates
 // it, and returns the verified attributes of the request.
 //
@@ -394,8 +427,9 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 		retErr.PrivateErr = fmt.Errorf("cannot unmarshal response: %s", err)
 		return nil, retErr
 	}
-	if resp.Destination != sp.AcsURL.String() {
-		retErr.PrivateErr = fmt.Errorf("`Destination` does not match AcsURL (expected %q)", sp.AcsURL.String())
+
+	if err := sp.validateDestination(rawResponseBuf, &resp); err != nil {
+		retErr.PrivateErr = err
 		return nil, retErr
 	}
 
