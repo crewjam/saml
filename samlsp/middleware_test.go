@@ -452,8 +452,12 @@ func (test *MiddlewareTest) TestHandlesInvalidResponse(c *C) {
 
 func (test *MiddlewareTest) TestHandlesInvalidClaimName(c *C) {
 	tc := TokenClaims{}
-	tc.Attributes = map[string][]string{"http://claim.com/claims/group": []string{"g1"}}
-	r := &http.Request{}
+	tc.Attributes = make(map[string][]string)
+	tc.Attributes["http://claim.com/claims/group"] = []string{"g1"}
+	http.NewRequest(
+	r := &http.Request{
+		Header: make(http.Header),
+	}
 	tc.SetHTTPHeader(r)
 	c.Assert(r.Header.Get("group"), Equals, "g1")
 }
