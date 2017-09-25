@@ -68,7 +68,7 @@ func (s *Server) GetSession(w http.ResponseWriter, r *http.Request, req *saml.Id
 			Value:    session.ID,
 			MaxAge:   int(sessionMaxAge.Seconds()),
 			HttpOnly: true,
-			Secure:   saml.IsHTTPS(r),
+			Secure:   r.URL.Scheme == "https",
 			Path:     "/",
 		})
 		return session
