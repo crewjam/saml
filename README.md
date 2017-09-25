@@ -32,73 +32,74 @@ The core package contains the implementation of SAML. The package samlsp provide
 ## Getting Started as a Service Provider
 
 Let us assume we have a simple web appliation to protect. We'll modify this application so it uses SAML to authenticate users.
+```golang
+package main
 
-    package main
+import "net/http"
 
-    import "net/http"
+func hello(w http.ResponseWriter, r *http.Request) {
+    fmt.Fprintf(w, "Hello, World!")
+}
 
-    func hello(w http.ResponseWriter, r *http.Request) {
-        fmt.Fprintf(w, "Hello, World!")
-    }
-
-    func main() {
-        app := http.HandlerFunc(hello)
-        http.Handle("/hello", app)
-        http.ListenAndServe(":8000", nil)
-    }
-
+func main() {
+    app := http.HandlerFunc(hello)
+    http.Handle("/hello", app)
+    http.ListenAndServe(":8000", nil)
+}
+```
 Each service provider must have an self-signed X.509 key pair established. You can generate your own with something like this:
 
     openssl req -x509 -newkey rsa:2048 -keyout myservice.key -out myservice.cert -days 365 -nodes -subj "/CN=myservice.example.com"
 
 We will use `samlsp.Middleware` to wrap the endpoint we want to protect. Middleware provides both an `http.Handler` to serve the SAML specific URLs **and** a set of wrappers to require the user to be logged in. We also provide the URL where the service provider can fetch the metadata from the IDP at startup. In our case, we'll use [testshib.org](https://www.testshib.org/), an identity provider designed for testing.
 
-    package main
+```golang
+package main
 
-    import (
-        "fmt"
-        "io/ioutil"
-        "net/http"
+import (
+    "fmt"
+    "io/ioutil"
+    "net/http"
 
-        "github.com/crewjam/saml/samlsp"
-    )
+    "github.com/crewjam/saml/samlsp"
+)
 
-    func hello(w http.ResponseWriter, r *http.Request) {
-        fmt.Fprintf(w, "Hello, %s!", r.Header.Get("X-Saml-Cn"))
+func hello(w http.ResponseWriter, r *http.Request) {
+    fmt.Fprintf(w, "Hello, %s!", r.Header.Get("X-Saml-Cn"))
+}
+
+func main() {
+    keyPair, err := tls.LoadX509KeyPair("myservice.cert", "myservice.key")
+    if err != nil {
+        panic(err) // TODO handle error
+    }
+    keyPair.Leaf, err = x509.ParseCertificate(keyPair.Certificate[0])
+    if err != nil {
+        panic(err) // TODO handle error
     }
 
-    func main() {
-        keyPair, err := tls.LoadX509KeyPair("myservice.cert", "myservice.key")
-        if err != nil {
-            panic(err) // TODO handle error
-        }
-        keyPair.Leaf, err = x509.ParseCertificate(keyPair.Certificate[0])
-        if err != nil {
-            panic(err) // TODO handle error
-        }
-
-        idpMetadataURL, err := url.Parse("https://www.testshib.org/metadata/testshib-providers.xml")
-        if err != nil {
-            panic(err) // TODO handle error
-        }
-
-        rootURL, err := url.Parse("http://localhost:8000")
-        if err != nil {
-            panic(err) // TODO handle error
-        }
-
-        samlSP, _ := samlsp.New(samlsp.Options{
-            URL:            *rootURL,
-            Key:            kp.PrivateKey.(*rsa.PrivateKey),
-            Certificate:    kp.Leaf,
-            IDPMetadataURL: idpMetadataURL,
-        })
-        app := http.HandlerFunc(hello)
-        http.Handle("/hello", samlSP.RequireAccount(app))
-        http.Handle("/saml/", samlSP)
-        http.ListenAndServe(":8000", nil)
+    idpMetadataURL, err := url.Parse("https://www.testshib.org/metadata/testshib-providers.xml")
+    if err != nil {
+        panic(err) // TODO handle error
     }
 
+    rootURL, err := url.Parse("http://localhost:8000")
+    if err != nil {
+        panic(err) // TODO handle error
+    }
+
+    samlSP, _ := samlsp.New(samlsp.Options{
+        URL:            *rootURL,
+        Key:            kp.PrivateKey.(*rsa.PrivateKey),
+        Certificate:    kp.Leaf,
+        IDPMetadataURL: idpMetadataURL,
+    })
+    app := http.HandlerFunc(hello)
+    http.Handle("/hello", samlSP.RequireAccount(app))
+    http.Handle("/saml/", samlSP)
+    http.ListenAndServe(":8000", nil)
+}
+```
 
 Next we'll have to register our service provider with the identiy provider to establish trust from the service provider to the IDP. For [testshib.org](https://www.testshib.org/), you can do something like:
 
