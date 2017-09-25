@@ -150,7 +150,8 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 			Name:     fmt.Sprintf("saml_%s", relayState),
 			Value:    signedState,
 			MaxAge:   int(saml.MaxIssueDelay.Seconds()),
-			HttpOnly: false,
+			HttpOnly: true,
+			Secure:   saml.IsHTTPS(r),
 			Path:     m.ServiceProvider.AcsURL.Path,
 		})
 
@@ -281,7 +282,8 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 		Domain:   m.CookieDomain,
 		Value:    signedToken,
 		MaxAge:   int(m.CookieMaxAge.Seconds()),
-		HttpOnly: false,
+		HttpOnly: true,
+		Secure:   saml.IsHTTPS(r),
 		Path:     "/",
 	})
 

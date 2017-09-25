@@ -2,6 +2,7 @@ package saml
 
 import (
 	"crypto/rand"
+	"net/http"
 	"time"
 
 	dsig "github.com/russellhaering/goxmldsig"
@@ -26,4 +27,12 @@ func randomBytes(n int) []byte {
 		panic(err)
 	}
 	return rv
+}
+
+// IsHTTPS returns true if the given request is for an https host
+func IsHTTPS(r *http.Request) bool {
+	if r.URL.Scheme == "https" {
+		return true
+	}
+	return false
 }
