@@ -449,3 +449,11 @@ func (test *MiddlewareTest) TestHandlesInvalidResponse(c *C) {
 	c.Assert(resp.Header().Get("Location"), Equals, "")
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals, "")
 }
+
+func (test *MiddlewareTest) TestHandlesInvalidClaimName(c *C) {
+	tc := TokenClaims{}
+	tc.Attributes = map[string][]string{"http://claim.com/claims/group": []string{"g1"}}
+	r := &http.Request{}
+	tc.SetHTTPHeader(r)
+	c.Assert(r.Header.Get("group"), Equals, "g1")
+}

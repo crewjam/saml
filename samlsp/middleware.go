@@ -212,6 +212,25 @@ type TokenClaims struct {
 	Attributes map[string][]string `json:"attr"`
 }
 
+func (t TokenClaims) SetHTTPHeader(r *http.Request) {
+	// It is an error for the request to include any X-SAML* headers,
+	// because those might be confused with ours. If we encounter any
+	// such headers, we abort the request, so there is no confustion.
+	for headerName := range r.Header {
+		if strings.HasPrefix(headerName, "X-Saml") {
+			panic("X-Saml-* headers should not exist when this function is called")
+		}
+	}
+
+	for claimName, claimValues := range t.Attributes {
+		for _, claimValue := range claimValues {
+			cn := strings.Split(claimName, "/")
+			r.Header.Add("X-Saml-"+cn[len(cn)-1], claimValue)
+		}
+	}
+	r.Header.Set("X-Saml-Subject", t.Subject)
+}
+
 // Authorize is invoked by ServeHTTP when we have a new, valid SAML assertion.
 // It sets a cookie that contains a signed JWT containing the assertion attributes.
 // It then redirects the user's browser to the original URL contained in RelayState.
@@ -322,22 +341,7 @@ func (m *Middleware) IsAuthorized(r *http.Request) bool {
 		return false
 	}
 
-	// It is an error for the request to include any X-SAML* headers,
-	// because those might be confused with ours. If we encounter any
-	// such headers, we abort the request, so there is no confustion.
-	for headerName := range r.Header {
-		if strings.HasPrefix(headerName, "X-Saml") {
-			panic("X-Saml-* headers should not exist when this function is called")
-		}
-	}
-
-	for claimName, claimValues := range tokenClaims.Attributes {
-		for _, claimValue := range claimValues {
-			cn := strings.Split(claimName, "/")
-			r.Header.Add("X-Saml-"+cn[len(cn)-1], claimValue)
-		}
-	}
-	r.Header.Set("X-Saml-Subject", tokenClaims.Subject)
+	tokenClaims.SetHTTPHeader(r)
 
 	return true
 }
