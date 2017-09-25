@@ -26,6 +26,7 @@ type Options struct {
 	IDPMetadata       *saml.EntityDescriptor
 	IDPMetadataURL    *url.URL
 	HTTPClient        *http.Client
+	CookieMaxAge      time.Duration
 }
 
 // New creates a new Middleware
@@ -40,6 +41,11 @@ func New(opts Options) (*Middleware, error) {
 		logr = logger.DefaultLogger
 	}
 
+	cookieMaxAge := opts.CookieMaxAge
+	if opts.CookieMaxAge == 0 {
+		cookieMaxAge = defaultCookieMaxAge
+	}
+
 	m := &Middleware{
 		ServiceProvider: saml.ServiceProvider{
 			Key:         opts.Key,
@@ -51,7 +57,8 @@ func New(opts Options) (*Middleware, error) {
 		},
 		AllowIDPInitiated: opts.AllowIDPInitiated,
 		CookieName:        defaultCookieName,
-		CookieMaxAge:      defaultCookieMaxAge,
+		CookieMaxAge:      cookieMaxAge,
+		CookieDomain:      opts.URL.Host,
 	}
 
 	// fetch the IDP metadata if needed.
@@ -101,9 +108,9 @@ func New(opts Options) (*Middleware, error) {
 			}
 
 			err = fmt.Errorf("no entity found with IDPSSODescriptor")
-			for _, e := range entities.EntityDescriptors {
+			for i, e := range entities.EntityDescriptors {
 				if len(e.IDPSSODescriptors) > 0 {
-					entity = &e
+					entity = &entities.EntityDescriptors[i]
 					err = nil
 				}
 			}

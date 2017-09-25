@@ -140,7 +140,7 @@ func (test *MiddlewareTest) TestRequireAccountNoCreds(c *C) {
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
 		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
-			"; Path=/saml2/acs; Max-Age=90")
+			"; Path=/saml2/acs; Max-Age=90; HttpOnly")
 
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
 	c.Assert(err, IsNil)
@@ -166,7 +166,7 @@ func (test *MiddlewareTest) TestRequireAccountNoCredsPostBinding(c *C) {
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
 		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
-			"; Path=/saml2/acs; Max-Age=90")
+			"; Path=/saml2/acs; Max-Age=90; HttpOnly")
 	c.Assert(string(resp.Body.Bytes()), Equals, ""+
 		"<!DOCTYPE html>"+
 		"<html>"+
@@ -176,13 +176,13 @@ func (test *MiddlewareTest) TestRequireAccountNoCredsPostBinding(c *C) {
 		"<input type=\"hidden\" name=\"RelayState\" value=\"KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6\" />"+
 		"<input id=\"SAMLSubmitButton\" type=\"submit\" value=\"Submit\" />"+
 		"</form>"+
-		"<script>document.getElementById('SAMLSubmitButton').style.visibility=\"hidden\";</script>"+
-		"<script>document.getElementById('SAMLRequestForm').submit();</script>"+
+		"<script>document.getElementById('SAMLSubmitButton').style.visibility=\"hidden\";"+
+		"document.getElementById('SAMLRequestForm').submit();</script>"+
 		"</body>"+
 		"</html>")
 
 	// check that the CSP script hash is set correctly
-	scriptContent := "document.getElementById('SAMLRequestForm').submit();"
+	scriptContent := "document.getElementById('SAMLSubmitButton').style.visibility=\"hidden\";document.getElementById('SAMLRequestForm').submit();"
 	scriptSum := sha256.Sum256([]byte(scriptContent))
 	scriptHash := base64.StdEncoding.EncodeToString(scriptSum[:])
 	c.Assert(resp.Header().Get("Content-Security-Policy"), Equals,
@@ -259,7 +259,7 @@ func (test *MiddlewareTest) TestRequireAccountBadCreds(c *C) {
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
 		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
-			"; Path=/saml2/acs; Max-Age=90")
+			"; Path=/saml2/acs; Max-Age=90; HttpOnly")
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
 	c.Assert(err, IsNil)
 	decodedRequest, err := testsaml.ParseRedirectRequest(redirectURL)
@@ -290,7 +290,7 @@ func (test *MiddlewareTest) TestRequireAccountExpiredCreds(c *C) {
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
 		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
-			"; Path=/saml2/acs; Max-Age=90")
+			"; Path=/saml2/acs; Max-Age=90; HttpOnly")
 
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
 	c.Assert(err, IsNil)
@@ -412,7 +412,7 @@ func (test *MiddlewareTest) TestCanParseResponse(c *C) {
 	c.Assert(resp.Header()["Set-Cookie"], DeepEquals, []string{
 		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6=; Expires=Thu, 01 Jan 1970 00:00:01 GMT",
 		"ttt=" + expectedToken + "; " +
-			"Path=/; Max-Age=7200",
+			"Path=/; Max-Age=7200; HttpOnly",
 	})
 }
 

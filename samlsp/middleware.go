@@ -52,6 +52,7 @@ type Middleware struct {
 	AllowIDPInitiated bool
 	CookieName        string
 	CookieMaxAge      time.Duration
+	CookieDomain      string
 }
 
 const defaultCookieMaxAge = time.Hour
@@ -149,7 +150,8 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 			Name:     fmt.Sprintf("saml_%s", relayState),
 			Value:    signedState,
 			MaxAge:   int(saml.MaxIssueDelay.Seconds()),
-			HttpOnly: false,
+			HttpOnly: true,
+			Secure:   r.URL.Scheme == "https",
 			Path:     m.ServiceProvider.AcsURL.Path,
 		})
 
@@ -160,11 +162,10 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 			return
 		}
 		if binding == saml.HTTPPostBinding {
-			w.Header().Set("Content-Security-Policy", ""+
+			w.Header().Add("Content-Security-Policy", ""+
 				"default-src; "+
-				"script-src 'sha256-D8xB+y+rJ90RmLdP72xBqEEc0NUatn7yuCND0orkrgk='; "+
-				"reflected-xss block; "+
-				"referrer no-referrer;")
+				"script-src 'sha256-AjPdJSbZmeWHnEc5ykvJFay8FTWeTeRbs9dutfZ0HqE='; "+
+				"reflected-xss block; referrer no-referrer;")
 			w.Header().Add("Content-type", "text/html")
 			w.Write([]byte(`<!DOCTYPE html><html><body>`))
 			w.Write(req.Post(relayState))
@@ -297,9 +298,11 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     m.CookieName,
+		Domain:   m.CookieDomain,
 		Value:    signedToken,
 		MaxAge:   int(m.CookieMaxAge.Seconds()),
-		HttpOnly: false,
+		HttpOnly: true,
+		Secure:   r.URL.Scheme == "https",
 		Path:     "/",
 	})
 
