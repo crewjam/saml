@@ -458,5 +458,5 @@ func (test *MiddlewareTest) TestHandlesInvalidClaimName(c *C) {
 		Header: make(http.Header),
 	}
 	tc.SetHTTPHeader(r)
-	c.Assert(r.Header.Get("group"), Equals, "g1")
+	c.Assert(r.Header.Get("X-Saml-group"), Equals, "g1")
 }
