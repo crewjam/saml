@@ -448,8 +448,10 @@ func (test *ParseTest) TestCanParseTestshibMetadata(c *C) {
 	})
 
 	u := mustParseURL("https://idp.testshib.org/idp/shibboleth")
-	_, err := New(Options{IDPMetadataURL: &u})
+	m, err := New(Options{IDPMetadataURL: &u})
 	c.Assert(err, IsNil)
+	c.Assert(m.ServiceProvider.IDPMetadata.EntityID, Equals, "https://idp.testshib.org/idp/shibboleth")
+	c.Assert(len(m.ServiceProvider.IDPMetadata.IDPSSODescriptors), Equals, 1)
 }
 
 func (test *ParseTest) TestCanParseGoogleMetadata(c *C) {
