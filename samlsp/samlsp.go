@@ -27,6 +27,7 @@ type Options struct {
 	IDPMetadataURL    *url.URL
 	HTTPClient        *http.Client
 	CookieMaxAge      time.Duration
+	ForceAuthn        bool
 }
 
 // New creates a new Middleware
@@ -54,6 +55,7 @@ func New(opts Options) (*Middleware, error) {
 			MetadataURL: metadataURL,
 			AcsURL:      acsURL,
 			IDPMetadata: opts.IDPMetadata,
+			ForceAuthn:  &opts.ForceAuthn,
 		},
 		AllowIDPInitiated: opts.AllowIDPInitiated,
 		CookieName:        defaultCookieName,
