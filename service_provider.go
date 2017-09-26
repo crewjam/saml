@@ -76,6 +76,10 @@ type ServiceProvider struct {
 
 	// Logger is used to log messages for example in the event of errors
 	Logger logger.Interface
+
+	// ForceAuthn allows you to force re-authentication of users even if the user
+	// has a SSO session at the IdP.
+	ForceAuthn *bool
 }
 
 // MaxIssueDelay is the longest allowed time between when a SAML assertion is
@@ -274,6 +278,7 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string) (*AuthnReque
 			// urn:oasis:names:tc:SAML:2.0:nameid-format:transient
 			Format: &nameIDFormat,
 		},
+		ForceAuthn: sp.ForceAuthn,
 	}
 	return &req, nil
 }
