@@ -115,7 +115,7 @@ func (test *ServiceProviderTest) TestCanProduceMetadata(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(string(spMetadata), DeepEquals, ""+
 		"<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2015-12-03T01:57:09Z\" entityID=\"https://example.com/saml2/metadata\">\n"+
-		"  <SPSSODescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"0001-01-01T00:00:00Z\" protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\" AuthnRequestsSigned=\"false\" WantAssertionsSigned=\"true\">\n"+
+		"  <SPSSODescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2015-12-03T01:57:09Z\" protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\" AuthnRequestsSigned=\"false\" WantAssertionsSigned=\"true\">\n"+
 		"    <KeyDescriptor use=\"signing\">\n"+
 		"      <KeyInfo xmlns=\"http://www.w3.org/2000/09/xmldsig#\">\n"+
 		"        <X509Data>\n"+
