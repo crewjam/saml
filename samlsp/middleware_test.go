@@ -92,7 +92,7 @@ func (test *MiddlewareTest) TestCanProduceMetadata(c *C) {
 	c.Assert(resp.Header().Get("Content-type"), Equals, "application/samlmetadata+xml")
 	c.Assert(string(resp.Body.Bytes()), DeepEquals, ""+
 		"<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2015-12-03T01:57:09.123Z\" entityID=\"https://15661444.ngrok.io/saml2/metadata\">\n"+
-		"  <SPSSODescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"0001-01-01T00:00:00Z\" protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\" AuthnRequestsSigned=\"false\" WantAssertionsSigned=\"true\">\n"+
+		"  <SPSSODescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2015-12-03T01:57:09.123456789Z\" protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\" AuthnRequestsSigned=\"false\" WantAssertionsSigned=\"true\">\n"+
 		"    <KeyDescriptor use=\"signing\">\n"+
 		"      <KeyInfo xmlns=\"http://www.w3.org/2000/09/xmldsig#\">\n"+
 		"        <X509Data>\n"+
