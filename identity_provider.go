@@ -91,6 +91,7 @@ type IdentityProvider struct {
 	Key                     crypto.PrivateKey
 	Logger                  logger.Interface
 	Certificate             *x509.Certificate
+	Intermediates           []*x509.Certificate
 	MetadataURL             url.URL
 	SSOURL                  url.URL
 	ServiceProviderProvider ServiceProviderProvider
@@ -669,6 +670,9 @@ func (req *IdpAuthnRequest) MakeAssertionEl() error {
 		PrivateKey:  req.IDP.Key,
 		Leaf:        req.IDP.Certificate,
 	}
+	for _, cert := range req.IDP.Intermediates {
+		keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
+	}
 	keyStore := dsig.TLSCertKeyStore(keyPair)
 
 	signingContext := dsig.NewDefaultSigningContext(keyStore)
@@ -864,6 +868,9 @@ func (req *IdpAuthnRequest) MakeResponse() error {
 			Certificate: [][]byte{req.IDP.Certificate.Raw},
 			PrivateKey:  req.IDP.Key,
 			Leaf:        req.IDP.Certificate,
+		}
+		for _, cert := range req.IDP.Intermediates {
+			keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
 		}
 		keyStore := dsig.TLSCertKeyStore(keyPair)
 
