@@ -96,6 +96,7 @@ type IdentityProvider struct {
 	ServiceProviderProvider ServiceProviderProvider
 	SessionProvider         SessionProvider
 	AssertionMaker          AssertionMaker
+	SignatureMethod         string
 }
 
 // Metadata returns the metadata structure for this identity provider.
@@ -671,9 +672,14 @@ func (req *IdpAuthnRequest) MakeAssertionEl() error {
 	}
 	keyStore := dsig.TLSCertKeyStore(keyPair)
 
+	signatureMethod := req.IDP.SignatureMethod
+	if signatureMethod == "" {
+		signatureMethod = dsig.RSASHA1SignatureMethod
+	}
+
 	signingContext := dsig.NewDefaultSigningContext(keyStore)
 	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
-	if err := signingContext.SetSignatureMethod(dsig.RSASHA1SignatureMethod); err != nil {
+	if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
 		return err
 	}
 
@@ -867,9 +873,14 @@ func (req *IdpAuthnRequest) MakeResponse() error {
 		}
 		keyStore := dsig.TLSCertKeyStore(keyPair)
 
+		signatureMethod := req.IDP.SignatureMethod
+		if signatureMethod == "" {
+			signatureMethod = dsig.RSASHA1SignatureMethod
+		}
+
 		signingContext := dsig.NewDefaultSigningContext(keyStore)
 		signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
-		if err := signingContext.SetSignatureMethod(dsig.RSASHA1SignatureMethod); err != nil {
+		if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
 			return err
 		}
 
