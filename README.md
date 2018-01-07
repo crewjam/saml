@@ -1,3 +1,13 @@
+# SAML
+
+Package saml contains a partial implementation of the SAML standard in golang.
+SAML is a standard for identity federation, i.e. either allowing a third party to authenticate your users or allowing third parties to rely on us to authenticate their users.
+
+## Introduction
+
+In SAML parlance an **Identity Provider** (IDP) is a service that knows how to authenticate users. A **Service Provider** (SP) is a service that delegates authentication to an IDP. If you are building a service where users log in with someone else's credentials, then you are a **Service Provider**. This package supports implementing both service providers and identity providers.
+
+The core package contains the implementation of SAML. The package samlsp provides helper middleware suitable for use in Service Provider applications. The package samlidp provides a rudimentary IDP service that is useful for testing or as a starting point for other integrations.
 
 ## Breaking Changes 
 
@@ -19,15 +29,6 @@ In various places `url.URL` is now used where `string` was used <= version 0.1.0
 In various places where keys and certificates were modeled as `string` 
 <= version 0.1.0 (what was I thinking?!) they are now modeled as 
 `*rsa.PrivateKey`, `*x509.Certificate`, or `crypto.PrivateKey` as appropriate.
-
-## Introduction
-
-Package saml contains a partial implementation of the SAML standard in golang.
-SAML is a standard for identity federation, i.e. either allowing a third party to authenticate your users or allowing third parties to rely on us to authenticate their users.
-
-In SAML parlance an **Identity Provider** (IDP) is a service that knows how to authenticate users. A **Service Provider** (SP) is a service that delegates authentication to an IDP. If you are building a service where users log in with someone else's credentials, then you are a **Service Provider**. This package supports implementing both service providers and identity providers.
-
-The core package contains the implementation of SAML. The package samlsp provides helper middleware suitable for use in Service Provider applications. The package samlidp provides a rudimentary IDP service that is useful for testing or as a starting point for other integrations.
 
 ## Getting Started as a Service Provider
 
@@ -115,15 +116,15 @@ Now you should be able to authenticate. The flow should look like this:
 
 1. You browse to `localhost:8000/hello`
 
-2. The middleware redirects you to `https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO`
+1. The middleware redirects you to `https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO`
 
-3. testshib.org prompts you for a username and password.
+1. testshib.org prompts you for a username and password.
 
-4. testshib.org returns you an HTML document which contains an HTML form setup to POST to `localhost:8000/saml/acs`. The form is automatically submitted if you have javascript enabled.
+1. testshib.org returns you an HTML document which contains an HTML form setup to POST to `localhost:8000/saml/acs`. The form is automatically submitted if you have javascript enabled.
 
-5. The local service validates the response, issues a session cookie, and redirects you to the original URL, `localhost:8000/hello`.
+1. The local service validates the response, issues a session cookie, and redirects you to the original URL, `localhost:8000/hello`.
 
-6. This time when `localhost:8000/hello` is requested there is a valid session and so the main content is served.
+1. This time when `localhost:8000/hello` is requested there is a valid session and so the main content is served.
 
 ## Getting Started as an Identity Provider
 
