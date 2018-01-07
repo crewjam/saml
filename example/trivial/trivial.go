@@ -14,7 +14,7 @@ import (
 )
 
 func hello(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hello, %s!", r.Header.Get("X-Saml-Cn"))
+	fmt.Fprintf(w, "Hello, %s!", samlsp.Token(r.Context()).Attributes.Get("cn"))
 }
 
 func main() {

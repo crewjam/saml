@@ -19,7 +19,7 @@ import (
 // It implements http.Handler so that it can provide the metadata and ACS endpoints,
 // typically /saml/metadata and /saml/acs, respectively.
 //
-// It also provides middleware, RequireAccount which redirects users to
+// It also provides middleware RequireAccount which redirects users to
 // the auth process if they do not have session credentials.
 //
 // When redirecting the user through the SAML auth flow, the middlware assigns
@@ -37,12 +37,9 @@ import (
 // authenticated attributes from the SAML assertion.
 //
 // When the middlware receives a request with a valid session JWT it extracts
-// the SAML attributes and modifies the http.Request object adding headers
-// corresponding to the specified attributes. For example, if the attribute
-// "cn" were present in the initial assertion with a value of "Alice Smith",
-// then a corresponding header "X-Saml-Cn" will be added to the request with
-// a value of "Alice Smith". For safety, the middleware strips out any existing
-// headers that begin with "X-Saml-".
+// the SAML attributes and modifies the http.Request object adding a Context
+// object to the request context that contains attributes from the initial
+// SAML assertion.
 //
 // When issuing JSON Web Tokens, a signing key is required. Because the
 // SAML service provider already has a private key, we borrow that key
@@ -105,7 +102,8 @@ func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // to start the SAML auth flow.
 func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
-		if m.IsAuthorized(r) {
+		if token := m.GetAuthorizationToken(r); token != nil {
+			r = r.WithContext(WithToken(r.Context(), token))
 			handler.ServeHTTP(w, r)
 			return
 		}
@@ -209,11 +207,6 @@ func (m *Middleware) getPossibleRequestIDs(r *http.Request) []string {
 	return rv
 }
 
-type TokenClaims struct {
-	jwt.StandardClaims
-	Attributes map[string][]string `json:"attr"`
-}
-
 // Authorize is invoked by ServeHTTP when we have a new, valid SAML assertion.
 // It sets a cookie that contains a signed JWT containing the assertion attributes.
 // It then redirects the user's browser to the original URL contained in RelayState.
@@ -250,7 +243,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 	}
 
 	now := saml.TimeNow()
-	claims := TokenClaims{}
+	claims := AuthorizationToken{}
 	claims.Audience = m.ServiceProvider.Metadata().EntityID
 	claims.IssuedAt = now.Unix()
 	claims.ExpiresAt = now.Add(m.CookieMaxAge).Unix()
@@ -272,6 +265,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 			}
 		}
 	}
+
 	signedToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256,
 		claims).SignedString(secretBlock)
 	if err != nil {
@@ -291,64 +285,49 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 	http.Redirect(w, r, redirectURI, http.StatusFound)
 }
 
-// IsAuthorized is invoked by RequireAccount to determine if the request
-// is already authorized or if the user's browser should be redirected to the
-// SAML login flow. If the request is authorized, then the request headers
-// starting with X-Saml- for each SAML assertion attribute are set. For example,
-// if an attribute "uid" has the value "alice@example.com", then the following
-// header would be added to the request:
+// IsAuthorized returns true if the request has already been authorized.
 //
-//     X-Saml-Uid: alice@example.com
-//
-// It is an error for this function to be invoked with a request containing
-// any headers starting with X-Saml. This function will panic if you do.
+// Note: This function is retained for compatability. Use GetAuthorizationToken in new code
+// instead.
 func (m *Middleware) IsAuthorized(r *http.Request) bool {
+	return m.GetAuthorizationToken(r) != nil
+}
+
+// GetAuthorizationToken is invoked by RequireAccount to determine if the request
+// is already authorized or if the user's browser should be redirected to the
+// SAML login flow. If the request is authorized, then the request context is
+// ammended with a Context object.
+func (m *Middleware) GetAuthorizationToken(r *http.Request) *AuthorizationToken {
 	cookie, err := r.Cookie(m.CookieName)
 	if err != nil {
-		return false
+		return nil
 	}
 
-	tokenClaims := TokenClaims{}
+	tokenClaims := AuthorizationToken{}
 	token, err := jwt.ParseWithClaims(cookie.Value, &tokenClaims, func(t *jwt.Token) (interface{}, error) {
 		secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
 		return secretBlock, nil
 	})
 	if err != nil || !token.Valid {
 		m.ServiceProvider.Logger.Printf("ERROR: invalid token: %s", err)
-		return false
+		return nil
 	}
 	if err := tokenClaims.StandardClaims.Valid(); err != nil {
 		m.ServiceProvider.Logger.Printf("ERROR: invalid token claims: %s", err)
-		return false
+		return nil
 	}
 	if tokenClaims.Audience != m.ServiceProvider.Metadata().EntityID {
 		m.ServiceProvider.Logger.Printf("ERROR: invalid audience: %s", err)
-		return false
+		return nil
 	}
 
-	// It is an error for the request to include any X-SAML* headers,
-	// because those might be confused with ours. If we encounter any
-	// such headers, we abort the request, so there is no confustion.
-	for headerName := range r.Header {
-		if strings.HasPrefix(headerName, "X-Saml") {
-			panic("X-Saml-* headers should not exist when this function is called")
-		}
-	}
-
-	for claimName, claimValues := range tokenClaims.Attributes {
-		for _, claimValue := range claimValues {
-			r.Header.Add("X-Saml-"+claimName, claimValue)
-		}
-	}
-	r.Header.Set("X-Saml-Subject", tokenClaims.Subject)
-
-	return true
+	return &tokenClaims
 }
 
 // RequireAttribute returns a middleware function that requires that the
 // SAML attribute `name` be set to `value`. This can be used to require
-// that a remote user be a member of a group. It relies on the X-Saml-* headers
-// that RequireAccount adds to the request.
+// that a remote user be a member of a group. It relies on the Claims assigned
+// to to the context in RequireAccount.
 //
 // For example:
 //
@@ -358,8 +337,8 @@ func (m *Middleware) IsAuthorized(r *http.Request) bool {
 func RequireAttribute(name, value string) func(http.Handler) http.Handler {
 	return func(handler http.Handler) http.Handler {
 		fn := func(w http.ResponseWriter, r *http.Request) {
-			if values, ok := r.Header[http.CanonicalHeaderKey(fmt.Sprintf("X-Saml-%s", name))]; ok {
-				for _, actualValue := range values {
+			if claims := Token(r.Context()); claims != nil {
+				for _, actualValue := range claims.Attributes[name] {
 					if actualValue == value {
 						handler.ServeHTTP(w, r)
 						return
