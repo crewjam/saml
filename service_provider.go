@@ -25,6 +25,7 @@ import (
 // NameIDFormat is the format of the id
 type NameIDFormat string
 
+// Element returns an XML element representation of n.
 func (n NameIDFormat) Element() *etree.Element {
 	el := etree.NewElement("")
 	el.SetText(string(n))
