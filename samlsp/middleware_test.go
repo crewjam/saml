@@ -473,3 +473,14 @@ func (test *MiddlewareTest) TestHandlesInvalidResponse(c *C) {
 	c.Assert(resp.Header().Get("Location"), Equals, "")
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals, "")
 }
+
+func (test *MiddlewareTest) TestHandlesInvalidClaimName(c *C) {
+	tc := TokenClaims{}
+	tc.Attributes = make(map[string][]string)
+	tc.Attributes["http://claim.com/claims/group"] = []string{"g1"}
+	r := &http.Request{
+		Header: make(http.Header),
+	}
+	tc.SetHTTPHeader(r)
+	c.Assert(r.Header.Get("X-Saml-group"), Equals, "g1")
+}
