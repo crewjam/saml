@@ -1,6 +1,7 @@
 package samlsp
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/xml"
@@ -209,6 +210,7 @@ func (m *Middleware) getPossibleRequestIDs(r *http.Request) []string {
 	return rv
 }
 
+//TokenClaims are claims that are stored in the jwt
 type TokenClaims struct {
 	jwt.StandardClaims
 	Attributes map[string][]string `json:"attr"`
@@ -291,6 +293,9 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 	http.Redirect(w, r, redirectURI, http.StatusFound)
 }
 
+//SamlContextKey is used to give a named type for the keys of the context
+type SamlContextKey string
+
 // IsAuthorized is invoked by RequireAccount to determine if the request
 // is already authorized or if the user's browser should be redirected to the
 // SAML login flow. If the request is authorized, then the request headers
@@ -326,6 +331,11 @@ func (m *Middleware) IsAuthorized(r *http.Request) bool {
 		return false
 	}
 
+	//Get any existing context from the http request
+	ctx := r.Context()
+	ctx = context.WithValue(ctx, SamlContextKey("saml-claims"), tokenClaims)
+
+	//TODO remove this if we don't want to continue using headers.  Remove until the next TODO
 	// It is an error for the request to include any X-SAML* headers,
 	// because those might be confused with ours. If we encounter any
 	// such headers, we abort the request, so there is no confustion.
@@ -341,6 +351,10 @@ func (m *Middleware) IsAuthorized(r *http.Request) bool {
 		}
 	}
 	r.Header.Set("X-Saml-Subject", tokenClaims.Subject)
+	//TODO finish removing here
+
+	//Overwrite the underlying http request to include the context
+	*r = *r.WithContext(ctx)
 
 	return true
 }
