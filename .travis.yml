@@ -12,10 +12,8 @@ install:
   - dep ensure
 
 # starting with go 1.9, vendor is excluded and you can simply do: go test ./...
-script: go test $(go list ./... | grep -v /vendor/)
+script: go test ./...
 
 go:
-  - 1.7
-  - 1.8
   - 1.9
   - tip
