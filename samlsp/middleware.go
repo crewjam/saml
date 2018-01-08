@@ -252,7 +252,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 	now := saml.TimeNow()
 	claims := TokenClaims{}
 	claims.Audience = m.ServiceProvider.Metadata().EntityID
-	claims.IssuedAt = assertion.IssueInstant.Unix()
+	claims.IssuedAt = now.Unix()
 	claims.ExpiresAt = now.Add(m.CookieMaxAge).Unix()
 	claims.NotBefore = now.Unix()
 	if sub := assertion.Subject; sub != nil {
