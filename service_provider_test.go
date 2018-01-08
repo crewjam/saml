@@ -115,7 +115,7 @@ func (test *ServiceProviderTest) TestCanProduceMetadata(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(string(spMetadata), DeepEquals, ""+
 		"<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2015-12-03T01:57:09Z\" entityID=\"https://example.com/saml2/metadata\">\n"+
-		"  <SPSSODescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"0001-01-01T00:00:00Z\" protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\" AuthnRequestsSigned=\"false\" WantAssertionsSigned=\"true\">\n"+
+		"  <SPSSODescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2015-12-03T01:57:09Z\" protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\" AuthnRequestsSigned=\"false\" WantAssertionsSigned=\"true\">\n"+
 		"    <KeyDescriptor use=\"signing\">\n"+
 		"      <KeyInfo xmlns=\"http://www.w3.org/2000/09/xmldsig#\">\n"+
 		"        <X509Data>\n"+
@@ -188,8 +188,8 @@ func (test *ServiceProviderTest) TestCanProducePostRequest(c *C) {
 		`<input type="hidden" name="SAMLRequest" value="PHNhbWxwOkF1dGhuUmVxdWVzdCB4bWxuczpzYW1sPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6YXNzZXJ0aW9uIiB4bWxuczpzYW1scD0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOnByb3RvY29sIiBJRD0iaWQtMDAwMjA0MDYwODBhMGMwZTEwMTIxNDE2MTgxYTFjMWUyMDIyMjQyNiIgVmVyc2lvbj0iMi4wIiBJc3N1ZUluc3RhbnQ9IjIwMTUtMTItMDFUMDE6MzE6MjFaIiBEZXN0aW5hdGlvbj0iaHR0cHM6Ly9pZHAudGVzdHNoaWIub3JnL2lkcC9wcm9maWxlL1NBTUwyL1BPU1QvU1NPIiBBc3NlcnRpb25Db25zdW1lclNlcnZpY2VVUkw9Imh0dHBzOi8vMTU2NjE0NDQubmdyb2suaW8vc2FtbDIvYWNzIiBQcm90b2NvbEJpbmRpbmc9InVybjpvYXNpczpuYW1lczp0YzpTQU1MOjIuMDpiaW5kaW5nczpIVFRQLVBPU1QiPjxzYW1sOklzc3VlciBGb3JtYXQ9InVybjpvYXNpczpuYW1lczp0YzpTQU1MOjIuMDpuYW1laWQtZm9ybWF0OmVudGl0eSI&#43;aHR0cHM6Ly8xNTY2MTQ0NC5uZ3Jvay5pby9zYW1sMi9tZXRhZGF0YTwvc2FtbDpJc3N1ZXI&#43;PHNhbWxwOk5hbWVJRFBvbGljeSBGb3JtYXQ9InVybjpvYXNpczpuYW1lczp0YzpTQU1MOjIuMDpuYW1laWQtZm9ybWF0OnRyYW5zaWVudCIgQWxsb3dDcmVhdGU9InRydWUiLz48L3NhbWxwOkF1dGhuUmVxdWVzdD4=" />`+
 		`<input type="hidden" name="RelayState" value="relayState" />`+
 		`<input id="SAMLSubmitButton" type="submit" value="Submit" /></form>`+
-		`<script>document.getElementById('SAMLSubmitButton').style.visibility="hidden";</script>`+
-		`<script>document.getElementById('SAMLRequestForm').submit();</script>`)
+		`<script>document.getElementById('SAMLSubmitButton').style.visibility="hidden";`+
+		`document.getElementById('SAMLRequestForm').submit();</script>`)
 }
 
 func (test *ServiceProviderTest) TestCanHandleOneloginResponse(c *C) {

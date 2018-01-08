@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/xml"
 	"io/ioutil"
@@ -16,8 +17,6 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	dsig "github.com/russellhaering/goxmldsig"
 	. "gopkg.in/check.v1"
-
-	"crypto/x509"
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/logger"
@@ -50,7 +49,7 @@ func (tr *testRandomReader) Read(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-const expectedToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovLzE1NjYxNDQ0Lm5ncm9rLmlvL3NhbWwyL21ldGFkYXRhIiwiZXhwIjoxNDQ4OTQyMjI5LCJpYXQiOjE0NDg5MzQ5ODEsIm5iZiI6MTQ0ODkzNTAyOSwic3ViIjoiXzQxYmQyOTU5NzZkYWRkNzBlMTQ4MGYzMThlNzcyODQxIiwiYXR0ciI6eyJjbiI6WyJNZSBNeXNlbGYgQW5kIEkiXSwiZWR1UGVyc29uQWZmaWxpYXRpb24iOlsiTWVtYmVyIiwiU3RhZmYiXSwiZWR1UGVyc29uRW50aXRsZW1lbnQiOlsidXJuOm1hY2U6ZGlyOmVudGl0bGVtZW50OmNvbW1vbi1saWItdGVybXMiXSwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6WyJteXNlbGZAdGVzdHNoaWIub3JnIl0sImVkdVBlcnNvblNjb3BlZEFmZmlsaWF0aW9uIjpbIk1lbWJlckB0ZXN0c2hpYi5vcmciLCJTdGFmZkB0ZXN0c2hpYi5vcmciXSwiZWR1UGVyc29uVGFyZ2V0ZWRJRCI6WyIiXSwiZ2l2ZW5OYW1lIjpbIk1lIE15c2VsZiJdLCJzbiI6WyJBbmQgSSJdLCJ0ZWxlcGhvbmVOdW1iZXIiOlsiNTU1LTU1NTUiXSwidWlkIjpbIm15c2VsZiJdfX0.owRdm3bcXkYV4ePjcJw3qHILRLDhNHAdG3gddLOBJPw"
+const expectedToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovLzE1NjYxNDQ0Lm5ncm9rLmlvL3NhbWwyL21ldGFkYXRhIiwiZXhwIjoxNDQ4OTQyMjI5LCJpYXQiOjE0NDg5MzUwMjksIm5iZiI6MTQ0ODkzNTAyOSwic3ViIjoiXzQxYmQyOTU5NzZkYWRkNzBlMTQ4MGYzMThlNzcyODQxIiwiYXR0ciI6eyJjbiI6WyJNZSBNeXNlbGYgQW5kIEkiXSwiZWR1UGVyc29uQWZmaWxpYXRpb24iOlsiTWVtYmVyIiwiU3RhZmYiXSwiZWR1UGVyc29uRW50aXRsZW1lbnQiOlsidXJuOm1hY2U6ZGlyOmVudGl0bGVtZW50OmNvbW1vbi1saWItdGVybXMiXSwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6WyJteXNlbGZAdGVzdHNoaWIub3JnIl0sImVkdVBlcnNvblNjb3BlZEFmZmlsaWF0aW9uIjpbIk1lbWJlckB0ZXN0c2hpYi5vcmciLCJTdGFmZkB0ZXN0c2hpYi5vcmciXSwiZWR1UGVyc29uVGFyZ2V0ZWRJRCI6WyIiXSwiZ2l2ZW5OYW1lIjpbIk1lIE15c2VsZiJdLCJzbiI6WyJBbmQgSSJdLCJ0ZWxlcGhvbmVOdW1iZXIiOlsiNTU1LTU1NTUiXSwidWlkIjpbIm15c2VsZiJdfX0.2MBH9f4aspGqmENebmtHiwfc7RFBlaNs_-jlTJKk6Bg"
 
 func (test *MiddlewareTest) SetUpTest(c *C) {
 	saml.TimeNow = func() time.Time {
@@ -92,7 +91,7 @@ func (test *MiddlewareTest) TestCanProduceMetadata(c *C) {
 	c.Assert(resp.Header().Get("Content-type"), Equals, "application/samlmetadata+xml")
 	c.Assert(string(resp.Body.Bytes()), DeepEquals, ""+
 		"<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2015-12-03T01:57:09.123Z\" entityID=\"https://15661444.ngrok.io/saml2/metadata\">\n"+
-		"  <SPSSODescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"0001-01-01T00:00:00Z\" protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\" AuthnRequestsSigned=\"false\" WantAssertionsSigned=\"true\">\n"+
+		"  <SPSSODescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2015-12-03T01:57:09.123456789Z\" protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\" AuthnRequestsSigned=\"false\" WantAssertionsSigned=\"true\">\n"+
 		"    <KeyDescriptor use=\"signing\">\n"+
 		"      <KeyInfo xmlns=\"http://www.w3.org/2000/09/xmldsig#\">\n"+
 		"        <X509Data>\n"+
@@ -140,7 +139,31 @@ func (test *MiddlewareTest) TestRequireAccountNoCreds(c *C) {
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
 		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
-			"; Path=/saml2/acs; Max-Age=90")
+			"; Path=/saml2/acs; Max-Age=90; HttpOnly")
+
+	redirectURL, err := url.Parse(resp.Header().Get("Location"))
+	c.Assert(err, IsNil)
+	decodedRequest, err := testsaml.ParseRedirectRequest(redirectURL)
+	c.Assert(err, IsNil)
+	c.Assert(string(decodedRequest), Equals, "<samlp:AuthnRequest xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:57:09.123Z\" Destination=\"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO\" AssertionConsumerServiceURL=\"https://15661444.ngrok.io/saml2/acs\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\"><saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://15661444.ngrok.io/saml2/metadata</saml:Issuer><samlp:NameIDPolicy Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" AllowCreate=\"true\"/></samlp:AuthnRequest>")
+}
+
+func (test *MiddlewareTest) TestRequireAccountNoCredsSecure(c *C) {
+	test.Middleware.CookieSecure = true
+	handler := test.Middleware.RequireAccount(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			panic("not reached")
+		}))
+
+	req, _ := http.NewRequest("GET", "/frob", nil)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	c.Assert(resp.Code, Equals, http.StatusFound)
+	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
+		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
+			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
+			"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure")
 
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
 	c.Assert(err, IsNil)
@@ -166,7 +189,7 @@ func (test *MiddlewareTest) TestRequireAccountNoCredsPostBinding(c *C) {
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
 		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
-			"; Path=/saml2/acs; Max-Age=90")
+			"; Path=/saml2/acs; Max-Age=90; HttpOnly")
 	c.Assert(string(resp.Body.Bytes()), Equals, ""+
 		"<!DOCTYPE html>"+
 		"<html>"+
@@ -176,13 +199,13 @@ func (test *MiddlewareTest) TestRequireAccountNoCredsPostBinding(c *C) {
 		"<input type=\"hidden\" name=\"RelayState\" value=\"KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6\" />"+
 		"<input id=\"SAMLSubmitButton\" type=\"submit\" value=\"Submit\" />"+
 		"</form>"+
-		"<script>document.getElementById('SAMLSubmitButton').style.visibility=\"hidden\";</script>"+
-		"<script>document.getElementById('SAMLRequestForm').submit();</script>"+
+		"<script>document.getElementById('SAMLSubmitButton').style.visibility=\"hidden\";"+
+		"document.getElementById('SAMLRequestForm').submit();</script>"+
 		"</body>"+
 		"</html>")
 
 	// check that the CSP script hash is set correctly
-	scriptContent := "document.getElementById('SAMLRequestForm').submit();"
+	scriptContent := "document.getElementById('SAMLSubmitButton').style.visibility=\"hidden\";document.getElementById('SAMLRequestForm').submit();"
 	scriptSum := sha256.Sum256([]byte(scriptContent))
 	scriptHash := base64.StdEncoding.EncodeToString(scriptSum[:])
 	c.Assert(resp.Header().Get("Content-Security-Policy"), Equals,
@@ -194,16 +217,17 @@ func (test *MiddlewareTest) TestRequireAccountNoCredsPostBinding(c *C) {
 func (test *MiddlewareTest) TestRequireAccountCreds(c *C) {
 	handler := test.Middleware.RequireAccount(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			c.Assert(r.Header.Get("X-Saml-Telephonenumber"), Equals, "555-5555")
-			c.Assert(r.Header["X-Saml-Edupersonscopedaffiliation"], DeepEquals, []string{"Member@testshib.org", "Staff@testshib.org"})
-			c.Assert(r.Header.Get("X-Saml-Sn"), Equals, "And I")
-			c.Assert(r.Header.Get("X-Saml-Edupersonentitlement"), Equals, "urn:mace:dir:entitlement:common-lib-terms")
-			c.Assert(r.Header.Get("X-Saml-Edupersontargetedid"), Equals, "")
-			c.Assert(r.Header.Get("X-Saml-Givenname"), Equals, "Me Myself")
-			c.Assert(r.Header.Get("X-Saml-Cn"), Equals, "Me Myself And I")
-			c.Assert(r.Header["X-Saml-Edupersonaffiliation"], DeepEquals, []string{"Member", "Staff"})
-			c.Assert(r.Header.Get("X-Saml-Uid"), Equals, "myself")
-			c.Assert(r.Header.Get("X-Saml-Edupersonprincipalname"), Equals, "myself@testshib.org")
+			token := Token(r.Context())
+			c.Assert(token.Attributes.Get("telephoneNumber"), DeepEquals, "555-5555")
+			c.Assert(token.Attributes.Get("sn"), Equals, "And I")
+			c.Assert(token.Attributes.Get("eduPersonEntitlement"), Equals, "urn:mace:dir:entitlement:common-lib-terms")
+			c.Assert(token.Attributes.Get("eduPersonTargetedID"), Equals, "")
+			c.Assert(token.Attributes.Get("givenName"), Equals, "Me Myself")
+			c.Assert(token.Attributes.Get("cn"), Equals, "Me Myself And I")
+			c.Assert(token.Attributes.Get("uid"), Equals, "myself")
+			c.Assert(token.Attributes.Get("eduPersonPrincipalName"), Equals, "myself@testshib.org")
+			c.Assert(token.Attributes["eduPersonScopedAffiliation"], DeepEquals, []string{"Member@testshib.org", "Staff@testshib.org"})
+			c.Assert(token.Attributes["eduPersonAffiliation"], DeepEquals, []string{"Member", "Staff"})
 			w.WriteHeader(http.StatusTeapot)
 		}))
 
@@ -215,30 +239,6 @@ func (test *MiddlewareTest) TestRequireAccountCreds(c *C) {
 	handler.ServeHTTP(resp, req)
 
 	c.Assert(resp.Code, Equals, http.StatusTeapot)
-}
-
-func (test *MiddlewareTest) TestFiltersSpecialHeadersInRequest(c *C) {
-	handler := test.Middleware.RequireAccount(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			panic("not reached")
-		}))
-
-	{
-		req, _ := http.NewRequest("GET", "/frob", nil)
-		req.Header.Set("X-Saml-Uid", "root") // evil
-		req.Header.Set("Cookie", "ttt="+expectedToken+"; Path=/; Max-Age=7200")
-		resp := httptest.NewRecorder()
-		c.Assert(func() { handler.ServeHTTP(resp, req) }, PanicMatches, "X-Saml-\\* headers should not exist when this function is called")
-	}
-
-	// make sure case folding works
-	{
-		req, _ := http.NewRequest("GET", "/frob", nil)
-		req.Header.Set("x-SAML-uId", "root") // evil
-		req.Header.Set("Cookie", "ttt="+expectedToken+"; Path=/; Max-Age=7200")
-		resp := httptest.NewRecorder()
-		c.Assert(func() { handler.ServeHTTP(resp, req) }, PanicMatches, "X-Saml-\\* headers should not exist when this function is called")
-	}
 }
 
 func (test *MiddlewareTest) TestRequireAccountBadCreds(c *C) {
@@ -259,13 +259,12 @@ func (test *MiddlewareTest) TestRequireAccountBadCreds(c *C) {
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
 		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
-			"; Path=/saml2/acs; Max-Age=90")
+			"; Path=/saml2/acs; Max-Age=90; HttpOnly")
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
 	c.Assert(err, IsNil)
 	decodedRequest, err := testsaml.ParseRedirectRequest(redirectURL)
 	c.Assert(err, IsNil)
 	c.Assert(string(decodedRequest), Equals, "<samlp:AuthnRequest xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:57:09.123Z\" Destination=\"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO\" AssertionConsumerServiceURL=\"https://15661444.ngrok.io/saml2/acs\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\"><saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://15661444.ngrok.io/saml2/metadata</saml:Issuer><samlp:NameIDPolicy Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" AllowCreate=\"true\"/></samlp:AuthnRequest>")
-
 }
 
 func (test *MiddlewareTest) TestRequireAccountExpiredCreds(c *C) {
@@ -290,7 +289,7 @@ func (test *MiddlewareTest) TestRequireAccountExpiredCreds(c *C) {
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
 		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
-			"; Path=/saml2/acs; Max-Age=90")
+			"; Path=/saml2/acs; Max-Age=90; HttpOnly")
 
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
 	c.Assert(err, IsNil)
@@ -309,22 +308,6 @@ func (test *MiddlewareTest) TestRequireAccountPanicOnRequestToACS(c *C) {
 	resp := httptest.NewRecorder()
 	c.Assert(func() { handler.ServeHTTP(resp, req) }, Panics,
 		"don't wrap Middleware with RequireAccount")
-}
-
-func (test *MiddlewareTest) TestRejectRequestWithMagicHeader(c *C) {
-	handler := test.Middleware.RequireAccount(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			panic("not reached")
-		}))
-
-	req, _ := http.NewRequest("GET", "/frob", nil)
-	req.Header.Set("Cookie", ""+
-		"ttt="+expectedToken+"; "+
-		"Path=/; Max-Age=7200")
-	req.Header.Set("X-Saml-Uid", "root") // ... evil
-	resp := httptest.NewRecorder()
-	c.Assert(func() { handler.ServeHTTP(resp, req) }, Panics,
-		"X-Saml-* headers should not exist when this function is called")
 }
 
 func (test *MiddlewareTest) TestRequireAttribute(c *C) {
@@ -412,7 +395,7 @@ func (test *MiddlewareTest) TestCanParseResponse(c *C) {
 	c.Assert(resp.Header()["Set-Cookie"], DeepEquals, []string{
 		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6=; Expires=Thu, 01 Jan 1970 00:00:01 GMT",
 		"ttt=" + expectedToken + "; " +
-			"Path=/; Max-Age=7200",
+			"Path=/; Max-Age=7200; HttpOnly",
 	})
 }
 

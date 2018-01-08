@@ -25,6 +25,7 @@ import (
 // NameIDFormat is the format of the id
 type NameIDFormat string
 
+// Element returns an XML element representation of n.
 func (n NameIDFormat) Element() *etree.Element {
 	el := etree.NewElement("")
 	el.SetText(string(n))
@@ -37,6 +38,7 @@ const (
 	UnspecifiedNameIDFormat  NameIDFormat = "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
 	TransientNameIDFormat    NameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
 	EmailAddressNameIDFormat NameIDFormat = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+	PersistentNameIDFormat   NameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
 )
 
 // ServiceProvider implements SAML Service provider.
@@ -76,6 +78,10 @@ type ServiceProvider struct {
 
 	// Logger is used to log messages for example in the event of errors
 	Logger logger.Interface
+
+	// ForceAuthn allows you to force re-authentication of users even if the user
+	// has a SSO session at the IdP.
+	ForceAuthn *bool
 }
 
 // MaxIssueDelay is the longest allowed time between when a SAML assertion is
@@ -103,12 +109,13 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 
 	authnRequestsSigned := false
 	wantAssertionsSigned := true
+	validUntil := TimeNow().Add(validDuration)
 	return &EntityDescriptor{
 		EntityID:   sp.MetadataURL.String(),
-		ValidUntil: TimeNow().Add(validDuration),
+		ValidUntil: validUntil,
 
 		SPSSODescriptors: []SPSSODescriptor{
-			SPSSODescriptor{
+			{
 				SSODescriptor: SSODescriptor{
 					RoleDescriptor: RoleDescriptor{
 						ProtocolSupportEnumeration: "urn:oasis:names:tc:SAML:2.0:protocol",
@@ -132,13 +139,14 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 								},
 							},
 						},
+						ValidUntil: validUntil,
 					},
 				},
 				AuthnRequestsSigned:  &authnRequestsSigned,
 				WantAssertionsSigned: &wantAssertionsSigned,
 
 				AssertionConsumerServices: []IndexedEndpoint{
-					IndexedEndpoint{
+					{
 						Binding:  HTTPPostBinding,
 						Location: sp.AcsURL.String(),
 						Index:    1,
@@ -274,6 +282,7 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string) (*AuthnReque
 			// urn:oasis:names:tc:SAML:2.0:nameid-format:transient
 			Format: &nameIDFormat,
 		},
+		ForceAuthn: sp.ForceAuthn,
 	}
 	return &req, nil
 }
@@ -305,8 +314,8 @@ func (req *AuthnRequest) Post(relayState string) []byte {
 		`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
 		`<input id="SAMLSubmitButton" type="submit" value="Submit" />` +
 		`</form>` +
-		`<script>document.getElementById('SAMLSubmitButton').style.visibility="hidden";</script>` +
-		`<script>document.getElementById('SAMLRequestForm').submit();</script>`))
+		`<script>document.getElementById('SAMLSubmitButton').style.visibility="hidden";` +
+		`document.getElementById('SAMLRequestForm').submit();</script>`))
 	data := struct {
 		URL         string
 		SAMLRequest string

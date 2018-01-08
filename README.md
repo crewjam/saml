@@ -1,3 +1,13 @@
+# SAML
+
+Package saml contains a partial implementation of the SAML standard in golang.
+SAML is a standard for identity federation, i.e. either allowing a third party to authenticate your users or allowing third parties to rely on us to authenticate their users.
+
+## Introduction
+
+In SAML parlance an **Identity Provider** (IDP) is a service that knows how to authenticate users. A **Service Provider** (SP) is a service that delegates authentication to an IDP. If you are building a service where users log in with someone else's credentials, then you are a **Service Provider**. This package supports implementing both service providers and identity providers.
+
+The core package contains the implementation of SAML. The package samlsp provides helper middleware suitable for use in Service Provider applications. The package samlidp provides a rudimentary IDP service that is useful for testing or as a starting point for other integrations.
 
 ## Breaking Changes 
 
@@ -20,85 +30,80 @@ In various places where keys and certificates were modeled as `string`
 <= version 0.1.0 (what was I thinking?!) they are now modeled as 
 `*rsa.PrivateKey`, `*x509.Certificate`, or `crypto.PrivateKey` as appropriate.
 
-## Introduction
-
-Package saml contains a partial implementation of the SAML standard in golang.
-SAML is a standard for identity federation, i.e. either allowing a third party to authenticate your users or allowing third parties to rely on us to authenticate their users.
-
-In SAML parlance an **Identity Provider** (IDP) is a service that knows how to authenticate users. A **Service Provider** (SP) is a service that delegates authentication to an IDP. If you are building a service where users log in with someone else's credentials, then you are a **Service Provider**. This package supports implementing both service providers and identity providers.
-
-The core package contains the implementation of SAML. The package samlsp provides helper middleware suitable for use in Service Provider applications. The package samlidp provides a rudimentary IDP service that is useful for testing or as a starting point for other integrations.
-
 ## Getting Started as a Service Provider
 
 Let us assume we have a simple web appliation to protect. We'll modify this application so it uses SAML to authenticate users.
+```golang
+package main
 
-    package main
+import "net/http"
 
-    import "net/http"
+func hello(w http.ResponseWriter, r *http.Request) {
+    fmt.Fprintf(w, "Hello, World!")
+}
 
-    func hello(w http.ResponseWriter, r *http.Request) {
-        fmt.Fprintf(w, "Hello, World!")
-    }
-
-    func main() {
-        app := http.HandlerFunc(hello)
-        http.Handle("/hello", app)
-        http.ListenAndServe(":8000", nil)
-    }
-
+func main() {
+    app := http.HandlerFunc(hello)
+    http.Handle("/hello", app)
+    http.ListenAndServe(":8000", nil)
+}
+```
 Each service provider must have an self-signed X.509 key pair established. You can generate your own with something like this:
 
     openssl req -x509 -newkey rsa:2048 -keyout myservice.key -out myservice.cert -days 365 -nodes -subj "/CN=myservice.example.com"
 
 We will use `samlsp.Middleware` to wrap the endpoint we want to protect. Middleware provides both an `http.Handler` to serve the SAML specific URLs **and** a set of wrappers to require the user to be logged in. We also provide the URL where the service provider can fetch the metadata from the IDP at startup. In our case, we'll use [testshib.org](https://www.testshib.org/), an identity provider designed for testing.
 
-    package main
+```golang
+package main
 
-    import (
-        "fmt"
-        "io/ioutil"
-        "net/http"
+import (
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"net/http"
+	"net/url"
 
-        "github.com/crewjam/saml/samlsp"
-    )
+	"github.com/crewjam/saml/samlsp"
+)
 
-    func hello(w http.ResponseWriter, r *http.Request) {
-        fmt.Fprintf(w, "Hello, %s!", r.Header.Get("X-Saml-Cn"))
-    }
+func hello(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, "Hello, %s!", samlsp.Token(r.Context()).Attributes.Get("cn"))
+}
 
-    func main() {
-        keyPair, err := tls.LoadX509KeyPair("myservice.cert", "myservice.key")
-        if err != nil {
-            panic(err) // TODO handle error
-        }
-        keyPair.Leaf, err = x509.ParseCertificate(keyPair.Certificate[0])
-        if err != nil {
-            panic(err) // TODO handle error
-        }
+func main() {
+	keyPair, err := tls.LoadX509KeyPair("myservice.cert", "myservice.key")
+	if err != nil {
+		panic(err) // TODO handle error
+	}
+	keyPair.Leaf, err = x509.ParseCertificate(keyPair.Certificate[0])
+	if err != nil {
+		panic(err) // TODO handle error
+	}
 
-        idpMetadataURL, err := url.Parse("https://www.testshib.org/metadata/testshib-providers.xml")
-        if err != nil {
-            panic(err) // TODO handle error
-        }
+	idpMetadataURL, err := url.Parse("https://www.testshib.org/metadata/testshib-providers.xml")
+	if err != nil {
+		panic(err) // TODO handle error
+	}
 
-        rootURL, err := url.Parse("http://localhost:8000")
-        if err != nil {
-            panic(err) // TODO handle error
-        }
+	rootURL, err := url.Parse("http://localhost:8000")
+	if err != nil {
+		panic(err) // TODO handle error
+	}
 
-        samlSP, _ := samlsp.New(samlsp.Options{
-            URL:            *rootURL,
-            Key:            kp.PrivateKey.(*rsa.PrivateKey),
-            Certificate:    kp.Leaf,
-            IDPMetadataURL: idpMetadataURL,
-        })
-        app := http.HandlerFunc(hello)
-        http.Handle("/hello", samlSP.RequireAccount(app))
-        http.Handle("/saml/", samlSP)
-        http.ListenAndServe(":8000", nil)
-    }
-
+	samlSP, _ := samlsp.New(samlsp.Options{
+		URL:            *rootURL,
+		Key:            keyPair.PrivateKey.(*rsa.PrivateKey),
+		Certificate:    keyPair.Leaf,
+		IDPMetadataURL: idpMetadataURL,
+	})
+	app := http.HandlerFunc(hello)
+	http.Handle("/hello", samlSP.RequireAccount(app))
+	http.Handle("/saml/", samlSP)
+	http.ListenAndServe(":8000", nil)
+}
+```
 
 Next we'll have to register our service provider with the identiy provider to establish trust from the service provider to the IDP. For [testshib.org](https://www.testshib.org/), you can do something like:
 
@@ -111,15 +116,15 @@ Now you should be able to authenticate. The flow should look like this:
 
 1. You browse to `localhost:8000/hello`
 
-2. The middleware redirects you to `https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO`
+1. The middleware redirects you to `https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO`
 
-3. testshib.org prompts you for a username and password.
+1. testshib.org prompts you for a username and password.
 
-4. testshib.org returns you an HTML document which contains an HTML form setup to POST to `localhost:8000/saml/acs`. The form is automatically submitted if you have javascript enabled.
+1. testshib.org returns you an HTML document which contains an HTML form setup to POST to `localhost:8000/saml/acs`. The form is automatically submitted if you have javascript enabled.
 
-5. The local service validates the response, issues a session cookie, and redirects you to the original URL, `localhost:8000/hello`.
+1. The local service validates the response, issues a session cookie, and redirects you to the original URL, `localhost:8000/hello`.
 
-6. This time when `localhost:8000/hello` is requested there is a valid session and so the main content is served.
+1. This time when `localhost:8000/hello` is requested there is a valid session and so the main content is served.
 
 ## Getting Started as an Identity Provider
 
