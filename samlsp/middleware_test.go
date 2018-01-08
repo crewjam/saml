@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/xml"
 	"io/ioutil"
@@ -16,8 +17,6 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	dsig "github.com/russellhaering/goxmldsig"
 	. "gopkg.in/check.v1"
-
-	"crypto/x509"
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/logger"
@@ -218,16 +217,17 @@ func (test *MiddlewareTest) TestRequireAccountNoCredsPostBinding(c *C) {
 func (test *MiddlewareTest) TestRequireAccountCreds(c *C) {
 	handler := test.Middleware.RequireAccount(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			c.Assert(r.Header.Get("X-Saml-Telephonenumber"), Equals, "555-5555")
-			c.Assert(r.Header["X-Saml-Edupersonscopedaffiliation"], DeepEquals, []string{"Member@testshib.org", "Staff@testshib.org"})
-			c.Assert(r.Header.Get("X-Saml-Sn"), Equals, "And I")
-			c.Assert(r.Header.Get("X-Saml-Edupersonentitlement"), Equals, "urn:mace:dir:entitlement:common-lib-terms")
-			c.Assert(r.Header.Get("X-Saml-Edupersontargetedid"), Equals, "")
-			c.Assert(r.Header.Get("X-Saml-Givenname"), Equals, "Me Myself")
-			c.Assert(r.Header.Get("X-Saml-Cn"), Equals, "Me Myself And I")
-			c.Assert(r.Header["X-Saml-Edupersonaffiliation"], DeepEquals, []string{"Member", "Staff"})
-			c.Assert(r.Header.Get("X-Saml-Uid"), Equals, "myself")
-			c.Assert(r.Header.Get("X-Saml-Edupersonprincipalname"), Equals, "myself@testshib.org")
+			token := Token(r.Context())
+			c.Assert(token.Attributes.Get("telephoneNumber"), DeepEquals, "555-5555")
+			c.Assert(token.Attributes.Get("sn"), Equals, "And I")
+			c.Assert(token.Attributes.Get("eduPersonEntitlement"), Equals, "urn:mace:dir:entitlement:common-lib-terms")
+			c.Assert(token.Attributes.Get("eduPersonTargetedID"), Equals, "")
+			c.Assert(token.Attributes.Get("givenName"), Equals, "Me Myself")
+			c.Assert(token.Attributes.Get("cn"), Equals, "Me Myself And I")
+			c.Assert(token.Attributes.Get("uid"), Equals, "myself")
+			c.Assert(token.Attributes.Get("eduPersonPrincipalName"), Equals, "myself@testshib.org")
+			c.Assert(token.Attributes["eduPersonScopedAffiliation"], DeepEquals, []string{"Member@testshib.org", "Staff@testshib.org"})
+			c.Assert(token.Attributes["eduPersonAffiliation"], DeepEquals, []string{"Member", "Staff"})
 			w.WriteHeader(http.StatusTeapot)
 		}))
 
@@ -239,30 +239,6 @@ func (test *MiddlewareTest) TestRequireAccountCreds(c *C) {
 	handler.ServeHTTP(resp, req)
 
 	c.Assert(resp.Code, Equals, http.StatusTeapot)
-}
-
-func (test *MiddlewareTest) TestFiltersSpecialHeadersInRequest(c *C) {
-	handler := test.Middleware.RequireAccount(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			panic("not reached")
-		}))
-
-	{
-		req, _ := http.NewRequest("GET", "/frob", nil)
-		req.Header.Set("X-Saml-Uid", "root") // evil
-		req.Header.Set("Cookie", "ttt="+expectedToken+"; Path=/; Max-Age=7200")
-		resp := httptest.NewRecorder()
-		c.Assert(func() { handler.ServeHTTP(resp, req) }, PanicMatches, "X-Saml-\\* headers should not exist when this function is called")
-	}
-
-	// make sure case folding works
-	{
-		req, _ := http.NewRequest("GET", "/frob", nil)
-		req.Header.Set("x-SAML-uId", "root") // evil
-		req.Header.Set("Cookie", "ttt="+expectedToken+"; Path=/; Max-Age=7200")
-		resp := httptest.NewRecorder()
-		c.Assert(func() { handler.ServeHTTP(resp, req) }, PanicMatches, "X-Saml-\\* headers should not exist when this function is called")
-	}
 }
 
 func (test *MiddlewareTest) TestRequireAccountBadCreds(c *C) {
@@ -289,7 +265,6 @@ func (test *MiddlewareTest) TestRequireAccountBadCreds(c *C) {
 	decodedRequest, err := testsaml.ParseRedirectRequest(redirectURL)
 	c.Assert(err, IsNil)
 	c.Assert(string(decodedRequest), Equals, "<samlp:AuthnRequest xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:57:09.123Z\" Destination=\"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO\" AssertionConsumerServiceURL=\"https://15661444.ngrok.io/saml2/acs\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\"><saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://15661444.ngrok.io/saml2/metadata</saml:Issuer><samlp:NameIDPolicy Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" AllowCreate=\"true\"/></samlp:AuthnRequest>")
-
 }
 
 func (test *MiddlewareTest) TestRequireAccountExpiredCreds(c *C) {
@@ -333,22 +308,6 @@ func (test *MiddlewareTest) TestRequireAccountPanicOnRequestToACS(c *C) {
 	resp := httptest.NewRecorder()
 	c.Assert(func() { handler.ServeHTTP(resp, req) }, Panics,
 		"don't wrap Middleware with RequireAccount")
-}
-
-func (test *MiddlewareTest) TestRejectRequestWithMagicHeader(c *C) {
-	handler := test.Middleware.RequireAccount(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			panic("not reached")
-		}))
-
-	req, _ := http.NewRequest("GET", "/frob", nil)
-	req.Header.Set("Cookie", ""+
-		"ttt="+expectedToken+"; "+
-		"Path=/; Max-Age=7200")
-	req.Header.Set("X-Saml-Uid", "root") // ... evil
-	resp := httptest.NewRecorder()
-	c.Assert(func() { handler.ServeHTTP(resp, req) }, Panics,
-		"X-Saml-* headers should not exist when this function is called")
 }
 
 func (test *MiddlewareTest) TestRequireAttribute(c *C) {

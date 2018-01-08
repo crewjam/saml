@@ -68,7 +68,8 @@
 // )
 // 
 // func hello(w http.ResponseWriter, r *http.Request) {
-// 	fmt.Fprintf(w, "Hello, %s!", r.Header.Get("X-Saml-Cn"))
+// 	claims := samlsp.Claims(r.Context())
+// 	fmt.Fprintf(w, "Hello, %s!", claims.Attributes["cn"][0])
 // }
 // 
 // func main() {
