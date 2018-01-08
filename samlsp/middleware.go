@@ -4,9 +4,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/xml"
-	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/crewjam/saml"
@@ -47,14 +45,10 @@ import (
 type Middleware struct {
 	ServiceProvider   saml.ServiceProvider
 	AllowIDPInitiated bool
-	CookieName        string
-	CookieMaxAge      time.Duration
-	CookieDomain      string
-	CookieSecure      bool
+	TokenMaxAge       time.Duration
+	ClientState       ClientState
+	ClientToken       ClientToken
 }
-
-const defaultCookieMaxAge = time.Hour
-const defaultCookieName = "token"
 
 var jwtSigningMethod = jwt.SigningMethodHS256
 
@@ -145,15 +139,7 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 			return
 		}
 
-		http.SetCookie(w, &http.Cookie{
-			Name:     fmt.Sprintf("saml_%s", relayState),
-			Value:    signedState,
-			MaxAge:   int(saml.MaxIssueDelay.Seconds()),
-			HttpOnly: true,
-			Secure:   m.CookieSecure || r.URL.Scheme == "https",
-			Path:     m.ServiceProvider.AcsURL.Path,
-		})
-
+		m.ClientState.SetState(w, r, relayState, signedState)
 		if binding == saml.HTTPRedirectBinding {
 			redirectURL := req.Redirect(relayState)
 			w.Header().Add("Location", redirectURL.String())
@@ -178,16 +164,11 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 
 func (m *Middleware) getPossibleRequestIDs(r *http.Request) []string {
 	rv := []string{}
-	for _, cookie := range r.Cookies() {
-		if !strings.HasPrefix(cookie.Name, "saml_") {
-			continue
-		}
-		m.ServiceProvider.Logger.Printf("getPossibleRequestIDs: cookie: %s", cookie.String())
-
+	for _, value := range m.ClientState.GetStates(r) {
 		jwtParser := jwt.Parser{
 			ValidMethods: []string{jwtSigningMethod.Name},
 		}
-		token, err := jwtParser.Parse(cookie.Value, func(t *jwt.Token) (interface{}, error) {
+		token, err := jwtParser.Parse(value, func(t *jwt.Token) (interface{}, error) {
 			secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
 			return secretBlock, nil
 		})
@@ -214,10 +195,10 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 	secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
 
 	redirectURI := "/"
-	if r.Form.Get("RelayState") != "" {
-		stateCookie, err := r.Cookie(fmt.Sprintf("saml_%s", r.Form.Get("RelayState")))
-		if err != nil {
-			m.ServiceProvider.Logger.Printf("cannot find corresponding cookie: %s", fmt.Sprintf("saml_%s", r.Form.Get("RelayState")))
+	if relayState := r.Form.Get("RelayState"); relayState != "" {
+		stateValue := m.ClientState.GetState(r, relayState)
+		if stateValue == "" {
+			m.ServiceProvider.Logger.Printf("cannot find corresponding state: %s", relayState)
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
@@ -225,11 +206,11 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 		jwtParser := jwt.Parser{
 			ValidMethods: []string{jwtSigningMethod.Name},
 		}
-		state, err := jwtParser.Parse(stateCookie.Value, func(t *jwt.Token) (interface{}, error) {
+		state, err := jwtParser.Parse(stateValue, func(t *jwt.Token) (interface{}, error) {
 			return secretBlock, nil
 		})
 		if err != nil || !state.Valid {
-			m.ServiceProvider.Logger.Printf("Cannot decode state JWT: %s (%s)", err, stateCookie.Value)
+			m.ServiceProvider.Logger.Printf("Cannot decode state JWT: %s (%s)", err, stateValue)
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
@@ -237,16 +218,14 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 		redirectURI = claims["uri"].(string)
 
 		// delete the cookie
-		stateCookie.Value = ""
-		stateCookie.Expires = time.Unix(1, 0) // past time as close to epoch as possible, but not zero time.Time{}
-		http.SetCookie(w, stateCookie)
+		m.ClientState.DeleteState(w, r, relayState)
 	}
 
 	now := saml.TimeNow()
 	claims := AuthorizationToken{}
 	claims.Audience = m.ServiceProvider.Metadata().EntityID
 	claims.IssuedAt = now.Unix()
-	claims.ExpiresAt = now.Add(m.CookieMaxAge).Unix()
+	claims.ExpiresAt = now.Add(m.TokenMaxAge).Unix()
 	claims.NotBefore = now.Unix()
 	if sub := assertion.Subject; sub != nil {
 		if nameID := sub.NameID; nameID != nil {
@@ -265,23 +244,13 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 			}
 		}
 	}
-
 	signedToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256,
 		claims).SignedString(secretBlock)
 	if err != nil {
 		panic(err)
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     m.CookieName,
-		Domain:   m.CookieDomain,
-		Value:    signedToken,
-		MaxAge:   int(m.CookieMaxAge.Seconds()),
-		HttpOnly: true,
-		Secure:   m.CookieSecure || r.URL.Scheme == "https",
-		Path:     "/",
-	})
-
+	m.ClientToken.SetToken(w, r, signedToken, m.TokenMaxAge)
 	http.Redirect(w, r, redirectURI, http.StatusFound)
 }
 
@@ -298,13 +267,13 @@ func (m *Middleware) IsAuthorized(r *http.Request) bool {
 // SAML login flow. If the request is authorized, then the request context is
 // ammended with a Context object.
 func (m *Middleware) GetAuthorizationToken(r *http.Request) *AuthorizationToken {
-	cookie, err := r.Cookie(m.CookieName)
-	if err != nil {
+	tokenStr := m.ClientToken.GetToken(r)
+	if tokenStr == "" {
 		return nil
 	}
 
 	tokenClaims := AuthorizationToken{}
-	token, err := jwt.ParseWithClaims(cookie.Value, &tokenClaims, func(t *jwt.Token) (interface{}, error) {
+	token, err := jwt.ParseWithClaims(tokenStr, &tokenClaims, func(t *jwt.Token) (interface{}, error) {
 		secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
 		return secretBlock, nil
 	})
