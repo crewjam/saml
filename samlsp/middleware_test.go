@@ -77,12 +77,18 @@ func (test *MiddlewareTest) SetUpTest(c *C) {
 		},
 		TokenMaxAge: time.Hour * 2,
 	}
+
 	cookieStore := ClientCookies{
 		ServiceProvider: &test.Middleware.ServiceProvider,
 		Name:            "ttt",
 	}
 	test.Middleware.ClientState = &cookieStore
 	test.Middleware.ClientToken = &cookieStore
+	test.Middleware.TokenSigner = &JWTTokenSigner{
+		Key:      x509.MarshalPKCS1PrivateKey(test.Middleware.ServiceProvider.Key),
+		Audience: test.Middleware.ServiceProvider.Metadata().EntityID,
+	}
+
 	err := xml.Unmarshal([]byte(test.IDPMetadata), &test.Middleware.ServiceProvider.IDPMetadata)
 	c.Assert(err, IsNil)
 }

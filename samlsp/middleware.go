@@ -48,6 +48,7 @@ type Middleware struct {
 	TokenMaxAge       time.Duration
 	ClientState       ClientState
 	ClientToken       ClientToken
+	TokenSigner       AuthorizationTokenSigner
 }
 
 var jwtSigningMethod = jwt.SigningMethodHS256
@@ -272,25 +273,13 @@ func (m *Middleware) GetAuthorizationToken(r *http.Request) *AuthorizationToken 
 		return nil
 	}
 
-	tokenClaims := AuthorizationToken{}
-	token, err := jwt.ParseWithClaims(tokenStr, &tokenClaims, func(t *jwt.Token) (interface{}, error) {
-		secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
-		return secretBlock, nil
-	})
-	if err != nil || !token.Valid {
+	token, err := m.TokenSigner.ParseAuthorizationToken(r.Context(), tokenStr)
+	if err != nil {
 		m.ServiceProvider.Logger.Printf("ERROR: invalid token: %s", err)
 		return nil
 	}
-	if err := tokenClaims.StandardClaims.Valid(); err != nil {
-		m.ServiceProvider.Logger.Printf("ERROR: invalid token claims: %s", err)
-		return nil
-	}
-	if tokenClaims.Audience != m.ServiceProvider.Metadata().EntityID {
-		m.ServiceProvider.Logger.Printf("ERROR: invalid audience: %s", err)
-		return nil
-	}
 
-	return &tokenClaims
+	return token
 }
 
 // RequireAttribute returns a middleware function that requires that the

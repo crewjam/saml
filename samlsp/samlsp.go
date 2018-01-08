@@ -63,6 +63,13 @@ func New(opts Options) (*Middleware, error) {
 		TokenMaxAge:       tokenMaxAge,
 	}
 
+	if opts.Key != nil {
+		m.TokenSigner = &JWTTokenSigner{
+			Key:      x509.MarshalPKCS1PrivateKey(opts.Key),
+			Audience: m.ServiceProvider.Metadata().EntityID,
+		}
+	}
+
 	cookieStore := ClientCookies{
 		ServiceProvider: &m.ServiceProvider,
 		Name:            defaultCookieName,
