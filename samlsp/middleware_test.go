@@ -75,9 +75,14 @@ func (test *MiddlewareTest) SetUpTest(c *C) {
 			IDPMetadata: &saml.EntityDescriptor{},
 			Logger:      logger.DefaultLogger,
 		},
-		CookieName:   "ttt",
-		CookieMaxAge: time.Hour * 2,
+		TokenMaxAge: time.Hour * 2,
 	}
+	cookieStore := ClientCookies{
+		ServiceProvider: &test.Middleware.ServiceProvider,
+		Name:            "ttt",
+	}
+	test.Middleware.ClientState = &cookieStore
+	test.Middleware.ClientToken = &cookieStore
 	err := xml.Unmarshal([]byte(test.IDPMetadata), &test.Middleware.ServiceProvider.IDPMetadata)
 	c.Assert(err, IsNil)
 }
@@ -149,7 +154,8 @@ func (test *MiddlewareTest) TestRequireAccountNoCreds(c *C) {
 }
 
 func (test *MiddlewareTest) TestRequireAccountNoCredsSecure(c *C) {
-	test.Middleware.CookieSecure = true
+	cookieStore := test.Middleware.ClientState.(*ClientCookies)
+	cookieStore.Secure = true
 	handler := test.Middleware.RequireAccount(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			panic("not reached")
