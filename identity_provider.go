@@ -298,6 +298,7 @@ type IdpAuthnRequest struct {
 	Assertion               *Assertion
 	AssertionEl             *etree.Element
 	ResponseEl              *etree.Element
+	Now                     time.Time
 }
 
 // NewIdpAuthnRequest returns a new IdpAuthnRequest for the given HTTP request to the authorization
@@ -306,6 +307,7 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 	req := &IdpAuthnRequest{
 		IDP:         idp,
 		HTTPRequest: r,
+		Now:         TimeNow(),
 	}
 
 	switch r.Method {
@@ -375,7 +377,7 @@ func (req *IdpAuthnRequest) Validate() error {
 		}
 	}
 
-	if req.Request.IssueInstant.Add(MaxIssueDelay).Before(TimeNow()) {
+	if req.Request.IssueInstant.Add(MaxIssueDelay).Before(req.Now) {
 		return fmt.Errorf("request expired at %s",
 			req.Request.IssueInstant.Add(MaxIssueDelay))
 	}
@@ -591,8 +593,8 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 
 	// allow for some clock skew in the validity period using the
 	// issuer's apparent clock.
-	notBefore := TimeNow().Add(-1 * MaxClockSkew)
-	notOnOrAfterAfter := notBefore.Add(MaxClockSkew).Add(MaxIssueDelay)
+	notBefore := req.Now.Add(-1 * MaxClockSkew)
+	notOnOrAfterAfter := req.Now.Add(MaxIssueDelay)
 	if notBefore.Before(req.Request.IssueInstant) {
 		notBefore = req.Request.IssueInstant
 		notOnOrAfterAfter = notBefore.Add(MaxIssueDelay)
@@ -619,7 +621,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 					SubjectConfirmationData: &SubjectConfirmationData{
 						Address:      req.HTTPRequest.RemoteAddr,
 						InResponseTo: req.Request.ID,
-						NotOnOrAfter: TimeNow().Add(MaxIssueDelay),
+						NotOnOrAfter: req.Now.Add(MaxIssueDelay),
 						Recipient:    req.ACSEndpoint.Location,
 					},
 				},
@@ -842,7 +844,7 @@ func (req *IdpAuthnRequest) MakeResponse() error {
 		Destination:  req.ACSEndpoint.Location,
 		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
 		InResponseTo: req.Request.ID,
-		IssueInstant: TimeNow(),
+		IssueInstant: req.Now,
 		Version:      "2.0",
 		Issuer: &Issuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
