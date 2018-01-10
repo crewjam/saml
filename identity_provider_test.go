@@ -363,6 +363,7 @@ func (test *IdentityProviderTest) TestCanParse(c *C) {
 
 func (test *IdentityProviderTest) TestCanValidate(c *C) {
 	req := IdpAuthnRequest{
+		Now: TimeNow(),
 		IDP: &test.IDP,
 		RequestBuffer: []byte("" +
 			"<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
@@ -383,12 +384,14 @@ func (test *IdentityProviderTest) TestCanValidate(c *C) {
 	c.Assert(req.ACSEndpoint, DeepEquals, &IndexedEndpoint{Binding: "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST", Location: "https://sp.example.com/saml2/acs", Index: 1})
 
 	req = IdpAuthnRequest{
+		Now:           TimeNow(),
 		IDP:           &test.IDP,
 		RequestBuffer: []byte("<AuthnRequest"),
 	}
 	c.Assert(req.Validate(), ErrorMatches, "XML syntax error on line 1: unexpected EOF")
 
 	req = IdpAuthnRequest{
+		Now: TimeNow(),
 		IDP: &test.IDP,
 		RequestBuffer: []byte("" +
 			"<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
@@ -406,6 +409,7 @@ func (test *IdentityProviderTest) TestCanValidate(c *C) {
 	c.Assert(req.Validate(), ErrorMatches, "expected destination to be \"https://idp.example.com/saml/sso\", not \"https://idp.wrongDestination.com/saml/sso\"")
 
 	req = IdpAuthnRequest{
+		Now: TimeNow(),
 		IDP: &test.IDP,
 		RequestBuffer: []byte("" +
 			"<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
@@ -423,6 +427,7 @@ func (test *IdentityProviderTest) TestCanValidate(c *C) {
 	c.Assert(req.Validate(), ErrorMatches, "request expired at 2014\\-12\\-01 01:58:39 \\+0000 UTC")
 
 	req = IdpAuthnRequest{
+		Now: TimeNow(),
 		IDP: &test.IDP,
 		RequestBuffer: []byte("" +
 			"<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
@@ -440,6 +445,7 @@ func (test *IdentityProviderTest) TestCanValidate(c *C) {
 	c.Assert(req.Validate(), ErrorMatches, "expected SAML request version 2.0 got 4.2")
 
 	req = IdpAuthnRequest{
+		Now: TimeNow(),
 		IDP: &test.IDP,
 		RequestBuffer: []byte("" +
 			"<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
@@ -457,6 +463,7 @@ func (test *IdentityProviderTest) TestCanValidate(c *C) {
 	c.Assert(req.Validate(), ErrorMatches, "cannot handle request from unknown service provider https://unknownSP.example.com/saml2/metadata")
 
 	req = IdpAuthnRequest{
+		Now: TimeNow(),
 		IDP: &test.IDP,
 		RequestBuffer: []byte("" +
 			"<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
@@ -477,6 +484,7 @@ func (test *IdentityProviderTest) TestCanValidate(c *C) {
 
 func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 	req := IdpAuthnRequest{
+		Now: TimeNow(),
 		IDP: &test.IDP,
 		RequestBuffer: []byte("" +
 			"<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
@@ -656,6 +664,7 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 
 func (test *IdentityProviderTest) TestMarshalAssertion(c *C) {
 	req := IdpAuthnRequest{
+		Now: TimeNow(),
 		IDP: &test.IDP,
 		RequestBuffer: []byte("" +
 			"<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
@@ -703,6 +712,7 @@ func (test *IdentityProviderTest) TestMarshalAssertion(c *C) {
 
 func (test *IdentityProviderTest) TestMakeResponse(c *C) {
 	req := IdpAuthnRequest{
+		Now: TimeNow(),
 		IDP: &test.IDP,
 		RequestBuffer: []byte("" +
 			"<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
@@ -772,6 +782,7 @@ func (test *IdentityProviderTest) TestMakeResponse(c *C) {
 
 func (test *IdentityProviderTest) TestWriteResponse(c *C) {
 	req := IdpAuthnRequest{
+		Now:        TimeNow(),
 		IDP:        &test.IDP,
 		RelayState: "THIS_IS_THE_RELAY_STATE",
 		RequestBuffer: []byte("" +
@@ -868,6 +879,7 @@ func (test *IdentityProviderTest) TestCanHandleUnencryptedResponse(c *C) {
 	}
 
 	req := IdpAuthnRequest{
+		Now: TimeNow(),
 		IDP: &test.IDP,
 		RequestBuffer: []byte("" +
 			"<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
@@ -1132,6 +1144,7 @@ func (test *IdentityProviderTest) TestNoDestination(c *C) {
 	}
 
 	req := IdpAuthnRequest{
+		Now: TimeNow(),
 		IDP: &test.IDP,
 		RequestBuffer: []byte("" +
 			"<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
