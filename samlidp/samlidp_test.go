@@ -15,8 +15,8 @@ import (
 
 	"crypto/rsa"
 
-	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/logger"
+	"github.com/lightstep/saml"
+	"github.com/lightstep/saml/logger"
 	"github.com/dgrijalva/jwt-go"
 )
 

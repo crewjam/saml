@@ -10,7 +10,7 @@ import (
 
 	"crypto/rsa"
 
-	"github.com/crewjam/saml/samlsp"
+	"github.com/lightstep/saml/samlsp"
 )
 
 func hello(w http.ResponseWriter, r *http.Request) {
