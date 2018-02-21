@@ -428,6 +428,36 @@ func (req *IdpAuthnRequest) getACSEndpoint() error {
 		}
 	}
 
+	// Some service providers, like the Microsoft Azure AD service provider, issue
+	// assertion requests that don't specify an ACS url at all.
+	if req.Request.AssertionConsumerServiceURL == "" && req.Request.AssertionConsumerServiceIndex == "" {
+		// find a default ACS binding in the metadata that we can use
+		for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
+			for _, spAssertionConsumerService := range spssoDescriptor.AssertionConsumerServices {
+				if spAssertionConsumerService.IsDefault != nil && *spAssertionConsumerService.IsDefault {
+					switch spAssertionConsumerService.Binding {
+					case HTTPPostBinding, HTTPRedirectBinding:
+						req.SPSSODescriptor = &spssoDescriptor
+						req.ACSEndpoint = &spAssertionConsumerService
+						return nil
+					}
+				}
+			}
+		}
+
+		// if we can't find a default, use *any* ACS binding
+		for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
+			for _, spAssertionConsumerService := range spssoDescriptor.AssertionConsumerServices {
+				switch spAssertionConsumerService.Binding {
+				case HTTPPostBinding, HTTPRedirectBinding:
+					req.SPSSODescriptor = &spssoDescriptor
+					req.ACSEndpoint = &spAssertionConsumerService
+					return nil
+				}
+			}
+		}
+	}
+
 	return os.ErrNotExist // no ACS url found or specified
 }
 
