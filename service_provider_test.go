@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -405,6 +406,103 @@ PUkfbaYHQGP6IS0lzeCeDX0wab3qRoh7/jJt5/BR8Iwf</ds:X509Certificate>
 			},
 		},
 	})
+}
+
+func (test *ServiceProviderTest) TestRejectsInjectedComment(c *C) {
+	// An actual response from google
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05 UTC 2006", "Tue Jan 5 16:55:39 UTC 2016")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
+	SamlResponse := "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiIHN0YW5kYWxvbmU9Im5vIj8+PHNhbWwycDpSZXNwb25zZSB4bWxuczpzYW1sMnA9InVybjpvYXNpczpuYW1lczp0YzpTQU1MOjIuMDpwcm90b2NvbCIgRGVzdGluYXRpb249Imh0dHBzOi8vMjllZTZkMmUubmdyb2suaW8vc2FtbC9hY3MiIElEPSJfZmMxNDFkYjI4NGViMzA5ODYwNTM1MWJkZTRkOWJlNTkiIEluUmVzcG9uc2VUbz0iaWQtZmQ0MTlhNWFiMDQ3MjY0NTQyN2Y4ZTA3ZDg3YTNhNWRkMGIyZTlhNiIgSXNzdWVJbnN0YW50PSIyMDE2LTAxLTA1VDE2OjU1OjM5LjM0OFoiIFZlcnNpb249IjIuMCI+PHNhbWwyOklzc3VlciB4bWxuczpzYW1sMj0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOmFzc2VydGlvbiI+aHR0cHM6Ly9hY2NvdW50cy5nb29nbGUuY29tL28vc2FtbDI/aWRwaWQ9QzAyZGZsMXIxPC9zYW1sMjpJc3N1ZXI+PGRzOlNpZ25hdHVyZSB4bWxuczpkcz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC8wOS94bWxkc2lnIyI+PGRzOlNpZ25lZEluZm8+PGRzOkNhbm9uaWNhbGl6YXRpb25NZXRob2QgQWxnb3JpdGhtPSJodHRwOi8vd3d3LnczLm9yZy8yMDAxLzEwL3htbC1leGMtYzE0biMiLz48ZHM6U2lnbmF0dXJlTWV0aG9kIEFsZ29yaXRobT0iaHR0cDovL3d3dy53My5vcmcvMjAwMS8wNC94bWxkc2lnLW1vcmUjcnNhLXNoYTI1NiIvPjxkczpSZWZlcmVuY2UgVVJJPSIjX2ZjMTQxZGIyODRlYjMwOTg2MDUzNTFiZGU0ZDliZTU5Ij48ZHM6VHJhbnNmb3Jtcz48ZHM6VHJhbnNmb3JtIEFsZ29yaXRobT0iaHR0cDovL3d3dy53My5vcmcvMjAwMC8wOS94bWxkc2lnI2VudmVsb3BlZC1zaWduYXR1cmUiLz48ZHM6VHJhbnNmb3JtIEFsZ29yaXRobT0iaHR0cDovL3d3dy53My5vcmcvMjAwMS8xMC94bWwtZXhjLWMxNG4jIi8+PC9kczpUcmFuc2Zvcm1zPjxkczpEaWdlc3RNZXRob2QgQWxnb3JpdGhtPSJodHRwOi8vd3d3LnczLm9yZy8yMDAxLzA0L3htbGVuYyNzaGEyNTYiLz48ZHM6RGlnZXN0VmFsdWU+bHRNRUJLRzRZNVNLeERScUxHR2xFSGtPd3hla3dQOStybnA2WEtqdkJxVT08L2RzOkRpZ2VzdFZhbHVlPjwvZHM6UmVmZXJlbmNlPjwvZHM6U2lnbmVkSW5mbz48ZHM6U2lnbmF0dXJlVmFsdWU+SFBVV0pmYTlqdVdiKy9wZ0YrQklsc2pycE40NkE0RUNiT3hNdXhmWEFRUCtrMU5KMG9EdTJKYk1pZHpmclJBRkRHMjZaNjZWQWtkcwpBRmYwVFgzMWxvVjdaU0tGS0lVY0tuaFlXTHFuUTZLbmRydnJLbzF5UUhzUkdUNzJoVjl3SWdqTFRTZm5FV3QvOEMxaERQQi96R0txClhXZ3VvNFFHYlZUeVBoVVh3eEFzRmxBNjFDdkE5Q1pzU2xpeHBaY2pOVjUyQmMydzI5RUNRNStBcHZGWjVqRU1EN1JiQTVpMzdBbmgKUVBCeVYrZXo4ZU9Yc0hvQlhsR0drTjlDR201MFR6djZ3TW12WkdkT2pKWlhvRWZGUTA4UFJwbE9DQWpxSjM3QnhpWitLZWtUaE1KYgorelowcG1yeWR2V3lONEMzNWcycGVueGw2QUtxYnhMaXlJUkVaZz09PC9kczpTaWduYXR1cmVWYWx1ZT48ZHM6S2V5SW5mbz48ZHM6WDUwOURhdGE+PGRzOlg1MDlTdWJqZWN0TmFtZT5TVD1DYWxpZm9ybmlhLEM9VVMsT1U9R29vZ2xlIEZvciBXb3JrLENOPUdvb2dsZSxMPU1vdW50YWluIFZpZXcsTz1Hb29nbGUgSW5jLjwvZHM6WDUwOVN1YmplY3ROYW1lPjxkczpYNTA5Q2VydGlmaWNhdGU+TUlJRGREQ0NBbHlnQXdJQkFnSUdBVklTbElsWU1BMEdDU3FHU0liM0RRRUJDd1VBTUhzeEZEQVNCZ05WQkFvVEMwZHZiMmRzWlNCSgpibU11TVJZd0ZBWURWUVFIRXcxTmIzVnVkR0ZwYmlCV2FXVjNNUTh3RFFZRFZRUURFd1pIYjI5bmJHVXhHREFXQmdOVkJBc1REMGR2CmIyZHNaU0JHYjNJZ1YyOXlhekVMTUFrR0ExVUVCaE1DVlZNeEV6QVJCZ05WQkFnVENrTmhiR2xtYjNKdWFXRXdIaGNOTVRZd01UQTEKTVRZeE56UTVXaGNOTWpFd01UQXpNVFl4TnpRNVdqQjdNUlF3RWdZRFZRUUtFd3RIYjI5bmJHVWdTVzVqTGpFV01CUUdBMVVFQnhNTgpUVzkxYm5SaGFXNGdWbWxsZHpFUE1BMEdBMVVFQXhNR1IyOXZaMnhsTVJnd0ZnWURWUVFMRXc5SGIyOW5iR1VnUm05eUlGZHZjbXN4CkN6QUpCZ05WQkFZVEFsVlRNUk13RVFZRFZRUUlFd3BEWVd4cFptOXlibWxoTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEEKTUlJQkNnS0NBUUVBbVVmTVVQeEhTWS9aWVo4OGZVR0FsaFVQNE5pN3pqNTR2c3JzUERBNFVoUWlSZUVEUnVuTjFxM09Ic1NoUm9uZwpnZDRMdkE4My9lLzNwbS9WNjBSNnZ5TWZqM1ovSUdXWStlWjk3RUpVdmprdHQrVlJvQWkyNm9lWTlaVzZTODV5YXB2QTNpdWhFd0lRCk9jdVBtMU9xUlEweVE0c1VEK1d0TC9RU21sWXZEUDVUSzFkNndoVGlzTnNLU3FlRlpDYi9zOU9YMDFVZXhXMUJ1RE9MZVZ0MHJDVzEKa1JOY0JCTERtZDRobkRQMFNWcTduTGhORllYajJFYTZXc3lSQUl2Y2hhVUd5K0ltYTJva1htOTVZZTlrbjhlMTE4aS81clJleUtDbQpCbHNrTWtOYUE0S1dLdklRbTNEZGpnT05nRWQwSXZLRXh5THdZN2E1L0pJVXZCaGI5UUlEQVFBQk1BMEdDU3FHU0liM0RRRUJDd1VBCkE0SUJBUUFVRExNbkhwemZwNFNoZEJxQ3JlVzQ4ZjhyVTk0cTJxTXdyVStXNkRrT3JHSlRBU1ZHUzlSaWIvTUtBaVJZT21xbGFxRVkKTlA1N3BDckUvblJCNUZWZEUrQWxTeC9mUjNraHNRM3pmLzRkWXMyMVN2R2YrT2FzOTlYRWJXZlYwT21QTVltM0lyU0NPQkVWMzF3aAo0MXFSYzVRTG5SK1h1dE5QYlNCTit0bitnaVJDTEdDQkxlODFvVnc0ZlJHUWJna2Q4N3JmTE95M0c2MzBJNnMvSjVmZUZGVVQ4ZDdoCjltcE9lT3FMQ1ByS3BxK3dJM2FEM2xmNG1YcUtJRE5pSEhSb05sNjdBTlB1L04zZk5VMUhwbFZ0dnJvVnBpTnA4N2ZyZ2RsS1RFY2cKUFVrZmJhWUhRR1A2SVMwbHplQ2VEWDB3YWIzcVJvaDcvakp0NS9CUjhJd2Y8L2RzOlg1MDlDZXJ0aWZpY2F0ZT48L2RzOlg1MDlEYXRhPjwvZHM6S2V5SW5mbz48L2RzOlNpZ25hdHVyZT48c2FtbDJwOlN0YXR1cz48c2FtbDJwOlN0YXR1c0NvZGUgVmFsdWU9InVybjpvYXNpczpuYW1lczp0YzpTQU1MOjIuMDpzdGF0dXM6U3VjY2VzcyIvPjwvc2FtbDJwOlN0YXR1cz48c2FtbDI6QXNzZXJ0aW9uIHhtbG5zOnNhbWwyPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6YXNzZXJ0aW9uIiBJRD0iXzllNzY0OTUyZTZhMjYxZTE5NDA5YTM4MjU1ODEwMzNkIiBJc3N1ZUluc3RhbnQ9IjIwMTYtMDEtMDVUMTY6NTU6MzkuMzQ4WiIgVmVyc2lvbj0iMi4wIj48c2FtbDI6SXNzdWVyPmh0dHBzOi8vYWNjb3VudHMuZ29vZ2xlLmNvbS9vL3NhbWwyP2lkcGlkPUMwMmRmbDFyMTwvc2FtbDI6SXNzdWVyPjxzYW1sMjpTdWJqZWN0PjxzYW1sMjpOYW1lSUQ+cm9zc0BvY3RvbGFicy5pbzwvc2FtbDI6TmFtZUlEPjxzYW1sMjpTdWJqZWN0Q29uZmlybWF0aW9uIE1ldGhvZD0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOmNtOmJlYXJlciI+PHNhbWwyOlN1YmplY3RDb25maXJtYXRpb25EYXRhIEluUmVzcG9uc2VUbz0iaWQtZmQ0MTlhNWFiMDQ3MjY0NTQyN2Y4ZTA3ZDg3YTNhNWRkMGIyZTlhNiIgTm90T25PckFmdGVyPSIyMDE2LTAxLTA1VDE3OjAwOjM5LjM0OFoiIFJlY2lwaWVudD0iaHR0cHM6Ly8yOWVlNmQyZS5uZ3Jvay5pby9zYW1sL2FjcyIvPjwvc2FtbDI6U3ViamVjdENvbmZpcm1hdGlvbj48L3NhbWwyOlN1YmplY3Q+PHNhbWwyOkNvbmRpdGlvbnMgTm90QmVmb3JlPSIyMDE2LTAxLTA1VDE2OjUwOjM5LjM0OFoiIE5vdE9uT3JBZnRlcj0iMjAxNi0wMS0wNVQxNzowMDozOS4zNDhaIj48c2FtbDI6QXVkaWVuY2VSZXN0cmljdGlvbj48c2FtbDI6QXVkaWVuY2U+aHR0cHM6Ly8yOWVlNmQyZS5uZ3Jvay5pby9zYW1sL21ldGFkYXRhPC9zYW1sMjpBdWRpZW5jZT48L3NhbWwyOkF1ZGllbmNlUmVzdHJpY3Rpb24+PC9zYW1sMjpDb25kaXRpb25zPjxzYW1sMjpBdHRyaWJ1dGVTdGF0ZW1lbnQ+PHNhbWwyOkF0dHJpYnV0ZSBOYW1lPSJwaG9uZSIvPjxzYW1sMjpBdHRyaWJ1dGUgTmFtZT0iYWRkcmVzcyIvPjxzYW1sMjpBdHRyaWJ1dGUgTmFtZT0iam9iVGl0bGUiLz48c2FtbDI6QXR0cmlidXRlIE5hbWU9ImZpcnN0TmFtZSI+PHNhbWwyOkF0dHJpYnV0ZVZhbHVlIHhtbG5zOnhzPSJodHRwOi8vd3d3LnczLm9yZy8yMDAxL1hNTFNjaGVtYSIgeG1sbnM6eHNpPSJodHRwOi8vd3d3LnczLm9yZy8yMDAxL1hNTFNjaGVtYS1pbnN0YW5jZSIgeHNpOnR5cGU9InhzOmFueVR5cGUiPlJvc3M8L3NhbWwyOkF0dHJpYnV0ZVZhbHVlPjwvc2FtbDI6QXR0cmlidXRlPjxzYW1sMjpBdHRyaWJ1dGUgTmFtZT0ibGFzdE5hbWUiPjxzYW1sMjpBdHRyaWJ1dGVWYWx1ZSB4bWxuczp4cz0iaHR0cDovL3d3dy53My5vcmcvMjAwMS9YTUxTY2hlbWEiIHhtbG5zOnhzaT0iaHR0cDovL3d3dy53My5vcmcvMjAwMS9YTUxTY2hlbWEtaW5zdGFuY2UiIHhzaTp0eXBlPSJ4czphbnlUeXBlIj5LaW5kZXI8L3NhbWwyOkF0dHJpYnV0ZVZhbHVlPjwvc2FtbDI6QXR0cmlidXRlPjwvc2FtbDI6QXR0cmlidXRlU3RhdGVtZW50PjxzYW1sMjpBdXRoblN0YXRlbWVudCBBdXRobkluc3RhbnQ9IjIwMTYtMDEtMDVUMTY6NTU6MzguMDAwWiIgU2Vzc2lvbkluZGV4PSJfOWU3NjQ5NTJlNmEyNjFlMTk0MDlhMzgyNTU4MTAzM2QiPjxzYW1sMjpBdXRobkNvbnRleHQ+PHNhbWwyOkF1dGhuQ29udGV4dENsYXNzUmVmPnVybjpvYXNpczpuYW1lczp0YzpTQU1MOjIuMDphYzpjbGFzc2VzOnVuc3BlY2lmaWVkPC9zYW1sMjpBdXRobkNvbnRleHRDbGFzc1JlZj48L3NhbWwyOkF1dGhuQ29udGV4dD48L3NhbWwyOkF1dGhuU3RhdGVtZW50Pjwvc2FtbDI6QXNzZXJ0aW9uPjwvc2FtbDJwOlJlc3BvbnNlPg=="
+	test.IDPMetadata = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://accounts.google.com/o/saml2?idpid=C02dfl1r1" validUntil="2021-01-03T16:17:49.000Z">
+  <md:IDPSSODescriptor WantAuthnRequestsSigned="false" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <md:KeyDescriptor use="signing">
+      <ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+        <ds:X509Data>
+          <ds:X509Certificate>MIIDdDCCAlygAwIBAgIGAVISlIlYMA0GCSqGSIb3DQEBCwUAMHsxFDASBgNVBAoTC0dvb2dsZSBJ
+bmMuMRYwFAYDVQQHEw1Nb3VudGFpbiBWaWV3MQ8wDQYDVQQDEwZHb29nbGUxGDAWBgNVBAsTD0dv
+b2dsZSBGb3IgV29yazELMAkGA1UEBhMCVVMxEzARBgNVBAgTCkNhbGlmb3JuaWEwHhcNMTYwMTA1
+MTYxNzQ5WhcNMjEwMTAzMTYxNzQ5WjB7MRQwEgYDVQQKEwtHb29nbGUgSW5jLjEWMBQGA1UEBxMN
+TW91bnRhaW4gVmlldzEPMA0GA1UEAxMGR29vZ2xlMRgwFgYDVQQLEw9Hb29nbGUgRm9yIFdvcmsx
+CzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpDYWxpZm9ybmlhMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A
+MIIBCgKCAQEAmUfMUPxHSY/ZYZ88fUGAlhUP4Ni7zj54vsrsPDA4UhQiReEDRunN1q3OHsShRong
+gd4LvA83/e/3pm/V60R6vyMfj3Z/IGWY+eZ97EJUvjktt+VRoAi26oeY9ZW6S85yapvA3iuhEwIQ
+OcuPm1OqRQ0yQ4sUD+WtL/QSmlYvDP5TK1d6whTisNsKSqeFZCb/s9OX01UexW1BuDOLeVt0rCW1
+kRNcBBLDmd4hnDP0SVq7nLhNFYXj2Ea6WsyRAIvchaUGy+Ima2okXm95Ye9kn8e118i/5rReyKCm
+BlskMkNaA4KWKvIQm3DdjgONgEd0IvKExyLwY7a5/JIUvBhb9QIDAQABMA0GCSqGSIb3DQEBCwUA
+A4IBAQAUDLMnHpzfp4ShdBqCreW48f8rU94q2qMwrU+W6DkOrGJTASVGS9Rib/MKAiRYOmqlaqEY
+NP57pCrE/nRB5FVdE+AlSx/fR3khsQ3zf/4dYs21SvGf+Oas99XEbWfV0OmPMYm3IrSCOBEV31wh
+41qRc5QLnR+XutNPbSBN+tn+giRCLGCBLe81oVw4fRGQbgkd87rfLOy3G630I6s/J5feFFUT8d7h
+9mpOeOqLCPrKpq+wI3aD3lf4mXqKIDNiHHRoNl67ANPu/N3fNU1HplVtvroVpiNp87frgdlKTEcg
+PUkfbaYHQGP6IS0lzeCeDX0wab3qRoh7/jJt5/BR8Iwf</ds:X509Certificate>
+        </ds:X509Data>
+      </ds:KeyInfo>
+    </md:KeyDescriptor>
+    <md:NameIDFormat>urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress</md:NameIDFormat>
+    <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://accounts.google.com/o/saml2/idp?idpid=C02dfl1r1"/>
+    <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://accounts.google.com/o/saml2/idp?idpid=C02dfl1r1"/>
+  </md:IDPSSODescriptor>
+</md:EntityDescriptor>`
+
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("https://29ee6d2e.ngrok.io/saml/metadata"),
+		AcsURL:      mustParseURL("https://29ee6d2e.ngrok.io/saml/acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	c.Assert(err, IsNil)
+
+	// this is a valid response
+	{
+		req := http.Request{PostForm: url.Values{}}
+		req.PostForm.Set("SAMLResponse", SamlResponse)
+		assertion, err := s.ParseResponse(&req, []string{"id-fd419a5ab0472645427f8e07d87a3a5dd0b2e9a6"})
+		if err != nil {
+			c.Logf("%s", err.(*InvalidResponseError).PrivateErr)
+		}
+		c.Assert(err, IsNil)
+		c.Assert(assertion.Subject.NameID.Value, DeepEquals, "ross@octolabs.io")
+	}
+
+	// this is a valid response but with a comment injected
+	{
+		x, _ := base64.StdEncoding.DecodeString(SamlResponse)
+		y := strings.Replace(string(x), "ross@octolabs.io", "ross@<!-- and a comment -->octolabs.io", 1)
+		SamlResponse = base64.StdEncoding.EncodeToString([]byte(y))
+
+		req := http.Request{PostForm: url.Values{}}
+		req.PostForm.Set("SAMLResponse", SamlResponse)
+		assertion, err := s.ParseResponse(&req, []string{"id-fd419a5ab0472645427f8e07d87a3a5dd0b2e9a6"})
+
+		// Note: I would expect the injected comment to be stripped and for the signature
+		// to validate. Less ideal, but not insecure is the case where the comment breaks
+		// the signature, perhaps because xml-c18n isn't being implemented correctly by
+		// dsig.
+		if err == nil {
+			c.Assert(assertion.Subject.NameID.Value, DeepEquals, "ross@octolabs.io")
+		}
+	}
+
+	// this is an invalid response with a commend injected per CVE-2018-7340
+	// ref: https://duo.com/blog/duo-finds-saml-vulnerabilities-affecting-multiple-implementations
+	// it *MUST NOT* validate
+	{
+		x, _ := base64.StdEncoding.DecodeString(SamlResponse)
+		y := strings.Replace(string(x), "ross@octolabs.io", "ross@octolabs.io<!-- and a comment -->.example.com", 1)
+		SamlResponse = base64.StdEncoding.EncodeToString([]byte(y))
+
+		req := http.Request{PostForm: url.Values{}}
+		req.PostForm.Set("SAMLResponse", SamlResponse)
+		_, err := s.ParseResponse(&req, []string{"id-fd419a5ab0472645427f8e07d87a3a5dd0b2e9a6"})
+		c.Assert(err, Not(IsNil))
+		realErr := err.(*InvalidResponseError).PrivateErr
+		c.Assert(realErr, ErrorMatches, "cannot validate signature on Response: Signature could not be verified")
+	}
 }
 
 func (test *ServiceProviderTest) TestCanParseResponse(c *C) {
