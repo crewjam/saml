@@ -30,6 +30,7 @@ type Options struct {
 	HTTPClient        *http.Client
 	CookieMaxAge      time.Duration
 	CookieName        string
+	CookieDomain      string
 	CookieSecure      bool
 	ForceAuthn        bool
 }
@@ -72,7 +73,12 @@ func New(opts Options) (*Middleware, error) {
 			}
 			return defaultCookieName
 		}(),
-		Domain: opts.URL.Host,
+		Domain: func() string {
+			if opts.CookieDomain != "" {
+				return opts.CookieDomain
+			}
+			return opts.URL.Host
+		}(),
 		Secure: opts.CookieSecure,
 	}
 	m.ClientState = &cookieStore
