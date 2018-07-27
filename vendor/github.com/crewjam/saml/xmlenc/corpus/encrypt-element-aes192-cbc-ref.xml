@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE test [
+<!ATTLIST PaymentInfo Id ID #IMPLIED>
+]>
+<PurchaseOrder xmlns="urn:example:po">
+  <Items>
+    <Item Code="001-001-001" Quantity="1">
+      spade
+    </Item>
+    <Item Code="001-001-002" Quantity="1">
+      shovel
+    </Item>
+  </Items>
+  <ShippingAddress>
+    Dig PLC, 1 First Ave, Dublin 1, Ireland
+  </ShippingAddress>
+  <EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#" Type="http://www.w3.org/2001/04/xmlenc#Element">
+    <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes192-cbc" />
+    <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+      <KeyName>jeb</KeyName>
+    </KeyInfo>
+    <CipherData>
+      <CipherReference URI="">
+        <Transforms>
+          <Transform xmlns="http://www.w3.org/2000/09/xmldsig#" Algorithm="http://www.w3.org/TR/1999/REC-xpath-19991116">
+            <XPath xmlns:rep="http://www.example.org/repository">self::text()[parent::rep:CipherValue[@Id="example1"]]</XPath>
+          </Transform>
+          <Transform xmlns="http://www.w3.org/2000/09/xmldsig#" Algorithm="http://www.w3.org/2000/09/xmldsig#base64" />
+        </Transforms>
+      </CipherReference>
+    </CipherData>
+  </EncryptedData>
+  <CipherValue xmlns="http://www.example.org/repository" Id="example1">
+    zih1MFU6Px1m2U1lSEIV9LUIsnb3SIWBfRHlRrOWKFFFcVvXiE6z3nCbkNYMuy1T
+    nPwXDd9/BkOGiPuFT2jixN7Zowe2ANK1dZXKVjZ1+ACx+Kg17U+EMPEuq481OW7e
+    wm0vnbur0L2lCXb4DP7c6sotV89W53v2MlaYqWHhlBO/zasqwhl6q/c/L/GdPUHH
+    ovKZ+24ZWYktxCLEXMslIAysQ0UFBLolrtC/7XDgYY9s4UvbedgeqbrdnxQ4LiRn
+    L+aKN1bnKF3KlWKCJFvVrRESriGPBfpasWA/A1LOK333a8LaOlS7RFamflfICk+t
+    VqCspVnIs6vBBtrGLI5SsJS+rh1r42jI/h/ivELUOmUq1sZCFQvEhx7AiHi4/9SY
+    LWcR4w3ZH3aqFL/XtAzKYQ==
+  </CipherValue>
+</PurchaseOrder>
