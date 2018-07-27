@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">
+  <SignedInfo>
+    <CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315" />
+    <SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#hmac-sha512" />
+    <Reference URI="http://www.w3.org/TR/xml-stylesheet">
+      <DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha512" />
+      <DigestValue>c8+KT9+qCSbNpdZm7/dp9Mv/lgF51ATycY0Ttz/0bw2p5nvnmeEgQpIPw5HhVJ9Ku6dDf0RKVVR/CsYvPGfnEg==</DigestValue>
+    </Reference>
+  </SignedInfo>
+  <SignatureValue>
+    zB8ZUo9bQxzxnxW2aZ217eu//1e5xHB6RlfEOFOlx1l5PIhadKAlQo0z1D9B2HVU
+    Kj4StSnlUsrvDo2BxgiAoA==
+  </SignatureValue>
+  <KeyInfo>
+    <EncryptedKey xmlns="http://www.w3.org/2001/04/xmlenc#">
+      <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#kw-aes256" />
+      <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+        <KeyName>jed</KeyName>
+      </KeyInfo>
+      <CipherData>
+        <CipherValue>
+          tPCC89jQShB+WDINCdRfKgf8wTlAx8xRXD73RmEHPBfix8zS1N82KQ==
+        </CipherValue>
+      </CipherData>
+    </EncryptedKey>
+  </KeyInfo>
+</Signature>

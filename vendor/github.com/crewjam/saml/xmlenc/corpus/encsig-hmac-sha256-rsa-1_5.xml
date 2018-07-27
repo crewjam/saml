@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">
+  <SignedInfo>
+    <CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315" />
+    <SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#hmac-sha256" />
+    <Reference URI="http://www.w3.org/TR/xml-stylesheet">
+      <DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1" />
+      <DigestValue>60NvZvtdTB+7UnlLp/H24p7h4bs=</DigestValue>
+    </Reference>
+  </SignedInfo>
+  <SignatureValue>
+    9XBpYbFplNqqF7U/QtCHYE20U7oIxcyCr0L19MlenNo=
+  </SignatureValue>
+  <KeyInfo>
+    <EncryptedKey xmlns="http://www.w3.org/2001/04/xmlenc#">
+      <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#rsa-1_5" />
+      <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+        <X509Data>
+          <X509Certificate>
+            MIICkjCCAfugAwIBAgIGAOxN32E+MA0GCSqGSIb3DQEBBQUAMG4xCzAJBgNVBAYT
+            AklFMQ8wDQYDVQQIEwZEdWJsaW4xJDAiBgNVBAoTG0JhbHRpbW9yZSBUZWNobm9s
+            b2dpZXMgTHRkLjERMA8GA1UECxMIWC9TZWN1cmUxFTATBgNVBAMTDFRyYW5zaWVu
+            dCBDQTAeFw0wMjAyMjgxNzUyNDZaFw0wMzAyMjgxNzUyNDBaMG8xCzAJBgNVBAYT
+            AklFMQ8wDQYDVQQIEwZEdWJsaW4xJDAiBgNVBAoTG0JhbHRpbW9yZSBUZWNobm9s
+            b2dpZXMgTHRkLjERMA8GA1UECxMIWC9TZWN1cmUxFjAUBgNVBAMTDU1lcmxpbiBI
+            dWdoZXMwgZ8wDQYJKoZIhvcNAQEBBQADgY0AMIGJAoGBAORdNSxbNFWlQeNsOlYJ
+            9gN9eZD+rguRqKhmhOm7i63VDd5ALm2APXhqAmGBPzLN5jlL9g2XALK5WSO4XKjJ
+            McVfYg4+nPuOeHgqdD4HUgf19j/6SaTMcmDFJQMmx1Qw+Aakq3mGcSfvOJcBZctz
+            a50VucfCGL1NdfBEcaL3BnhjAgMBAAGjOjA4MA4GA1UdDwEB/wQEAwIFoDARBgNV
+            HQ4ECgQIjFG0ZGNyvNswEwYDVR0jBAwwCoAIhJXVlhr6O4wwDQYJKoZIhvcNAQEF
+            BQADgYEAXzG7x5aCJYRusTbmuZqhidGM5iiA9+RmZ4JTPDEgbeiTiJROxpr+ZjnA
+            TmsDKrCpqNUiHWjmsKEArYQp8R/KjdKl/pVe3jUvTxb0YZ+li/7k0GQ5LyRT/K4c
+            2SgyLlyBPhpMq+z3g4P2egVRaZbxsLuKQILf7MIV/X5iAEBzu1w=
+          </X509Certificate>
+        </X509Data>
+      </KeyInfo>
+      <CipherData>
+        <CipherValue>
+          BRhPOKN/KLCih2Q2RoxQiaV0s1FfpOM+kisl9MwRSPow5CyX91rBVfoWpP/Qq1T3
+          Rj/f0gVoJyE008uLic4X/S4spnudlOzTkVB6bUzoBt4j+z4hEq/cIfHqVdEJ+lN0
+          iu1sJk3k6ESl22OWEqQB7Rl5sAdhFPOqXsnLUNWmqA8=
+        </CipherValue>
+      </CipherData>
+    </EncryptedKey>
+  </KeyInfo>
+</Signature>

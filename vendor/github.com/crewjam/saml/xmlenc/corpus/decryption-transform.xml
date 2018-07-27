@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PurchaseOrder xmlns="urn:example:po">
+  <Items>
+    <Item Code="001-001-001" Quantity="1">
+      spade
+    </Item>
+    <Item Code="001-001-002" Quantity="1">
+      shovel
+    </Item>
+  </Items>
+  <ShippingAddress>
+    Dig PLC, 1 First Ave, Dublin 1, Ireland
+  </ShippingAddress>
+  <PaymentInfo>
+    <EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#" Id="encrypt-data-0" Type="http://www.w3.org/2001/04/xmlenc#Content">
+      <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes256-cbc" />
+      <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+        <KeyName>jed</KeyName>
+      </KeyInfo>
+      <CipherData>
+        <CipherValue>
+          SE3HkQevYxzuN9LoMH3QIYHK0X7DBlobhiTbRucgKcTKt9DsUJIcd6JZV6lrw/4x
+          YICyq6YM73IWpibspxgz/0chhvWem9sYZvWTuTtZgHzeY0Uri6bpXqBEn1YT0K6B
+          chwfv1myfp91EmdPHU+shH6ZEyYkHJUMss58iIawIuVsIfpCO7xDKgfs/glnN3os
+          epY0KvAMZSnwUAf42fQ3TlahLTR+B52AmdodwaCwQlwQwrC7RH0FtNiiLQA9SA2t
+          //StKWcyHjswUCejfKLdjv6bK+WmBxmnNWtmI9DYkjJ6V5pYU1MVw+JG410O+gaa
+          fnNWxlWa+BGwcTaz+KNrP8bIqli8IoJJgxXIUqfb734=
+        </CipherValue>
+      </CipherData>
+    </EncryptedData>
+  </PaymentInfo>
+  <Signature xmlns="http://www.w3.org/2000/09/xmldsig#">
+    <SignedInfo>
+      <CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315" />
+      <SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#dsa-sha1" />
+      <Reference URI="">
+        <Transforms>
+          <Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature" />
+          <Transform Algorithm="http://www.w3.org/2001/04/decrypt#" />
+        </Transforms>
+        <DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256" />
+        <DigestValue>wSvPYqTcpLfX2mKXibtsmm7FDu8N+/BObM0+bGaeXhk=</DigestValue>
+      </Reference>
+    </SignedInfo>
+    <SignatureValue>
+      O0VYUdslJ8t2EURD0T/v2nNrFQMo42vzvfAhooZrDbkuLbCj6/Hxmw==
+    </SignatureValue>
+    <KeyInfo>
+      <KeyValue>
+        <DSAKeyValue>
+          <P>
+            imup6lmki4rAmUstKb/xdBRMWNtQ+pDN97ZnLA9X3lKbkEHtYFyjQ3uActgVSJ75
+            iVRuKxz4Cb5RzVm25EaKmKq8rif1MtBIi6jjDJxmIdNaEKG9zVTf9giJx1N9I0t3
+            oh1fAVZDSrzKzJGQ2WvDfIfFHdJMtB3C0VKGmLZR7Xk=
+          </P>
+          <Q>
+            xDve3j7sEnh4rIzM5gK+5/gxxFU=
+          </Q>
+          <G>
+            NLugAf6IZJxo3BCOi5yrGEVwtlEzXcnndXhd0Tz38CnQKc4SEupm4PyP5TmLvK64
+            TDfOD7sno/W5oI1KZdimfW2c4r/6waNzZSvicMOWhLYY621Nn6njBc8VNwoxWpzC
+            XhKm70b8+D4YZMn/eU5DN8dvhTv/bNK21FfJqjp033U=
+          </G>
+          <Y>
+            W7dOmH/vWqocVCiqaxj6soxVXfR8XpMdY2Zv4Amjr3n81geyOLb6IZ+l7MUbdp85
+            29DQzuoVTthVpB9X4JKCprZIzifOTM1PFflTBzjx7egJwJWAIVdWyiIPjke6Va+w
+            uV2n4Rl/cgCvrXK5cTov5C/Bpaf6o+qrrDGFBLLZTF4=
+          </Y>
+        </DSAKeyValue>
+      </KeyValue>
+    </KeyInfo>
+  </Signature>
+</PurchaseOrder>

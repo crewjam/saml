@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">
+  <SignedInfo>
+    <CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315" />
+    <SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#hmac-sha384" />
+    <Reference URI="http://www.w3.org/TR/xml-stylesheet">
+      <DigestMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#sha384" />
+      <DigestValue>bWetGDV3M5oEiecfEHILQxVQRa1XgdY37VH8eWi9yVVx7Rr7UNhk+v6Jk7sMNPoA</DigestValue>
+    </Reference>
+  </SignedInfo>
+  <SignatureValue>
+    iEjhOJoKiwsOBduxHj7bxILSsl6TLhNO3w/vlRcw9RZAe24HIxLRfhj4Xqsz1Orr
+  </SignatureValue>
+  <KeyInfo>
+    <EncryptedKey xmlns="http://www.w3.org/2001/04/xmlenc#">
+      <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#kw-aes192" />
+      <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+        <KeyName>jeb</KeyName>
+      </KeyInfo>
+      <CipherData>
+        <CipherValue>
+          19D633XVohP6UJvaVRAhJek+ahtM3gOiVs6nZyAasDEb+WCUQOcWZw==
+        </CipherValue>
+      </CipherData>
+    </EncryptedKey>
+  </KeyInfo>
+</Signature>
