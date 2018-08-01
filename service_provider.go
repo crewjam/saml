@@ -87,7 +87,7 @@ type ServiceProvider struct {
 // issued by the IDP and the time it is received by ParseResponse. This is used
 // to prevent old responses from being replayed (while allowing for some clock
 // drift between the SP and IDP).
-const MaxIssueDelay = time.Second * 90
+var MaxIssueDelay = time.Second * 90
 
 // MaxClockSkew allows for leeway for clock skew between the IDP and SP when
 // validating assertions. It defaults to 180 seconds (matches shibboleth).
