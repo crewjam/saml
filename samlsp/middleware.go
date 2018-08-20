@@ -293,7 +293,7 @@ func (m *Middleware) GetAuthorizationToken(r *http.Request) *AuthorizationToken 
 		return nil
 	}
 	if tokenClaims.Audience != m.ServiceProvider.Metadata().EntityID {
-		m.ServiceProvider.Logger.Printf("ERROR: invalid audience: %s", err)
+		m.ServiceProvider.Logger.Printf("ERROR: tokenClaims.Audience does not match EntityID")
 		return nil
 	}
 
