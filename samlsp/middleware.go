@@ -48,6 +48,7 @@ type Middleware struct {
 	TokenMaxAge       time.Duration
 	ClientState       ClientState
 	ClientToken       ClientToken
+	Binding           string
 }
 
 var jwtSigningMethod = jwt.SigningMethodHS256
@@ -110,11 +111,17 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 			panic("don't wrap Middleware with RequireAccount")
 		}
 
-		binding := saml.HTTPRedirectBinding
-		bindingLocation := m.ServiceProvider.GetSSOBindingLocation(binding)
-		if bindingLocation == "" {
-			binding = saml.HTTPPostBinding
+		var binding, bindingLocation string
+		if m.Binding != "" {
+			binding = m.Binding
 			bindingLocation = m.ServiceProvider.GetSSOBindingLocation(binding)
+		} else {
+			binding = saml.HTTPRedirectBinding
+			bindingLocation = m.ServiceProvider.GetSSOBindingLocation(binding)
+			if bindingLocation == "" {
+				binding = saml.HTTPPostBinding
+				bindingLocation = m.ServiceProvider.GetSSOBindingLocation(binding)
+			}
 		}
 
 		req, err := m.ServiceProvider.MakeAuthenticationRequest(bindingLocation)
