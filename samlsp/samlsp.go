@@ -29,6 +29,8 @@ type Options struct {
 	IDPMetadataURL    *url.URL
 	HTTPClient        *http.Client
 	CookieMaxAge      time.Duration
+	CookieName        string
+	CookieDomain      string
 	CookieSecure      bool
 	ForceAuthn        bool
 }
@@ -65,9 +67,19 @@ func New(opts Options) (*Middleware, error) {
 
 	cookieStore := ClientCookies{
 		ServiceProvider: &m.ServiceProvider,
-		Name:            defaultCookieName,
-		Domain:          opts.URL.Host,
-		Secure:          opts.CookieSecure,
+		Name: func() string {
+			if opts.CookieName != "" {
+				return opts.CookieName
+			}
+			return defaultCookieName
+		}(),
+		Domain: func() string {
+			if opts.CookieDomain != "" {
+				return opts.CookieDomain
+			}
+			return opts.URL.Host
+		}(),
+		Secure: opts.CookieSecure,
 	}
 	m.ClientState = &cookieStore
 	m.ClientToken = &cookieStore
