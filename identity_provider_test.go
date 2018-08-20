@@ -763,10 +763,10 @@ func (test *IdentityProviderTest) TestMakeResponse(c *C) {
 		"          <ds:Transform Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\"/>\n"+
 		"        </ds:Transforms>\n"+
 		"        <ds:DigestMethod Algorithm=\"http://www.w3.org/2000/09/xmldsig#sha1\"/>\n"+
-		"        <ds:DigestValue>fGqTakd3fq3s1utz7xTvzJtQc+E=</ds:DigestValue>\n"+
+		"        <ds:DigestValue>KsbyS2V2/QCarAksPQyV5s3PVDk=</ds:DigestValue>\n"+
 		"      </ds:Reference>\n"+
 		"    </ds:SignedInfo>\n"+
-		"    <ds:SignatureValue>yXty6VQCvvF6QAR+vXZtLq2/r8Jt2B9jExD1vVfvWY+S1sKPZbNbaKl69YHYXU8lkhymlVNaMsaezQWDisbNfPe0R0UWysp2rfIXpVDGTdp/YHPj1MIODMPrlgWFfcJjgGxox0tTVzaFyOJFSPhn4G8wEI86WHuePnjRcenfxyk=</ds:SignatureValue>\n"+
+		"    <ds:SignatureValue>paj/Jq/TTvYXu35Jtyevmu8bn2DZecfaj/wu8l7mY2sN++w9QL/sLZoyyJk6WsAsS0NMMOt8o5WN7EU+bVlbQ6VQbf2VO9gEPbONMdpQ8gfrvMiLo5vRS22iRaPehIH8gvWxAq64vWWt94OihpndNRt782K/0h/NvXBj+4vK7V8=</ds:SignatureValue>\n"+
 		"    <ds:KeyInfo>\n"+
 		"      <ds:X509Data>\n"+
 		"        <ds:X509Certificate>MIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJVUzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkdBMQwwCgYDVQQKDANmb28xEjAQBgNVBAMMCWxvY2FsaG9zdDCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA1PMHYmhZj308kWLhZVT4vOulqx/9ibm5B86fPWwUKKQ2i12MYtz07tzukPymisTDhQaqyJ8Kqb/6JjhmeMnEOdTvSPmHO8m1ZVveJU6NoKRn/mP/BD7FW52WhbrUXLSeHVSKfWkNk6S4hk9MV9TswTvyRIKvRsw0X/gfnqkroJcCAwEAATANBgkqhkiG9w0BAQUFAAOBgQCMMlIO+GNcGekevKgkakpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeTQLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvnOwJlNCASPZRH/JmF8tX0hoHuAQ==</ds:X509Certificate>\n"+
@@ -776,7 +776,7 @@ func (test *IdentityProviderTest) TestMakeResponse(c *C) {
 		"  <samlp:Status>\n"+
 		"    <samlp:StatusCode Value=\"urn:oasis:names:tc:SAML:2.0:status:Success\"/>\n"+
 		"  </samlp:Status>\n"+
-		"  <this-is-an-encrypted-assertion xmlns=\"http://www.w3.org/XML/1998/namespace\"/>\n"+
+		"  <this-is-an-encrypted-assertion/>\n"+
 		"</samlp:Response>\n")
 }
 
