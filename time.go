@@ -6,7 +6,7 @@ import "time"
 // found in SAML documents.
 type RelaxedTime time.Time
 
-const timeFormat = "2006-01-02T15:04:05.999Z07:00"
+const timeFormat = "2006-01-02T15:04:05.999Z"
 
 // MarshalText implements encoding.TextMarshaler
 func (m RelaxedTime) MarshalText() ([]byte, error) {
