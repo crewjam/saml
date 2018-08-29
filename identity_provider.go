@@ -94,6 +94,7 @@ type IdentityProvider struct {
 	Intermediates           []*x509.Certificate
 	MetadataURL             url.URL
 	SSOURL                  url.URL
+	LogoutURL               url.URL
 	ServiceProviderProvider ServiceProviderProvider
 	SessionProvider         SessionProvider
 	AssertionMaker          AssertionMaker
@@ -104,7 +105,7 @@ type IdentityProvider struct {
 func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 	certStr := base64.StdEncoding.EncodeToString(idp.Certificate.Raw)
 
-	return &EntityDescriptor{
+	ed := &EntityDescriptor{
 		EntityID:      idp.MetadataURL.String(),
 		ValidUntil:    TimeNow().Add(DefaultValidDuration),
 		CacheDuration: DefaultValidDuration,
@@ -149,6 +150,17 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 			},
 		},
 	}
+
+	if idp.LogoutURL.String() != "" {
+		ed.IDPSSODescriptors[0].SSODescriptor.SingleLogoutServices = []Endpoint{
+			{
+				Binding:  HTTPRedirectBinding,
+				Location: idp.LogoutURL.String(),
+			},
+		}
+	}
+
+	return ed
 }
 
 // Handler returns an http.Handler that serves the metadata and SSO
