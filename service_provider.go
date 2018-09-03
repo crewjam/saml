@@ -402,6 +402,16 @@ func (ivr *InvalidResponseError) Error() string {
 	return fmt.Sprintf("Authentication failed")
 }
 
+// ErrBadStatus is returned when the assertion provided is valid but the
+// status code is not "urn:oasis:names:tc:SAML:2.0:status:Success".
+type ErrBadStatus struct {
+	Status string
+}
+
+func (e ErrBadStatus) Error() string {
+	return e.Status
+}
+
 func responseIsSigned(response *etree.Document) (bool, error) {
 	signatureElement, err := findChild(response.Root(), "http://www.w3.org/2000/09/xmldsig#", "Signature")
 	if err != nil {
@@ -512,7 +522,7 @@ func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleR
 		return nil, retErr
 	}
 	if resp.Status.StatusCode.Value != StatusSuccess {
-		retErr.PrivateErr = fmt.Errorf("Status code was not %s", StatusSuccess)
+		retErr.PrivateErr = ErrBadStatus{Status: resp.Status.StatusCode.Value}
 		return nil, retErr
 	}
 

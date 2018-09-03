@@ -819,7 +819,7 @@ func TestSPInvalidResponses(t *testing.T) {
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	assert.EqualError(t,
 		err.(*InvalidResponseError).PrivateErr,
-		"Status code was not not:the:success:value")
+		"urn:oasis:names:tc:SAML:2.0:status:Success")
 	StatusSuccess = oldSpStatusSuccess
 
 	s.IDPMetadata.IDPSSODescriptors[0].KeyDescriptors[0].KeyInfo.Certificate = "invalid"
