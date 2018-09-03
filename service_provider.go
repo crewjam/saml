@@ -372,6 +372,12 @@ func (ivr *InvalidResponseError) Error() string {
 	return fmt.Sprintf("Authentication failed")
 }
 
+type ErrStatus string
+
+func (e ErrStatus) Error() string {
+	return string(e)
+}
+
 // ParseResponse extracts the SAML IDP response received in req, validates
 // it, and returns the verified attributes of the request.
 //
@@ -428,7 +434,7 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 		return nil, retErr
 	}
 	if resp.Status.StatusCode.Value != StatusSuccess {
-		retErr.PrivateErr = fmt.Errorf("Status code was not %s", StatusSuccess)
+		retErr.PrivateErr = ErrStatus(resp.Status.StatusCode.Value)
 		return nil, retErr
 	}
 
