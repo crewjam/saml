@@ -57,6 +57,7 @@ func (s *Server) GetSession(w http.ResponseWriter, r *http.Request, req *saml.Id
 			UserCommonName: user.CommonName,
 			UserSurname:    user.Surname,
 			UserGivenName:  user.GivenName,
+			NameID:         user.Name,
 		}
 		if err := s.Store.Put(fmt.Sprintf("/sessions/%s", session.ID), &session); err != nil {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
