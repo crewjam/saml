@@ -140,6 +140,25 @@ func (test *ServiceProviderTest) TestCanProduceMetadata(c *C) {
 		"</EntityDescriptor>")
 }
 
+func (test *ServiceProviderTest) TestCanProduceMetadataNoSigningKey(c *C) {
+	s := ServiceProvider{
+		MetadataURL: mustParseURL("https://example.com/saml2/metadata"),
+		AcsURL:      mustParseURL("https://example.com/saml2/acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	c.Assert(err, IsNil)
+
+	spMetadata, err := xml.MarshalIndent(s.Metadata(), "", "  ")
+	c.Assert(err, IsNil)
+	c.Assert(string(spMetadata), DeepEquals, ""+
+		"<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2015-12-03T01:57:09Z\" entityID=\"https://example.com/saml2/metadata\">\n"+
+		"  <SPSSODescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2015-12-03T01:57:09Z\" protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\" AuthnRequestsSigned=\"false\" WantAssertionsSigned=\"true\">\n"+
+		"    <AssertionConsumerService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Location=\"https://example.com/saml2/acs\" index=\"1\"></AssertionConsumerService>\n"+
+		"  </SPSSODescriptor>\n"+
+		"</EntityDescriptor>")
+}
+
 func (test *ServiceProviderTest) TestCanProduceRedirectRequest(c *C) {
 	TimeNow = func() time.Time {
 		rv, _ := time.Parse("Mon Jan 2 15:04:05.999999999 UTC 2006", "Mon Dec 1 01:31:21.123456789 UTC 2015")
