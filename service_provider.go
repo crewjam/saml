@@ -118,10 +118,35 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 	authnRequestsSigned := false
 	wantAssertionsSigned := true
 	validUntil := TimeNow().Add(validDuration)
-	certBytes := sp.Certificate.Raw
-	for _, intermediate := range sp.Intermediates {
-		certBytes = append(certBytes, intermediate.Raw...)
+
+	var keyDescriptors []KeyDescriptor
+	if sp.Certificate != nil {
+		certBytes := sp.Certificate.Raw
+		for _, intermediate := range sp.Intermediates {
+			certBytes = append(certBytes, intermediate.Raw...)
+		}
+		keyDescriptors = []KeyDescriptor{
+			{
+				Use: "signing",
+				KeyInfo: KeyInfo{
+					Certificate: base64.StdEncoding.EncodeToString(certBytes),
+				},
+			},
+			{
+				Use: "encryption",
+				KeyInfo: KeyInfo{
+					Certificate: base64.StdEncoding.EncodeToString(certBytes),
+				},
+				EncryptionMethods: []EncryptionMethod{
+					{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
+					{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
+					{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
+					{Algorithm: "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"},
+				},
+			},
+		}
 	}
+
 	return &EntityDescriptor{
 		EntityID:   sp.MetadataURL.String(),
 		ValidUntil: validUntil,
@@ -131,27 +156,8 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 				SSODescriptor: SSODescriptor{
 					RoleDescriptor: RoleDescriptor{
 						ProtocolSupportEnumeration: "urn:oasis:names:tc:SAML:2.0:protocol",
-						KeyDescriptors: []KeyDescriptor{
-							{
-								Use: "signing",
-								KeyInfo: KeyInfo{
-									Certificate: base64.StdEncoding.EncodeToString(certBytes),
-								},
-							},
-							{
-								Use: "encryption",
-								KeyInfo: KeyInfo{
-									Certificate: base64.StdEncoding.EncodeToString(certBytes),
-								},
-								EncryptionMethods: []EncryptionMethod{
-									{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
-									{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
-									{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
-									{Algorithm: "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"},
-								},
-							},
-						},
-						ValidUntil: &validUntil,
+						KeyDescriptors:             keyDescriptors,
+						ValidUntil:                 &validUntil,
 					},
 					SingleLogoutServices: []Endpoint{
 						{
