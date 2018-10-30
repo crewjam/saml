@@ -107,6 +107,7 @@ func (test *ServiceProviderTest) TestCanProduceMetadata(c *C) {
 		Certificate: test.Certificate,
 		MetadataURL: mustParseURL("https://example.com/saml2/metadata"),
 		AcsURL:      mustParseURL("https://example.com/saml2/acs"),
+		SloURL:      mustParseURL("https://example.com/saml2/slo"),
 		IDPMetadata: &EntityDescriptor{},
 	}
 	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
@@ -135,6 +136,7 @@ func (test *ServiceProviderTest) TestCanProduceMetadata(c *C) {
 		"      <EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes256-cbc\"></EncryptionMethod>\n"+
 		"      <EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p\"></EncryptionMethod>\n"+
 		"    </KeyDescriptor>\n"+
+		"    <SingleLogoutService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Location=\"https://example.com/saml2/slo\" ResponseLocation=\"https://example.com/saml2/slo\"></SingleLogoutService>\n"+
 		"    <AssertionConsumerService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Location=\"https://example.com/saml2/acs\" index=\"1\"></AssertionConsumerService>\n"+
 		"  </SPSSODescriptor>\n"+
 		"</EntityDescriptor>")
