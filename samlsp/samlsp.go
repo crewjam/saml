@@ -47,6 +47,8 @@ func New(opts Options) (*Middleware, error) {
 	if logr == nil {
 		logr = logger.DefaultLogger
 	}
+	sloRelURL, _ := url.Parse("saml/slo")
+	sloURL := opts.URL.ResolveReference(sloRelURL)
 
 	tokenMaxAge := opts.CookieMaxAge
 	if opts.CookieMaxAge == 0 {
@@ -61,6 +63,7 @@ func New(opts Options) (*Middleware, error) {
 			Intermediates:     opts.Intermediates,
 			MetadataURL:       *metadataURL,
 			AcsURL:            *acsURL,
+			SloURL:            *sloURL,
 			IDPMetadata:       opts.IDPMetadata,
 			ForceAuthn:        &opts.ForceAuthn,
 			AllowIDPInitiated: opts.AllowIDPInitiated,

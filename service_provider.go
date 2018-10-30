@@ -66,6 +66,10 @@ type ServiceProvider struct {
 	// on this host, i.e. https://example.com/saml/acs
 	AcsURL url.URL
 
+	// SloURL is the full URL to the SAML Single Logout endpoint on this host.
+	// i.e. https://example.com/saml/slo
+	SloURL url.URL
+
 	// IDPMetadata is the metadata from the identity provider.
 	IDPMetadata *EntityDescriptor
 
@@ -149,6 +153,13 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 						},
 						ValidUntil: &validUntil,
 					},
+					SingleLogoutServices: []Endpoint{
+						{
+							Binding:          HTTPPostBinding,
+							Location:         sp.SloURL.String(),
+							ResponseLocation: sp.SloURL.String(),
+						},
+					},
 				},
 				AuthnRequestsSigned:  &authnRequestsSigned,
 				WantAssertionsSigned: &wantAssertionsSigned,
@@ -214,6 +225,19 @@ func (sp *ServiceProvider) GetSSOBindingLocation(binding string) string {
 	return ""
 }
 
+// GetSLOBindingLocation returns URL for the IDP's Single Log Out Service binding
+// of the specified type (HTTPRedirectBinding or HTTPPostBinding)
+func (sp *ServiceProvider) GetSLOBindingLocation(binding string) string {
+	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
+		for _, singleLogoutService := range idpSSODescriptor.SingleLogoutServices {
+			if singleLogoutService.Binding == binding {
+				return singleLogoutService.Location
+			}
+		}
+	}
+	return ""
+}
+
 // getIDPSigningCerts returns the certificates which we can use to verify things
 // signed by the IDP in PEM format, or nil if no such certificate is found.
 func (sp *ServiceProvider) getIDPSigningCerts() ([]*x509.Certificate, error) {
@@ -266,18 +290,9 @@ func (sp *ServiceProvider) getIDPSigningCerts() ([]*x509.Certificate, error) {
 
 // MakeAuthenticationRequest produces a new AuthnRequest object for idpURL.
 func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string) (*AuthnRequest, error) {
-	var nameIDFormat string
-	switch sp.AuthnNameIDFormat {
-	case "":
-		// To maintain library back-compat, use "transient" if unset.
-		nameIDFormat = string(TransientNameIDFormat)
-	case UnspecifiedNameIDFormat:
-		// Spec defines an empty value as "unspecified" so don't set one.
-	default:
-		nameIDFormat = string(sp.AuthnNameIDFormat)
-	}
 
 	allowCreate := true
+	nameIDFormat := sp.nameIDFormat()
 	req := AuthnRequest{
 		AssertionConsumerServiceURL: sp.AcsURL.String(),
 		Destination:                 idpURL,
@@ -743,4 +758,86 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 
 	_, err = validationContext.Validate(el)
 	return err
+}
+
+// MakeLogoutRequest produces a new LogoutRequest object for idpURL.
+func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string) (*LogoutRequest, error) {
+
+	req := LogoutRequest{
+		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
+		IssueInstant: TimeNow(),
+		Version:      "2.0",
+		Destination:  idpURL,
+		Issuer: &Issuer{
+			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
+			Value:  sp.MetadataURL.String(),
+		},
+		NameID: &NameID{
+			Format:          sp.nameIDFormat(),
+			Value:           nameID,
+			NameQualifier:   sp.IDPMetadata.EntityID,
+			SPNameQualifier: sp.Metadata().EntityID,
+		},
+	}
+	return &req, nil
+}
+
+// MakeRedirectLogoutRequest creates a SAML authentication request using
+// the HTTP-Redirect binding. It returns a URL that we will redirect the user to
+// in order to start the auth process.
+func (sp *ServiceProvider) MakeRedirectLogoutRequest(nameID string) (*LogoutRequest, error) {
+	return sp.MakeLogoutRequest(sp.GetSLOBindingLocation(HTTPRedirectBinding), nameID)
+}
+
+func (sp *ServiceProvider) nameIDFormat() string {
+	var nameIDFormat string
+	switch sp.AuthnNameIDFormat {
+	case "":
+		// To maintain library back-compat, use "transient" if unset.
+		nameIDFormat = string(TransientNameIDFormat)
+	case UnspecifiedNameIDFormat:
+		// Spec defines an empty value as "unspecified" so don't set one.
+	default:
+		nameIDFormat = string(sp.AuthnNameIDFormat)
+	}
+	return nameIDFormat
+}
+
+// ValidateLogoutResponse returns a nil error iff the logout request is valid.
+func (sp *ServiceProvider) ValidateLogoutResponse(r *http.Request) error {
+	r.ParseForm()
+	rawResponseBuf, err := base64.StdEncoding.DecodeString(r.PostForm.Get("SAMLResponse"))
+	if err != nil {
+		return fmt.Errorf("unable to parse base64: %s", err)
+	}
+
+	resp := LogoutResponse{}
+	if err := xml.Unmarshal(rawResponseBuf, &resp); err != nil {
+		return fmt.Errorf("cannot unmarshal response: %s", err)
+	}
+	if resp.Destination != sp.SloURL.String() {
+		return fmt.Errorf("`Destination` does not match SloURL (expected %q)", sp.SloURL.String())
+	}
+
+	now := time.Now()
+	if resp.IssueInstant.Add(MaxIssueDelay).Before(now) {
+		return fmt.Errorf("issueInstant expired at %s", resp.IssueInstant.Add(MaxIssueDelay))
+	}
+	if resp.Issuer.Value != sp.IDPMetadata.EntityID {
+		return fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
+	}
+	if resp.Status.StatusCode.Value != StatusSuccess {
+		return fmt.Errorf("status code was not %s", StatusSuccess)
+	}
+
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(rawResponseBuf); err != nil {
+		return err
+	}
+	responseEl := doc.Root()
+	if err = sp.validateSigned(responseEl); err != nil {
+		return err
+	}
+
+	return nil
 }
