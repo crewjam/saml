@@ -184,7 +184,9 @@ func (m *Middleware) getPossibleRequestIDs(r *http.Request) []string {
 			continue
 		}
 		claims := token.Claims.(jwt.MapClaims)
-		rv = append(rv, claims["id"].(string))
+		if id, ok := claims["id"]; ok {
+			rv = append(rv, id.(string))
+		}
 	}
 
 	// If IDP initiated requests are allowed, then we can expect an empty response ID.
@@ -204,28 +206,33 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 	redirectURI := "/"
 	if relayState := r.Form.Get("RelayState"); relayState != "" {
 		stateValue := m.ClientState.GetState(r, relayState)
-		if stateValue == "" {
+		if stateValue != "" {
+			jwtParser := jwt.Parser{
+				ValidMethods: []string{jwtSigningMethod.Name},
+			}
+			state, err := jwtParser.Parse(stateValue, func(t *jwt.Token) (interface{}, error) {
+				return secretBlock, nil
+			})
+			if err != nil || !state.Valid {
+				m.ServiceProvider.Logger.Printf("Cannot decode state JWT: %s (%s)", err, stateValue)
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
+			claims := state.Claims.(jwt.MapClaims)
+			redirectURI = claims["uri"].(string)
+
+			// delete the cookie
+			m.ClientState.DeleteState(w, r, relayState)
+		} else if m.AllowIDPInitiated {
+			// If the state value couldn't be retrieved for the RelayState, and IDP-initiated flows are allowed
+			// then use the RelayState value as the redirect URI itself.
+			redirectURI = relayState
+		} else {
+			// Otherwise, redirect the user with a 403.
 			m.ServiceProvider.Logger.Printf("cannot find corresponding state: %s", relayState)
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
-
-		jwtParser := jwt.Parser{
-			ValidMethods: []string{jwtSigningMethod.Name},
-		}
-		state, err := jwtParser.Parse(stateValue, func(t *jwt.Token) (interface{}, error) {
-			return secretBlock, nil
-		})
-		if err != nil || !state.Valid {
-			m.ServiceProvider.Logger.Printf("Cannot decode state JWT: %s (%s)", err, stateValue)
-			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-			return
-		}
-		claims := state.Claims.(jwt.MapClaims)
-		redirectURI = claims["uri"].(string)
-
-		// delete the cookie
-		m.ClientState.DeleteState(w, r, relayState)
 	}
 
 	now := saml.TimeNow()
