@@ -8,6 +8,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
@@ -77,7 +78,11 @@ func New(opts Options) (*Middleware, error) {
 			if opts.CookieDomain != "" {
 				return opts.CookieDomain
 			}
-			return opts.URL.Host
+			host, _, err := net.SplitHostPort(opts.URL.Host)
+			if err != nil {
+				return opts.URL.Host
+			}
+			return host
 		}(),
 		Secure: opts.CookieSecure,
 	}

@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/xml"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -403,6 +404,33 @@ func (test *MiddlewareTest) TestCanParseResponse(c *C) {
 		"ttt=" + expectedToken + "; " +
 			"Path=/; Max-Age=7200; HttpOnly",
 	})
+}
+
+func (test *MiddlewareTest) TestDefaultCookieDomainIPv4(c *C) {
+	ipv4Loopback := net.IP{127, 0, 0, 1}
+	mw, err := New(Options{
+		URL:         mustParseURL("https://" + net.JoinHostPort(ipv4Loopback.String(), "54321")),
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		IDPMetadata: &saml.EntityDescriptor{},
+	})
+	c.Assert(err, IsNil)
+
+	cookieStore := mw.ClientToken.(*ClientCookies)
+	c.Assert(cookieStore.Domain, Equals, ipv4Loopback.String(), Commentf("Cookie domain must not contain a port or the cookie cannot be set properly"))
+}
+
+func (test *MiddlewareTest) TestDefaultCookieDomainIPv6(c *C) {
+	mw, err := New(Options{
+		URL:         mustParseURL("https://" + net.JoinHostPort(net.IPv6loopback.String(), "54321")),
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		IDPMetadata: &saml.EntityDescriptor{},
+	})
+	c.Assert(err, IsNil)
+
+	cookieStore := mw.ClientToken.(*ClientCookies)
+	c.Assert(cookieStore.Domain, Equals, net.IPv6loopback.String(), Commentf("Cookie domain must not contain a port or the cookie cannot be set properly"))
 }
 
 func (test *MiddlewareTest) TestRejectsInvalidRelayState(c *C) {
