@@ -165,8 +165,9 @@ func (mspp *mockServiceProviderProvider) GetServiceProvider(r *http.Request, ser
 }
 
 func (test *IdentityProviderTest) TestCanProduceMetadata(c *C) {
+
 	c.Assert(test.IDP.Metadata(), DeepEquals, &EntityDescriptor{
-		ValidUntil:    TimeNow().Add(DefaultValidDuration),
+		ValidUntil:    GetValidDuration(DefaultValidDuration),
 		CacheDuration: DefaultValidDuration,
 		EntityID:      "https://idp.example.com/saml/metadata",
 		IDPSSODescriptors: []IDPSSODescriptor{

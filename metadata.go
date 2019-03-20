@@ -17,11 +17,11 @@ var HTTPRedirectBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-metadata-2.0-os.pdf §2.3.1
 type EntitiesDescriptor struct {
-	XMLName             xml.Name       `xml:"urn:oasis:names:tc:SAML:2.0:metadata EntitiesDescriptor"`
-	ID                  *string        `xml:",attr,omitempty"`
-	ValidUntil          *time.Time     `xml:"validUntil,attr,omitempty"`
-	CacheDuration       *time.Duration `xml:"cacheDuration,attr,omitempty"`
-	Name                *string        `xml:",attr,omitempty"`
+	XMLName             xml.Name   `xml:"urn:oasis:names:tc:SAML:2.0:metadata EntitiesDescriptor"`
+	ID                  *string    `xml:",attr,omitempty"`
+	ValidUntil          *time.Time `xml:"validUntil,attr,omitempty"`
+	CacheDuration       *string    `xml:"cacheDuration,attr,omitempty"`
+	Name                *string    `xml:",attr,omitempty"`
 	Signature           *etree.Element
 	EntitiesDescriptors []EntitiesDescriptor `xml:"urn:oasis:names:tc:SAML:2.0:metadata EntitiesDescriptor"`
 	EntityDescriptors   []EntityDescriptor   `xml:"urn:oasis:names:tc:SAML:2.0:metadata EntityDescriptor"`
@@ -40,11 +40,11 @@ var Metadata = struct{}{}
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-metadata-2.0-os.pdf §2.3.2
 type EntityDescriptor struct {
-	XMLName                       xml.Name      `xml:"urn:oasis:names:tc:SAML:2.0:metadata EntityDescriptor"`
-	EntityID                      string        `xml:"entityID,attr"`
-	ID                            string        `xml:",attr,omitempty"`
-	ValidUntil                    time.Time     `xml:"validUntil,attr,omitempty"`
-	CacheDuration                 time.Duration `xml:"cacheDuration,attr,omitempty"`
+	XMLName                       xml.Name  `xml:"urn:oasis:names:tc:SAML:2.0:metadata EntityDescriptor"`
+	EntityID                      string    `xml:"entityID,attr"`
+	ID                            string    `xml:",attr,omitempty"`
+	ValidUntil                    time.Time `xml:"validUntil,attr,omitempty"`
+	CacheDuration                 string    `xml:"cacheDuration,attr,omitempty"`
 	Signature                     *etree.Element
 	RoleDescriptors               []RoleDescriptor               `xml:"RoleDescriptor"`
 	IDPSSODescriptors             []IDPSSODescriptor             `xml:"IDPSSODescriptor"`
@@ -63,11 +63,11 @@ func (m EntityDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElement) err
 	type Alias EntityDescriptor
 	aux := &struct {
 		ValidUntil    RelaxedTime `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration    `xml:"cacheDuration,attr,omitempty"`
+		CacheDuration string      `xml:"cacheDuration,attr,omitempty"`
 		*Alias
 	}{
 		ValidUntil:    RelaxedTime(m.ValidUntil),
-		CacheDuration: Duration(m.CacheDuration),
+		CacheDuration: m.CacheDuration,
 		Alias:         (*Alias)(&m),
 	}
 	return e.Encode(aux)
@@ -78,7 +78,7 @@ func (m *EntityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 	type Alias EntityDescriptor
 	aux := &struct {
 		ValidUntil    RelaxedTime `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration    `xml:"cacheDuration,attr,omitempty"`
+		CacheDuration string      `xml:"cacheDuration,attr,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -87,7 +87,7 @@ func (m *EntityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 		return err
 	}
 	m.ValidUntil = time.Time(aux.ValidUntil)
-	m.CacheDuration = time.Duration(aux.CacheDuration)
+	m.CacheDuration = aux.CacheDuration
 	return nil
 }
 

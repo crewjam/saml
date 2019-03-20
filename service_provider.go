@@ -73,7 +73,7 @@ type ServiceProvider struct {
 
 	// MetadataValidDuration is a duration used to calculate validUntil
 	// attribute in the metadata endpoint
-	MetadataValidDuration time.Duration
+	MetadataValidDuration string
 
 	// Logger is used to log messages for example in the event of errors
 	Logger logger.Interface
@@ -94,7 +94,7 @@ var MaxIssueDelay = time.Second * 90
 var MaxClockSkew = time.Second * 180
 
 // DefaultValidDuration is how long we assert that the SP metadata is valid.
-const DefaultValidDuration = time.Hour * 24 * 2
+const DefaultValidDuration = "P2DT"
 
 // DefaultCacheDuration is how long we ask the IDP to cache the SP metadata.
 const DefaultCacheDuration = time.Hour * 24 * 1
@@ -102,13 +102,14 @@ const DefaultCacheDuration = time.Hour * 24 * 1
 // Metadata returns the service provider metadata
 func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 	validDuration := DefaultValidDuration
-	if sp.MetadataValidDuration > 0 {
+
+	if sp.MetadataValidDuration != "" {
 		validDuration = sp.MetadataValidDuration
 	}
 
 	authnRequestsSigned := false
 	wantAssertionsSigned := true
-	validUntil := TimeNow().Add(validDuration)
+	validUntil := GetValidDuration(validDuration)
 	return &EntityDescriptor{
 		EntityID:   sp.MetadataURL.String(),
 		ValidUntil: validUntil,

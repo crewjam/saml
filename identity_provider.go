@@ -107,7 +107,7 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 
 	ed := &EntityDescriptor{
 		EntityID:      idp.MetadataURL.String(),
-		ValidUntil:    TimeNow().Add(DefaultValidDuration),
+		ValidUntil:    GetValidDuration(DefaultValidDuration),
 		CacheDuration: DefaultValidDuration,
 		IDPSSODescriptors: []IDPSSODescriptor{
 			IDPSSODescriptor{

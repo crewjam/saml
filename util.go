@@ -2,9 +2,11 @@ package saml
 
 import (
 	"crypto/rand"
+	"strconv"
+	"strings"
 	"time"
 
-	dsig "github.com/russellhaering/goxmldsig"
+	"github.com/russellhaering/goxmldsig"
 )
 
 // TimeNow is a function that returns the current time. The default
@@ -26,4 +28,56 @@ func randomBytes(n int) []byte {
 		panic(err)
 	}
 	return rv
+}
+
+func GetValidDuration(samlTime string) time.Time {
+	// TODO: Add support for negative cache duration
+
+	samlTime = strings.ToLower(samlTime)
+
+	if samlTime[0] != 'p' {
+		parsedTime, err := strconv.ParseInt(samlTime, 10, 64)
+		if err != nil {
+			return TimeNow().Add(time.Duration(time.Hour * 24 * 2))
+		}
+
+		return TimeNow().Add(time.Duration(parsedTime))
+	}
+
+	//strip P
+	samlTime = samlTime[1:]
+
+	samlTime, yearVal := getCacheTimeValue(samlTime, "y")
+	samlTime, monthVal := getCacheTimeValue(samlTime, "m")
+	samlTime, dayVal := getCacheTimeValue(samlTime, "d")
+
+	currentTime := TimeNow()
+	currentTime = currentTime.AddDate(yearVal, monthVal, dayVal)
+
+	if samlTime == "" {
+		return currentTime
+	}
+
+	//strip T
+	samlTime = samlTime[1:]
+	samlTime, hourVal := getCacheTimeValue(samlTime, "h")
+	samlTime, minuteVal := getCacheTimeValue(samlTime, "m")
+	_, secondVal := getCacheTimeValue(samlTime, "s")
+
+	currentTime = currentTime.Add(time.Duration(hourVal) * time.Hour)
+	currentTime = currentTime.Add(time.Duration(minuteVal) * time.Minute)
+	currentTime = currentTime.Add(time.Duration(secondVal) * time.Second)
+
+	return currentTime
+}
+
+func getCacheTimeValue(samlTime string, valType string) (string, int) {
+	result := 0
+	splitTime := strings.Split(samlTime, valType)
+	if len(splitTime) > 0 {
+		result, _ = strconv.Atoi(splitTime[0])
+		samlTime = strings.Replace(samlTime, splitTime[0]+valType, "", 1)
+	}
+
+	return samlTime, result
 }

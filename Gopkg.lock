@@ -2,12 +2,15 @@
 
 
 [[projects]]
+  digest = "1:b5f28f7eda54d2695765c778c951a2ace52c06afb7da1f7e0c7485baa5b02100"
   name = "github.com/beevik/etree"
   packages = ["."]
+  pruneopts = ""
   revision = "9d7e8feddccb4ed1b8afb54e368bd323d2ff652c"
   version = "v1.0.1"
 
 [[projects]]
+  digest = "1:7d18876d174c2f46e7005446b9ffd703e3861cebb790951d7911eeb0a1d87959"
   name = "github.com/crewjam/saml"
   packages = [
     ".",
@@ -15,52 +18,66 @@
     "samlidp",
     "samlsp",
     "testsaml",
-    "xmlenc"
+    "xmlenc",
   ]
+  pruneopts = ""
   revision = "6b5dd2d26974f7f5e59132ef5921fab7993794d7"
   version = "0.2.0"
 
 [[projects]]
   branch = "master"
+  digest = "1:899ab67e7a794d8c454b4e6088c7cb85e6b7b4ec9cf5c94d6c742eb8b2e7da26"
   name = "github.com/dchest/uniuri"
   packages = ["."]
+  pruneopts = ""
   revision = "8902c56451e9b58ff940bbe5fec35d5f9c04584a"
 
 [[projects]]
+  digest = "1:6098222470fe0172157ce9bbef5d2200df4edde17ee649c5d6e48330e4afa4c6"
   name = "github.com/dgrijalva/jwt-go"
   packages = ["."]
+  pruneopts = ""
   revision = "06ea1031745cb8b3dab3f6a236daf2b0aa468b7e"
   version = "v3.2.0"
 
 [[projects]]
+  digest = "1:302ad9379eb146668760df4d779a95379acab43ce5f9a28f27f3273f98232020"
   name = "github.com/jonboulle/clockwork"
   packages = ["."]
+  pruneopts = ""
   revision = "2eee05ed794112d45db504eb05aa693efd2b8b09"
   version = "v0.1.0"
 
 [[projects]]
+  digest = "1:3108ec0946181c60040ff51b811908f89d03e521e2b4ade5ef5c65b3c0e911ae"
   name = "github.com/kr/pretty"
   packages = ["."]
+  pruneopts = ""
   revision = "73f6ac0b30a98e433b289500d779f50c1a6f0712"
   version = "v0.1.0"
 
 [[projects]]
+  digest = "1:11b056b4421396ab14e384ab8ab8c2079b03f1e51aa5eb4d9b81f9e0d1aa8fbf"
   name = "github.com/kr/text"
   packages = ["."]
+  pruneopts = ""
   revision = "e2ffdb16a802fe2bb95e2e35ff34f0e53aeef34f"
   version = "v0.1.0"
 
 [[projects]]
   branch = "master"
+  digest = "1:3a63d21f9c90d17c31e506b23b9267f97918e24303125e1eae6108c623296875"
   name = "github.com/russellhaering/goxmldsig"
   packages = [
     ".",
     "etreeutils",
-    "types"
+    "types",
   ]
+  pruneopts = ""
   revision = "7acd5e4a6ef74fe1b082c20f119556adf70c3944"
 
 [[projects]]
+  digest = "1:dd9db030ef90b658f9478c454820cef568bb91bc9347dc568fc7c30bb24e3f22"
   name = "github.com/zenazn/goji"
   packages = [
     ".",
@@ -69,30 +86,53 @@
     "graceful/listener",
     "web",
     "web/middleware",
-    "web/mutil"
+    "web/mutil",
   ]
+  pruneopts = ""
   revision = "64eb34159fe53473206c2b3e70fe396a639452f2"
   version = "v1.0"
 
 [[projects]]
   branch = "master"
+  digest = "1:cae234a803b78380e4d769db6036b9fcc8c08ed4ff862571ffc1a958edc1f629"
   name = "golang.org/x/crypto"
   packages = [
     "bcrypt",
     "blowfish",
-    "ripemd160"
+    "ripemd160",
   ]
+  pruneopts = ""
   revision = "c126467f60eb25f8f27e5a981f32a87e3965053f"
 
 [[projects]]
   branch = "v1"
+  digest = "1:1d01f96bc2293b56c3dec797b8f976d7613fb30ce92bfbc994130404f7f7f031"
   name = "gopkg.in/check.v1"
   packages = ["."]
+  pruneopts = ""
   revision = "788fd78401277ebd861206a03c884797c6ec5541"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "e95ae53367b806651c34d425c22f40bade70c9db018c9b619b37f4c8405acb65"
+  input-imports = [
+    "github.com/beevik/etree",
+    "github.com/crewjam/saml",
+    "github.com/crewjam/saml/logger",
+    "github.com/crewjam/saml/samlidp",
+    "github.com/crewjam/saml/samlsp",
+    "github.com/crewjam/saml/testsaml",
+    "github.com/crewjam/saml/xmlenc",
+    "github.com/dchest/uniuri",
+    "github.com/dgrijalva/jwt-go",
+    "github.com/kr/pretty",
+    "github.com/russellhaering/goxmldsig",
+    "github.com/russellhaering/goxmldsig/etreeutils",
+    "github.com/zenazn/goji",
+    "github.com/zenazn/goji/web",
+    "golang.org/x/crypto/bcrypt",
+    "golang.org/x/crypto/ripemd160",
+    "gopkg.in/check.v1",
+  ]
   solver-name = "gps-cdcl"
   solver-version = 1

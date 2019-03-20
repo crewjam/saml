@@ -26,7 +26,7 @@ func (s *MetadataTest) TestCanParseMetadata(c *C) {
 		EntityID:      "https://dev.aa.kndr.org/users/auth/saml/metadata",
 		ID:            "_af805d1c-c2e3-444e-9cf5-efc664eeace6",
 		ValidUntil:    time.Date(2001, time.February, 3, 4, 5, 6, 789000000, time.UTC),
-		CacheDuration: time.Hour,
+		CacheDuration: "PT1H",
 		SPSSODescriptors: []SPSSODescriptor{
 			SPSSODescriptor{
 				XMLName: xml.Name{Space: "urn:oasis:names:tc:SAML:2.0:metadata", Local: "SPSSODescriptor"},
@@ -94,7 +94,7 @@ func (s *MetadataTest) TestCanProduceSPMetadata(c *C) {
 	metadata := EntityDescriptor{
 		EntityID:      "http://localhost:5000/e087a985171710fb9fb30f30f41384f9/saml2/metadata/",
 		ValidUntil:    validUntil,
-		CacheDuration: time.Hour,
+		CacheDuration: "PT1H",
 		SPSSODescriptors: []SPSSODescriptor{
 			SPSSODescriptor{
 				AuthnRequestsSigned:  &AuthnRequestsSigned,
