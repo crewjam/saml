@@ -37,10 +37,10 @@ type Options struct {
 
 // New creates a new Middleware
 func New(opts Options) (*Middleware, error) {
-	metadataURL := opts.URL
-	metadataURL.Path = metadataURL.Path + "/saml/metadata"
-	acsURL := opts.URL
-	acsURL.Path = acsURL.Path + "/saml/acs"
+	metadataRelURL, _ := url.Parse("saml/metadata")
+	metadataURL := opts.URL.ResolveReference(metadataRelURL)
+	acsRelURL, _ := url.Parse("saml/acs")
+	acsURL := opts.URL.ResolveReference(acsRelURL)
 	logr := opts.Logger
 	if logr == nil {
 		logr = logger.DefaultLogger
@@ -56,8 +56,8 @@ func New(opts Options) (*Middleware, error) {
 			Key:         opts.Key,
 			Logger:      logr,
 			Certificate: opts.Certificate,
-			MetadataURL: metadataURL,
-			AcsURL:      acsURL,
+			MetadataURL: *metadataURL,
+			AcsURL:      *acsURL,
 			IDPMetadata: opts.IDPMetadata,
 			ForceAuthn:  &opts.ForceAuthn,
 		},
