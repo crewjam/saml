@@ -549,7 +549,7 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 		return fmt.Errorf("Conditions is expired")
 	}
 
-	audienceRestrictionsValid := false
+	audienceRestrictionsValid := len(assertion.Conditions.AudienceRestrictions) == 0
 	for _, audienceRestriction := range assertion.Conditions.AudienceRestrictions {
 		if audienceRestriction.Audience.Value == sp.MetadataURL.String() {
 			audienceRestrictionsValid = true

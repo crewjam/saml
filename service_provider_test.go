@@ -785,6 +785,11 @@ func (test *ServiceProviderTest) TestInvalidAssertions(c *C) {
 	c.Assert(err.Error(), Equals, "Conditions AudienceRestriction does not contain \"https://15661444.ngrok.io/saml2/metadata\"")
 	assertion = Assertion{}
 	xml.Unmarshal(assertionBuf, &assertion)
+
+	// Not having an audience is not an error
+	assertion.Conditions.AudienceRestrictions = []AudienceRestriction{}
+	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
+	c.Assert(err, Equals, nil)
 }
 
 func (test *ServiceProviderTest) TestRealWorldKeyInfoHasRSAPublicKeyNotX509Cert(c *C) {
