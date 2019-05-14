@@ -234,12 +234,13 @@ func (sp *ServiceProvider) getIDPSigningCerts() ([]*x509.Certificate, error) {
 		return nil, errors.New("cannot find any signing certificate in the IDP SSO descriptor")
 	}
 
-	var parsedCerts []*x509.Certificate
-	wsRegex := regexp.MustCompile(`\s+`)
+	var certs []*x509.Certificate
 
+	// cleanup whitespace
+	regex := regexp.MustCompile(`\s+`)
 	for _, certStr := range certStrs {
 		// cleanup whitespace
-		certStr = wsRegex.ReplaceAllString(certStr, "")
+		certStr = regex.ReplaceAllString(certStr, "")
 		certBytes, err := base64.StdEncoding.DecodeString(certStr)
 		if err != nil {
 			return nil, fmt.Errorf("cannot parse certificate: %s", err)
@@ -249,10 +250,10 @@ func (sp *ServiceProvider) getIDPSigningCerts() ([]*x509.Certificate, error) {
 		if err != nil {
 			return nil, err
 		}
-
-		parsedCerts = append(parsedCerts, parsedCert)
+		certs = append(certs, parsedCert)
 	}
-	return parsedCerts, nil
+
+	return certs, nil
 }
 
 // MakeAuthenticationRequest produces a new AuthnRequest object for idpURL.
@@ -549,7 +550,7 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 		return fmt.Errorf("Conditions is expired")
 	}
 
-	audienceRestrictionsValid := false
+	audienceRestrictionsValid := len(assertion.Conditions.AudienceRestrictions) == 0
 	for _, audienceRestriction := range assertion.Conditions.AudienceRestrictions {
 		if audienceRestriction.Audience.Value == sp.MetadataURL.String() {
 			audienceRestrictionsValid = true
