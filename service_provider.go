@@ -239,7 +239,6 @@ func (sp *ServiceProvider) getIDPSigningCerts() ([]*x509.Certificate, error) {
 	// cleanup whitespace
 	regex := regexp.MustCompile(`\s+`)
 	for _, certStr := range certStrs {
-		// cleanup whitespace
 		certStr = regex.ReplaceAllString(certStr, "")
 		certBytes, err := base64.StdEncoding.DecodeString(certStr)
 		if err != nil {
