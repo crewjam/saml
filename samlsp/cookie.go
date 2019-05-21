@@ -1,6 +1,7 @@
 package samlsp
 
 import (
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -84,7 +85,7 @@ func (c ClientCookies) SetToken(w http.ResponseWriter, r *http.Request, value st
 	// Cookies should not have the port attached to them so strip it off
 	domain := c.Domain
 	if strings.Contains(domain, ":") {
-		domain = strings.Split(domain, ":")[0]
+		domain, _, _ = net.SplitHostPort(domain)
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     c.Name,
