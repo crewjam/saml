@@ -1,9 +1,13 @@
 package samlsp
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/xml"
+	"io/ioutil"
 	"net/http"
 	"time"
 
@@ -107,6 +111,12 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 	return http.HandlerFunc(fn)
 }
 
+const (
+	jwtTokenClaims = "token_claims"
+)
+
+//RequireAccountHandler redirects to the login flow if the http request does not have a
+//validated user
 func (m *Middleware) RequireAccountHandler(w http.ResponseWriter, r *http.Request) {
 	// If we try to redirect when the original request is the ACS URL we'll
 	// end up in a loop. This is a programming error, so we panic here. In
@@ -242,18 +252,30 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 			claims.StandardClaims.Subject = nameID.Value
 		}
 	}
+	var attrs map[string][]string
 	for _, attributeStatement := range assertion.AttributeStatements {
-		claims.Attributes = map[string][]string{}
+		attrs = map[string][]string{}
 		for _, attr := range attributeStatement.Attributes {
 			claimName := attr.FriendlyName
 			if claimName == "" {
 				claimName = attr.Name
 			}
 			for _, value := range attr.Values {
-				claims.Attributes[claimName] = append(claims.Attributes[claimName], value.Value)
+				attrs[claimName] = append(claims.Attributes[claimName], value.Value)
 			}
 		}
 	}
+
+	//Encode and compress claims
+	//This helps work around the 4kb max cookie size in browsers
+	attrJSON, _ := json.Marshal(attrs)
+	buf := bytes.Buffer{}
+	gz := gzip.NewWriter(buf)
+	gz.Write(attrJSON)
+	gz.Close()
+
+	claims.Attributes = map[string][]string{}
+	claims.Attributes[jwtTokenClaims] = []string{string(buf.Bytes())}
 	signedToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256,
 		claims).SignedString(secretBlock)
 	if err != nil {
@@ -298,6 +320,16 @@ func (m *Middleware) GetAuthorizationToken(r *http.Request) *AuthorizationToken 
 	if tokenClaims.Audience != m.ServiceProvider.Metadata().EntityID {
 		m.ServiceProvider.Logger.Printf("ERROR: tokenClaims.Audience does not match EntityID")
 		return nil
+	}
+
+	//decompress and decode attributes
+	attrList := tokenClaims.Attributes[jwtTokenClaims]
+	if len(attrList) == 1 {
+		gz, _ := gzip.NewReader(bytes.NewReader([]byte(attrList[0])))
+		data, _ := ioutil.ReadAll(gz)
+		cl := map[string][]string{}
+		json.Unmarshal(data, &cl)
+		tokenClaims.Attributes = cl
 	}
 
 	return &tokenClaims
