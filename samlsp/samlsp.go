@@ -53,13 +53,14 @@ func New(opts Options) (*Middleware, error) {
 
 	m := &Middleware{
 		ServiceProvider: saml.ServiceProvider{
-			Key:         opts.Key,
-			Logger:      logr,
-			Certificate: opts.Certificate,
-			MetadataURL: *metadataURL,
-			AcsURL:      *acsURL,
-			IDPMetadata: opts.IDPMetadata,
-			ForceAuthn:  &opts.ForceAuthn,
+			Key:               opts.Key,
+			Logger:            logr,
+			Certificate:       opts.Certificate,
+			MetadataURL:       *metadataURL,
+			AcsURL:            *acsURL,
+			IDPMetadata:       opts.IDPMetadata,
+			ForceAuthn:        &opts.ForceAuthn,
+			AllowIDPInitiated: opts.AllowIDPInitiated,
 		},
 		AllowIDPInitiated: opts.AllowIDPInitiated,
 		TokenMaxAge:       tokenMaxAge,

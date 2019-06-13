@@ -81,6 +81,9 @@ type ServiceProvider struct {
 	// ForceAuthn allows you to force re-authentication of users even if the user
 	// has a SSO session at the IdP.
 	ForceAuthn *bool
+
+	// AllowIdpInitiated
+	AllowIDPInitiated bool
 }
 
 // MaxIssueDelay is the longest allowed time between when a SAML assertion is
@@ -402,16 +405,36 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 		return nil, retErr
 	}
 	retErr.Response = string(rawResponseBuf)
+	assertion, err := sp.ParseXmlResponse(rawResponseBuf, possibleRequestIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	return assertion, nil
+
+}
+
+func (sp *ServiceProvider) ParseXmlResponse(decodedResponseXml []byte, possibleRequestIDs []string) (*Assertion, error) {
+	now := TimeNow()
+	var err error
+	retErr := &InvalidResponseError{
+		Now:      now,
+		Response: string(decodedResponseXml),
+	}
 
 	// do some validation first before we decrypt
 	resp := Response{}
-	if err := xml.Unmarshal(rawResponseBuf, &resp); err != nil {
+	if err := xml.Unmarshal([]byte(decodedResponseXml), &resp); err != nil {
 		retErr.PrivateErr = fmt.Errorf("cannot unmarshal response: %s", err)
 		return nil, retErr
 	}
 	if resp.Destination != sp.AcsURL.String() {
 		retErr.PrivateErr = fmt.Errorf("`Destination` does not match AcsURL (expected %q)", sp.AcsURL.String())
 		return nil, retErr
+	}
+
+	if sp.AllowIDPInitiated && len(possibleRequestIDs) == 0 {
+		possibleRequestIDs = append([]string{""})
 	}
 
 	requestIDvalid := false
@@ -442,7 +465,7 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 	if resp.EncryptedAssertion == nil {
 
 		doc := etree.NewDocument()
-		if err := doc.ReadFromBytes(rawResponseBuf); err != nil {
+		if err := doc.ReadFromBytes(decodedResponseXml); err != nil {
 			retErr.PrivateErr = err
 			return nil, retErr
 		}
@@ -465,7 +488,7 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 	// decrypt the response
 	if resp.EncryptedAssertion != nil {
 		doc := etree.NewDocument()
-		if err := doc.ReadFromBytes(rawResponseBuf); err != nil {
+		if err := doc.ReadFromBytes(decodedResponseXml); err != nil {
 			retErr.PrivateErr = err
 			return nil, retErr
 		}
