@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/crewjam/saml"
+	"github.com/stmath/saml"
 )
 
 // ClientState implements client side storage for state.

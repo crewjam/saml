@@ -11,7 +11,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/crewjam/saml"
+	"github.com/stmath/saml"
 	"github.com/zenazn/goji/web"
 )
 
