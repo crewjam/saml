@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
+	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/xmlenc"
 	dsig "github.com/russellhaering/goxmldsig"
@@ -633,6 +634,18 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 			Values: []AttributeValue{{
 				Type:  "xs:string",
 				Value: session.UserCommonName,
+			}},
+		})
+	}
+
+	if session.UserScopedAffiliation != "" {
+		attributes = append(attributes, Attribute{
+			FriendlyName: "uid",
+			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.9",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []AttributeValue{{
+				Type:  "xs:string",
+				Value: session.UserScopedAffiliation,
 			}},
 		})
 	}
