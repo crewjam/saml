@@ -19,7 +19,6 @@ import (
 
 	"github.com/beevik/etree"
 	. "gopkg.in/check.v1"
-	"strings"
 )
 
 // Hook up gocheck into the "go test" runner.

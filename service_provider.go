@@ -378,31 +378,28 @@ func (ivr *InvalidResponseError) Error() string {
 	return fmt.Sprintf("Authentication failed")
 }
 
-func responseContainsSignature(response *etree.Document) (bool, error) {
+func responseIsSigned(response *etree.Document) (bool, error) {
 	signatureElement, err := findChild(response.Root(), "http://www.w3.org/2000/09/xmldsig#", "Signature")
 	if err != nil {
 		return false, err
 	}
-	if signatureElement == nil {
-		return false, nil
-	}
-	return true, nil
+	return signatureElement != nil, nil
 }
 
+// validateDestination validates the Destination attribute iff the response is signed.
 func (sp *ServiceProvider) validateDestination(response []byte, responseDom *Response) error {
-	// A response MUST contain a Destination attribute if the SAML request is signed.
 	responseXml := etree.NewDocument()
 	err := responseXml.ReadFromBytes(response)
 	if err != nil {
 		return err
 	}
 
-	present, err := responseContainsSignature(responseXml)
+	signed, err := responseIsSigned(responseXml)
 	if err != nil {
 		return err
 	}
 
-	if present {
+	if signed {
 		if responseDom.Destination != sp.AcsURL.String() {
 			return fmt.Errorf("`Destination` does not match AcsURL (expected %q, actual %q)", sp.AcsURL.String(), responseDom.Destination)
 		}
