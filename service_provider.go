@@ -410,7 +410,7 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 		return nil, retErr
 	}
 	if resp.Destination != sp.AcsURL.String() {
-		retErr.PrivateErr = fmt.Errorf("`Destination` does not match AcsURL (expected %q)", sp.AcsURL.String())
+		retErr.PrivateErr = fmt.Errorf("`Destination` does not match AcsURL (expected %q but found %q)", sp.AcsURL.String(), resp.Destination)
 		return nil, retErr
 	}
 

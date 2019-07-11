@@ -665,7 +665,7 @@ func (test *ServiceProviderTest) TestInvalidResponses(c *C) {
 	s.AcsURL = mustParseURL("https://wrong/saml2/acs")
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
-	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "`Destination` does not match AcsURL (expected \"https://wrong/saml2/acs\")")
+	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "`Destination` does not match AcsURL (expected \"https://wrong/saml2/acs\" but found \"https://15661444.ngrok.io/saml2/acs\")")
 	s.AcsURL = mustParseURL("https://15661444.ngrok.io/saml2/acs")
 
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
