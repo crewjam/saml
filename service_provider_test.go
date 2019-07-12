@@ -708,6 +708,25 @@ func (test *ServiceProviderTest) TestMismatchedDestinationsWithSignaturePresent(
 	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "`Destination` does not match AcsURL (expected \"https://15661444.ngrok.io/saml2/acs\", actual \"https://wrong/saml2/acs\")")
 }
 
+func (test *ServiceProviderTest) TestMismatchedDestinationsWithNoSignaturePresent(c *C) {
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	c.Assert(err, IsNil)
+
+	req := http.Request{PostForm: url.Values{}}
+	test.replaceDestination("https://wrong/saml2/acs")
+	bytes, _ := test.responseDom().WriteToBytes()
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(bytes))
+	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
+	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "`Destination` does not match AcsURL (expected \"https://15661444.ngrok.io/saml2/acs\", actual \"https://wrong/saml2/acs\")")
+}
+
 func (test *ServiceProviderTest) TestMissingDestinationWithSignaturePresent(c *C) {
 	s := ServiceProvider{
 		Key:         test.Key,

@@ -386,7 +386,8 @@ func responseIsSigned(response *etree.Document) (bool, error) {
 	return signatureElement != nil, nil
 }
 
-// validateDestination validates the Destination attribute iff the response is signed.
+// validateDestination validates the Destination attribute.
+// If the response is signed, the Destination is required to be present.
 func (sp *ServiceProvider) validateDestination(response []byte, responseDom *Response) error {
 	responseXml := etree.NewDocument()
 	err := responseXml.ReadFromBytes(response)
@@ -399,7 +400,10 @@ func (sp *ServiceProvider) validateDestination(response []byte, responseDom *Res
 		return err
 	}
 
-	if signed {
+
+	// Compare if the response is signed OR the Destination is provided.
+	// (Even if the response is not signed, if the Destination is set it must match.)
+	if signed || responseDom.Destination != "" {
 		if responseDom.Destination != sp.AcsURL.String() {
 			return fmt.Errorf("`Destination` does not match AcsURL (expected %q, actual %q)", sp.AcsURL.String(), responseDom.Destination)
 		}
