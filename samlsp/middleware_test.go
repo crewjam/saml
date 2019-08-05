@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/xml"
 	"io/ioutil"
 	"net/http"
@@ -49,7 +50,51 @@ func (tr *testRandomReader) Read(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-const expectedToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovLzE1NjYxNDQ0Lm5ncm9rLmlvL3NhbWwyL21ldGFkYXRhIiwiZXhwIjoxNDQ4OTQyMjI5LCJpYXQiOjE0NDg5MzUwMjksIm5iZiI6MTQ0ODkzNTAyOSwic3ViIjoiXzQxYmQyOTU5NzZkYWRkNzBlMTQ4MGYzMThlNzcyODQxIiwiYXR0ciI6eyJjbiI6WyJNZSBNeXNlbGYgQW5kIEkiXSwiZWR1UGVyc29uQWZmaWxpYXRpb24iOlsiTWVtYmVyIiwiU3RhZmYiXSwiZWR1UGVyc29uRW50aXRsZW1lbnQiOlsidXJuOm1hY2U6ZGlyOmVudGl0bGVtZW50OmNvbW1vbi1saWItdGVybXMiXSwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6WyJteXNlbGZAdGVzdHNoaWIub3JnIl0sImVkdVBlcnNvblNjb3BlZEFmZmlsaWF0aW9uIjpbIk1lbWJlckB0ZXN0c2hpYi5vcmciLCJTdGFmZkB0ZXN0c2hpYi5vcmciXSwiZWR1UGVyc29uVGFyZ2V0ZWRJRCI6WyIiXSwiZ2l2ZW5OYW1lIjpbIk1lIE15c2VsZiJdLCJzbiI6WyJBbmQgSSJdLCJ0ZWxlcGhvbmVOdW1iZXIiOlsiNTU1LTU1NTUiXSwidWlkIjpbIm15c2VsZiJdfX0.2MBH9f4aspGqmENebmtHiwfc7RFBlaNs_-jlTJKk6Bg"
+var tokenJSON = []byte(`{
+  "aud": "https://15661444.ngrok.io/saml2/metadata",
+  "exp": 1448942229,
+  "iat": 1448935029,
+  "nbf": 1448935029,
+  "sub": "_41bd295976dadd70e1480f318e772841",
+  "attr": {
+    "cn": [
+      "Me Myself And I"
+    ],
+    "eduPersonAffiliation": [
+      "Member",
+      "Staff"
+    ],
+    "eduPersonEntitlement": [
+      "urn:mace:dir:entitlement:common-lib-terms"
+    ],
+    "eduPersonPrincipalName": [
+      "myself@testshib.org"
+    ],
+    "eduPersonScopedAffiliation": [
+      "Member@testshib.org",
+      "Staff@testshib.org"
+    ],
+    "eduPersonTargetedID": [
+      ""
+    ],
+    "givenName": [
+      "Me Myself"
+    ],
+    "sn": [
+      "And I"
+    ],
+    "telephoneNumber": [
+      "555-5555"
+    ],
+    "uid": [
+      "myself"
+    ]
+  }
+}`)
+
+var testToken func(id string) string
+
+var expectedToken string
 
 func (test *MiddlewareTest) SetUpTest(c *C) {
 	saml.TimeNow = func() time.Time {
@@ -85,6 +130,35 @@ func (test *MiddlewareTest) SetUpTest(c *C) {
 	test.Middleware.ClientToken = &cookieStore
 	err := xml.Unmarshal([]byte(test.IDPMetadata), &test.Middleware.ServiceProvider.IDPMetadata)
 	c.Assert(err, IsNil)
+
+	var tc AuthorizationToken
+
+	if err := json.Unmarshal(tokenJSON, &tc); err != nil {
+		panic(err)
+	}
+
+	expectedToken, err = jwt.NewWithClaims(jwtSigningMethod, &tc).SignedString(test.Key)
+	if err != nil {
+		panic(err)
+	}
+
+	testToken = func(id string) string {
+		type tc struct {
+			Id  string `json:"id"`
+			Uri string `json:"uri"`
+			jwt.StandardClaims
+		}
+		testTokenClaim := tc{
+			Id:  id,
+			Uri: "/frob",
+		}
+
+		token, err := jwt.NewWithClaims(jwtSigningMethod, &testTokenClaim).SignedString(test.Key)
+		if err != nil {
+			panic(err)
+		}
+		return token
+	}
 }
 
 func (test *MiddlewareTest) TestCanProduceMetadata(c *C) {
@@ -142,9 +216,7 @@ func (test *MiddlewareTest) TestRequireAccountNoCreds(c *C) {
 
 	c.Assert(resp.Code, Equals, http.StatusFound)
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
-		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
-			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
-			"; Path=/saml2/acs; Max-Age=90; HttpOnly")
+		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+testToken("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly")
 
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
 	c.Assert(err, IsNil)
@@ -167,9 +239,7 @@ func (test *MiddlewareTest) TestRequireAccountNoCredsSecure(c *C) {
 
 	c.Assert(resp.Code, Equals, http.StatusFound)
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
-		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
-			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
-			"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure")
+		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+testToken("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure")
 
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
 	c.Assert(err, IsNil)
@@ -193,9 +263,7 @@ func (test *MiddlewareTest) TestRequireAccountNoCredsPostBinding(c *C) {
 
 	c.Assert(resp.Code, Equals, http.StatusOK)
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
-		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
-			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
-			"; Path=/saml2/acs; Max-Age=90; HttpOnly")
+		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+testToken("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly")
 	c.Assert(string(resp.Body.Bytes()), Equals, ""+
 		"<!DOCTYPE html>"+
 		"<html>"+
@@ -263,9 +331,7 @@ func (test *MiddlewareTest) TestRequireAccountBadCreds(c *C) {
 	c.Assert(resp.Code, Equals, http.StatusFound)
 
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
-		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
-			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
-			"; Path=/saml2/acs; Max-Age=90; HttpOnly")
+		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+testToken("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly")
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
 	c.Assert(err, IsNil)
 	decodedRequest, err := testsaml.ParseRedirectRequest(redirectURL)
@@ -293,9 +359,7 @@ func (test *MiddlewareTest) TestRequireAccountExpiredCreds(c *C) {
 
 	c.Assert(resp.Code, Equals, http.StatusFound)
 	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
-		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
-			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
-			"; Path=/saml2/acs; Max-Age=90; HttpOnly")
+		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+testToken("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly")
 
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
 	c.Assert(err, IsNil)
@@ -390,8 +454,7 @@ func (test *MiddlewareTest) TestCanParseResponse(c *C) {
 	req, _ := http.NewRequest("POST", "/saml2/acs", bytes.NewReader([]byte(v.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Cookie", ""+
-		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
-		"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTllNjE3NTNkNjRlOTI4YWY1YTdhMzQxYTk3ZjQyMGM5IiwidXJpIjoiL2Zyb2IifQ.RHNEmqXQcB_ncWZSPkhOL4Sx5hZFD6eHP1RJ0ZgUhuk")
+		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+testToken("id-9e61753d64e928af5a7a341a97f420c9"))
 
 	resp := httptest.NewRecorder()
 	test.Middleware.ServeHTTP(resp, req)
