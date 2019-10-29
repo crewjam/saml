@@ -13,7 +13,7 @@ func TestAttributeXMLRoundTrip(t *testing.T) {
 		FriendlyName: "TestFriendlyName",
 		Name:         "TestName",
 		NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:basic",
-		Values: []AttributeValue{AttributeValue{
+		Values: []AttributeValue{{
 			Type:  "xs:string",
 			Value: "test",
 		}},

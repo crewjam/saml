@@ -24,7 +24,7 @@ func TestCanParseMetadata(t *testing.T) {
 		ValidUntil:    time.Date(2001, time.February, 3, 4, 5, 6, 789000000, time.UTC),
 		CacheDuration: time.Hour,
 		SPSSODescriptors: []SPSSODescriptor{
-			SPSSODescriptor{
+			{
 				XMLName: xml.Name{Space: "urn:oasis:names:tc:SAML:2.0:metadata", Local: "SPSSODescriptor"},
 				SSODescriptor: SSODescriptor{
 					RoleDescriptor: RoleDescriptor{
@@ -34,7 +34,7 @@ func TestCanParseMetadata(t *testing.T) {
 				AuthnRequestsSigned:  &False,
 				WantAssertionsSigned: &False,
 				AssertionConsumerServices: []IndexedEndpoint{
-					IndexedEndpoint{
+					{
 						Binding:   "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
 						Location:  "https://dev.aa.kndr.org/users/auth/saml/callback",
 						Index:     0,
@@ -42,7 +42,7 @@ func TestCanParseMetadata(t *testing.T) {
 					},
 				},
 				AttributeConsumingServices: []AttributeConsumingService{
-					AttributeConsumingService{
+					{
 						Index:        1,
 						IsDefault:    &True,
 						ServiceNames: []LocalizedName{{Value: "Required attributes"}},
@@ -94,7 +94,7 @@ func TestCanProduceSPMetadata(t *testing.T) {
 		ValidUntil:    validUntil,
 		CacheDuration: time.Hour,
 		SPSSODescriptors: []SPSSODescriptor{
-			SPSSODescriptor{
+			{
 				AuthnRequestsSigned:  &AuthnRequestsSigned,
 				WantAssertionsSigned: &WantAssertionsSigned,
 				SSODescriptor: SSODescriptor{

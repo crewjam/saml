@@ -12,9 +12,10 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
-	"github.com/crewjam/saml/testsaml"
 	dsig "github.com/russellhaering/goxmldsig"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/crewjam/saml/testsaml"
 )
 
 type ServiceProviderTest struct {
@@ -686,12 +687,6 @@ func addSignatureToDocument(doc *etree.Document) *etree.Document {
 	signatureEl := doc.CreateElement("xmldsig:Signature")
 	signatureEl.CreateAttr("xmlns:xmldsig", "http://www.w3.org/2000/09/xmldsig#")
 	responseEl.AddChild(signatureEl)
-	return doc
-}
-
-func removeDestinationFromDocument(doc *etree.Document) *etree.Document {
-	responseEl := doc.FindElement("//Response")
-	responseEl.RemoveAttr("Destination")
 	return doc
 }
 

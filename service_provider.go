@@ -16,10 +16,11 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
-	"github.com/crewjam/saml/logger"
-	"github.com/crewjam/saml/xmlenc"
 	dsig "github.com/russellhaering/goxmldsig"
 	"github.com/russellhaering/goxmldsig/etreeutils"
+
+	"github.com/crewjam/saml/logger"
+	"github.com/crewjam/saml/xmlenc"
 )
 
 // NameIDFormat is the format of the id
@@ -54,7 +55,7 @@ type ServiceProvider struct {
 	Key *rsa.PrivateKey
 
 	// Certificate is the RSA public part of Key.
-	Certificate *x509.Certificate
+	Certificate   *x509.Certificate
 	Intermediates []*x509.Certificate
 
 	// MetadataURL is the full URL to the metadata endpoint on this host,
@@ -397,17 +398,16 @@ func responseIsSigned(response *etree.Document) (bool, error) {
 // validateDestination validates the Destination attribute.
 // If the response is signed, the Destination is required to be present.
 func (sp *ServiceProvider) validateDestination(response []byte, responseDom *Response) error {
-	responseXml := etree.NewDocument()
-	err := responseXml.ReadFromBytes(response)
+	responseXML := etree.NewDocument()
+	err := responseXML.ReadFromBytes(response)
 	if err != nil {
 		return err
 	}
 
-	signed, err := responseIsSigned(responseXml)
+	signed, err := responseIsSigned(responseXML)
 	if err != nil {
 		return err
 	}
-
 
 	// Compare if the response is signed OR the Destination is provided.
 	// (Even if the response is not signed, if the Destination is set it must match.)
@@ -444,7 +444,7 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 		return nil, retErr
 	}
 	retErr.Response = string(rawResponseBuf)
-	assertion, err := sp.ParseXmlResponse(rawResponseBuf, possibleRequestIDs)
+	assertion, err := sp.ParseXMLResponse(rawResponseBuf, possibleRequestIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -453,22 +453,22 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 
 }
 
-func (sp *ServiceProvider) ParseXmlResponse(decodedResponseXml []byte, possibleRequestIDs []string) (*Assertion, error) {
+func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleRequestIDs []string) (*Assertion, error) {
 	now := TimeNow()
 	var err error
 	retErr := &InvalidResponseError{
 		Now:      now,
-		Response: string(decodedResponseXml),
+		Response: string(decodedResponseXML),
 	}
 
 	// do some validation first before we decrypt
 	resp := Response{}
-	if err := xml.Unmarshal([]byte(decodedResponseXml), &resp); err != nil {
+	if err := xml.Unmarshal([]byte(decodedResponseXML), &resp); err != nil {
 		retErr.PrivateErr = fmt.Errorf("cannot unmarshal response: %s", err)
 		return nil, retErr
 	}
 
-	if err := sp.validateDestination(decodedResponseXml, &resp); err != nil {
+	if err := sp.validateDestination(decodedResponseXML, &resp); err != nil {
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
@@ -505,7 +505,7 @@ func (sp *ServiceProvider) ParseXmlResponse(decodedResponseXml []byte, possibleR
 	if resp.EncryptedAssertion == nil {
 
 		doc := etree.NewDocument()
-		if err := doc.ReadFromBytes(decodedResponseXml); err != nil {
+		if err := doc.ReadFromBytes(decodedResponseXML); err != nil {
 			retErr.PrivateErr = err
 			return nil, retErr
 		}
@@ -528,7 +528,7 @@ func (sp *ServiceProvider) ParseXmlResponse(decodedResponseXml []byte, possibleR
 	// decrypt the response
 	if resp.EncryptedAssertion != nil {
 		doc := etree.NewDocument()
-		if err := doc.ReadFromBytes(decodedResponseXml); err != nil {
+		if err := doc.ReadFromBytes(decodedResponseXML); err != nil {
 			retErr.PrivateErr = err
 			return nil, retErr
 		}

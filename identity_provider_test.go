@@ -18,11 +18,12 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
+	"github.com/dgrijalva/jwt-go"
+	"github.com/stretchr/testify/assert"
+
 	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/testsaml"
 	"github.com/crewjam/saml/xmlenc"
-	"github.com/dgrijalva/jwt-go"
-	"github.com/stretchr/testify/assert"
 )
 
 type IdentityProviderTest struct {
@@ -171,7 +172,7 @@ func TestIDPCanProduceMetadata(t *testing.T) {
 		CacheDuration: DefaultValidDuration,
 		EntityID:      "https://idp.example.com/saml/metadata",
 		IDPSSODescriptors: []IDPSSODescriptor{
-			IDPSSODescriptor{
+			{
 				SSODescriptor: SSODescriptor{
 					RoleDescriptor: RoleDescriptor{
 						ProtocolSupportEnumeration: "urn:oasis:names:tc:SAML:2.0:protocol",
@@ -202,11 +203,11 @@ func TestIDPCanProduceMetadata(t *testing.T) {
 					NameIDFormats: []NameIDFormat{NameIDFormat("urn:oasis:names:tc:SAML:2.0:nameid-format:transient")},
 				},
 				SingleSignOnServices: []Endpoint{
-					Endpoint{
+					{
 						Binding:  "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect",
 						Location: "https://idp.example.com/saml/sso",
 					},
-					Endpoint{
+					{
 						Binding:  "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
 						Location: "https://idp.example.com/saml/sso",
 					},
@@ -537,7 +538,7 @@ func TestIDPMakeAssertion(t *testing.T) {
 		Subject: &Subject{
 			NameID: &NameID{Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:transient", NameQualifier: "https://idp.example.com/saml/metadata", SPNameQualifier: "https://sp.example.com/saml2/metadata", Value: ""},
 			SubjectConfirmations: []SubjectConfirmation{
-				SubjectConfirmation{
+				{
 					Method: "urn:oasis:names:tc:SAML:2.0:cm:bearer",
 					SubjectConfirmationData: &SubjectConfirmationData{
 						Address:      "",
@@ -552,13 +553,13 @@ func TestIDPMakeAssertion(t *testing.T) {
 			NotBefore:    TimeNow(),
 			NotOnOrAfter: TimeNow().Add(MaxIssueDelay),
 			AudienceRestrictions: []AudienceRestriction{
-				AudienceRestriction{
+				{
 					Audience: Audience{Value: "https://sp.example.com/saml2/metadata"},
 				},
 			},
 		},
 		AuthnStatements: []AuthnStatement{
-			AuthnStatement{
+			{
 				AuthnInstant:    time.Time{},
 				SessionIndex:    "",
 				SubjectLocality: &SubjectLocality{},
@@ -568,7 +569,7 @@ func TestIDPMakeAssertion(t *testing.T) {
 			},
 		},
 		AttributeStatements: []AttributeStatement{
-			AttributeStatement{
+			{
 				Attributes: []Attribute{
 					{
 						FriendlyName: "uid",
@@ -1051,9 +1052,9 @@ func TestIDPRequestedAttributes(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	expectedAttributes := []AttributeStatement{AttributeStatement{
+	expectedAttributes := []AttributeStatement{{
 		Attributes: []Attribute{
-			Attribute{
+			{
 				FriendlyName: "Email address",
 				Name:         "email",
 				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:basic",
@@ -1064,7 +1065,7 @@ func TestIDPRequestedAttributes(t *testing.T) {
 					},
 				},
 			},
-			Attribute{
+			{
 				FriendlyName: "Full name",
 				Name:         "name",
 				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:basic",
@@ -1075,7 +1076,7 @@ func TestIDPRequestedAttributes(t *testing.T) {
 					},
 				},
 			},
-			Attribute{
+			{
 				FriendlyName: "Given name",
 				Name:         "first_name",
 				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:basic",
@@ -1086,7 +1087,7 @@ func TestIDPRequestedAttributes(t *testing.T) {
 					},
 				},
 			},
-			Attribute{
+			{
 				FriendlyName: "Family name",
 				Name:         "last_name",
 				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:basic",
@@ -1097,7 +1098,7 @@ func TestIDPRequestedAttributes(t *testing.T) {
 					},
 				},
 			},
-			Attribute{
+			{
 				FriendlyName: "uid",
 				Name:         "urn:oid:0.9.2342.19200300.100.1.1",
 				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
@@ -1108,7 +1109,7 @@ func TestIDPRequestedAttributes(t *testing.T) {
 					},
 				},
 			},
-			Attribute{
+			{
 				FriendlyName: "eduPersonPrincipalName",
 				Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.6",
 				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
@@ -1119,7 +1120,7 @@ func TestIDPRequestedAttributes(t *testing.T) {
 					},
 				},
 			},
-			Attribute{
+			{
 				FriendlyName: "sn",
 				Name:         "urn:oid:2.5.4.4",
 				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
@@ -1130,7 +1131,7 @@ func TestIDPRequestedAttributes(t *testing.T) {
 					},
 				},
 			},
-			Attribute{
+			{
 				FriendlyName: "givenName",
 				Name:         "urn:oid:2.5.4.42",
 				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
@@ -1141,7 +1142,7 @@ func TestIDPRequestedAttributes(t *testing.T) {
 					},
 				},
 			},
-			Attribute{
+			{
 				FriendlyName: "cn",
 				Name:         "urn:oid:2.5.4.3",
 				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",

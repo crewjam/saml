@@ -9,9 +9,10 @@ import (
 	"net/url"
 	"sync"
 
+	"github.com/zenazn/goji/web"
+
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/logger"
-	"github.com/zenazn/goji/web"
 )
 
 // Options represent the parameters to New() for creating a new IDP server
