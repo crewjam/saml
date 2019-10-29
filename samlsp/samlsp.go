@@ -8,6 +8,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
@@ -37,12 +38,12 @@ type Options struct {
 
 // New creates a new Middleware
 func New(opts Options) (*Middleware, error) {
-	metadataURL := opts.URL
-	metadataURL.Path = metadataURL.Path + "/saml/metadata"
-	acsURL := opts.URL
-	acsURL.Path = acsURL.Path + "/saml/acs"
-	sloURL := opts.URL
-	sloURL.Path = sloURL.Path + "/saml/slo"
+	metadataRelURL, _ := url.Parse("saml/metadata")
+	metadataURL := opts.URL.ResolveReference(metadataRelURL)
+	acsRelURL, _ := url.Parse("saml/acs")
+	acsURL := opts.URL.ResolveReference(acsRelURL)
+	sloRelURL, _ := url.Parse("saml/slo")
+  sloURL := opts.URL.ResolveReference(sloRelURL)
 	logr := opts.Logger
 	if logr == nil {
 		logr = logger.DefaultLogger
@@ -55,14 +56,15 @@ func New(opts Options) (*Middleware, error) {
 
 	m := &Middleware{
 		ServiceProvider: saml.ServiceProvider{
-			Key:         opts.Key,
-			Logger:      logr,
-			Certificate: opts.Certificate,
-			MetadataURL: metadataURL,
-			AcsURL:      acsURL,
-			SloURL:      sloURL,
-			IDPMetadata: opts.IDPMetadata,
-			ForceAuthn:  &opts.ForceAuthn,
+			Key:               opts.Key,
+			Logger:            logr,
+			Certificate:       opts.Certificate,
+			MetadataURL:       *metadataURL,
+			AcsURL:            *acsURL,
+			SloURL:            *sloURL,
+			IDPMetadata:       opts.IDPMetadata,
+			ForceAuthn:        &opts.ForceAuthn,
+			AllowIDPInitiated: opts.AllowIDPInitiated,
 		},
 		AllowIDPInitiated: opts.AllowIDPInitiated,
 		TokenMaxAge:       tokenMaxAge,
@@ -80,7 +82,11 @@ func New(opts Options) (*Middleware, error) {
 			if opts.CookieDomain != "" {
 				return opts.CookieDomain
 			}
-			return opts.URL.Host
+			host, _, err := net.SplitHostPort(opts.URL.Host)
+			if err != nil {
+				return opts.URL.Host
+			}
+			return host
 		}(),
 		Secure: opts.CookieSecure,
 	}

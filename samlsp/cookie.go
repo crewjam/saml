@@ -1,6 +1,7 @@
 package samlsp
 
 import (
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -81,9 +82,14 @@ func (c ClientCookies) DeleteState(w http.ResponseWriter, r *http.Request, id st
 
 // SetToken assigns the specified token by setting a cookie.
 func (c ClientCookies) SetToken(w http.ResponseWriter, r *http.Request, value string, maxAge time.Duration) {
+	// Cookies should not have the port attached to them so strip it off
+	domain := c.Domain
+	if strings.Contains(domain, ":") {
+		domain, _, _ = net.SplitHostPort(domain)
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     c.Name,
-		Domain:   c.Domain,
+		Domain:   domain,
 		Value:    value,
 		MaxAge:   int(maxAge.Seconds()),
 		HttpOnly: true,
