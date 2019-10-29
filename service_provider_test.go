@@ -17,6 +17,7 @@ import (
 
 	"crypto/x509"
 
+	"github.com/beevik/etree"
 	. "gopkg.in/check.v1"
 )
 
@@ -642,6 +643,109 @@ func (test *ServiceProviderTest) TestCanParseResponse(c *C) {
 	})
 }
 
+func (test *ServiceProviderTest) replaceDestination(newDestination string) {
+	newStr := ""
+	if newDestination != "" {
+		newStr = `Destination="` + newDestination + `"`
+	}
+	test.SamlResponse = strings.Replace(test.SamlResponse, `Destination="https://15661444.ngrok.io/saml2/acs"`, newStr, 1)
+}
+
+func (test *ServiceProviderTest) TestCanProcessResponseWithoutDestination(c *C) {
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	c.Assert(err, IsNil)
+
+	req := http.Request{PostForm: url.Values{}}
+	test.replaceDestination("")
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
+	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
+	c.Assert(err, Equals, nil)
+}
+
+func (test *ServiceProviderTest) responseDom() (doc *etree.Document) {
+	doc = etree.NewDocument()
+	doc.ReadFromString(test.SamlResponse)
+	return doc
+}
+
+func addSignatureToDocument(doc *etree.Document) *etree.Document {
+	responseEl := doc.FindElement("//Response")
+	signatureEl := doc.CreateElement("xmldsig:Signature")
+	signatureEl.CreateAttr("xmlns:xmldsig", "http://www.w3.org/2000/09/xmldsig#")
+	responseEl.AddChild(signatureEl)
+	return doc
+}
+
+func removeDestinationFromDocument(doc *etree.Document) *etree.Document {
+	responseEl := doc.FindElement("//Response")
+	responseEl.RemoveAttr("Destination")
+	return doc
+}
+
+func (test *ServiceProviderTest) TestMismatchedDestinationsWithSignaturePresent(c *C) {
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	c.Assert(err, IsNil)
+
+	req := http.Request{PostForm: url.Values{}}
+	test.replaceDestination("https://wrong/saml2/acs")
+	bytes, _ := addSignatureToDocument(test.responseDom()).WriteToBytes()
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(bytes))
+	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
+	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "`Destination` does not match AcsURL (expected \"https://15661444.ngrok.io/saml2/acs\", actual \"https://wrong/saml2/acs\")")
+}
+
+func (test *ServiceProviderTest) TestMismatchedDestinationsWithNoSignaturePresent(c *C) {
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	c.Assert(err, IsNil)
+
+	req := http.Request{PostForm: url.Values{}}
+	test.replaceDestination("https://wrong/saml2/acs")
+	bytes, _ := test.responseDom().WriteToBytes()
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(bytes))
+	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
+	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "`Destination` does not match AcsURL (expected \"https://15661444.ngrok.io/saml2/acs\", actual \"https://wrong/saml2/acs\")")
+}
+
+func (test *ServiceProviderTest) TestMissingDestinationWithSignaturePresent(c *C) {
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	c.Assert(err, IsNil)
+
+	req := http.Request{PostForm: url.Values{}}
+	test.replaceDestination("")
+	bytes, _ := addSignatureToDocument(test.responseDom()).WriteToBytes()
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(bytes))
+	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
+	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "`Destination` does not match AcsURL (expected \"https://15661444.ngrok.io/saml2/acs\", actual \"\")")
+}
+
 func (test *ServiceProviderTest) TestInvalidResponses(c *C) {
 	s := ServiceProvider{
 		Key:         test.Key,
@@ -661,12 +765,6 @@ func (test *ServiceProviderTest) TestInvalidResponses(c *C) {
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte("<hello>World!</hello>")))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	c.Assert(err.(*InvalidResponseError).PrivateErr, ErrorMatches, "cannot unmarshal response: expected element type <Response> but have <hello>")
-
-	s.AcsURL = mustParseURL("https://wrong/saml2/acs")
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
-	c.Assert(err.(*InvalidResponseError).PrivateErr.Error(), Equals, "`Destination` does not match AcsURL (expected \"https://wrong/saml2/acs\")")
-	s.AcsURL = mustParseURL("https://15661444.ngrok.io/saml2/acs")
 
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
 	_, err = s.ParseResponse(&req, []string{"wrongRequestID"})
