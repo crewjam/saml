@@ -468,7 +468,7 @@ func (sp *ServiceProvider) ParseXmlResponse(decodedResponseXml []byte, possibleR
 		return nil, retErr
 	}
 
-	if err := sp.validateDestination(rawResponseBuf, &resp); err != nil {
+	if err := sp.validateDestination(decodedResponseXml, &resp); err != nil {
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
