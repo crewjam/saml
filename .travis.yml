@@ -2,9 +2,6 @@ language: go
 
 env: GO111MODULE=on
 
-install:
-  - dep ensure
-
 before_script:
   - go install github.com/golangci/golangci-lint/cmd/golangci-lint
 
