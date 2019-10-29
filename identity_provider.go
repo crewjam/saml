@@ -20,28 +20,29 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
+	dsig "github.com/russellhaering/goxmldsig"
+
 	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/xmlenc"
-	dsig "github.com/russellhaering/goxmldsig"
 )
 
 // Session represents a user session. It is returned by the
 // SessionProvider implementation's GetSession method. Fields here
 // are used to set fields in the SAML assertion.
 type Session struct {
-	ID         				string
-	CreateTime 				time.Time
-	ExpireTime 				time.Time
-	Index     				string
+	ID         string
+	CreateTime time.Time
+	ExpireTime time.Time
+	Index      string
 
-	NameID         			string
-	Groups         			[]string
-	UserName       			string
-	UserEmail      			string
-	UserCommonName 			string
-	UserSurname    			string
-	UserGivenName  			string
-	UserScopedAffiliation 	string
+	NameID                string
+	Groups                []string
+	UserName              string
+	UserEmail             string
+	UserCommonName        string
+	UserSurname           string
+	UserGivenName         string
+	UserScopedAffiliation string
 }
 
 // SessionProvider is an interface used by IdentityProvider to determine the

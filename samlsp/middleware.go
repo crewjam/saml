@@ -7,8 +7,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/crewjam/saml"
 	"github.com/dgrijalva/jwt-go"
+
+	"github.com/crewjam/saml"
 )
 
 // Middleware implements middleware than allows a web application
@@ -268,7 +269,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 
 // IsAuthorized returns true if the request has already been authorized.
 //
-// Note: This function is retained for compatability. Use GetAuthorizationToken in new code
+// Note: This function is retained for compatibility. Use GetAuthorizationToken in new code
 // instead.
 func (m *Middleware) IsAuthorized(r *http.Request) bool {
 	return m.GetAuthorizationToken(r) != nil
@@ -277,7 +278,7 @@ func (m *Middleware) IsAuthorized(r *http.Request) bool {
 // GetAuthorizationToken is invoked by RequireAccount to determine if the request
 // is already authorized or if the user's browser should be redirected to the
 // SAML login flow. If the request is authorized, then the request context is
-// ammended with a Context object.
+// amended with a Context object.
 func (m *Middleware) GetAuthorizationToken(r *http.Request) *AuthorizationToken {
 	tokenStr := m.ClientToken.GetToken(r)
 	if tokenStr == "" {

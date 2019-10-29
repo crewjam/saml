@@ -218,7 +218,7 @@ func (r *Response) Element() *etree.Element {
 	// cannonicalizer. This could be avoided by providing a prefix list to the
 	// cannonicalizer, but prefix lists do not appear to be implemented correctly
 	// in some libraries, so the safest action is to always produce XML that is
-	// (a) in cannonical form and (b) does not require prefix lists.
+	// (a) in canonical form and (b) does not require prefix lists.
 	el.CreateAttr("xmlns:xs", "http://www.w3.org/2001/XMLSchema")
 
 	el.CreateAttr("ID", r.ID)
@@ -357,7 +357,7 @@ const (
 	StatusNoAvailableIDP = "urn:oasis:names:tc:SAML:2.0:status:NoAvailableIDP"
 
 	// StatusNoPassive means Indicates the responding provider cannot authenticate the principal passively, as has been requested.
-	StatusNoPassive = "urn:oasis:names:tc:SAML:2.0:status:NoPassive"
+	StatusNoPassive = "urn:oasis:names:tc:SAML:2.0:status:NoPassive" //nolint:gosec
 
 	// StatusNoSupportedIDP is used by an intermediary to indicate that none of the identity providers in an <IDPList> are supported by the intermediary.
 	StatusNoSupportedIDP = "urn:oasis:names:tc:SAML:2.0:status:NoSupportedIDP"
