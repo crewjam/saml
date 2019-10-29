@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
-	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/xmlenc"
 	dsig "github.com/russellhaering/goxmldsig"
