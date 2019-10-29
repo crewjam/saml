@@ -141,7 +141,7 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 								},
 							},
 						},
-						ValidUntil: validUntil,
+						ValidUntil: &validUntil,
 					},
 				},
 				AuthnRequestsSigned:  &authnRequestsSigned,
