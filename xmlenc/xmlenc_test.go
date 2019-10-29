@@ -3,69 +3,63 @@ package xmlenc
 import (
 	"io/ioutil"
 	"math/rand"
+	"testing"
 
 	"github.com/beevik/etree"
-	. "gopkg.in/check.v1"
+	"github.com/stretchr/testify/assert"
 )
 
-type TestFoo struct {
-}
-
-var _ = Suite(&TestFoo{})
-
-func (test *TestFoo) SetUpTest(c *C) {
+func TestDataAES128CBC(t *testing.T) {
 	RandReader = rand.New(rand.NewSource(0)) // deterministic random numbers for tests
-}
-
-func (test *TestFoo) TestDataAES128CBC(c *C) {
 	plaintext, err := ioutil.ReadFile("test_data/encrypt-data-aes128-cbc.data")
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
 	var ciphertext string
 	{
 		encrypter := AES128CBC
 		cipherEl, encErr := encrypter.Encrypt([]byte("abcdefghijklmnop"), []byte(plaintext))
-		c.Assert(encErr, IsNil)
+		assert.NoError(t, encErr)
 
 		doc := etree.NewDocument()
 		doc.SetRoot(cipherEl)
 		doc.IndentTabs()
 		ciphertext, err = doc.WriteToString()
-		c.Assert(err, IsNil)
+		assert.NoError(t, err)
 	}
 
 	{
 		decrypter := AES128CBC
 		doc := etree.NewDocument()
 		err = doc.ReadFromString(ciphertext)
-		c.Assert(err, IsNil)
+		assert.NoError(t, err)
 
 		actualPlaintext, err := decrypter.Decrypt(
 			[]byte("abcdefghijklmnop"), doc.Root())
-		c.Assert(err, IsNil)
-		c.Assert(actualPlaintext, DeepEquals, plaintext)
+		assert.NoError(t, err)
+		assert.Equal(t, plaintext, actualPlaintext)
 	}
 
 	{
 		decrypter := AES128CBC
 		doc := etree.NewDocument()
 		err := doc.ReadFromFile("test_data/encrypt-data-aes128-cbc.xml")
-		c.Assert(err, IsNil)
+		assert.NoError(t, err)
 
 		actualPlaintext, err := decrypter.Decrypt([]byte("abcdefghijklmnop"), doc.Root())
-		c.Assert(err, IsNil)
-		c.Assert(actualPlaintext, DeepEquals, plaintext)
+		assert.NoError(t, err)
+		assert.Equal(t, plaintext, actualPlaintext)
 	}
 }
 
 /*
-func (test *TestFoo) TestAES256CBC(c *C) {
+func TestAES256CBC(t *testing.T) {
+	RandReader = rand.New(rand.NewSource(0)) // deterministic random numbers for tests
 	doc := etree.NewDocument()
 	err := doc.ReadFromFile("test_data/plaintext.xml")
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
 	el := doc.FindElement("//PaymentInfo")
-	c.Assert(el, Not(IsNil))
+	assert.NotNil(t, el)
 
 	tmpDoc := etree.NewDocument()
 	tmpDoc.SetRoot(el.Copy())
@@ -74,7 +68,7 @@ func (test *TestFoo) TestAES256CBC(c *C) {
 	encrypter := AES256CBC
 	cipherEl, err := encrypter.Encrypt(
 		[]byte("abcdefghijklmnopqrstuvwxyz012345"), []byte(tmpBuf))
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
 	el.Child = nil
 	el.AddChild(cipherEl)

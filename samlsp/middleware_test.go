@@ -17,15 +17,12 @@ import (
 
 	"github.com/dgrijalva/jwt-go"
 	dsig "github.com/russellhaering/goxmldsig"
-	. "gopkg.in/check.v1"
+	"github.com/stretchr/testify/assert"
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/testsaml"
 )
-
-// Hook up gocheck into the "go test" runner.
-func Test(t *testing.T) { TestingT(t) }
 
 type MiddlewareTest struct {
 	AuthnRequest string
@@ -35,8 +32,6 @@ type MiddlewareTest struct {
 	IDPMetadata  string
 	Middleware   Middleware
 }
-
-var _ = Suite(&MiddlewareTest{})
 
 type testRandomReader struct {
 	Next byte
@@ -52,7 +47,8 @@ func (tr *testRandomReader) Read(p []byte) (n int, err error) {
 
 const expectedToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovLzE1NjYxNDQ0Lm5ncm9rLmlvL3NhbWwyL21ldGFkYXRhIiwiZXhwIjoxNDQ4OTQyMjI5LCJpYXQiOjE0NDg5MzUwMjksIm5iZiI6MTQ0ODkzNTAyOSwic3ViIjoiXzQxYmQyOTU5NzZkYWRkNzBlMTQ4MGYzMThlNzcyODQxIiwiYXR0ciI6eyJjbiI6WyJNZSBNeXNlbGYgQW5kIEkiXSwiZWR1UGVyc29uQWZmaWxpYXRpb24iOlsiTWVtYmVyIiwiU3RhZmYiXSwiZWR1UGVyc29uRW50aXRsZW1lbnQiOlsidXJuOm1hY2U6ZGlyOmVudGl0bGVtZW50OmNvbW1vbi1saWItdGVybXMiXSwiZWR1UGVyc29uUHJpbmNpcGFsTmFtZSI6WyJteXNlbGZAdGVzdHNoaWIub3JnIl0sImVkdVBlcnNvblNjb3BlZEFmZmlsaWF0aW9uIjpbIk1lbWJlckB0ZXN0c2hpYi5vcmciLCJTdGFmZkB0ZXN0c2hpYi5vcmciXSwiZWR1UGVyc29uVGFyZ2V0ZWRJRCI6WyIiXSwiZ2l2ZW5OYW1lIjpbIk1lIE15c2VsZiJdLCJzbiI6WyJBbmQgSSJdLCJ0ZWxlcGhvbmVOdW1iZXIiOlsiNTU1LTU1NTUiXSwidWlkIjpbIm15c2VsZiJdfX0.2MBH9f4aspGqmENebmtHiwfc7RFBlaNs_-jlTJKk6Bg"
 
-func (test *MiddlewareTest) SetUpTest(c *C) {
+func NewMiddlewareTest() *MiddlewareTest {
+	test := MiddlewareTest{}
 	saml.TimeNow = func() time.Time {
 		rv, _ := time.Parse("Mon Jan 2 15:04:05.999999999 MST 2006", "Mon Dec 1 01:57:09.123456789 UTC 2015")
 		return rv
@@ -85,17 +81,23 @@ func (test *MiddlewareTest) SetUpTest(c *C) {
 	test.Middleware.ClientState = &cookieStore
 	test.Middleware.ClientToken = &cookieStore
 	err := xml.Unmarshal([]byte(test.IDPMetadata), &test.Middleware.ServiceProvider.IDPMetadata)
-	c.Assert(err, IsNil)
+	if err != nil {
+		panic(err)
+	}
+	return &test
 }
 
-func (test *MiddlewareTest) TestCanProduceMetadata(c *C) {
+func TestMiddlewareCanProduceMetadata(t *testing.T) {
+	test := NewMiddlewareTest()
 	req, _ := http.NewRequest("GET", "/saml2/metadata", nil)
 
 	resp := httptest.NewRecorder()
 	test.Middleware.ServeHTTP(resp, req)
-	c.Assert(resp.Code, Equals, http.StatusOK)
-	c.Assert(resp.Header().Get("Content-type"), Equals, "application/samlmetadata+xml")
-	c.Assert(string(resp.Body.Bytes()), DeepEquals, ""+
+	assert.Equal(t, http.StatusOK, resp.Code)
+	assert.Equal(t,
+		"application/samlmetadata+xml",
+		resp.Header().Get("Content-type"))
+	assert.Equal(t, ""+
 		"<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2015-12-03T01:57:09.123Z\" entityID=\"https://15661444.ngrok.io/saml2/metadata\">\n"+
 		"  <SPSSODescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2015-12-03T01:57:09.123456789Z\" protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\" AuthnRequestsSigned=\"false\" WantAssertionsSigned=\"true\">\n"+
 		"    <KeyDescriptor use=\"signing\">\n"+
@@ -118,20 +120,23 @@ func (test *MiddlewareTest) TestCanProduceMetadata(c *C) {
 		"    </KeyDescriptor>\n"+
 		"    <AssertionConsumerService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Location=\"https://15661444.ngrok.io/saml2/acs\" index=\"1\"></AssertionConsumerService>\n"+
 		"  </SPSSODescriptor>\n"+
-		"</EntityDescriptor>")
+		"</EntityDescriptor>",
+		string(resp.Body.Bytes()))
 }
 
-func (test *MiddlewareTest) TestFourOhFour(c *C) {
+func TestMiddlewareFourOhFour(t *testing.T) {
+	test := NewMiddlewareTest()
 	req, _ := http.NewRequest("GET", "/this/is/not/a/supported/uri", nil)
 
 	resp := httptest.NewRecorder()
 	test.Middleware.ServeHTTP(resp, req)
-	c.Assert(resp.Code, Equals, http.StatusNotFound)
+	assert.Equal(t, http.StatusNotFound, resp.Code)
 	respBuf, _ := ioutil.ReadAll(resp.Body)
-	c.Assert(string(respBuf), Equals, "404 page not found\n")
+	assert.Equal(t, "404 page not found\n", string(respBuf))
 }
 
-func (test *MiddlewareTest) TestRequireAccountNoCreds(c *C) {
+func TestMiddlewareRequireAccountNoCreds(t *testing.T) {
+	test := NewMiddlewareTest()
 	handler := test.Middleware.RequireAccount(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			panic("not reached")
@@ -141,20 +146,24 @@ func (test *MiddlewareTest) TestRequireAccountNoCreds(c *C) {
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
-	c.Assert(resp.Code, Equals, http.StatusFound)
-	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
+	assert.Equal(t, http.StatusFound, resp.Code)
+	assert.Equal(t,
 		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
-			"; Path=/saml2/acs; Max-Age=90; HttpOnly")
+			"; Path=/saml2/acs; Max-Age=90; HttpOnly",
+		resp.Header().Get("Set-Cookie"))
 
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 	decodedRequest, err := testsaml.ParseRedirectRequest(redirectURL)
-	c.Assert(err, IsNil)
-	c.Assert(string(decodedRequest), Equals, "<samlp:AuthnRequest xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:57:09.123Z\" Destination=\"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO\" AssertionConsumerServiceURL=\"https://15661444.ngrok.io/saml2/acs\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\"><saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://15661444.ngrok.io/saml2/metadata</saml:Issuer><samlp:NameIDPolicy Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" AllowCreate=\"true\"/></samlp:AuthnRequest>")
+	assert.NoError(t, err)
+	assert.Equal(t,
+		"<samlp:AuthnRequest xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:57:09.123Z\" Destination=\"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO\" AssertionConsumerServiceURL=\"https://15661444.ngrok.io/saml2/acs\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\"><saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://15661444.ngrok.io/saml2/metadata</saml:Issuer><samlp:NameIDPolicy Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" AllowCreate=\"true\"/></samlp:AuthnRequest>",
+		string(decodedRequest))
 }
 
-func (test *MiddlewareTest) TestRequireAccountNoCredsSecure(c *C) {
+func TestMiddlewareRequireAccountNoCredsSecure(t *testing.T) {
+	test := NewMiddlewareTest()
 	cookieStore := test.Middleware.ClientState.(*ClientCookies)
 	cookieStore.Secure = true
 	handler := test.Middleware.RequireAccount(
@@ -166,22 +175,27 @@ func (test *MiddlewareTest) TestRequireAccountNoCredsSecure(c *C) {
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
-	c.Assert(resp.Code, Equals, http.StatusFound)
-	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
+	assert.Equal(t, http.StatusFound, resp.Code)
+	assert.Equal(t,
 		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
-			"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure")
+			"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure",
+		resp.Header().Get("Set-Cookie"))
 
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 	decodedRequest, err := testsaml.ParseRedirectRequest(redirectURL)
-	c.Assert(err, IsNil)
-	c.Assert(string(decodedRequest), Equals, "<samlp:AuthnRequest xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:57:09.123Z\" Destination=\"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO\" AssertionConsumerServiceURL=\"https://15661444.ngrok.io/saml2/acs\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\"><saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://15661444.ngrok.io/saml2/metadata</saml:Issuer><samlp:NameIDPolicy Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" AllowCreate=\"true\"/></samlp:AuthnRequest>")
+	assert.NoError(t, err)
+	assert.Equal(t,
+		"<samlp:AuthnRequest xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:57:09.123Z\" Destination=\"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO\" AssertionConsumerServiceURL=\"https://15661444.ngrok.io/saml2/acs\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\"><saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://15661444.ngrok.io/saml2/metadata</saml:Issuer><samlp:NameIDPolicy Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" AllowCreate=\"true\"/></samlp:AuthnRequest>",
+		string(decodedRequest))
 }
 
-func (test *MiddlewareTest) TestRequireAccountNoCredsPostBinding(c *C) {
+func TestMiddlewareRequireAccountNoCredsPostBinding(t *testing.T) {
+	test := NewMiddlewareTest()
 	test.Middleware.ServiceProvider.IDPMetadata.IDPSSODescriptors[0].SingleSignOnServices = test.Middleware.ServiceProvider.IDPMetadata.IDPSSODescriptors[0].SingleSignOnServices[1:2]
-	c.Assert("", Equals, test.Middleware.ServiceProvider.GetSSOBindingLocation(saml.HTTPRedirectBinding))
+	assert.Equal(t, "",
+		test.Middleware.ServiceProvider.GetSSOBindingLocation(saml.HTTPRedirectBinding))
 
 	handler := test.Middleware.RequireAccount(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -192,12 +206,13 @@ func (test *MiddlewareTest) TestRequireAccountNoCredsPostBinding(c *C) {
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
-	c.Assert(resp.Code, Equals, http.StatusOK)
-	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
+	assert.Equal(t, http.StatusOK, resp.Code)
+	assert.Equal(t,
 		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
-			"; Path=/saml2/acs; Max-Age=90; HttpOnly")
-	c.Assert(string(resp.Body.Bytes()), Equals, ""+
+			"; Path=/saml2/acs; Max-Age=90; HttpOnly",
+		resp.Header().Get("Set-Cookie"))
+	assert.Equal(t, ""+
 		"<!DOCTYPE html>"+
 		"<html>"+
 		"<body>"+
@@ -209,32 +224,35 @@ func (test *MiddlewareTest) TestRequireAccountNoCredsPostBinding(c *C) {
 		"<script>document.getElementById('SAMLSubmitButton').style.visibility=\"hidden\";"+
 		"document.getElementById('SAMLRequestForm').submit();</script>"+
 		"</body>"+
-		"</html>")
+		"</html>",
+		string(resp.Body.Bytes()))
 
 	// check that the CSP script hash is set correctly
 	scriptContent := "document.getElementById('SAMLSubmitButton').style.visibility=\"hidden\";document.getElementById('SAMLRequestForm').submit();"
 	scriptSum := sha256.Sum256([]byte(scriptContent))
 	scriptHash := base64.StdEncoding.EncodeToString(scriptSum[:])
-	c.Assert(resp.Header().Get("Content-Security-Policy"), Equals,
-		"default-src; script-src 'sha256-"+scriptHash+"'; reflected-xss block; referrer no-referrer;")
+	assert.Equal(t,
+		"default-src; script-src 'sha256-"+scriptHash+"'; reflected-xss block; referrer no-referrer;",
+		resp.Header().Get("Content-Security-Policy"))
 
-	c.Assert(resp.Header().Get("Content-type"), Equals, "text/html")
+	assert.Equal(t, "text/html", resp.Header().Get("Content-type"))
 }
 
-func (test *MiddlewareTest) TestRequireAccountCreds(c *C) {
+func TestMiddlewareRequireAccountCreds(t *testing.T) {
+	test := NewMiddlewareTest()
 	handler := test.Middleware.RequireAccount(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := Token(r.Context())
-			c.Assert(token.Attributes.Get("telephoneNumber"), DeepEquals, "555-5555")
-			c.Assert(token.Attributes.Get("sn"), Equals, "And I")
-			c.Assert(token.Attributes.Get("eduPersonEntitlement"), Equals, "urn:mace:dir:entitlement:common-lib-terms")
-			c.Assert(token.Attributes.Get("eduPersonTargetedID"), Equals, "")
-			c.Assert(token.Attributes.Get("givenName"), Equals, "Me Myself")
-			c.Assert(token.Attributes.Get("cn"), Equals, "Me Myself And I")
-			c.Assert(token.Attributes.Get("uid"), Equals, "myself")
-			c.Assert(token.Attributes.Get("eduPersonPrincipalName"), Equals, "myself@testshib.org")
-			c.Assert(token.Attributes["eduPersonScopedAffiliation"], DeepEquals, []string{"Member@testshib.org", "Staff@testshib.org"})
-			c.Assert(token.Attributes["eduPersonAffiliation"], DeepEquals, []string{"Member", "Staff"})
+			assert.Equal(t, "555-5555", token.Attributes.Get("telephoneNumber"))
+			assert.Equal(t, "And I", token.Attributes.Get("sn"))
+			assert.Equal(t, "urn:mace:dir:entitlement:common-lib-terms", token.Attributes.Get("eduPersonEntitlement"))
+			assert.Equal(t, "", token.Attributes.Get("eduPersonTargetedID"))
+			assert.Equal(t, "Me Myself", token.Attributes.Get("givenName"))
+			assert.Equal(t, "Me Myself And I", token.Attributes.Get("cn"))
+			assert.Equal(t, "myself", token.Attributes.Get("uid"))
+			assert.Equal(t, "myself@testshib.org", token.Attributes.Get("eduPersonPrincipalName"))
+			assert.Equal(t, []string{"Member@testshib.org", "Staff@testshib.org"}, token.Attributes["eduPersonScopedAffiliation"])
+			assert.Equal(t, []string{"Member", "Staff"}, token.Attributes["eduPersonAffiliation"])
 			w.WriteHeader(http.StatusTeapot)
 		}))
 
@@ -245,10 +263,11 @@ func (test *MiddlewareTest) TestRequireAccountCreds(c *C) {
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
-	c.Assert(resp.Code, Equals, http.StatusTeapot)
+	assert.Equal(t, http.StatusTeapot, resp.Code)
 }
 
-func (test *MiddlewareTest) TestRequireAccountBadCreds(c *C) {
+func TestMiddlewareRequireAccountBadCreds(t *testing.T) {
+	test := NewMiddlewareTest()
 	handler := test.Middleware.RequireAccount(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			panic("not reached")
@@ -261,20 +280,24 @@ func (test *MiddlewareTest) TestRequireAccountBadCreds(c *C) {
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
-	c.Assert(resp.Code, Equals, http.StatusFound)
+	assert.Equal(t, http.StatusFound, resp.Code)
 
-	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
+	assert.Equal(t,
 		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
-			"; Path=/saml2/acs; Max-Age=90; HttpOnly")
+			"; Path=/saml2/acs; Max-Age=90; HttpOnly",
+		resp.Header().Get("Set-Cookie"))
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 	decodedRequest, err := testsaml.ParseRedirectRequest(redirectURL)
-	c.Assert(err, IsNil)
-	c.Assert(string(decodedRequest), Equals, "<samlp:AuthnRequest xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:57:09.123Z\" Destination=\"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO\" AssertionConsumerServiceURL=\"https://15661444.ngrok.io/saml2/acs\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\"><saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://15661444.ngrok.io/saml2/metadata</saml:Issuer><samlp:NameIDPolicy Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" AllowCreate=\"true\"/></samlp:AuthnRequest>")
+	assert.NoError(t, err)
+	assert.Equal(t,
+		"<samlp:AuthnRequest xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:57:09.123Z\" Destination=\"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO\" AssertionConsumerServiceURL=\"https://15661444.ngrok.io/saml2/acs\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\"><saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://15661444.ngrok.io/saml2/metadata</saml:Issuer><samlp:NameIDPolicy Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" AllowCreate=\"true\"/></samlp:AuthnRequest>",
+		string(decodedRequest))
 }
 
-func (test *MiddlewareTest) TestRequireAccountExpiredCreds(c *C) {
+func TestMiddlewareRequireAccountExpiredCreds(t *testing.T) {
+	test := NewMiddlewareTest()
 	jwt.TimeFunc = func() time.Time {
 		rv, _ := time.Parse("Mon Jan 2 15:04:05 UTC 2006", "Mon Dec 1 01:31:21 UTC 2115")
 		return rv
@@ -292,20 +315,24 @@ func (test *MiddlewareTest) TestRequireAccountExpiredCreds(c *C) {
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
-	c.Assert(resp.Code, Equals, http.StatusFound)
-	c.Assert(resp.Header().Get("Set-Cookie"), Equals,
+	assert.Equal(t, http.StatusFound, resp.Code)
+	assert.Equal(t,
 		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImlkLTAwMDIwNDA2MDgwYTBjMGUxMDEyMTQxNjE4MWExYzFlMjAyMjI0MjYiLCJ1cmkiOiIvZnJvYiJ9.7f-xjK5ZzpP_51YL4aPQSQcIBKKCRb_j6CE9pZieJG0"+
-			"; Path=/saml2/acs; Max-Age=90; HttpOnly")
+			"; Path=/saml2/acs; Max-Age=90; HttpOnly",
+		resp.Header().Get("Set-Cookie"))
 
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 	decodedRequest, err := testsaml.ParseRedirectRequest(redirectURL)
-	c.Assert(err, IsNil)
-	c.Assert(string(decodedRequest), Equals, "<samlp:AuthnRequest xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:57:09.123Z\" Destination=\"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO\" AssertionConsumerServiceURL=\"https://15661444.ngrok.io/saml2/acs\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\"><saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://15661444.ngrok.io/saml2/metadata</saml:Issuer><samlp:NameIDPolicy Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" AllowCreate=\"true\"/></samlp:AuthnRequest>")
+	assert.NoError(t, err)
+	assert.Equal(t,
+		"<samlp:AuthnRequest xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:57:09.123Z\" Destination=\"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO\" AssertionConsumerServiceURL=\"https://15661444.ngrok.io/saml2/acs\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\"><saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://15661444.ngrok.io/saml2/metadata</saml:Issuer><samlp:NameIDPolicy Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" AllowCreate=\"true\"/></samlp:AuthnRequest>",
+		string(decodedRequest))
 }
 
-func (test *MiddlewareTest) TestRequireAccountPanicOnRequestToACS(c *C) {
+func TestMiddlewareRequireAccountPanicOnRequestToACS(t *testing.T) {
+	test := NewMiddlewareTest()
 	handler := test.Middleware.RequireAccount(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			panic("not reached")
@@ -313,11 +340,14 @@ func (test *MiddlewareTest) TestRequireAccountPanicOnRequestToACS(c *C) {
 
 	req, _ := http.NewRequest("POST", "https://15661444.ngrok.io/saml2/acs", nil)
 	resp := httptest.NewRecorder()
-	c.Assert(func() { handler.ServeHTTP(resp, req) }, Panics,
-		"don't wrap Middleware with RequireAccount")
+
+	assert.PanicsWithValue(t,
+		"don't wrap Middleware with RequireAccount",
+		func() { handler.ServeHTTP(resp, req) })
 }
 
-func (test *MiddlewareTest) TestRequireAttribute(c *C) {
+func TestMiddlewareRequireAttribute(t *testing.T) {
+	test := NewMiddlewareTest()
 	handler := test.Middleware.RequireAccount(
 		RequireAttribute("eduPersonAffiliation", "Staff")(
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -331,10 +361,11 @@ func (test *MiddlewareTest) TestRequireAttribute(c *C) {
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
-	c.Assert(resp.Code, Equals, http.StatusTeapot)
+	assert.Equal(t, http.StatusTeapot, resp.Code)
 }
 
-func (test *MiddlewareTest) TestRequireAttributeWrongValue(c *C) {
+func TestMiddlewareRequireAttributeWrongValue(t *testing.T) {
+	test := NewMiddlewareTest()
 	handler := test.Middleware.RequireAccount(
 		RequireAttribute("eduPersonAffiliation", "DomainAdmins")(
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -348,10 +379,11 @@ func (test *MiddlewareTest) TestRequireAttributeWrongValue(c *C) {
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
-	c.Assert(resp.Code, Equals, http.StatusForbidden)
+	assert.Equal(t, http.StatusForbidden, resp.Code)
 }
 
-func (test *MiddlewareTest) TestRequireAttributeNotPresent(c *C) {
+func TestMiddlewareRequireAttributeNotPresent(t *testing.T) {
+	test := NewMiddlewareTest()
 	handler := test.Middleware.RequireAccount(
 		RequireAttribute("valueThatDoesntExist", "doesntMatter")(
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -365,10 +397,10 @@ func (test *MiddlewareTest) TestRequireAttributeNotPresent(c *C) {
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
-	c.Assert(resp.Code, Equals, http.StatusForbidden)
+	assert.Equal(t, http.StatusForbidden, resp.Code)
 }
 
-func (test *MiddlewareTest) TestRequireAttributeMissingAccount(c *C) {
+func TestMiddlewareRequireAttributeMissingAccount(t *testing.T) {
 	handler := RequireAttribute("eduPersonAffiliation", "DomainAdmins")(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			panic("not reached")
@@ -381,10 +413,11 @@ func (test *MiddlewareTest) TestRequireAttributeMissingAccount(c *C) {
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 
-	c.Assert(resp.Code, Equals, http.StatusForbidden)
+	assert.Equal(t, http.StatusForbidden, resp.Code)
 }
 
-func (test *MiddlewareTest) TestCanParseResponse(c *C) {
+func TestMiddlewareCanParseResponse(t *testing.T) {
+	test := NewMiddlewareTest()
 	v := &url.Values{}
 	v.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
 	v.Set("RelayState", "KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6")
@@ -396,17 +429,18 @@ func (test *MiddlewareTest) TestCanParseResponse(c *C) {
 
 	resp := httptest.NewRecorder()
 	test.Middleware.ServeHTTP(resp, req)
-	c.Assert(resp.Code, Equals, http.StatusFound)
+	assert.Equal(t, http.StatusFound, resp.Code)
 
-	c.Assert(resp.Header().Get("Location"), Equals, "/frob")
-	c.Assert(resp.Header()["Set-Cookie"], DeepEquals, []string{
+	assert.Equal(t, "/frob", resp.Header().Get("Location"))
+	assert.Equal(t, []string{
 		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6=; Expires=Thu, 01 Jan 1970 00:00:01 GMT",
 		"ttt=" + expectedToken + "; " +
-			"Path=/; Max-Age=7200; HttpOnly",
-	})
+			"Path=/; Max-Age=7200; HttpOnly"},
+		resp.Header()["Set-Cookie"])
 }
 
-func (test *MiddlewareTest) TestDefaultCookieDomainIPv4(c *C) {
+func TestMiddlewareDefaultCookieDomainIPv4(t *testing.T) {
+	test := NewMiddlewareTest()
 	ipv4Loopback := net.IP{127, 0, 0, 1}
 	mw, err := New(Options{
 		URL:         mustParseURL("https://" + net.JoinHostPort(ipv4Loopback.String(), "54321")),
@@ -414,26 +448,34 @@ func (test *MiddlewareTest) TestDefaultCookieDomainIPv4(c *C) {
 		Certificate: test.Certificate,
 		IDPMetadata: &saml.EntityDescriptor{},
 	})
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
 	cookieStore := mw.ClientToken.(*ClientCookies)
-	c.Assert(cookieStore.Domain, Equals, ipv4Loopback.String(), Commentf("Cookie domain must not contain a port or the cookie cannot be set properly"))
+	assert.Equal(t,
+		ipv4Loopback.String(),
+		cookieStore.Domain,
+		"Cookie domain must not contain a port or the cookie cannot be set properly")
 }
 
-func (test *MiddlewareTest) TestDefaultCookieDomainIPv6(c *C) {
+func TestMiddlewareDefaultCookieDomainIPv6(t *testing.T) {
+	test := NewMiddlewareTest()
 	mw, err := New(Options{
 		URL:         mustParseURL("https://" + net.JoinHostPort(net.IPv6loopback.String(), "54321")),
 		Key:         test.Key,
 		Certificate: test.Certificate,
 		IDPMetadata: &saml.EntityDescriptor{},
 	})
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
 	cookieStore := mw.ClientToken.(*ClientCookies)
-	c.Assert(cookieStore.Domain, Equals, net.IPv6loopback.String(), Commentf("Cookie domain must not contain a port or the cookie cannot be set properly"))
+	assert.Equal(t,
+		net.IPv6loopback.String(),
+		cookieStore.Domain,
+		"Cookie domain must not contain a port or the cookie cannot be set properly")
 }
 
-func (test *MiddlewareTest) TestRejectsInvalidRelayState(c *C) {
+func TestMiddlewareRejectsInvalidRelayState(t *testing.T) {
+	test := NewMiddlewareTest()
 	v := &url.Values{}
 	v.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
 	v.Set("RelayState", "ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy")
@@ -442,12 +484,13 @@ func (test *MiddlewareTest) TestRejectsInvalidRelayState(c *C) {
 
 	resp := httptest.NewRecorder()
 	test.Middleware.ServeHTTP(resp, req)
-	c.Assert(resp.Code, Equals, http.StatusForbidden)
-	c.Assert(resp.Header().Get("Location"), Equals, "")
-	c.Assert(resp.Header().Get("Set-Cookie"), Equals, "")
+	assert.Equal(t, http.StatusForbidden, resp.Code)
+	assert.Equal(t, "", resp.Header().Get("Location"))
+	assert.Equal(t, "", resp.Header().Get("Set-Cookie"))
 }
 
-func (test *MiddlewareTest) TestHandlesInvalidResponse(c *C) {
+func TestMiddlewareHandlesInvalidResponse(t *testing.T) {
+	test := NewMiddlewareTest()
 	v := &url.Values{}
 	v.Set("SAMLResponse", "this is not a valid saml response")
 	v.Set("RelayState", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1cmkiOiIvZnJvYiJ9.QEnpCWpKnhmzWZyfI8GIgCCWyH7qTly8vw-V4oJ1ni0")
@@ -460,9 +503,9 @@ func (test *MiddlewareTest) TestHandlesInvalidResponse(c *C) {
 	// note: it is important that when presented with an invalid request,
 	// the ACS handles DOES NOT reveal detailed error information in the
 	// HTTP response.
-	c.Assert(resp.Code, Equals, http.StatusForbidden)
+	assert.Equal(t, http.StatusForbidden, resp.Code)
 	respBody, _ := ioutil.ReadAll(resp.Body)
-	c.Assert(string(respBody), Equals, "Forbidden\n")
-	c.Assert(resp.Header().Get("Location"), Equals, "")
-	c.Assert(resp.Header().Get("Set-Cookie"), Equals, "")
+	assert.Equal(t, "Forbidden\n", string(respBody))
+	assert.Equal(t, "", resp.Header().Get("Location"))
+	assert.Equal(t, "", resp.Header().Get("Set-Cookie"))
 }

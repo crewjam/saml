@@ -4,43 +4,45 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"testing"
 
-	. "gopkg.in/check.v1"
+	"github.com/stretchr/testify/assert"
 )
 
-func (test *ServerTest) TestUsersCrud(c *C) {
+func TestUsersCrud(t *testing.T) {
+	test := NewServerTest()
 	w := httptest.NewRecorder()
 	r, _ := http.NewRequest("GET", "https://idp.example.com/users/", nil)
 	test.Server.ServeHTTP(w, r)
-	c.Assert(w.Code, Equals, http.StatusOK)
-	c.Assert(string(w.Body.Bytes()), Equals, "{\"users\":[]}\n")
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "{\"users\":[]}\n", string(w.Body.Bytes()))
 
 	w = httptest.NewRecorder()
 	r, _ = http.NewRequest("PUT", "https://idp.example.com/users/alice",
 		strings.NewReader(`{"name": "alice", "password": "hunter2"}`+"\n"))
 	test.Server.ServeHTTP(w, r)
-	c.Assert(w.Code, Equals, http.StatusNoContent)
+	assert.Equal(t, http.StatusNoContent, w.Code)
 
 	w = httptest.NewRecorder()
 	r, _ = http.NewRequest("GET", "https://idp.example.com/users/alice", nil)
 	test.Server.ServeHTTP(w, r)
-	c.Assert(w.Code, Equals, http.StatusOK)
-	c.Assert(string(w.Body.Bytes()), Equals, "{\"name\":\"alice\"}\n")
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "{\"name\":\"alice\"}\n", string(w.Body.Bytes()))
 
 	w = httptest.NewRecorder()
 	r, _ = http.NewRequest("GET", "https://idp.example.com/users/", nil)
 	test.Server.ServeHTTP(w, r)
-	c.Assert(w.Code, Equals, http.StatusOK)
-	c.Assert(string(w.Body.Bytes()), Equals, "{\"users\":[\"alice\"]}\n")
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "{\"users\":[\"alice\"]}\n", string(w.Body.Bytes()))
 
 	w = httptest.NewRecorder()
 	r, _ = http.NewRequest("DELETE", "https://idp.example.com/users/alice", nil)
 	test.Server.ServeHTTP(w, r)
-	c.Assert(w.Code, Equals, http.StatusNoContent)
+	assert.Equal(t, http.StatusNoContent, w.Code)
 
 	w = httptest.NewRecorder()
 	r, _ = http.NewRequest("GET", "https://idp.example.com/users/", nil)
 	test.Server.ServeHTTP(w, r)
-	c.Assert(w.Code, Equals, http.StatusOK)
-	c.Assert(string(w.Body.Bytes()), Equals, "{\"users\":[]}\n")
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "{\"users\":[]}\n", string(w.Body.Bytes()))
 }

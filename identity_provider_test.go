@@ -12,17 +12,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
-	"time"
-
 	"os"
+	"strings"
+	"testing"
+	"time"
 
 	"github.com/beevik/etree"
 	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/testsaml"
 	"github.com/crewjam/saml/xmlenc"
 	"github.com/dgrijalva/jwt-go"
-	. "gopkg.in/check.v1"
+	"github.com/stretchr/testify/assert"
 )
 
 type IdentityProviderTest struct {
@@ -35,8 +35,6 @@ type IdentityProviderTest struct {
 	SessionProvider SessionProvider
 	IDP             IdentityProvider
 }
-
-var _ = Suite(&IdentityProviderTest{})
 
 func mustParseURL(s string) url.URL {
 	rv, err := url.Parse(s)
@@ -70,7 +68,8 @@ func mustParseCertificate(pemStr string) *x509.Certificate {
 	return cert
 }
 
-func (test *IdentityProviderTest) SetUpTest(c *C) {
+func NewIdentifyProviderTest() *IdentityProviderTest {
+	test := IdentityProviderTest{}
 	TimeNow = func() time.Time {
 		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Dec 1 01:57:09 UTC 2015")
 		return rv
@@ -146,6 +145,7 @@ OwJlNCASPZRH/JmF8tX0hoHuAQ==
 
 	// bind the service provider and the IDP
 	test.SP.IDPMetadata = test.IDP.Metadata()
+	return &test
 }
 
 type mockSessionProvider struct {
@@ -164,8 +164,9 @@ func (mspp *mockServiceProviderProvider) GetServiceProvider(r *http.Request, ser
 	return mspp.GetServiceProviderFunc(r, serviceProviderID)
 }
 
-func (test *IdentityProviderTest) TestCanProduceMetadata(c *C) {
-	c.Assert(test.IDP.Metadata(), DeepEquals, &EntityDescriptor{
+func TestIDPCanProduceMetadata(t *testing.T) {
+	test := NewIdentifyProviderTest()
+	expected := &EntityDescriptor{
 		ValidUntil:    TimeNow().Add(DefaultValidDuration),
 		CacheDuration: DefaultValidDuration,
 		EntityID:      "https://idp.example.com/saml/metadata",
@@ -212,32 +213,37 @@ func (test *IdentityProviderTest) TestCanProduceMetadata(c *C) {
 				},
 			},
 		},
-	})
+	}
+	assert.Equal(t, expected, test.IDP.Metadata())
 }
 
-func (test *IdentityProviderTest) TestHTTPCanHandleMetadataRequest(c *C) {
+func TestIDPHTTPCanHandleMetadataRequest(t *testing.T) {
+	test := NewIdentifyProviderTest()
 	w := httptest.NewRecorder()
 	r, _ := http.NewRequest("GET", "https://idp.example.com/saml/metadata", nil)
 	test.IDP.Handler().ServeHTTP(w, r)
-	c.Assert(w.Code, Equals, http.StatusOK)
-	c.Assert(w.Header().Get("Content-type"), Equals, "application/samlmetadata+xml")
-	c.Assert(strings.HasPrefix(string(w.Body.Bytes()), "<EntityDescriptor"), Equals, true)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "application/samlmetadata+xml", w.Header().Get("Content-type"))
+	assert.True(t, strings.HasPrefix(string(w.Body.Bytes()), "<EntityDescriptor"),
+		string(w.Body.Bytes()))
 }
 
-func (test *IdentityProviderTest) TestHTTPCanHandleSSORequest(c *C) {
+func TestIDPHTTPCanHandleSSORequest(t *testing.T) {
+	test := NewIdentifyProviderTest()
 	w := httptest.NewRecorder()
 	r, _ := http.NewRequest("GET", "https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJBayoxFIX%2FypC9JhnU5wszAz7lgWCLaNtFd5fMbQ1MkmnunVb%2FfUfbUqEgdhs%2BTr5zkmLW8S5s8KVD4mzvm0Cl6FIwEciRCeCRDFuznd2sTD5Upk2Ro42NyGZEmNjFMI%2BBOo9pi%2BnVWbzfrEqxY27JSEntEPfg2waHNnpJ4JtcgiWRLfoLXYBjwDfu6p%2B8JIoiWy5K4eqBUipXIzVRUwXKKtRK53qkJ3qqQVuNPUjU4TIQQ%2BBS5EqPBzofKH2ntBn%2FMervo8jWnyX%2BuVC78FwKkT1gopNKX1JUxSklXTMIfM0gsv8xeeDL%2BPGk7%2FF0Qg0GdnwQ1cW5PDLUwFDID6uquO1Dlot1bJw9%2FPLRmia%2BzRMCYyk4dSiq6205QSDXOxfy3KAq5Pkvqt4DAAD%2F%2Fw%3D%3D", nil)
 	test.IDP.Handler().ServeHTTP(w, r)
-	c.Assert(w.Code, Equals, http.StatusOK)
+	assert.Equal(t, http.StatusOK, w.Code)
 
 	// rejects requests that are invalid
 	w = httptest.NewRecorder()
 	r, _ = http.NewRequest("GET", "https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=PEF1dGhuUmVxdWVzdA%3D%3D", nil)
 	test.IDP.Handler().ServeHTTP(w, r)
-	c.Assert(w.Code, Equals, http.StatusBadRequest)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func (test *IdentityProviderTest) TestCanHandleRequestWithNewSession(c *C) {
+func TestIDPCanHandleRequestWithNewSession(t *testing.T) {
+	test := NewIdentifyProviderTest()
 	test.IDP.SessionProvider = &mockSessionProvider{
 		GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
 			fmt.Fprintf(w, "RelayState: %s\nSAMLRequest: %s",
@@ -249,22 +255,25 @@ func (test *IdentityProviderTest) TestCanHandleRequestWithNewSession(c *C) {
 	w := httptest.NewRecorder()
 
 	requestURL, err := test.SP.MakeRedirectAuthenticationRequest("ThisIsTheRelayState")
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
 	decodedRequest, err := testsaml.ParseRedirectRequest(requestURL)
-	c.Assert(err, IsNil)
-	c.Assert(string(decodedRequest), Equals, "<samlp:AuthnRequest xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:57:09Z\" Destination=\"https://idp.example.com/saml/sso\" AssertionConsumerServiceURL=\"https://sp.example.com/saml2/acs\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\"><saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</saml:Issuer><samlp:NameIDPolicy Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" AllowCreate=\"true\"/></samlp:AuthnRequest>")
-	c.Assert(requestURL.Query().Get("RelayState"), Equals, "ThisIsTheRelayState")
+	assert.NoError(t, err)
+	assert.Equal(t, "<samlp:AuthnRequest xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:57:09Z\" Destination=\"https://idp.example.com/saml/sso\" AssertionConsumerServiceURL=\"https://sp.example.com/saml2/acs\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\"><saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</saml:Issuer><samlp:NameIDPolicy Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" AllowCreate=\"true\"/></samlp:AuthnRequest>",
+		string(decodedRequest))
+	assert.Equal(t, "ThisIsTheRelayState", requestURL.Query().Get("RelayState"))
 
 	r, _ := http.NewRequest("GET", requestURL.String(), nil)
 	test.IDP.ServeSSO(w, r)
-	c.Assert(w.Code, Equals, 200)
-	c.Assert(string(w.Body.Bytes()), Equals, ""+
+	assert.Equal(t, 200, w.Code)
+	assert.Equal(t, ""+
 		"RelayState: ThisIsTheRelayState\n"+
-		"SAMLRequest: <samlp:AuthnRequest xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:57:09Z\" Destination=\"https://idp.example.com/saml/sso\" AssertionConsumerServiceURL=\"https://sp.example.com/saml2/acs\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\"><saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</saml:Issuer><samlp:NameIDPolicy Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" AllowCreate=\"true\"/></samlp:AuthnRequest>")
+		"SAMLRequest: <samlp:AuthnRequest xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:57:09Z\" Destination=\"https://idp.example.com/saml/sso\" AssertionConsumerServiceURL=\"https://sp.example.com/saml2/acs\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\"><saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</saml:Issuer><samlp:NameIDPolicy Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" AllowCreate=\"true\"/></samlp:AuthnRequest>",
+		string(w.Body.Bytes()))
 }
 
-func (test *IdentityProviderTest) TestCanHandleRequestWithExistingSession(c *C) {
+func TestIDPCanHandleRequestWithExistingSession(t *testing.T) {
+	test := NewIdentifyProviderTest()
 	test.IDP.SessionProvider = &mockSessionProvider{
 		GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
 			return &Session{
@@ -276,20 +285,23 @@ func (test *IdentityProviderTest) TestCanHandleRequestWithExistingSession(c *C) 
 
 	w := httptest.NewRecorder()
 	requestURL, err := test.SP.MakeRedirectAuthenticationRequest("ThisIsTheRelayState")
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
 	decodedRequest, err := testsaml.ParseRedirectRequest(requestURL)
-	c.Assert(err, IsNil)
-	c.Assert(string(decodedRequest), Equals, "<samlp:AuthnRequest xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:57:09Z\" Destination=\"https://idp.example.com/saml/sso\" AssertionConsumerServiceURL=\"https://sp.example.com/saml2/acs\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\"><saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</saml:Issuer><samlp:NameIDPolicy Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" AllowCreate=\"true\"/></samlp:AuthnRequest>")
+	assert.NoError(t, err)
+	assert.Equal(t, "<samlp:AuthnRequest xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:57:09Z\" Destination=\"https://idp.example.com/saml/sso\" AssertionConsumerServiceURL=\"https://sp.example.com/saml2/acs\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\"><saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</saml:Issuer><samlp:NameIDPolicy Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" AllowCreate=\"true\"/></samlp:AuthnRequest>",
+		string(decodedRequest))
 
 	r, _ := http.NewRequest("GET", requestURL.String(), nil)
 	test.IDP.ServeSSO(w, r)
-	c.Assert(w.Code, Equals, 200)
-	c.Assert(string(w.Body.Bytes()), Matches,
-		"^<html><form method=\"post\" action=\"https://sp\\.example\\.com/saml2/acs\" id=\"SAMLResponseForm\"><input type=\"hidden\" name=\"SAMLResponse\" value=\".*\" /><input type=\"hidden\" name=\"RelayState\" value=\"ThisIsTheRelayState\" /><input id=\"SAMLSubmitButton\" type=\"submit\" value=\"Continue\" /></form><script>document\\.getElementById\\('SAMLSubmitButton'\\)\\.style\\.visibility='hidden';</script><script>document\\.getElementById\\('SAMLResponseForm'\\)\\.submit\\(\\);</script></html>$")
+	assert.Equal(t, 200, w.Code)
+	assert.Regexp(t,
+		"^<html><form method=\"post\" action=\"https://sp\\.example\\.com/saml2/acs\" id=\"SAMLResponseForm\"><input type=\"hidden\" name=\"SAMLResponse\" value=\".*\" /><input type=\"hidden\" name=\"RelayState\" value=\"ThisIsTheRelayState\" /><input id=\"SAMLSubmitButton\" type=\"submit\" value=\"Continue\" /></form><script>document\\.getElementById\\('SAMLSubmitButton'\\)\\.style\\.visibility='hidden';</script><script>document\\.getElementById\\('SAMLResponseForm'\\)\\.submit\\(\\);</script></html>$",
+		string(w.Body.Bytes()))
 }
 
-func (test *IdentityProviderTest) TestCanHandlePostRequestWithExistingSession(c *C) {
+func TestIDPCanHandlePostRequestWithExistingSession(t *testing.T) {
+	test := NewIdentifyProviderTest()
 	test.IDP.SessionProvider = &mockSessionProvider{
 		GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
 			return &Session{
@@ -302,9 +314,9 @@ func (test *IdentityProviderTest) TestCanHandlePostRequestWithExistingSession(c 
 	w := httptest.NewRecorder()
 
 	authRequest, err := test.SP.MakeAuthenticationRequest(test.SP.GetSSOBindingLocation(HTTPRedirectBinding))
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 	authRequestBuf, err := xml.Marshal(authRequest)
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 	q := url.Values{}
 	q.Set("SAMLRequest", base64.StdEncoding.EncodeToString(authRequestBuf))
 	q.Set("RelayState", "ThisIsTheRelayState")
@@ -313,12 +325,14 @@ func (test *IdentityProviderTest) TestCanHandlePostRequestWithExistingSession(c 
 	r.Header.Set("Content-type", "application/x-www-form-urlencoded")
 
 	test.IDP.ServeSSO(w, r)
-	c.Assert(w.Code, Equals, 200)
-	c.Assert(string(w.Body.Bytes()), Matches,
-		"^<html><form method=\"post\" action=\"https://sp\\.example\\.com/saml2/acs\" id=\"SAMLResponseForm\"><input type=\"hidden\" name=\"SAMLResponse\" value=\".*\" /><input type=\"hidden\" name=\"RelayState\" value=\"ThisIsTheRelayState\" /><input id=\"SAMLSubmitButton\" type=\"submit\" value=\"Continue\" /></form><script>document\\.getElementById\\('SAMLSubmitButton'\\)\\.style\\.visibility='hidden';</script><script>document\\.getElementById\\('SAMLResponseForm'\\)\\.submit\\(\\);</script></html>$")
+	assert.Equal(t, 200, w.Code)
+	assert.Regexp(t,
+		"^<html><form method=\"post\" action=\"https://sp\\.example\\.com/saml2/acs\" id=\"SAMLResponseForm\"><input type=\"hidden\" name=\"SAMLResponse\" value=\".*\" /><input type=\"hidden\" name=\"RelayState\" value=\"ThisIsTheRelayState\" /><input id=\"SAMLSubmitButton\" type=\"submit\" value=\"Continue\" /></form><script>document\\.getElementById\\('SAMLSubmitButton'\\)\\.style\\.visibility='hidden';</script><script>document\\.getElementById\\('SAMLResponseForm'\\)\\.submit\\(\\);</script></html>$",
+		string(w.Body.Bytes()))
 }
 
-func (test *IdentityProviderTest) TestRejectsInvalidRequest(c *C) {
+func TestIDPRejectsInvalidRequest(t *testing.T) {
+	test := NewIdentifyProviderTest()
 	test.IDP.SessionProvider = &mockSessionProvider{
 		GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
 			panic("not reached")
@@ -328,40 +342,42 @@ func (test *IdentityProviderTest) TestRejectsInvalidRequest(c *C) {
 	w := httptest.NewRecorder()
 	r, _ := http.NewRequest("GET", "https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=XXX", nil)
 	test.IDP.ServeSSO(w, r)
-	c.Assert(w.Code, Equals, http.StatusBadRequest)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	w = httptest.NewRecorder()
 	r, _ = http.NewRequest("POST", "https://idp.example.com/saml/sso",
 		strings.NewReader("RelayState=ThisIsTheRelayState&SAMLRequest=XXX"))
 	r.Header.Set("Content-type", "application/x-www-form-urlencoded")
 	test.IDP.ServeSSO(w, r)
-	c.Assert(w.Code, Equals, http.StatusBadRequest)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func (test *IdentityProviderTest) TestCanParse(c *C) {
+func TestIDPCanParse(t *testing.T) {
+	test := NewIdentifyProviderTest()
 	r, _ := http.NewRequest("GET", "https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJBayoxFIX%2FypC9JhnU5wszAz7lgWCLaNtFd5fMbQ1MkmnunVb%2FfUfbUqEgdhs%2BTr5zkmLW8S5s8KVD4mzvm0Cl6FIwEciRCeCRDFuznd2sTD5Upk2Ro42NyGZEmNjFMI%2BBOo9pi%2BnVWbzfrEqxY27JSEntEPfg2waHNnpJ4JtcgiWRLfoLXYBjwDfu6p%2B8JIoiWy5K4eqBUipXIzVRUwXKKtRK53qkJ3qqQVuNPUjU4TIQQ%2BBS5EqPBzofKH2ntBn%2FMervo8jWnyX%2BuVC78FwKkT1gopNKX1JUxSklXTMIfM0gsv8xeeDL%2BPGk7%2FF0Qg0GdnwQ1cW5PDLUwFDID6uquO1Dlot1bJw9%2FPLRmia%2BzRMCYyk4dSiq6205QSDXOxfy3KAq5Pkvqt4DAAD%2F%2Fw%3D%3D", nil)
 	req, err := NewIdpAuthnRequest(&test.IDP, r)
-	c.Assert(err, IsNil)
-	c.Assert(req.Validate(), IsNil)
+	assert.NoError(t, err)
+	assert.NoError(t, req.Validate())
 
 	r, _ = http.NewRequest("GET", "https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState", nil)
 	_, err = NewIdpAuthnRequest(&test.IDP, r)
-	c.Assert(err, ErrorMatches, "cannot decompress request: unexpected EOF")
+	assert.EqualError(t, err, "cannot decompress request: unexpected EOF")
 
 	r, _ = http.NewRequest("GET", "https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=NotValidBase64", nil)
 	_, err = NewIdpAuthnRequest(&test.IDP, r)
-	c.Assert(err, ErrorMatches, "cannot decode request: illegal base64 data at input byte 12")
+	assert.EqualError(t, err, "cannot decode request: illegal base64 data at input byte 12")
 
 	r, _ = http.NewRequest("GET", "https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=bm90IGZsYXRlIGVuY29kZWQ%3D", nil)
 	_, err = NewIdpAuthnRequest(&test.IDP, r)
-	c.Assert(err, ErrorMatches, "cannot decompress request: flate: corrupt input before offset 1")
+	assert.EqualError(t, err, "cannot decompress request: flate: corrupt input before offset 1")
 
 	r, _ = http.NewRequest("FROBNICATE", "https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJBayoxFIX%2FypC9JhnU5wszAz7lgWCLaNtFd5fMbQ1MkmnunVb%2FfUfbUqEgdhs%2BTr5zkmLW8S5s8KVD4mzvm0Cl6FIwEciRCeCRDFuznd2sTD5Upk2Ro42NyGZEmNjFMI%2BBOo9pi%2BnVWbzfrEqxY27JSEntEPfg2waHNnpJ4JtcgiWRLfoLXYBjwDfu6p%2B8JIoiWy5K4eqBUipXIzVRUwXKKtRK53qkJ3qqQVuNPUjU4TIQQ%2BBS5EqPBzofKH2ntBn%2FMervo8jWnyX%2BuVC78FwKkT1gopNKX1JUxSklXTMIfM0gsv8xeeDL%2BPGk7%2FF0Qg0GdnwQ1cW5PDLUwFDID6uquO1Dlot1bJw9%2FPLRmia%2BzRMCYyk4dSiq6205QSDXOxfy3KAq5Pkvqt4DAAD%2F%2Fw%3D%3D", nil)
 	_, err = NewIdpAuthnRequest(&test.IDP, r)
-	c.Assert(err, ErrorMatches, "method not allowed")
+	assert.EqualError(t, err, "method not allowed")
 }
 
-func (test *IdentityProviderTest) TestCanValidate(c *C) {
+func TestIDPCanValidate(t *testing.T) {
+	test := NewIdentifyProviderTest()
 	req := IdpAuthnRequest{
 		Now: TimeNow(),
 		IDP: &test.IDP,
@@ -378,17 +394,17 @@ func (test *IdentityProviderTest) TestCanValidate(c *C) {
 			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
 			"</AuthnRequest>"),
 	}
-	c.Assert(req.Validate(), IsNil)
-	c.Assert(req.Request, Not(IsNil))
-	c.Assert(req.ServiceProviderMetadata, Not(IsNil))
-	c.Assert(req.ACSEndpoint, DeepEquals, &IndexedEndpoint{Binding: "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST", Location: "https://sp.example.com/saml2/acs", Index: 1})
+	assert.NoError(t, req.Validate())
+	assert.NotNil(t, req.Request)
+	assert.NotNil(t, req.ServiceProviderMetadata)
+	assert.Equal(t, &IndexedEndpoint{Binding: "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST", Location: "https://sp.example.com/saml2/acs", Index: 1}, req.ACSEndpoint)
 
 	req = IdpAuthnRequest{
 		Now:           TimeNow(),
 		IDP:           &test.IDP,
 		RequestBuffer: []byte("<AuthnRequest"),
 	}
-	c.Assert(req.Validate(), ErrorMatches, "XML syntax error on line 1: unexpected EOF")
+	assert.EqualError(t, req.Validate(), "XML syntax error on line 1: unexpected EOF")
 
 	req = IdpAuthnRequest{
 		Now: TimeNow(),
@@ -406,7 +422,7 @@ func (test *IdentityProviderTest) TestCanValidate(c *C) {
 			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
 			"</AuthnRequest>"),
 	}
-	c.Assert(req.Validate(), ErrorMatches, "expected destination to be \"https://idp.example.com/saml/sso\", not \"https://idp.wrongDestination.com/saml/sso\"")
+	assert.EqualError(t, req.Validate(), "expected destination to be \"https://idp.example.com/saml/sso\", not \"https://idp.wrongDestination.com/saml/sso\"")
 
 	req = IdpAuthnRequest{
 		Now: TimeNow(),
@@ -424,7 +440,7 @@ func (test *IdentityProviderTest) TestCanValidate(c *C) {
 			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
 			"</AuthnRequest>"),
 	}
-	c.Assert(req.Validate(), ErrorMatches, "request expired at 2014\\-12\\-01 01:58:39 \\+0000 UTC")
+	assert.EqualError(t, req.Validate(), "request expired at 2014-12-01 01:58:39 +0000 UTC")
 
 	req = IdpAuthnRequest{
 		Now: TimeNow(),
@@ -442,7 +458,7 @@ func (test *IdentityProviderTest) TestCanValidate(c *C) {
 			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
 			"</AuthnRequest>"),
 	}
-	c.Assert(req.Validate(), ErrorMatches, "expected SAML request version 2.0 got 4.2")
+	assert.EqualError(t, req.Validate(), "expected SAML request version 2.0 got 4.2")
 
 	req = IdpAuthnRequest{
 		Now: TimeNow(),
@@ -460,7 +476,7 @@ func (test *IdentityProviderTest) TestCanValidate(c *C) {
 			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
 			"</AuthnRequest>"),
 	}
-	c.Assert(req.Validate(), ErrorMatches, "cannot handle request from unknown service provider https://unknownSP.example.com/saml2/metadata")
+	assert.EqualError(t, req.Validate(), "cannot handle request from unknown service provider https://unknownSP.example.com/saml2/metadata")
 
 	req = IdpAuthnRequest{
 		Now: TimeNow(),
@@ -478,11 +494,12 @@ func (test *IdentityProviderTest) TestCanValidate(c *C) {
 			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
 			"</AuthnRequest>"),
 	}
-	c.Assert(req.Validate(), ErrorMatches, "cannot find assertion consumer service: file does not exist")
+	assert.EqualError(t, req.Validate(), "cannot find assertion consumer service: file does not exist")
 
 }
 
-func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
+func TestIDPMakeAssertion(t *testing.T) {
+	test := NewIdentifyProviderTest()
 	req := IdpAuthnRequest{
 		Now: TimeNow(),
 		IDP: &test.IDP,
@@ -500,16 +517,15 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 			"</AuthnRequest>"),
 	}
 	req.HTTPRequest, _ = http.NewRequest("POST", "http://idp.example.com/saml/sso", nil)
-
-	c.Assert(req.Validate(), IsNil)
+	assert.NoError(t, req.Validate())
 
 	err := DefaultAssertionMaker{}.MakeAssertion(&req, &Session{
 		ID:       "f00df00df00d",
 		UserName: "alice",
 	})
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
-	c.Assert(req.Assertion, DeepEquals, &Assertion{
+	expected := &Assertion{
 		ID:           "id-00020406080a0c0e10121416181a1c1e20222426",
 		IssueInstant: TimeNow(),
 		Version:      "2.0",
@@ -568,7 +584,9 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 				},
 			},
 		},
-	})
+	}
+	assert.Equal(t, expected, req.Assertion)
+
 	err = DefaultAssertionMaker{}.MakeAssertion(&req, &Session{
 		ID:             "f00df00df00d",
 		CreateTime:     TimeNow(),
@@ -582,87 +600,90 @@ func (test *IdentityProviderTest) TestMakeAssertion(c *C) {
 		UserSurname:    "Smith",
 		UserGivenName:  "Alice",
 	})
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
-	c.Assert(req.Assertion.AttributeStatements[0].Attributes, DeepEquals, []Attribute{
-		{
-			FriendlyName: "uid",
-			Name:         "urn:oid:0.9.2342.19200300.100.1.1",
-			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []AttributeValue{
-				{
-					Type:  "xs:string",
-					Value: "alice",
+	expectedAttributes :=
+		[]Attribute{
+			{
+				FriendlyName: "uid",
+				Name:         "urn:oid:0.9.2342.19200300.100.1.1",
+				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+				Values: []AttributeValue{
+					{
+						Type:  "xs:string",
+						Value: "alice",
+					},
 				},
 			},
-		},
-		{
-			FriendlyName: "eduPersonPrincipalName",
-			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.6",
-			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []AttributeValue{
-				{
-					Type:  "xs:string",
-					Value: "alice@example.com",
+			{
+				FriendlyName: "eduPersonPrincipalName",
+				Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.6",
+				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+				Values: []AttributeValue{
+					{
+						Type:  "xs:string",
+						Value: "alice@example.com",
+					},
 				},
 			},
-		},
-		{
-			FriendlyName: "sn",
-			Name:         "urn:oid:2.5.4.4",
-			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []AttributeValue{
-				{
-					Type:  "xs:string",
-					Value: "Smith",
+			{
+				FriendlyName: "sn",
+				Name:         "urn:oid:2.5.4.4",
+				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+				Values: []AttributeValue{
+					{
+						Type:  "xs:string",
+						Value: "Smith",
+					},
 				},
 			},
-		},
-		{
-			FriendlyName: "givenName",
-			Name:         "urn:oid:2.5.4.42",
-			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []AttributeValue{
-				{
-					Type:  "xs:string",
-					Value: "Alice",
+			{
+				FriendlyName: "givenName",
+				Name:         "urn:oid:2.5.4.42",
+				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+				Values: []AttributeValue{
+					{
+						Type:  "xs:string",
+						Value: "Alice",
+					},
 				},
 			},
-		},
-		{
-			FriendlyName: "cn",
-			Name:         "urn:oid:2.5.4.3",
-			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []AttributeValue{
-				{
-					Type:  "xs:string",
-					Value: "Alice Smith",
+			{
+				FriendlyName: "cn",
+				Name:         "urn:oid:2.5.4.3",
+				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+				Values: []AttributeValue{
+					{
+						Type:  "xs:string",
+						Value: "Alice Smith",
+					},
 				},
 			},
-		},
-		{
-			FriendlyName: "eduPersonAffiliation",
-			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.1",
-			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []AttributeValue{
-				{
-					Type:  "xs:string",
-					Value: "Users",
-				},
-				{
-					Type:  "xs:string",
-					Value: "Administrators",
-				},
-				{
-					Type:  "xs:string",
-					Value: "♀",
+			{
+				FriendlyName: "eduPersonAffiliation",
+				Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.1",
+				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+				Values: []AttributeValue{
+					{
+						Type:  "xs:string",
+						Value: "Users",
+					},
+					{
+						Type:  "xs:string",
+						Value: "Administrators",
+					},
+					{
+						Type:  "xs:string",
+						Value: "♀",
+					},
 				},
 			},
-		},
-	})
+		}
+	assert.Equal(t, expectedAttributes, req.Assertion.AttributeStatements[0].Attributes)
 }
 
-func (test *IdentityProviderTest) TestMarshalAssertion(c *C) {
+func TestIDPMarshalAssertion(t *testing.T) {
+	test := NewIdentifyProviderTest()
 	req := IdpAuthnRequest{
 		Now: TimeNow(),
 		IDP: &test.IDP,
@@ -681,14 +702,14 @@ func (test *IdentityProviderTest) TestMarshalAssertion(c *C) {
 	}
 	req.HTTPRequest, _ = http.NewRequest("POST", "http://idp.example.com/saml/sso", nil)
 	err := req.Validate()
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 	err = DefaultAssertionMaker{}.MakeAssertion(&req, &Session{
 		ID:       "f00df00df00d",
 		UserName: "alice",
 	})
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 	err = req.MakeAssertionEl()
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
 	// Compare the plaintext first
 	expectedPlaintext := "<saml:Assertion xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" IssueInstant=\"2015-12-01T01:57:09Z\" Version=\"2.0\"><saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://idp.example.com/saml/metadata</saml:Issuer><ds:Signature xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\"><ds:SignedInfo><ds:CanonicalizationMethod Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\"/><ds:SignatureMethod Algorithm=\"http://www.w3.org/2000/09/xmldsig#rsa-sha1\"/><ds:Reference URI=\"#id-00020406080a0c0e10121416181a1c1e20222426\"><ds:Transforms><ds:Transform Algorithm=\"http://www.w3.org/2000/09/xmldsig#enveloped-signature\"/><ds:Transform Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\"/></ds:Transforms><ds:DigestMethod Algorithm=\"http://www.w3.org/2000/09/xmldsig#sha1\"/><ds:DigestValue>gjE0eLUMVt+kK0rIGYvnzHV/2Ok=</ds:DigestValue></ds:Reference></ds:SignedInfo><ds:SignatureValue>Jm1rrxo2x7SYTnaS97bCdnVLQGeQuCMTjiSUvwzBkWFR+xcPr+n38dXmv0q0R68tO7L2ELhLtBdLm/dWsxruN23TMGVQyHIPMgJExdnYb7fwqx6es/NAdbDUBTbSdMX0vhIlTsHu5F0bJ0Tg0iAo9uRk9VeBdkaxtPa7+4yl1PQ=</ds:SignatureValue><ds:KeyInfo><ds:X509Data><ds:X509Certificate>MIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJVUzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkdBMQwwCgYDVQQKDANmb28xEjAQBgNVBAMMCWxvY2FsaG9zdDCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA1PMHYmhZj308kWLhZVT4vOulqx/9ibm5B86fPWwUKKQ2i12MYtz07tzukPymisTDhQaqyJ8Kqb/6JjhmeMnEOdTvSPmHO8m1ZVveJU6NoKRn/mP/BD7FW52WhbrUXLSeHVSKfWkNk6S4hk9MV9TswTvyRIKvRsw0X/gfnqkroJcCAwEAATANBgkqhkiG9w0BAQUFAAOBgQCMMlIO+GNcGekevKgkakpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeTQLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvnOwJlNCASPZRH/JmF8tX0hoHuAQ==</ds:X509Certificate></ds:X509Data></ds:KeyInfo></ds:Signature><saml:Subject><saml:NameID Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" NameQualifier=\"https://idp.example.com/saml/metadata\" SPNameQualifier=\"https://sp.example.com/saml2/metadata\"/><saml:SubjectConfirmation Method=\"urn:oasis:names:tc:SAML:2.0:cm:bearer\"><saml:SubjectConfirmationData InResponseTo=\"id-00020406080a0c0e10121416181a1c1e\" NotOnOrAfter=\"2015-12-01T01:58:39Z\" Recipient=\"https://sp.example.com/saml2/acs\"/></saml:SubjectConfirmation></saml:Subject><saml:Conditions NotBefore=\"2015-12-01T01:57:09Z\" NotOnOrAfter=\"2015-12-01T01:58:39Z\"><saml:AudienceRestriction><saml:Audience>https://sp.example.com/saml2/metadata</saml:Audience></saml:AudienceRestriction></saml:Conditions><saml:AuthnStatement AuthnInstant=\"0001-01-01T00:00:00Z\"><saml:SubjectLocality/><saml:AuthnContext><saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml:AuthnContextClassRef></saml:AuthnContext></saml:AuthnStatement><saml:AttributeStatement><saml:Attribute FriendlyName=\"uid\" Name=\"urn:oid:0.9.2342.19200300.100.1.1\" NameFormat=\"urn:oasis:names:tc:SAML:2.0:attrname-format:uri\"><saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"xs:string\">alice</saml:AttributeValue></saml:Attribute></saml:AttributeStatement></saml:Assertion>"
@@ -698,19 +719,20 @@ func (test *IdentityProviderTest) TestMarshalAssertion(c *C) {
 		doc.SetRoot(req.AssertionEl)
 		el := doc.FindElement("//EncryptedAssertion/EncryptedData")
 		actualPlaintextBuf, err := xmlenc.Decrypt(test.SPKey, el)
-		c.Assert(err, IsNil)
+		assert.NoError(t, err)
 		actualPlaintext = string(actualPlaintextBuf)
 	}
-	c.Assert(actualPlaintext, Equals, expectedPlaintext)
+	assert.Equal(t, expectedPlaintext, actualPlaintext)
 
 	doc := etree.NewDocument()
 	doc.SetRoot(req.AssertionEl)
 	assertionBuffer, err := doc.WriteToBytes()
-	c.Assert(err, IsNil)
-	c.Assert(string(assertionBuffer), Equals, "<saml:EncryptedAssertion><xenc:EncryptedData xmlns:xenc=\"http://www.w3.org/2001/04/xmlenc#\" Id=\"_e285ece1511455780875d64ee2d3d0d0\" Type=\"http://www.w3.org/2001/04/xmlenc#Element\"><xenc:EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes128-cbc\" xmlns:xenc=\"http://www.w3.org/2001/04/xmlenc#\"/><ds:KeyInfo xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\"><xenc:EncryptedKey Id=\"_6e4ff95ff662a5eee82abdf44a2d0b75\" xmlns:xenc=\"http://www.w3.org/2001/04/xmlenc#\"><xenc:EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p\" xmlns:xenc=\"http://www.w3.org/2001/04/xmlenc#\"><ds:DigestMethod Algorithm=\"http://www.w3.org/2000/09/xmldsig#sha1\" xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\"/></xenc:EncryptionMethod><ds:KeyInfo><ds:X509Data><ds:X509Certificate>MIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJVUzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkdBMQwwCgYDVQQKDANmb28xEjAQBgNVBAMMCWxvY2FsaG9zdDCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA1PMHYmhZj308kWLhZVT4vOulqx/9ibm5B86fPWwUKKQ2i12MYtz07tzukPymisTDhQaqyJ8Kqb/6JjhmeMnEOdTvSPmHO8m1ZVveJU6NoKRn/mP/BD7FW52WhbrUXLSeHVSKfWkNk6S4hk9MV9TswTvyRIKvRsw0X/gfnqkroJcCAwEAATANBgkqhkiG9w0BAQUFAAOBgQCMMlIO+GNcGekevKgkakpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeTQLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvnOwJlNCASPZRH/JmF8tX0hoHuAQ==</ds:X509Certificate></ds:X509Data></ds:KeyInfo><xenc:CipherData xmlns:xenc=\"http://www.w3.org/2001/04/xmlenc#\"><xenc:CipherValue>R9aHQv2U2ZZSuvRaL4/X8TXpm2/1so2IiOz/+NsAzEKoLAg8Sj87Nj5oMrYY2HF5DPQm/N/3+v6wOU9dX62spTzoSWocVzQU+GdTG2DiIIiAAvQwZo1FyUDKS1Fs5voWzgKvs8G43nj68147T96sXY9SyeUBBdhQtXRsEsmKiAs=</xenc:CipherValue></xenc:CipherData></xenc:EncryptedKey></ds:KeyInfo><xenc:CipherData xmlns:xenc=\"http://www.w3.org/2001/04/xmlenc#\"><xenc:CipherValue>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</xenc:CipherValue></xenc:CipherData></xenc:EncryptedData></saml:EncryptedAssertion>")
+	assert.NoError(t, err)
+	assert.Equal(t, "<saml:EncryptedAssertion><xenc:EncryptedData xmlns:xenc=\"http://www.w3.org/2001/04/xmlenc#\" Id=\"_e285ece1511455780875d64ee2d3d0d0\" Type=\"http://www.w3.org/2001/04/xmlenc#Element\"><xenc:EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes128-cbc\" xmlns:xenc=\"http://www.w3.org/2001/04/xmlenc#\"/><ds:KeyInfo xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\"><xenc:EncryptedKey Id=\"_6e4ff95ff662a5eee82abdf44a2d0b75\" xmlns:xenc=\"http://www.w3.org/2001/04/xmlenc#\"><xenc:EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p\" xmlns:xenc=\"http://www.w3.org/2001/04/xmlenc#\"><ds:DigestMethod Algorithm=\"http://www.w3.org/2000/09/xmldsig#sha1\" xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\"/></xenc:EncryptionMethod><ds:KeyInfo><ds:X509Data><ds:X509Certificate>MIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJVUzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkdBMQwwCgYDVQQKDANmb28xEjAQBgNVBAMMCWxvY2FsaG9zdDCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA1PMHYmhZj308kWLhZVT4vOulqx/9ibm5B86fPWwUKKQ2i12MYtz07tzukPymisTDhQaqyJ8Kqb/6JjhmeMnEOdTvSPmHO8m1ZVveJU6NoKRn/mP/BD7FW52WhbrUXLSeHVSKfWkNk6S4hk9MV9TswTvyRIKvRsw0X/gfnqkroJcCAwEAATANBgkqhkiG9w0BAQUFAAOBgQCMMlIO+GNcGekevKgkakpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeTQLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvnOwJlNCASPZRH/JmF8tX0hoHuAQ==</ds:X509Certificate></ds:X509Data></ds:KeyInfo><xenc:CipherData xmlns:xenc=\"http://www.w3.org/2001/04/xmlenc#\"><xenc:CipherValue>R9aHQv2U2ZZSuvRaL4/X8TXpm2/1so2IiOz/+NsAzEKoLAg8Sj87Nj5oMrYY2HF5DPQm/N/3+v6wOU9dX62spTzoSWocVzQU+GdTG2DiIIiAAvQwZo1FyUDKS1Fs5voWzgKvs8G43nj68147T96sXY9SyeUBBdhQtXRsEsmKiAs=</xenc:CipherValue></xenc:CipherData></xenc:EncryptedKey></ds:KeyInfo><xenc:CipherData xmlns:xenc=\"http://www.w3.org/2001/04/xmlenc#\"><xenc:CipherValue>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</xenc:CipherValue></xenc:CipherData></xenc:EncryptedData></saml:EncryptedAssertion>", string(assertionBuffer))
 }
 
-func (test *IdentityProviderTest) TestMakeResponse(c *C) {
+func TestIDPMakeResponse(t *testing.T) {
+	test := NewIdentifyProviderTest()
 	req := IdpAuthnRequest{
 		Now: TimeNow(),
 		IDP: &test.IDP,
@@ -729,28 +751,28 @@ func (test *IdentityProviderTest) TestMakeResponse(c *C) {
 	}
 	req.HTTPRequest, _ = http.NewRequest("POST", "http://idp.example.com/saml/sso", nil)
 	err := req.Validate()
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 	err = DefaultAssertionMaker{}.MakeAssertion(&req, &Session{
 		ID:       "f00df00df00d",
 		UserName: "alice",
 	})
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 	err = req.MakeAssertionEl()
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
 	req.AssertionEl = etree.NewElement("this-is-an-encrypted-assertion")
 	err = req.MakeResponse()
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
 	response := Response{}
 	err = unmarshalEtreeHack(req.ResponseEl, &response)
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
 	doc := etree.NewDocument()
 	doc.SetRoot(req.ResponseEl)
 	doc.Indent(2)
 	responseStr, _ := doc.WriteToString()
-	c.Assert(responseStr, DeepEquals, ""+
+	assert.Equal(t, ""+
 		"<samlp:Response xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" xmlns:xs=\"http://www.w3.org/2001/XMLSchema\" ID=\"id-282a2c2e30323436383a3c3e40424446484a4c4e\" InResponseTo=\"id-00020406080a0c0e10121416181a1c1e\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:57:09Z\" Destination=\"https://sp.example.com/saml2/acs\">\n"+
 		"  <saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://idp.example.com/saml/metadata</saml:Issuer>\n"+
 		"  <ds:Signature xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\">\n"+
@@ -777,10 +799,11 @@ func (test *IdentityProviderTest) TestMakeResponse(c *C) {
 		"    <samlp:StatusCode Value=\"urn:oasis:names:tc:SAML:2.0:status:Success\"/>\n"+
 		"  </samlp:Status>\n"+
 		"  <this-is-an-encrypted-assertion/>\n"+
-		"</samlp:Response>\n")
+		"</samlp:Response>\n", responseStr)
 }
 
-func (test *IdentityProviderTest) TestWriteResponse(c *C) {
+func TestIDPWriteResponse(t *testing.T) {
+	test := NewIdentifyProviderTest()
 	req := IdpAuthnRequest{
 		Now:        TimeNow(),
 		IDP:        &test.IDP,
@@ -801,16 +824,17 @@ func (test *IdentityProviderTest) TestWriteResponse(c *C) {
 	}
 	req.HTTPRequest, _ = http.NewRequest("POST", "http://idp.example.com/saml/sso", nil)
 	err := req.Validate()
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
 	w := httptest.NewRecorder()
 	err = req.WriteResponse(w)
-	c.Assert(err, IsNil)
-	c.Assert(w.Code, Equals, 200)
-	c.Assert(string(w.Body.Bytes()), Equals, "<html><form method=\"post\" action=\"https://sp.example.com/saml2/acs\" id=\"SAMLResponseForm\"><input type=\"hidden\" name=\"SAMLResponse\" value=\"PFRISVNfSVNfVEhFX1NBTUxfUkVTUE9OU0UvPg==\" /><input type=\"hidden\" name=\"RelayState\" value=\"THIS_IS_THE_RELAY_STATE\" /><input id=\"SAMLSubmitButton\" type=\"submit\" value=\"Continue\" /></form><script>document.getElementById('SAMLSubmitButton').style.visibility='hidden';</script><script>document.getElementById('SAMLResponseForm').submit();</script></html>")
+	assert.NoError(t, err)
+	assert.Equal(t, 200, w.Code)
+	assert.Equal(t, "<html><form method=\"post\" action=\"https://sp.example.com/saml2/acs\" id=\"SAMLResponseForm\"><input type=\"hidden\" name=\"SAMLResponse\" value=\"PFRISVNfSVNfVEhFX1NBTUxfUkVTUE9OU0UvPg==\" /><input type=\"hidden\" name=\"RelayState\" value=\"THIS_IS_THE_RELAY_STATE\" /><input id=\"SAMLSubmitButton\" type=\"submit\" value=\"Continue\" /></form><script>document.getElementById('SAMLSubmitButton').style.visibility='hidden';</script><script>document.getElementById('SAMLResponseForm').submit();</script></html>", string(w.Body.Bytes()))
 }
 
-func (test *IdentityProviderTest) TestIDPInitiatedNewSession(c *C) {
+func TestIDPIDPInitiatedNewSession(t *testing.T) {
+	test := NewIdentifyProviderTest()
 	test.IDP.SessionProvider = &mockSessionProvider{
 		GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
 			fmt.Fprintf(w, "RelayState: %s", req.RelayState)
@@ -821,11 +845,12 @@ func (test *IdentityProviderTest) TestIDPInitiatedNewSession(c *C) {
 	w := httptest.NewRecorder()
 	r, _ := http.NewRequest("GET", "https://idp.example.com/services/sp/whoami", nil)
 	test.IDP.ServeIDPInitiated(w, r, test.SP.MetadataURL.String(), "ThisIsTheRelayState")
-	c.Assert(w.Code, Equals, 200)
-	c.Assert(string(w.Body.Bytes()), Equals, "RelayState: ThisIsTheRelayState")
+	assert.Equal(t, 200, w.Code)
+	assert.Equal(t, "RelayState: ThisIsTheRelayState", string(w.Body.Bytes()))
 }
 
-func (test *IdentityProviderTest) TestIDPInitiatedExistingSession(c *C) {
+func TestIDPIDPInitiatedExistingSession(t *testing.T) {
+	test := NewIdentifyProviderTest()
 	test.IDP.SessionProvider = &mockSessionProvider{
 		GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
 			return &Session{
@@ -838,12 +863,14 @@ func (test *IdentityProviderTest) TestIDPInitiatedExistingSession(c *C) {
 	w := httptest.NewRecorder()
 	r, _ := http.NewRequest("GET", "https://idp.example.com/services/sp/whoami", nil)
 	test.IDP.ServeIDPInitiated(w, r, test.SP.MetadataURL.String(), "ThisIsTheRelayState")
-	c.Assert(w.Code, Equals, 200)
-	c.Assert(string(w.Body.Bytes()), Matches,
-		"^<html><form method=\"post\" action=\"https://sp\\.example\\.com/saml2/acs\" id=\"SAMLResponseForm\"><input type=\"hidden\" name=\"SAMLResponse\" value=\".*\" /><input type=\"hidden\" name=\"RelayState\" value=\"ThisIsTheRelayState\" /><input id=\"SAMLSubmitButton\" type=\"submit\" value=\"Continue\" /></form><script>document\\.getElementById\\('SAMLSubmitButton'\\)\\.style\\.visibility='hidden';</script><script>document\\.getElementById\\('SAMLResponseForm'\\)\\.submit\\(\\);</script></html>$")
+	assert.Equal(t, 200, w.Code)
+	assert.Regexp(t,
+		"^<html><form method=\"post\" action=\"https://sp\\.example\\.com/saml2/acs\" id=\"SAMLResponseForm\"><input type=\"hidden\" name=\"SAMLResponse\" value=\".*\" /><input type=\"hidden\" name=\"RelayState\" value=\"ThisIsTheRelayState\" /><input id=\"SAMLSubmitButton\" type=\"submit\" value=\"Continue\" /></form><script>document\\.getElementById\\('SAMLSubmitButton'\\)\\.style\\.visibility='hidden';</script><script>document\\.getElementById\\('SAMLResponseForm'\\)\\.submit\\(\\);</script></html>$",
+		string(w.Body.Bytes()))
 }
 
-func (test *IdentityProviderTest) TestIDPInitiatedBadServiceProvider(c *C) {
+func TestIDPIDPInitiatedBadServiceProvider(t *testing.T) {
+	test := NewIdentifyProviderTest()
 	test.IDP.SessionProvider = &mockSessionProvider{
 		GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
 			return &Session{
@@ -856,10 +883,11 @@ func (test *IdentityProviderTest) TestIDPInitiatedBadServiceProvider(c *C) {
 	w := httptest.NewRecorder()
 	r, _ := http.NewRequest("GET", "https://idp.example.com/services/sp/whoami", nil)
 	test.IDP.ServeIDPInitiated(w, r, "https://wrong.url/metadata", "ThisIsTheRelayState")
-	c.Assert(w.Code, Equals, http.StatusNotFound)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func (test *IdentityProviderTest) TestCanHandleUnencryptedResponse(c *C) {
+func TestIDPCanHandleUnencryptedResponse(t *testing.T) {
+	test := NewIdentifyProviderTest()
 	test.IDP.SessionProvider = &mockSessionProvider{
 		GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
 			return &Session{ID: "f00df00df00d", UserName: "alice"}
@@ -868,7 +896,7 @@ func (test *IdentityProviderTest) TestCanHandleUnencryptedResponse(c *C) {
 
 	metadata := EntityDescriptor{}
 	err := xml.Unmarshal([]byte(`<?xml version='1.0' encoding='UTF-8'?><md:EntityDescriptor ID='_97e2ce01-fa34-4c09-9126-4f7595ef6bf8' entityID='https://gitlab.example.com/users/auth/saml/metadata' xmlns:md='urn:oasis:names:tc:SAML:2.0:metadata' xmlns:saml='urn:oasis:names:tc:SAML:2.0:assertion'><md:SPSSODescriptor AuthnRequestsSigned='false' WantAssertionsSigned='false' protocolSupportEnumeration='urn:oasis:names:tc:SAML:2.0:protocol'><md:AssertionConsumerService Binding='urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST' Location='https://gitlab.example.com/users/auth/saml/callback' index='0' isDefault='true'/><md:AttributeConsumingService index='1' isDefault='true'><md:ServiceName xml:lang='en'>Required attributes</md:ServiceName><md:RequestedAttribute FriendlyName='Email address' Name='email' NameFormat='urn:oasis:names:tc:SAML:2.0:attrname-format:basic'/><md:RequestedAttribute FriendlyName='Full name' Name='name' NameFormat='urn:oasis:names:tc:SAML:2.0:attrname-format:basic'/><md:RequestedAttribute FriendlyName='Given name' Name='first_name' NameFormat='urn:oasis:names:tc:SAML:2.0:attrname-format:basic'/><md:RequestedAttribute FriendlyName='Family name' Name='last_name' NameFormat='urn:oasis:names:tc:SAML:2.0:attrname-format:basic'/></md:AttributeConsumingService></md:SPSSODescriptor></md:EntityDescriptor>`), &metadata)
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 	test.IDP.ServiceProviderProvider = &mockServiceProviderProvider{
 		GetServiceProviderFunc: func(r *http.Request, serviceProviderID string) (*EntityDescriptor, error) {
 			if serviceProviderID == "https://gitlab.example.com/users/saml/metadata" {
@@ -894,122 +922,125 @@ func (test *IdentityProviderTest) TestCanHandleUnencryptedResponse(c *C) {
 	}
 	req.HTTPRequest, _ = http.NewRequest("POST", "http://idp.example.com/saml/sso", nil)
 	err = req.Validate()
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 	err = DefaultAssertionMaker{}.MakeAssertion(&req, &Session{
 		ID:       "f00df00df00d",
 		UserName: "alice",
 	})
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 	err = req.MakeAssertionEl()
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
 	err = req.MakeResponse()
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
 	doc := etree.NewDocument()
 	doc.SetRoot(req.ResponseEl)
 	doc.Indent(2)
 	responseStr, _ := doc.WriteToString()
-	c.Assert(responseStr, DeepEquals, ""+
-		"<samlp:Response xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" xmlns:xs=\"http://www.w3.org/2001/XMLSchema\" ID=\"id-282a2c2e30323436383a3c3e40424446484a4c4e\" InResponseTo=\"id-00020406080a0c0e10121416181a1c1e\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:57:09Z\" Destination=\"https://gitlab.example.com/users/auth/saml/callback\">\n"+
-		"  <saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://idp.example.com/saml/metadata</saml:Issuer>\n"+
-		"  <ds:Signature xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\">\n"+
-		"    <ds:SignedInfo>\n"+
-		"      <ds:CanonicalizationMethod Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\"/>\n"+
-		"      <ds:SignatureMethod Algorithm=\"http://www.w3.org/2000/09/xmldsig#rsa-sha1\"/>\n"+
-		"      <ds:Reference URI=\"#id-282a2c2e30323436383a3c3e40424446484a4c4e\">\n"+
-		"        <ds:Transforms>\n"+
-		"          <ds:Transform Algorithm=\"http://www.w3.org/2000/09/xmldsig#enveloped-signature\"/>\n"+
-		"          <ds:Transform Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\"/>\n"+
-		"        </ds:Transforms>\n"+
-		"        <ds:DigestMethod Algorithm=\"http://www.w3.org/2000/09/xmldsig#sha1\"/>\n"+
-		"        <ds:DigestValue>EJWYGjZq4zltPha+UU/Pcqs+JSc=</ds:DigestValue>\n"+
-		"      </ds:Reference>\n"+
-		"    </ds:SignedInfo>\n"+
-		"    <ds:SignatureValue>C4qEE/hh8tqaM47F6VK9toHJqQxnzzzfwxIc5IUOO1izD/vIFfn4OwKw/SfCFhYj8ZgnVM/BF3oaiWhuAMgFS+MKz2RYnY5h0+DUb1Mv4SjtEPQIv+TL/LGsMJuzPoEkXcxXefz2JCJMXeYM66PfeuBxRpETIe2zIJzZhd9mIrs=</ds:SignatureValue>\n"+
-		"    <ds:KeyInfo>\n"+
-		"      <ds:X509Data>\n"+
-		"        <ds:X509Certificate>MIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJVUzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkdBMQwwCgYDVQQKDANmb28xEjAQBgNVBAMMCWxvY2FsaG9zdDCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA1PMHYmhZj308kWLhZVT4vOulqx/9ibm5B86fPWwUKKQ2i12MYtz07tzukPymisTDhQaqyJ8Kqb/6JjhmeMnEOdTvSPmHO8m1ZVveJU6NoKRn/mP/BD7FW52WhbrUXLSeHVSKfWkNk6S4hk9MV9TswTvyRIKvRsw0X/gfnqkroJcCAwEAATANBgkqhkiG9w0BAQUFAAOBgQCMMlIO+GNcGekevKgkakpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeTQLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvnOwJlNCASPZRH/JmF8tX0hoHuAQ==</ds:X509Certificate>\n"+
-		"      </ds:X509Data>\n"+
-		"    </ds:KeyInfo>\n"+
-		"  </ds:Signature>\n"+
-		"  <samlp:Status>\n"+
-		"    <samlp:StatusCode Value=\"urn:oasis:names:tc:SAML:2.0:status:Success\"/>\n"+
-		"  </samlp:Status>\n"+
-		"  <saml:Assertion xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" IssueInstant=\"2015-12-01T01:57:09Z\" Version=\"2.0\">\n"+
-		"    <saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://idp.example.com/saml/metadata</saml:Issuer>\n"+
-		"    <ds:Signature xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\">\n"+
-		"      <ds:SignedInfo>\n"+
-		"        <ds:CanonicalizationMethod Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\"/>\n"+
-		"        <ds:SignatureMethod Algorithm=\"http://www.w3.org/2000/09/xmldsig#rsa-sha1\"/>\n"+
-		"        <ds:Reference URI=\"#id-00020406080a0c0e10121416181a1c1e20222426\">\n"+
-		"          <ds:Transforms>\n"+
-		"            <ds:Transform Algorithm=\"http://www.w3.org/2000/09/xmldsig#enveloped-signature\"/>\n"+
-		"            <ds:Transform Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\"/>\n"+
-		"          </ds:Transforms>\n"+
-		"          <ds:DigestMethod Algorithm=\"http://www.w3.org/2000/09/xmldsig#sha1\"/>\n"+
-		"          <ds:DigestValue>XPlQkPZr16jJADNHhQ/sma8PBC4=</ds:DigestValue>\n"+
-		"        </ds:Reference>\n"+
-		"      </ds:SignedInfo>\n"+
-		"      <ds:SignatureValue>zDZndnR6twoH0l7j5Qv7hrWxszt+UYSpJ07L0bnN9kD/3jUFkSStok5ubRP5rvOLH6cg4sQX97VuU7EPAmNhj9XcEH7hGMkAAxV/9pbrocSMAm4+HgpyoVl4NSvh9HVWA7tq2WMBgNl6qi05xGws2Fr+zlsax7yr9/hQKdNXL04=</ds:SignatureValue>\n"+
-		"      <ds:KeyInfo>\n"+
-		"        <ds:X509Data>\n"+
-		"          <ds:X509Certificate>MIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJVUzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkdBMQwwCgYDVQQKDANmb28xEjAQBgNVBAMMCWxvY2FsaG9zdDCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA1PMHYmhZj308kWLhZVT4vOulqx/9ibm5B86fPWwUKKQ2i12MYtz07tzukPymisTDhQaqyJ8Kqb/6JjhmeMnEOdTvSPmHO8m1ZVveJU6NoKRn/mP/BD7FW52WhbrUXLSeHVSKfWkNk6S4hk9MV9TswTvyRIKvRsw0X/gfnqkroJcCAwEAATANBgkqhkiG9w0BAQUFAAOBgQCMMlIO+GNcGekevKgkakpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeTQLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvnOwJlNCASPZRH/JmF8tX0hoHuAQ==</ds:X509Certificate>\n"+
-		"        </ds:X509Data>\n"+
-		"      </ds:KeyInfo>\n"+
-		"    </ds:Signature>\n"+
-		"    <saml:Subject>\n"+
-		"      <saml:NameID Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" NameQualifier=\"https://idp.example.com/saml/metadata\" SPNameQualifier=\"https://gitlab.example.com/users/auth/saml/metadata\"/>\n"+
-		"      <saml:SubjectConfirmation Method=\"urn:oasis:names:tc:SAML:2.0:cm:bearer\">\n"+
-		"        <saml:SubjectConfirmationData InResponseTo=\"id-00020406080a0c0e10121416181a1c1e\" NotOnOrAfter=\"2015-12-01T01:58:39Z\" Recipient=\"https://gitlab.example.com/users/auth/saml/callback\"/>\n"+
-		"      </saml:SubjectConfirmation>\n"+
-		"    </saml:Subject>\n"+
-		"    <saml:Conditions NotBefore=\"2015-12-01T01:57:09Z\" NotOnOrAfter=\"2015-12-01T01:58:39Z\">\n"+
-		"      <saml:AudienceRestriction>\n"+
-		"        <saml:Audience>https://gitlab.example.com/users/auth/saml/metadata</saml:Audience>\n"+
-		"      </saml:AudienceRestriction>\n"+
-		"    </saml:Conditions>\n"+
-		"    <saml:AuthnStatement AuthnInstant=\"0001-01-01T00:00:00Z\">\n"+
-		"      <saml:SubjectLocality/>\n"+
-		"      <saml:AuthnContext>\n"+
-		"        <saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml:AuthnContextClassRef>\n"+
-		"      </saml:AuthnContext>\n"+
-		"    </saml:AuthnStatement>\n"+
-		"    <saml:AttributeStatement>\n"+
-		"      <saml:Attribute FriendlyName=\"Email address\" Name=\"email\" NameFormat=\"urn:oasis:names:tc:SAML:2.0:attrname-format:basic\">\n"+
-		"        <saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"xs:string\"></saml:AttributeValue>\n"+
-		"      </saml:Attribute>\n"+
-		"      <saml:Attribute FriendlyName=\"Full name\" Name=\"name\" NameFormat=\"urn:oasis:names:tc:SAML:2.0:attrname-format:basic\">\n"+
-		"        <saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"xs:string\"></saml:AttributeValue>\n"+
-		"      </saml:Attribute>\n"+
-		"      <saml:Attribute FriendlyName=\"Given name\" Name=\"first_name\" NameFormat=\"urn:oasis:names:tc:SAML:2.0:attrname-format:basic\">\n"+
-		"        <saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"xs:string\"></saml:AttributeValue>\n"+
-		"      </saml:Attribute>\n"+
-		"      <saml:Attribute FriendlyName=\"Family name\" Name=\"last_name\" NameFormat=\"urn:oasis:names:tc:SAML:2.0:attrname-format:basic\">\n"+
-		"        <saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"xs:string\"></saml:AttributeValue>\n"+
-		"      </saml:Attribute>\n"+
-		"      <saml:Attribute FriendlyName=\"uid\" Name=\"urn:oid:0.9.2342.19200300.100.1.1\" NameFormat=\"urn:oasis:names:tc:SAML:2.0:attrname-format:uri\">\n"+
-		"        <saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"xs:string\">alice</saml:AttributeValue>\n"+
-		"      </saml:Attribute>\n"+
-		"    </saml:AttributeStatement>\n"+
-		"  </saml:Assertion>\n"+
-		"</samlp:Response>\n")
+
+	expectedResponseStr := "" +
+		"<samlp:Response xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" xmlns:xs=\"http://www.w3.org/2001/XMLSchema\" ID=\"id-282a2c2e30323436383a3c3e40424446484a4c4e\" InResponseTo=\"id-00020406080a0c0e10121416181a1c1e\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:57:09Z\" Destination=\"https://gitlab.example.com/users/auth/saml/callback\">\n" +
+		"  <saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://idp.example.com/saml/metadata</saml:Issuer>\n" +
+		"  <ds:Signature xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\">\n" +
+		"    <ds:SignedInfo>\n" +
+		"      <ds:CanonicalizationMethod Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\"/>\n" +
+		"      <ds:SignatureMethod Algorithm=\"http://www.w3.org/2000/09/xmldsig#rsa-sha1\"/>\n" +
+		"      <ds:Reference URI=\"#id-282a2c2e30323436383a3c3e40424446484a4c4e\">\n" +
+		"        <ds:Transforms>\n" +
+		"          <ds:Transform Algorithm=\"http://www.w3.org/2000/09/xmldsig#enveloped-signature\"/>\n" +
+		"          <ds:Transform Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\"/>\n" +
+		"        </ds:Transforms>\n" +
+		"        <ds:DigestMethod Algorithm=\"http://www.w3.org/2000/09/xmldsig#sha1\"/>\n" +
+		"        <ds:DigestValue>EJWYGjZq4zltPha+UU/Pcqs+JSc=</ds:DigestValue>\n" +
+		"      </ds:Reference>\n" +
+		"    </ds:SignedInfo>\n" +
+		"    <ds:SignatureValue>C4qEE/hh8tqaM47F6VK9toHJqQxnzzzfwxIc5IUOO1izD/vIFfn4OwKw/SfCFhYj8ZgnVM/BF3oaiWhuAMgFS+MKz2RYnY5h0+DUb1Mv4SjtEPQIv+TL/LGsMJuzPoEkXcxXefz2JCJMXeYM66PfeuBxRpETIe2zIJzZhd9mIrs=</ds:SignatureValue>\n" +
+		"    <ds:KeyInfo>\n" +
+		"      <ds:X509Data>\n" +
+		"        <ds:X509Certificate>MIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJVUzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkdBMQwwCgYDVQQKDANmb28xEjAQBgNVBAMMCWxvY2FsaG9zdDCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA1PMHYmhZj308kWLhZVT4vOulqx/9ibm5B86fPWwUKKQ2i12MYtz07tzukPymisTDhQaqyJ8Kqb/6JjhmeMnEOdTvSPmHO8m1ZVveJU6NoKRn/mP/BD7FW52WhbrUXLSeHVSKfWkNk6S4hk9MV9TswTvyRIKvRsw0X/gfnqkroJcCAwEAATANBgkqhkiG9w0BAQUFAAOBgQCMMlIO+GNcGekevKgkakpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeTQLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvnOwJlNCASPZRH/JmF8tX0hoHuAQ==</ds:X509Certificate>\n" +
+		"      </ds:X509Data>\n" +
+		"    </ds:KeyInfo>\n" +
+		"  </ds:Signature>\n" +
+		"  <samlp:Status>\n" +
+		"    <samlp:StatusCode Value=\"urn:oasis:names:tc:SAML:2.0:status:Success\"/>\n" +
+		"  </samlp:Status>\n" +
+		"  <saml:Assertion xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" IssueInstant=\"2015-12-01T01:57:09Z\" Version=\"2.0\">\n" +
+		"    <saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://idp.example.com/saml/metadata</saml:Issuer>\n" +
+		"    <ds:Signature xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\">\n" +
+		"      <ds:SignedInfo>\n" +
+		"        <ds:CanonicalizationMethod Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\"/>\n" +
+		"        <ds:SignatureMethod Algorithm=\"http://www.w3.org/2000/09/xmldsig#rsa-sha1\"/>\n" +
+		"        <ds:Reference URI=\"#id-00020406080a0c0e10121416181a1c1e20222426\">\n" +
+		"          <ds:Transforms>\n" +
+		"            <ds:Transform Algorithm=\"http://www.w3.org/2000/09/xmldsig#enveloped-signature\"/>\n" +
+		"            <ds:Transform Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\"/>\n" +
+		"          </ds:Transforms>\n" +
+		"          <ds:DigestMethod Algorithm=\"http://www.w3.org/2000/09/xmldsig#sha1\"/>\n" +
+		"          <ds:DigestValue>XPlQkPZr16jJADNHhQ/sma8PBC4=</ds:DigestValue>\n" +
+		"        </ds:Reference>\n" +
+		"      </ds:SignedInfo>\n" +
+		"      <ds:SignatureValue>zDZndnR6twoH0l7j5Qv7hrWxszt+UYSpJ07L0bnN9kD/3jUFkSStok5ubRP5rvOLH6cg4sQX97VuU7EPAmNhj9XcEH7hGMkAAxV/9pbrocSMAm4+HgpyoVl4NSvh9HVWA7tq2WMBgNl6qi05xGws2Fr+zlsax7yr9/hQKdNXL04=</ds:SignatureValue>\n" +
+		"      <ds:KeyInfo>\n" +
+		"        <ds:X509Data>\n" +
+		"          <ds:X509Certificate>MIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJVUzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkdBMQwwCgYDVQQKDANmb28xEjAQBgNVBAMMCWxvY2FsaG9zdDCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA1PMHYmhZj308kWLhZVT4vOulqx/9ibm5B86fPWwUKKQ2i12MYtz07tzukPymisTDhQaqyJ8Kqb/6JjhmeMnEOdTvSPmHO8m1ZVveJU6NoKRn/mP/BD7FW52WhbrUXLSeHVSKfWkNk6S4hk9MV9TswTvyRIKvRsw0X/gfnqkroJcCAwEAATANBgkqhkiG9w0BAQUFAAOBgQCMMlIO+GNcGekevKgkakpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeTQLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvnOwJlNCASPZRH/JmF8tX0hoHuAQ==</ds:X509Certificate>\n" +
+		"        </ds:X509Data>\n" +
+		"      </ds:KeyInfo>\n" +
+		"    </ds:Signature>\n" +
+		"    <saml:Subject>\n" +
+		"      <saml:NameID Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" NameQualifier=\"https://idp.example.com/saml/metadata\" SPNameQualifier=\"https://gitlab.example.com/users/auth/saml/metadata\"/>\n" +
+		"      <saml:SubjectConfirmation Method=\"urn:oasis:names:tc:SAML:2.0:cm:bearer\">\n" +
+		"        <saml:SubjectConfirmationData InResponseTo=\"id-00020406080a0c0e10121416181a1c1e\" NotOnOrAfter=\"2015-12-01T01:58:39Z\" Recipient=\"https://gitlab.example.com/users/auth/saml/callback\"/>\n" +
+		"      </saml:SubjectConfirmation>\n" +
+		"    </saml:Subject>\n" +
+		"    <saml:Conditions NotBefore=\"2015-12-01T01:57:09Z\" NotOnOrAfter=\"2015-12-01T01:58:39Z\">\n" +
+		"      <saml:AudienceRestriction>\n" +
+		"        <saml:Audience>https://gitlab.example.com/users/auth/saml/metadata</saml:Audience>\n" +
+		"      </saml:AudienceRestriction>\n" +
+		"    </saml:Conditions>\n" +
+		"    <saml:AuthnStatement AuthnInstant=\"0001-01-01T00:00:00Z\">\n" +
+		"      <saml:SubjectLocality/>\n" +
+		"      <saml:AuthnContext>\n" +
+		"        <saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml:AuthnContextClassRef>\n" +
+		"      </saml:AuthnContext>\n" +
+		"    </saml:AuthnStatement>\n" +
+		"    <saml:AttributeStatement>\n" +
+		"      <saml:Attribute FriendlyName=\"Email address\" Name=\"email\" NameFormat=\"urn:oasis:names:tc:SAML:2.0:attrname-format:basic\">\n" +
+		"        <saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"xs:string\"></saml:AttributeValue>\n" +
+		"      </saml:Attribute>\n" +
+		"      <saml:Attribute FriendlyName=\"Full name\" Name=\"name\" NameFormat=\"urn:oasis:names:tc:SAML:2.0:attrname-format:basic\">\n" +
+		"        <saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"xs:string\"></saml:AttributeValue>\n" +
+		"      </saml:Attribute>\n" +
+		"      <saml:Attribute FriendlyName=\"Given name\" Name=\"first_name\" NameFormat=\"urn:oasis:names:tc:SAML:2.0:attrname-format:basic\">\n" +
+		"        <saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"xs:string\"></saml:AttributeValue>\n" +
+		"      </saml:Attribute>\n" +
+		"      <saml:Attribute FriendlyName=\"Family name\" Name=\"last_name\" NameFormat=\"urn:oasis:names:tc:SAML:2.0:attrname-format:basic\">\n" +
+		"        <saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"xs:string\"></saml:AttributeValue>\n" +
+		"      </saml:Attribute>\n" +
+		"      <saml:Attribute FriendlyName=\"uid\" Name=\"urn:oid:0.9.2342.19200300.100.1.1\" NameFormat=\"urn:oasis:names:tc:SAML:2.0:attrname-format:uri\">\n" +
+		"        <saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"xs:string\">alice</saml:AttributeValue>\n" +
+		"      </saml:Attribute>\n" +
+		"    </saml:AttributeStatement>\n" +
+		"  </saml:Assertion>\n" +
+		"</samlp:Response>\n"
+	assert.Equal(t, expectedResponseStr, responseStr)
 }
 
-func (test *IdentityProviderTest) TestRequestedAttributes(c *C) {
+func TestIDPRequestedAttributes(t *testing.T) {
+	test := NewIdentifyProviderTest()
 	metadata := EntityDescriptor{}
 	err := xml.Unmarshal([]byte(`<?xml version='1.0' encoding='UTF-8'?><md:EntityDescriptor ID='_85fdc505-39e4-4c20-a67f-ca15f4e4064a' entityID='https://dev.aa.kndr.org/users/auth/saml/metadata' xmlns:md='urn:oasis:names:tc:SAML:2.0:metadata' xmlns:saml='urn:oasis:names:tc:SAML:2.0:assertion'><md:SPSSODescriptor AuthnRequestsSigned='false' WantAssertionsSigned='false' protocolSupportEnumeration='urn:oasis:names:tc:SAML:2.0:protocol'><md:AssertionConsumerService Binding='urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST' Location='https://dev.aa.kndr.org/users/auth/saml/callback' index='0' isDefault='true'/><md:AttributeConsumingService index='1' isDefault='true'><md:ServiceName xml:lang='en'>Required attributes</md:ServiceName><md:RequestedAttribute FriendlyName='Email address' Name='email' NameFormat='urn:oasis:names:tc:SAML:2.0:attrname-format:basic'/><md:RequestedAttribute FriendlyName='Full name' Name='name' NameFormat='urn:oasis:names:tc:SAML:2.0:attrname-format:basic'/><md:RequestedAttribute FriendlyName='Given name' Name='first_name' NameFormat='urn:oasis:names:tc:SAML:2.0:attrname-format:basic'/><md:RequestedAttribute FriendlyName='Family name' Name='last_name' NameFormat='urn:oasis:names:tc:SAML:2.0:attrname-format:basic'/></md:AttributeConsumingService></md:SPSSODescriptor></md:EntityDescriptor>`), &metadata)
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
 	requestURL, err := test.SP.MakeRedirectAuthenticationRequest("ThisIsTheRelayState")
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
 	r, _ := http.NewRequest("GET", requestURL.String(), nil)
 	req, err := NewIdpAuthnRequest(&test.IDP, r)
 	req.ServiceProviderMetadata = &metadata
 	req.ACSEndpoint = &metadata.SPSSODescriptors[0].AssertionConsumerServices[0]
 	req.SPSSODescriptor = &metadata.SPSSODescriptors[0]
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 	err = DefaultAssertionMaker{}.MakeAssertion(req, &Session{
 		ID:             "f00df00df00d",
 		UserName:       "alice",
@@ -1018,9 +1049,9 @@ func (test *IdentityProviderTest) TestRequestedAttributes(c *C) {
 		UserSurname:    "Smith",
 		UserCommonName: "Alice Smith",
 	})
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
-	c.Assert(req.Assertion.AttributeStatements, DeepEquals, []AttributeStatement{AttributeStatement{
+	expectedAttributes := []AttributeStatement{AttributeStatement{
 		Attributes: []Attribute{
 			Attribute{
 				FriendlyName: "Email address",
@@ -1121,10 +1152,12 @@ func (test *IdentityProviderTest) TestRequestedAttributes(c *C) {
 					},
 				},
 			},
-		}}})
+		}}}
+	assert.Equal(t, expectedAttributes, req.Assertion.AttributeStatements)
 }
 
-func (test *IdentityProviderTest) TestNoDestination(c *C) {
+func TestIDPNoDestination(t *testing.T) {
+	test := NewIdentifyProviderTest()
 	test.IDP.SessionProvider = &mockSessionProvider{
 		GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
 			return &Session{ID: "f00df00df00d", UserName: "alice"}
@@ -1133,7 +1166,7 @@ func (test *IdentityProviderTest) TestNoDestination(c *C) {
 
 	metadata := EntityDescriptor{}
 	err := xml.Unmarshal([]byte(`<?xml version='1.0' encoding='UTF-8'?><md:EntityDescriptor ID='_97e2ce01-fa34-4c09-9126-4f7595ef6bf8' entityID='https://gitlab.example.com/users/auth/saml/metadata' xmlns:md='urn:oasis:names:tc:SAML:2.0:metadata' xmlns:saml='urn:oasis:names:tc:SAML:2.0:assertion'><md:SPSSODescriptor AuthnRequestsSigned='false' WantAssertionsSigned='false' protocolSupportEnumeration='urn:oasis:names:tc:SAML:2.0:protocol'><md:AssertionConsumerService Binding='urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST' Location='https://gitlab.example.com/users/auth/saml/callback' index='0' isDefault='true'/><md:AttributeConsumingService index='1' isDefault='true'><md:ServiceName xml:lang='en'>Required attributes</md:ServiceName><md:RequestedAttribute FriendlyName='Email address' Name='email' NameFormat='urn:oasis:names:tc:SAML:2.0:attrname-format:basic'/><md:RequestedAttribute FriendlyName='Full name' Name='name' NameFormat='urn:oasis:names:tc:SAML:2.0:attrname-format:basic'/><md:RequestedAttribute FriendlyName='Given name' Name='first_name' NameFormat='urn:oasis:names:tc:SAML:2.0:attrname-format:basic'/><md:RequestedAttribute FriendlyName='Family name' Name='last_name' NameFormat='urn:oasis:names:tc:SAML:2.0:attrname-format:basic'/></md:AttributeConsumingService></md:SPSSODescriptor></md:EntityDescriptor>`), &metadata)
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 	test.IDP.ServiceProviderProvider = &mockServiceProviderProvider{
 		GetServiceProviderFunc: func(r *http.Request, serviceProviderID string) (*EntityDescriptor, error) {
 			if serviceProviderID == "https://gitlab.example.com/users/saml/metadata" {
@@ -1158,15 +1191,15 @@ func (test *IdentityProviderTest) TestNoDestination(c *C) {
 	}
 	req.HTTPRequest, _ = http.NewRequest("POST", "http://idp.example.com/saml/sso", nil)
 	err = req.Validate()
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 	err = DefaultAssertionMaker{}.MakeAssertion(&req, &Session{
 		ID:       "f00df00df00d",
 		UserName: "alice",
 	})
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 	err = req.MakeAssertionEl()
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
 	err = req.MakeResponse()
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 }
