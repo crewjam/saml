@@ -134,7 +134,7 @@ Now you should be able to authenticate. The flow should look like this:
 
 ## Getting Started as an Identity Provider
 
-Please see `examples/idp/` for a substantially complete example of how to use the library and helpers to be an identity provider.
+Please see `example/idp/` for a substantially complete example of how to use the library and helpers to be an identity provider.
 
 ## Support
 
