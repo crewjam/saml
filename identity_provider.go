@@ -339,14 +339,11 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 		req.RelayState = r.URL.Query().Get("RelayState")
 	case "POST":
 		if err := r.ParseForm(); err != nil {
-			fmt.Println("failed on ParseForm")
 			return nil, err
 		}
 		var err error
 		req.RequestBuffer, err = base64.StdEncoding.DecodeString(r.PostForm.Get("SAMLRequest"))
 		if err != nil {
-			fmt.Println("failed on DecodeString")
-			fmt.Printf("SAMLRequest: %s\n", r.PostForm.Get("SAMLRequest"))
 			return nil, err
 		}
 		req.RelayState = r.PostForm.Get("RelayState")
@@ -361,7 +358,6 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 // request is not valid.
 func (req *IdpAuthnRequest) Validate() error {
 	if err := xml.Unmarshal(req.RequestBuffer, &req.Request); err != nil {
-		fmt.Println("failed to unmarshal xml body")
 		return err
 	}
 
@@ -425,11 +421,8 @@ func (req *IdpAuthnRequest) Validate() error {
 
 func (req *IdpAuthnRequest) getACSEndpoint() error {
 	if req.Request.AssertionConsumerServiceIndex != "" {
-		fmt.Println("getACSEndpoint 1")
 		for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
-			fmt.Println("getACSEndpoint 1.1")
 			for _, spAssertionConsumerService := range spssoDescriptor.AssertionConsumerServices {
-				fmt.Println("getACSEndpoint 1.1.1")
 				if strconv.Itoa(spAssertionConsumerService.Index) == req.Request.AssertionConsumerServiceIndex {
 					req.SPSSODescriptor = &spssoDescriptor
 					req.ACSEndpoint = &spAssertionConsumerService
@@ -440,13 +433,9 @@ func (req *IdpAuthnRequest) getACSEndpoint() error {
 	}
 
 	if req.Request.AssertionConsumerServiceURL != "" {
-		fmt.Println("getACSEndpoint 2")
 		for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
-			fmt.Println("getACSEndpoint 2.1")
 			for _, spAssertionConsumerService := range spssoDescriptor.AssertionConsumerServices {
-				fmt.Println("getACSEndpoint 2.1.1")
 				if spAssertionConsumerService.Location == req.Request.AssertionConsumerServiceURL {
-					fmt.Println("getACSEndpoint happy yay!")
 					req.SPSSODescriptor = &spssoDescriptor
 					req.ACSEndpoint = &spAssertionConsumerService
 					return nil
@@ -458,12 +447,9 @@ func (req *IdpAuthnRequest) getACSEndpoint() error {
 	// Some service providers, like the Microsoft Azure AD service provider, issue
 	// assertion requests that don't specify an ACS url at all.
 	if req.Request.AssertionConsumerServiceURL == "" && req.Request.AssertionConsumerServiceIndex == "" {
-		fmt.Println("getACSEndpoint 3")
 		// find a default ACS binding in the metadata that we can use
 		for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
-			fmt.Println("getACSEndpoint 3.1")
 			for _, spAssertionConsumerService := range spssoDescriptor.AssertionConsumerServices {
-				fmt.Println("getACSEndpoint 3.1.1")
 				if spAssertionConsumerService.IsDefault != nil && *spAssertionConsumerService.IsDefault {
 					switch spAssertionConsumerService.Binding {
 					case HTTPPostBinding, HTTPRedirectBinding:
@@ -477,9 +463,7 @@ func (req *IdpAuthnRequest) getACSEndpoint() error {
 
 		// if we can't find a default, use *any* ACS binding
 		for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
-			fmt.Println("getACSEndpoint 3.2")
 			for _, spAssertionConsumerService := range spssoDescriptor.AssertionConsumerServices {
-				fmt.Println("getACSEndpoint 3.2.1")
 				switch spAssertionConsumerService.Binding {
 				case HTTPPostBinding, HTTPRedirectBinding:
 					req.SPSSODescriptor = &spssoDescriptor
