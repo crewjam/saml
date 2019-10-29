@@ -186,11 +186,13 @@ func (m *Middleware) getPossibleRequestIDs(r *http.Request) []string {
 			m.ServiceProvider.Logger.Printf("... invalid token %s", err)
 			continue
 		}
+		// If IDP initiated requests are allowed, then we can expect an empty response ID.
 		claims := token.Claims.(jwt.MapClaims)
-		rv = append(rv, claims["id"].(string))
+		if id, ok := claims["id"]; ok {
+			rv = append(rv, id.(string))
+		}
 	}
 
-	// If IDP initiated requests are allowed, then we can expect an empty response ID.
 	if m.AllowIDPInitiated {
 		rv = append(rv, "")
 	}
