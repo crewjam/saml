@@ -55,6 +55,7 @@ type ServiceProvider struct {
 
 	// Certificate is the RSA public part of Key.
 	Certificate *x509.Certificate
+	Intermediates []*x509.Certificate
 
 	// MetadataURL is the full URL to the metadata endpoint on this host,
 	// i.e. https://example.com/saml/metadata
@@ -112,6 +113,10 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 	authnRequestsSigned := false
 	wantAssertionsSigned := true
 	validUntil := TimeNow().Add(validDuration)
+	certBytes := sp.Certificate.Raw
+	for _, intermediate := range sp.Intermediates {
+		certBytes = append(certBytes, intermediate.Raw...)
+	}
 	return &EntityDescriptor{
 		EntityID:   sp.MetadataURL.String(),
 		ValidUntil: validUntil,
@@ -125,13 +130,13 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 							{
 								Use: "signing",
 								KeyInfo: KeyInfo{
-									Certificate: base64.StdEncoding.EncodeToString(sp.Certificate.Raw),
+									Certificate: base64.StdEncoding.EncodeToString(certBytes),
 								},
 							},
 							{
 								Use: "encryption",
 								KeyInfo: KeyInfo{
-									Certificate: base64.StdEncoding.EncodeToString(sp.Certificate.Raw),
+									Certificate: base64.StdEncoding.EncodeToString(certBytes),
 								},
 								EncryptionMethods: []EncryptionMethod{
 									{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},

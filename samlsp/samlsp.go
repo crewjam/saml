@@ -25,6 +25,7 @@ type Options struct {
 	Key               *rsa.PrivateKey
 	Logger            logger.Interface
 	Certificate       *x509.Certificate
+	Intermediates     []*x509.Certificate
 	AllowIDPInitiated bool
 	IDPMetadata       *saml.EntityDescriptor
 	IDPMetadataURL    *url.URL
@@ -57,6 +58,7 @@ func New(opts Options) (*Middleware, error) {
 			Key:               opts.Key,
 			Logger:            logr,
 			Certificate:       opts.Certificate,
+			Intermediates:     opts.Intermediates,
 			MetadataURL:       *metadataURL,
 			AcsURL:            *acsURL,
 			IDPMetadata:       opts.IDPMetadata,
