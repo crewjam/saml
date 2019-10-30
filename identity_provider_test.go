@@ -1007,16 +1007,16 @@ func TestIDPCanHandleUnencryptedResponse(t *testing.T) {
 		"    </saml:AuthnStatement>\n" +
 		"    <saml:AttributeStatement>\n" +
 		"      <saml:Attribute FriendlyName=\"Email address\" Name=\"email\" NameFormat=\"urn:oasis:names:tc:SAML:2.0:attrname-format:basic\">\n" +
-		"        <saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"xs:string\"></saml:AttributeValue>\n" +
+		"        <saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"xs:string\"/>\n" +
 		"      </saml:Attribute>\n" +
 		"      <saml:Attribute FriendlyName=\"Full name\" Name=\"name\" NameFormat=\"urn:oasis:names:tc:SAML:2.0:attrname-format:basic\">\n" +
-		"        <saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"xs:string\"></saml:AttributeValue>\n" +
+		"        <saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"xs:string\"/>\n" +
 		"      </saml:Attribute>\n" +
 		"      <saml:Attribute FriendlyName=\"Given name\" Name=\"first_name\" NameFormat=\"urn:oasis:names:tc:SAML:2.0:attrname-format:basic\">\n" +
-		"        <saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"xs:string\"></saml:AttributeValue>\n" +
+		"        <saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"xs:string\"/>\n" +
 		"      </saml:Attribute>\n" +
 		"      <saml:Attribute FriendlyName=\"Family name\" Name=\"last_name\" NameFormat=\"urn:oasis:names:tc:SAML:2.0:attrname-format:basic\">\n" +
-		"        <saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"xs:string\"></saml:AttributeValue>\n" +
+		"        <saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"xs:string\"/>\n" +
 		"      </saml:Attribute>\n" +
 		"      <saml:Attribute FriendlyName=\"uid\" Name=\"urn:oid:0.9.2342.19200300.100.1.1\" NameFormat=\"urn:oasis:names:tc:SAML:2.0:attrname-format:uri\">\n" +
 		"        <saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"xs:string\">alice</saml:AttributeValue>\n" +
