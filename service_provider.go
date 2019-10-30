@@ -19,7 +19,6 @@ import (
 	dsig "github.com/russellhaering/goxmldsig"
 	"github.com/russellhaering/goxmldsig/etreeutils"
 
-	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/xmlenc"
 )
 
@@ -80,9 +79,6 @@ type ServiceProvider struct {
 	// MetadataValidDuration is a duration used to calculate validUntil
 	// attribute in the metadata endpoint
 	MetadataValidDuration time.Duration
-
-	// Logger is used to log messages for example in the event of errors
-	Logger logger.Interface
 
 	// ForceAuthn allows you to force re-authentication of users even if the user
 	// has a SSO session at the IdP.

@@ -1,0 +1,69 @@
+package samlsp
+
+import (
+	"context"
+	"encoding/xml"
+	"fmt"
+	"io/ioutil"
+	"net/http"
+	"net/url"
+
+	"github.com/crewjam/httperr"
+
+	"github.com/crewjam/saml"
+)
+
+// ParseMetadata parses arbitrary SAML IDP metadata.
+//
+// Note: this is needed because IDP metadata is sometimes wrapped in
+// an <EntitiesDescriptor>, and sometimes the top level element is an
+// <EntityDescriptor>.
+func ParseMetadata(data []byte) (*saml.EntityDescriptor, error) {
+	entity := &saml.EntityDescriptor{}
+	err := xml.Unmarshal(data, entity)
+
+	// this comparison is ugly, but it is how the error is generated in encoding/xml
+	if err != nil && err.Error() == "expected element type <EntityDescriptor> but have <EntitiesDescriptor>" {
+		entities := &saml.EntitiesDescriptor{}
+		if err := xml.Unmarshal(data, entities); err != nil {
+			return nil, err
+		}
+
+		err = fmt.Errorf("no entity found with IDPSSODescriptor")
+		for i, e := range entities.EntityDescriptors {
+			if len(e.IDPSSODescriptors) > 0 {
+				entity = &entities.EntityDescriptors[i]
+				err = nil
+			}
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return entity, nil
+}
+
+// FetchMetadata returns metadata from an IDP metadata URL.
+func FetchMetadata(ctx context.Context, httpClient *http.Client, metadataURL url.URL) (*saml.EntityDescriptor, error) {
+	req, err := http.NewRequest("GET", metadataURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, httperr.Response(*resp)
+	}
+	defer resp.Body.Close()
+
+	data, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	return ParseMetadata(data)
+}
