@@ -79,7 +79,7 @@ func getCiphertext(encryptedKey *etree.Element) ([]byte, error) {
 	return ciphertext, nil
 }
 
-func validateRSAKey(key interface{}, encryptedKey *etree.Element) (*rsa.PrivateKey, error) {
+func validateRSAKeyIfPresent(key interface{}, encryptedKey *etree.Element) (*rsa.PrivateKey, error) {
 	rsaKey, ok := key.(*rsa.PrivateKey)
 	if !ok {
 		return nil, errors.New("expected key to be a *rsa.PrivateKey")
