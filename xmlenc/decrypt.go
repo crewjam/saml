@@ -110,8 +110,6 @@ func validateRSAKey(key interface{}, encryptedKey *etree.Element) (*rsa.PrivateK
 		}
 	} else if el = encryptedKey.FindElement("./KeyInfo/X509Data/X509IssuerSerial"); el != nil {
 		// TODO: determine how to validate the issuer serial information
-	} else {
-		return nil, ErrCannotFindRequiredElement("X509Certificate or X509IssuerSerial")
 	}
 	return rsaKey, nil
 }
