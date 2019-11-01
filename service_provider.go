@@ -452,16 +452,7 @@ func (sp *ServiceProvider) validateDestination(response []byte, responseDom *Res
 }
 
 // ParseResponse extracts the SAML IDP response received in req, validates
-// it, and returns the verified attributes of the request.
-//
-// This function handles decrypting the message, verifying the digital
-// signature on the assertion, and verifying that the specified conditions
-// and properties are met.
-//
-// If the function fails it will return an InvalidResponseError whose
-// properties are useful in describing which part of the parsing process
-// failed. However, to discourage inadvertent disclosure the diagnostic
-// information, the Error() method returns a static string.
+// it, and returns the verified assertion.
 func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs []string) (*Assertion, error) {
 	now := TimeNow()
 	retErr := &InvalidResponseError{
@@ -484,6 +475,17 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 
 }
 
+// ParseXMLResponse validates the SAML IDP response and
+// returns the verified assertion.
+//
+// This function handles decrypting the message, verifying the digital
+// signature on the assertion, and verifying that the specified conditions
+// and properties are met.
+//
+// If the function fails it will return an InvalidResponseError whose
+// properties are useful in describing which part of the parsing process
+// failed. However, to discourage inadvertent disclosure the diagnostic
+// information, the Error() method returns a static string.
 func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleRequestIDs []string) (*Assertion, error) {
 	now := TimeNow()
 	var err error
@@ -520,11 +522,11 @@ func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleR
 	}
 
 	if resp.IssueInstant.Add(MaxIssueDelay).Before(now) {
-		retErr.PrivateErr = fmt.Errorf("IssueInstant expired at %s", resp.IssueInstant.Add(MaxIssueDelay))
+		retErr.PrivateErr = fmt.Errorf("response IssueInstant expired at %s", resp.IssueInstant.Add(MaxIssueDelay))
 		return nil, retErr
 	}
 	if resp.Issuer.Value != sp.IDPMetadata.EntityID {
-		retErr.PrivateErr = fmt.Errorf("Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
+		retErr.PrivateErr = fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
 		return nil, retErr
 	}
 	if resp.Status.StatusCode.Value != StatusSuccess {
@@ -627,20 +629,20 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 			}
 		}
 		if !requestIDvalid {
-			return fmt.Errorf("SubjectConfirmation one of the possible request IDs (%v)", possibleRequestIDs)
+			return fmt.Errorf("assertion SubjectConfirmation one of the possible request IDs (%v)", possibleRequestIDs)
 		}
 		if subjectConfirmation.SubjectConfirmationData.Recipient != sp.AcsURL.String() {
-			return fmt.Errorf("SubjectConfirmation Recipient is not %s", sp.AcsURL.String())
+			return fmt.Errorf("assertion SubjectConfirmation Recipient is not %s", sp.AcsURL.String())
 		}
 		if subjectConfirmation.SubjectConfirmationData.NotOnOrAfter.Add(MaxClockSkew).Before(now) {
-			return fmt.Errorf("SubjectConfirmationData is expired")
+			return fmt.Errorf("assertion SubjectConfirmationData is expired")
 		}
 	}
 	if assertion.Conditions.NotBefore.Add(-MaxClockSkew).After(now) {
-		return fmt.Errorf("Conditions is not yet valid")
+		return fmt.Errorf("assertion Conditions is not yet valid")
 	}
 	if assertion.Conditions.NotOnOrAfter.Add(MaxClockSkew).Before(now) {
-		return fmt.Errorf("Conditions is expired")
+		return fmt.Errorf("assertion Conditions is expired")
 	}
 
 	audienceRestrictionsValid := len(assertion.Conditions.AudienceRestrictions) == 0
@@ -650,7 +652,7 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 		}
 	}
 	if !audienceRestrictionsValid {
-		return fmt.Errorf("Conditions AudienceRestriction does not contain %q", sp.MetadataURL.String())
+		return fmt.Errorf("assertion Conditions AudienceRestriction does not contain %q", sp.MetadataURL.String())
 	}
 	return nil
 }
