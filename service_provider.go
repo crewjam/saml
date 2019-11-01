@@ -452,16 +452,7 @@ func (sp *ServiceProvider) validateDestination(response []byte, responseDom *Res
 }
 
 // ParseResponse extracts the SAML IDP response received in req, validates
-// it, and returns the verified attributes of the request.
-//
-// This function handles decrypting the message, verifying the digital
-// signature on the assertion, and verifying that the specified conditions
-// and properties are met.
-//
-// If the function fails it will return an InvalidResponseError whose
-// properties are useful in describing which part of the parsing process
-// failed. However, to discourage inadvertent disclosure the diagnostic
-// information, the Error() method returns a static string.
+// it, and returns the verified assertion.
 func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs []string) (*Assertion, error) {
 	now := TimeNow()
 	retErr := &InvalidResponseError{
@@ -484,6 +475,17 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 
 }
 
+// ParseXMLResponse validates the SAML IDP response and
+// returns the verified assertion.
+//
+// This function handles decrypting the message, verifying the digital
+// signature on the assertion, and verifying that the specified conditions
+// and properties are met.
+//
+// If the function fails it will return an InvalidResponseError whose
+// properties are useful in describing which part of the parsing process
+// failed. However, to discourage inadvertent disclosure the diagnostic
+// information, the Error() method returns a static string.
 func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleRequestIDs []string) (*Assertion, error) {
 	now := TimeNow()
 	var err error

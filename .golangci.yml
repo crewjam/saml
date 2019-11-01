@@ -71,12 +71,8 @@ linters-settings:
       - unreachable
       - unsafeptr
       - unusedresult
+issues:
+  exclude-use-default: false
+  exclude:
+    - G104 # 'Errors unhandled. (gosec)
 
-#issues:
-#  exclude-use-default: false
-#  exclude:
-#    - G104 # 'Errors unhandled. (gosec)
-#    - G204 # Subprocess launched with variable (gosec)
-#    - G301 # Expect directory permissions to be 0750 or less (gosec)
-#    - G302 # Expect file permissions to be 0600 or less (gosec)
-#    - G304 # Potential file inclusion via variable (gosec)

@@ -39,6 +39,10 @@ type AuthnRequest struct {
 	ProviderName                   string `xml:",attr"`
 }
 
+// LogoutRequest  represents the SAML object of the same name, a request from an IDP
+// to destroy a user's session.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
 type LogoutRequest struct {
 	XMLName xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol LogoutRequest"`
 

@@ -130,6 +130,8 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 	return http.HandlerFunc(fn)
 }
 
+// RequireAccountHandler handles an HTTP request that does not already have a
+// valid session. It redirects the user to start the SAML auth flow.
 func (m *Middleware) RequireAccountHandler(w http.ResponseWriter, r *http.Request) {
 	// If we try to redirect when the original request is the ACS URL we'll
 	// end up in a loop. This is a programming error, so we panic here. In
