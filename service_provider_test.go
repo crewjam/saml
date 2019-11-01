@@ -761,25 +761,6 @@ func TestServiceProviderMissingDestinationWithSignaturePresent(t *testing.T) {
 		"`Destination` does not match AcsURL (expected \"https://15661444.ngrok.io/saml2/acs\", actual \"\")")
 }
 
-func TestSPCanProcessResponseWithoutDestination(t *testing.T) {
-	test := NewServiceProviderTest()
-	s := ServiceProvider{
-		Key:         test.Key,
-		Certificate: test.Certificate,
-		MetadataURL: mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
-		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
-		IDPMetadata: &EntityDescriptor{},
-	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
-	assert.NoError(t, err)
-
-	req := http.Request{PostForm: url.Values{}}
-	test.replaceDestination("")
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
-	assert.NoError(t, err)
-}
-
 func TestSPMismatchedDestinationsWithSignaturePresent(t *testing.T) {
 	test := NewServiceProviderTest()
 	s := ServiceProvider{
@@ -1194,31 +1175,31 @@ func TestServiceProviderCanHandleSignedAssertionsResponse(t *testing.T) {
 			Name:       "uid",
 			NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:basic",
 			Values: []AttributeValue{
-				AttributeValue{
+				{
 					Type:  "xs:string",
 					Value: "test",
 				},
 			},
 		},
-		Attribute{
+		{
 			Name:       "mail",
 			NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:basic",
 			Values: []AttributeValue{
-				AttributeValue{
+				{
 					Type:  "xs:string",
 					Value: "test@example.com",
 				},
 			},
 		},
-		Attribute{
+		{
 			Name:       "eduPersonAffiliation",
 			NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:basic",
 			Values: []AttributeValue{
-				AttributeValue{
+				{
 					Type:  "xs:string",
 					Value: "users",
 				},
-				AttributeValue{
+				{
 					Type:  "xs:string",
 					Value: "examplerole1",
 				},
