@@ -245,7 +245,7 @@ type NameIDPolicy struct {
 // Element returns an etree.Element representing the object in XML form.
 func (a *NameIDPolicy) Element() *etree.Element {
 	el := etree.NewElement("samlp:NameIDPolicy")
-	if a.Format != nil {
+	if a.Format != nil && *a.Format != "" {
 		el.CreateAttr("Format", *a.Format)
 	}
 	if a.SPNameQualifier != nil {

@@ -32,3 +32,17 @@ func TestAttributeXMLRoundTrip(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, expected, actual)
 }
+
+func TestNameIDFormat(t *testing.T) {
+	var emptyString string
+	el := NameIDPolicy{
+		Format: &emptyString,
+	}
+	doc := etree.NewDocument()
+	doc.SetRoot(el.Element())
+	x, err := doc.WriteToBytes()
+	assert.NoError(t, err)
+	assert.Equal(t,
+		"<samlp:NameIDPolicy/>",
+		string(x))
+}
