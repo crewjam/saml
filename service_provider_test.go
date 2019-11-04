@@ -867,7 +867,7 @@ func TestSPInvalidResponses(t *testing.T) {
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	assert.EqualError(t,
 		err.(*InvalidResponseError).PrivateErr,
-		"IssueInstant expired at 2015-12-01 01:57:51.375 +0000 UTC")
+		"response IssueInstant expired at 2015-12-01 01:57:51.375 +0000 UTC")
 	TimeNow = func() time.Time {
 		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Dec 1 01:57:09 UTC 2015")
 		return rv
@@ -879,7 +879,7 @@ func TestSPInvalidResponses(t *testing.T) {
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	assert.EqualError(t,
 		err.(*InvalidResponseError).PrivateErr,
-		"Issuer does not match the IDP metadata (expected \"http://snakeoil.com\")")
+		"response Issuer does not match the IDP metadata (expected \"http://snakeoil.com\")")
 	s.IDPMetadata.EntityID = "https://idp.testshib.org/idp/shibboleth"
 
 	oldSpStatusSuccess := StatusSuccess
@@ -951,35 +951,35 @@ func TestSPInvalidAssertions(t *testing.T) {
 	xml.Unmarshal(assertionBuf, &assertion)
 
 	err = s.validateAssertion(&assertion, []string{"any request id"}, TimeNow())
-	assert.EqualError(t, err, "SubjectConfirmation one of the possible request IDs ([any request id])")
+	assert.EqualError(t, err, "assertion SubjectConfirmation one of the possible request IDs ([any request id])")
 
 	assertion.Subject.SubjectConfirmations[0].SubjectConfirmationData.Recipient = "wrong/acs/url"
 	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
-	assert.EqualError(t, err, "SubjectConfirmation Recipient is not https://15661444.ngrok.io/saml2/acs")
+	assert.EqualError(t, err, "assertion SubjectConfirmation Recipient is not https://15661444.ngrok.io/saml2/acs")
 	assertion = Assertion{}
 	xml.Unmarshal(assertionBuf, &assertion)
 
 	assertion.Subject.SubjectConfirmations[0].SubjectConfirmationData.NotOnOrAfter = TimeNow().Add(-1 * time.Hour)
 	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
-	assert.EqualError(t, err, "SubjectConfirmationData is expired")
+	assert.EqualError(t, err, "assertion SubjectConfirmationData is expired")
 	assertion = Assertion{}
 	xml.Unmarshal(assertionBuf, &assertion)
 
 	assertion.Conditions.NotBefore = TimeNow().Add(time.Hour)
 	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
-	assert.EqualError(t, err, "Conditions is not yet valid")
+	assert.EqualError(t, err, "assertion Conditions is not yet valid")
 	assertion = Assertion{}
 	xml.Unmarshal(assertionBuf, &assertion)
 
 	assertion.Conditions.NotOnOrAfter = TimeNow().Add(-1 * time.Hour)
 	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
-	assert.EqualError(t, err, "Conditions is expired")
+	assert.EqualError(t, err, "assertion Conditions is expired")
 	assertion = Assertion{}
 	xml.Unmarshal(assertionBuf, &assertion)
 
 	assertion.Conditions.AudienceRestrictions[0].Audience.Value = "not/our/metadata/url"
 	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
-	assert.EqualError(t, err, "Conditions AudienceRestriction does not contain \"https://15661444.ngrok.io/saml2/metadata\"")
+	assert.EqualError(t, err, "assertion Conditions AudienceRestriction does not contain \"https://15661444.ngrok.io/saml2/metadata\"")
 	assertion = Assertion{}
 	xml.Unmarshal(assertionBuf, &assertion)
 
