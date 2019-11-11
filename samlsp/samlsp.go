@@ -8,6 +8,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
@@ -24,6 +25,7 @@ type Options struct {
 	Key               *rsa.PrivateKey
 	Logger            logger.Interface
 	Certificate       *x509.Certificate
+	Intermediates     []*x509.Certificate
 	AllowIDPInitiated bool
 	IDPMetadata       *saml.EntityDescriptor
 	IDPMetadataURL    *url.URL
@@ -45,6 +47,8 @@ func New(opts Options) (*Middleware, error) {
 	if logr == nil {
 		logr = logger.DefaultLogger
 	}
+	sloRelURL, _ := url.Parse("saml/slo")
+	sloURL := opts.URL.ResolveReference(sloRelURL)
 
 	tokenMaxAge := opts.CookieMaxAge
 	if opts.CookieMaxAge == 0 {
@@ -53,13 +57,16 @@ func New(opts Options) (*Middleware, error) {
 
 	m := &Middleware{
 		ServiceProvider: saml.ServiceProvider{
-			Key:         opts.Key,
-			Logger:      logr,
-			Certificate: opts.Certificate,
-			MetadataURL: *metadataURL,
-			AcsURL:      *acsURL,
-			IDPMetadata: opts.IDPMetadata,
-			ForceAuthn:  &opts.ForceAuthn,
+			Key:               opts.Key,
+			Logger:            logr,
+			Certificate:       opts.Certificate,
+			Intermediates:     opts.Intermediates,
+			MetadataURL:       *metadataURL,
+			AcsURL:            *acsURL,
+			SloURL:            *sloURL,
+			IDPMetadata:       opts.IDPMetadata,
+			ForceAuthn:        &opts.ForceAuthn,
+			AllowIDPInitiated: opts.AllowIDPInitiated,
 		},
 		AllowIDPInitiated: opts.AllowIDPInitiated,
 		TokenMaxAge:       tokenMaxAge,
@@ -77,7 +84,11 @@ func New(opts Options) (*Middleware, error) {
 			if opts.CookieDomain != "" {
 				return opts.CookieDomain
 			}
-			return opts.URL.Host
+			host, _, err := net.SplitHostPort(opts.URL.Host)
+			if err != nil {
+				return opts.URL.Host
+			}
+			return host
 		}(),
 		Secure: opts.CookieSecure,
 	}

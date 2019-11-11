@@ -1,14 +1,15 @@
 package samlsp
 
 import (
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/xml"
+	"io"
 	"net/http"
 	"time"
 
-	"github.com/crewjam/saml"
 	"github.com/dgrijalva/jwt-go"
+
+	"github.com/crewjam/saml"
 )
 
 // Middleware implements middleware than allows a web application
@@ -51,14 +52,36 @@ type Middleware struct {
 	Binding           string
 }
 
-var jwtSigningMethod = jwt.SigningMethodHS256
+var (
+	jwtSigningMethod = jwt.SigningMethodRS256
+	jwtParser        = jwt.Parser{
+		ValidMethods: []string{jwtSigningMethod.Name},
+	}
+)
 
 func randomBytes(n int) []byte {
 	rv := make([]byte, n)
-	if _, err := saml.RandReader.Read(rv); err != nil {
+	if _, err := io.ReadFull(saml.RandReader, rv); err != nil {
 		panic(err)
 	}
 	return rv
+}
+
+func (m *Middleware) issueSignedToken(claims jwt.Claims) (string, error) {
+	token := jwt.NewWithClaims(jwtSigningMethod, claims)
+	return token.SignedString(m.ServiceProvider.Key)
+}
+
+func (m *Middleware) parseSignedToken(token string) (*jwt.Token, error) {
+	return jwtParser.Parse(token, func(*jwt.Token) (interface{}, error) {
+		return m.ServiceProvider.Key.Public(), nil
+	})
+}
+
+func (m *Middleware) parseSignedTokenWithClaims(token string, claims jwt.Claims) (*jwt.Token, error) {
+	return jwtParser.ParseWithClaims(token, claims, func(*jwt.Token) (interface{}, error) {
+		return m.ServiceProvider.Key.Public(), nil
+	})
 }
 
 // ServeHTTP implements http.Handler and serves the SAML-specific HTTP endpoints
@@ -107,6 +130,8 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 	return http.HandlerFunc(fn)
 }
 
+// RequireAccountHandler handles an HTTP request that does not already have a
+// valid session. It redirects the user to start the SAML auth flow.
 func (m *Middleware) RequireAccountHandler(w http.ResponseWriter, r *http.Request) {
 	// If we try to redirect when the original request is the ACS URL we'll
 	// end up in a loop. This is a programming error, so we panic here. In
@@ -140,12 +165,10 @@ func (m *Middleware) RequireAccountHandler(w http.ResponseWriter, r *http.Reques
 	// we set a cookie that corresponds to the state
 	relayState := base64.URLEncoding.EncodeToString(randomBytes(42))
 
-	secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
-	state := jwt.New(jwtSigningMethod)
-	claims := state.Claims.(jwt.MapClaims)
+	claims := jwt.MapClaims{}
 	claims["id"] = req.ID
 	claims["uri"] = r.URL.String()
-	signedState, err := state.SignedString(secretBlock)
+	signedState, err := m.issueSignedToken(claims)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -175,22 +198,18 @@ func (m *Middleware) RequireAccountHandler(w http.ResponseWriter, r *http.Reques
 func (m *Middleware) getPossibleRequestIDs(r *http.Request) []string {
 	rv := []string{}
 	for _, value := range m.ClientState.GetStates(r) {
-		jwtParser := jwt.Parser{
-			ValidMethods: []string{jwtSigningMethod.Name},
-		}
-		token, err := jwtParser.Parse(value, func(t *jwt.Token) (interface{}, error) {
-			secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
-			return secretBlock, nil
-		})
+		token, err := m.parseSignedToken(value)
 		if err != nil || !token.Valid {
 			m.ServiceProvider.Logger.Printf("... invalid token %s", err)
 			continue
 		}
+		// If IDP initiated requests are allowed, then we can expect an empty response ID.
 		claims := token.Claims.(jwt.MapClaims)
-		rv = append(rv, claims["id"].(string))
+		if id, ok := claims["id"]; ok {
+			rv = append(rv, id.(string))
+		}
 	}
 
-	// If IDP initiated requests are allowed, then we can expect an empty response ID.
 	if m.AllowIDPInitiated {
 		rv = append(rv, "")
 	}
@@ -202,7 +221,6 @@ func (m *Middleware) getPossibleRequestIDs(r *http.Request) []string {
 // It sets a cookie that contains a signed JWT containing the assertion attributes.
 // It then redirects the user's browser to the original URL contained in RelayState.
 func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion *saml.Assertion) {
-	secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
 
 	redirectURI := "/"
 	if relayState := r.Form.Get("RelayState"); relayState != "" {
@@ -213,12 +231,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 			return
 		}
 
-		jwtParser := jwt.Parser{
-			ValidMethods: []string{jwtSigningMethod.Name},
-		}
-		state, err := jwtParser.Parse(stateValue, func(t *jwt.Token) (interface{}, error) {
-			return secretBlock, nil
-		})
+		state, err := m.parseSignedToken(stateValue)
 		if err != nil || !state.Valid {
 			m.ServiceProvider.Logger.Printf("Cannot decode state JWT: %s (%s)", err, stateValue)
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
@@ -254,8 +267,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 			}
 		}
 	}
-	signedToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256,
-		claims).SignedString(secretBlock)
+	signedToken, err := m.issueSignedToken(claims)
 	if err != nil {
 		panic(err)
 	}
@@ -266,7 +278,7 @@ func (m *Middleware) Authorize(w http.ResponseWriter, r *http.Request, assertion
 
 // IsAuthorized returns true if the request has already been authorized.
 //
-// Note: This function is retained for compatability. Use GetAuthorizationToken in new code
+// Note: This function is retained for compatibility. Use GetAuthorizationToken in new code
 // instead.
 func (m *Middleware) IsAuthorized(r *http.Request) bool {
 	return m.GetAuthorizationToken(r) != nil
@@ -275,7 +287,7 @@ func (m *Middleware) IsAuthorized(r *http.Request) bool {
 // GetAuthorizationToken is invoked by RequireAccount to determine if the request
 // is already authorized or if the user's browser should be redirected to the
 // SAML login flow. If the request is authorized, then the request context is
-// ammended with a Context object.
+// amended with a Context object.
 func (m *Middleware) GetAuthorizationToken(r *http.Request) *AuthorizationToken {
 	tokenStr := m.ClientToken.GetToken(r)
 	if tokenStr == "" {
@@ -283,10 +295,7 @@ func (m *Middleware) GetAuthorizationToken(r *http.Request) *AuthorizationToken 
 	}
 
 	tokenClaims := AuthorizationToken{}
-	token, err := jwt.ParseWithClaims(tokenStr, &tokenClaims, func(t *jwt.Token) (interface{}, error) {
-		secretBlock := x509.MarshalPKCS1PrivateKey(m.ServiceProvider.Key)
-		return secretBlock, nil
-	})
+	token, err := m.parseSignedTokenWithClaims(tokenStr, &tokenClaims)
 	if err != nil || !token.Valid {
 		m.ServiceProvider.Logger.Printf("ERROR: invalid token: %s", err)
 		return nil

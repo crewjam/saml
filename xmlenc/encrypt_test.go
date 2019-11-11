@@ -1,22 +1,17 @@
 package xmlenc
 
 import (
+	"crypto/x509"
 	"encoding/pem"
 	"fmt"
 	"math/rand"
 	"strings"
-
-	"crypto/x509"
+	"testing"
 
 	"github.com/beevik/etree"
 	"github.com/kr/pretty"
-	. "gopkg.in/check.v1"
+	"github.com/stretchr/testify/assert"
 )
-
-type EncryptTest struct {
-}
-
-var _ = Suite(&EncryptTest{})
 
 const (
 	testCertificate    = "-----BEGIN CERTIFICATE-----\nMIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJV\nUzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0\nMB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMx\nCzAJBgNVBAgMAkdBMQwwCgYDVQQKDANmb28xEjAQBgNVBAMMCWxvY2FsaG9zdDCB\nnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA1PMHYmhZj308kWLhZVT4vOulqx/9\nibm5B86fPWwUKKQ2i12MYtz07tzukPymisTDhQaqyJ8Kqb/6JjhmeMnEOdTvSPmH\nO8m1ZVveJU6NoKRn/mP/BD7FW52WhbrUXLSeHVSKfWkNk6S4hk9MV9TswTvyRIKv\nRsw0X/gfnqkroJcCAwEAATANBgkqhkiG9w0BAQUFAAOBgQCMMlIO+GNcGekevKgk\nakpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeT\nQLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvn\nOwJlNCASPZRH/JmF8tX0hoHuAQ==\n-----END CERTIFICATE-----\n"
@@ -44,21 +39,19 @@ const (
 `
 )
 
-func (test *EncryptTest) SetUpTest(c *C) {
+func TestCanEncryptOAEP(t *testing.T) {
 	RandReader = rand.New(rand.NewSource(0)) // deterministic random numbers for tests
-}
 
-func (test *EncryptTest) TestCanEncryptOAEP(c *C) {
 	pemBlock, _ := pem.Decode([]byte(testCertificate))
 	certificate, err := x509.ParseCertificate(pemBlock.Bytes)
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
 	e := OAEP()
 	e.BlockCipher = AES128CBC
 	e.DigestMethod = &SHA1
 
 	el, err := e.Encrypt(certificate, []byte(expectedPlaintext))
-	c.Assert(err, IsNil)
+	assert.NoError(t, err)
 
 	doc := etree.NewDocument()
 	doc.SetRoot(el)
@@ -72,5 +65,5 @@ func (test *EncryptTest) TestCanEncryptOAEP(c *C) {
 	for _, l := range diff {
 		fmt.Println(l)
 	}
-	c.Assert(ciphertext, Equals, expectedCiphertext)
+	assert.Equal(t, expectedCiphertext, ciphertext)
 }

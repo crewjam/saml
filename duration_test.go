@@ -2,18 +2,16 @@ package saml
 
 import (
 	"errors"
+	"strconv"
+	"testing"
 	"time"
 
-	. "gopkg.in/check.v1"
+	"github.com/stretchr/testify/assert"
 )
 
-var _ = Suite(&DurationTest{})
-
-type DurationTest struct{}
-
 var durationMarshalTests = []struct {
-	in  time.Duration
-	out []byte
+	in       time.Duration
+	expected []byte
 }{
 	{0, nil},
 	{time.Nanosecond, []byte("PT0.000000001S")},
@@ -25,18 +23,20 @@ var durationMarshalTests = []struct {
 	{2*time.Hour + 3*time.Minute + 4*time.Second + 5*time.Nanosecond, []byte("PT2H3M4.000000005S")},
 }
 
-func (t DurationTest) TestMarshalText(c *C) {
-	for _, tc := range durationMarshalTests {
-		got, err := Duration(tc.in).MarshalText()
-		c.Assert(err, IsNil)
-		c.Assert(got, DeepEquals, tc.out)
+func TestDuration(t *testing.T) {
+	for i, testCase := range durationMarshalTests {
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			actual, err := Duration(testCase.in).MarshalText()
+			assert.NoError(t, err)
+			assert.Equal(t, testCase.expected, actual)
+		})
 	}
 }
 
 var durationUnmarshalTests = []struct {
-	in  []byte
-	out time.Duration
-	err error
+	in       []byte
+	expected time.Duration
+	err      error
 }{
 	{nil, 0, nil},
 	{[]byte("PT0.0000000001S"), 0, nil},
@@ -68,16 +68,17 @@ var durationUnmarshalTests = []struct {
 	{[]byte("PT1.S"), 0, errors.New("invalid duration (PT1.S)")},
 }
 
-func (t DurationTest) TestUnmarshalText(c *C) {
-	for _, tc := range durationUnmarshalTests {
-		var d Duration
-		err := d.UnmarshalText(tc.in)
-		if tc.err == nil {
-			c.Assert(err, IsNil)
-		} else {
-			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, tc.err.Error())
-		}
-		c.Assert(d, Equals, Duration(tc.out))
+func TestDurationUnmarshal(t *testing.T) {
+	for i, testCase := range durationUnmarshalTests {
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			var actual Duration
+			err := actual.UnmarshalText(testCase.in)
+			if testCase.err == nil {
+				assert.NoError(t, err)
+			} else {
+				assert.EqualError(t, err, testCase.err.Error())
+			}
+			assert.Equal(t, Duration(testCase.expected), actual)
+		})
 	}
 }
