@@ -101,16 +101,24 @@ type IdentityProvider struct {
 	SessionProvider         SessionProvider
 	AssertionMaker          AssertionMaker
 	SignatureMethod         string
+	ValidDuration           *time.Duration
 }
 
 // Metadata returns the metadata structure for this identity provider.
 func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 	certStr := base64.StdEncoding.EncodeToString(idp.Certificate.Raw)
 
+	var validDuration time.Duration
+	if idp.ValidDuration != nil {
+		validDuration = *idp.ValidDuration
+	} else {
+		validDuration = DefaultValidDuration
+	}
+
 	ed := &EntityDescriptor{
 		EntityID:      idp.MetadataURL.String(),
-		ValidUntil:    TimeNow().Add(DefaultValidDuration),
-		CacheDuration: DefaultValidDuration,
+		ValidUntil:    TimeNow().Add(validDuration),
+		CacheDuration: validDuration,
 		IDPSSODescriptors: []IDPSSODescriptor{
 			{
 				SSODescriptor: SSODescriptor{
