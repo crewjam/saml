@@ -33,6 +33,9 @@ func main() {
 		context.Background(),
 		http.DefaultClient,
 		*idpMetadataURL)
+	if err != nil {
+		panic(err) // TODO handle error
+	}
 
 	samlSP, err := samlsp.New(samlsp.Options{
 		URL:         *rootURL,
@@ -40,6 +43,9 @@ func main() {
 		Key:         keyPair.PrivateKey.(*rsa.PrivateKey),
 		Certificate: keyPair.Leaf,
 	})
+	if err != nil {
+		panic(err) // TODO handle error
+	}
 
 	app := http.HandlerFunc(hello)
 	http.Handle("/hello", samlSP.RequireAccount(app))

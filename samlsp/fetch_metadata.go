@@ -3,7 +3,7 @@ package samlsp
 import (
 	"context"
 	"encoding/xml"
-	"fmt"
+	"errors"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -29,13 +29,12 @@ func ParseMetadata(data []byte) (*saml.EntityDescriptor, error) {
 			return nil, err
 		}
 
-		err = fmt.Errorf("no entity found with IDPSSODescriptor")
 		for i, e := range entities.EntityDescriptors {
 			if len(e.IDPSSODescriptors) > 0 {
-				entity = &entities.EntityDescriptors[i]
-				err = nil
+				return &entities.EntityDescriptors[i], nil
 			}
 		}
+		return nil, errors.New("no entity found with IDPSSODescriptor")
 	}
 	if err != nil {
 		return nil, err
@@ -55,10 +54,10 @@ func FetchMetadata(ctx context.Context, httpClient *http.Client, metadataURL url
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		return nil, httperr.Response(*resp)
 	}
-	defer resp.Body.Close()
 
 	data, err := ioutil.ReadAll(resp.Body)
 	if err != nil {

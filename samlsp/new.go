@@ -38,7 +38,7 @@ type Options struct {
 // a JWTSessionCodec configured to issue signed tokens.
 func DefaultSessionCodec(opts Options) JWTSessionCodec {
 
-	// for backwards compatability, support CookieMaxAge
+	// for backwards compatibility, support CookieMaxAge
 	maxAge := defaultSessionMaxAge
 	if opts.CookieMaxAge > 0 {
 		maxAge = opts.CookieMaxAge
@@ -56,25 +56,25 @@ func DefaultSessionCodec(opts Options) JWTSessionCodec {
 // DefaultSessionProvider returns the default SessionProvider for the provided options,
 // a CookieSessionProvider configured to store sessions in a cookie.
 func DefaultSessionProvider(opts Options) CookieSessionProvider {
-	// for backwards compatability, support CookieMaxAge
+	// for backwards compatibility, support CookieMaxAge
 	maxAge := defaultSessionMaxAge
 	if opts.CookieMaxAge > 0 {
 		maxAge = opts.CookieMaxAge
 	}
 
-	// for backwards compatability, support CookieName
+	// for backwards compatibility, support CookieName
 	cookieName := defaultSessionCookieName
 	if opts.CookieName != "" {
 		cookieName = opts.CookieName
 	}
 
-	// for backwards compatability, support CookieDomain
+	// for backwards compatibility, support CookieDomain
 	cookieDomain := opts.URL.Host
 	if opts.CookieDomain != "" {
 		cookieDomain = opts.CookieDomain
 	}
 
-	// for backwards compatability, support CookieDomain
+	// for backwards compatibility, support CookieDomain
 	cookieSecure := opts.URL.Scheme == "https"
 	if opts.CookieSecure {
 		cookieSecure = true
@@ -144,13 +144,13 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 // replacing and/or changing Session, RequestTracker, and ServiceProvider
 // in the returned Middleware.
 func New(opts Options) (*Middleware, error) {
-	// for backwards compatability, support Logger
+	// for backwards compatibility, support Logger
 	onError := DefaultOnError
 	if opts.Logger != nil {
 		onError = defaultOnErrorWithLogger(opts.Logger)
 	}
 
-	// for backwards compatability, support IDPMetadataURL
+	// for backwards compatibility, support IDPMetadataURL
 	if opts.IDPMetadataURL != nil && opts.IDPMetadata == nil {
 		httpClient := opts.HTTPClient
 		if httpClient == nil {

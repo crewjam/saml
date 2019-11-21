@@ -2,6 +2,7 @@ package samlsp
 
 import (
 	"crypto/rsa"
+	"errors"
 	"fmt"
 	"time"
 
@@ -94,7 +95,7 @@ func (c JWTSessionCodec) Decode(signed string) (Session, error) {
 		return nil, fmt.Errorf("expected issuer %q, got %q", c.Issuer, claims.Issuer)
 	}
 	if claims.SAMLSession != true {
-		return nil, fmt.Errorf("expected saml-session")
+		return nil, errors.New("expected saml-session")
 	}
 	return claims, nil
 }

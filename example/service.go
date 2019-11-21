@@ -10,7 +10,6 @@ import (
 	"encoding/xml"
 	"flag"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -121,6 +120,9 @@ func main() {
 
 	idpMetadata, err := samlsp.FetchMetadata(context.Background(), http.DefaultClient,
 		*idpMetadataURL)
+	if err != nil {
+		panic(err) // TODO handle error
+	}
 
 	rootURL, err := url.Parse(*rootURLstr)
 	if err != nil {
@@ -135,7 +137,7 @@ func main() {
 		IDPMetadata:       idpMetadata,
 	})
 	if err != nil {
-		log.Fatalf("%s", err)
+		panic(err) // TODO handle error
 	}
 
 	// register with the service provider

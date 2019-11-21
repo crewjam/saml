@@ -26,7 +26,7 @@ func DefaultOnError(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 // defaultOnErrorWithLogger is like DefaultOnError but accepts a custom logger.
-// This is a bridge for backward compatability with people use provide the
+// This is a bridge for backward compatibility with people use provide the
 // deprecated Logger options field to New().
 func defaultOnErrorWithLogger(log logger.Interface) ErrorFunction {
 	return func(w http.ResponseWriter, r *http.Request, err error) {
