@@ -8,10 +8,10 @@ import (
 )
 
 // HTTPPostBinding is the official URN for the HTTP-POST binding (transport)
-var HTTPPostBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+const HTTPPostBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
 
 // HTTPRedirectBinding is the official URN for the HTTP-Redirect binding (transport)
-var HTTPRedirectBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+const HTTPRedirectBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
 
 // EntitiesDescriptor represents the SAML object of the same name.
 //
