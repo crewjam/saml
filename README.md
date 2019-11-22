@@ -1,4 +1,5 @@
 # SAML
+
 [![](https://godoc.org/github.com/crewjam/saml?status.svg)](http://godoc.org/github.com/crewjam/saml)
 
 [![Build Status](https://travis-ci.org/crewjam/saml.svg?branch=master)](https://travis-ci.org/crewjam/saml)
@@ -12,30 +13,82 @@ In SAML parlance an **Identity Provider** (IDP) is a service that knows how to a
 
 The core package contains the implementation of SAML. The package samlsp provides helper middleware suitable for use in Service Provider applications. The package samlidp provides a rudimentary IDP service that is useful for testing or as a starting point for other integrations.
 
-## Breaking Changes 
+## Breaking Changes
+
+Version 0.4.0 introduces a few breaking changes to the _samlsp_ package in order to make the package more extensible, and to clean up the interfaces a bit. The default behavior remains the same, but you can now provide interface implementations of _RequestTracker_ (which tracks pending requests), _Session_ (which handles maintaining a session) and _OnError_ which handles reporting errors.
+
+Public fields of _samlsp.Middleware_ have changed, so some usages may require adjustment. See [issue 231](https://github.com/crewjam/saml/issues/231) for details.
+
+The option to provide an IDP metadata **URL** has been deprecated. Instead, we recommend that you use the `FetchMetadata()` function, or fetch the metadata yourself and use the new `ParseMetadata()` function, and pass the metadata in _samlsp.Options.IDPMetadata_.
+
+Similarly, the _HTTPClient_ field is now deprecated because it was only used for fetching metdata, which is no longer directly implemented.
+
+The fields that manage how cookies are set are deprecated as well. To customize how cookies are managed, provide custom implementation of _RequestTracker_ and/or _Session_, perhaps by extending the default implementations.
+
+The deprecated fields have not been removed from the Options structure,
+
+don't need it any more other )
+
+We have
+
+In particular we have deprecated the following fields in
+_samlsp.Options_:
+
+- _Logger_ -- this was used to emit errors while
+
+IDPMetadataURL *url.URL // DEPRECATED: this field will be removed, instead use FetchMetadata
+HTTPClient *http.Client // DEPRECATED: this field will be removed, instead pass httpClient to FetchMetadata
+CookieMaxAge time.Duration // DEPRECATED: this field will be removed. Instead, assign a custom CookieRequestTracker or CookieSessionProvider
+CookieName string // DEPRECATED: this field will be removed. Instead, assign a custom CookieRequestTracker or CookieSessionProvider
+CookieDomain string // DEPRECATED: this field will be removed. Instead, assign a custom CookieRequestTracker or CookieSessionProvider
+CookieSecure
+
+URL url.URL
+Key *rsa.PrivateKey
+Certificate *x509.Certificate
+Intermediates []*x509.Certificate
+AllowIDPInitiated bool
+IDPMetadata *saml.EntityDescriptor
+ForceAuthn bool // TODO(ross): this should be \*bool
+
+    URL               url.URL
+    Key               *rsa.PrivateKey
+    Logger            logger.Interface
+    Certificate       *x509.Certificate
+    Intermediates     []*x509.Certificate
+    AllowIDPInitiated bool
+    IDPMetadata       *saml.EntityDescriptor
+    IDPMetadataURL    *url.URL
+    HTTPClient        *http.Client
+    CookieMaxAge      time.Duration
+    CookieName        string
+    CookieDomain      string
+    CookieSecure      bool
+    ForceAuthn        bool
 
 Note: between version 0.2.0 and the current master include changes to the API
 that will break your existing code a little.
 
 This change turned some fields from pointers to a single optional struct into
 the more correct slice of struct, and to pluralize the field name. For example,
-`IDPSSODescriptor *IDPSSODescriptor` has become 
-`IDPSSODescriptors []IDPSSODescriptor`. This more accurately reflects the 
+`IDPSSODescriptor *IDPSSODescriptor` has become
+`IDPSSODescriptors []IDPSSODescriptor`. This more accurately reflects the
 standard.
 
-The struct `Metadata` has been renamed to `EntityDescriptor`. In 0.2.0 and before, 
-every struct derived from the standard has the same name as in the standard, 
-*except* for `Metadata` which should always have been called `EntityDescriptor`. 
+The struct `Metadata` has been renamed to `EntityDescriptor`. In 0.2.0 and before,
+every struct derived from the standard has the same name as in the standard,
+_except_ for `Metadata` which should always have been called `EntityDescriptor`.
 
 In various places `url.URL` is now used where `string` was used <= version 0.1.0.
 
-In various places where keys and certificates were modeled as `string` 
-<= version 0.1.0 (what was I thinking?!) they are now modeled as 
+In various places where keys and certificates were modeled as `string`
+<= version 0.1.0 (what was I thinking?!) they are now modeled as
 `*rsa.PrivateKey`, `*x509.Certificate`, or `crypto.PrivateKey` as appropriate.
 
 ## Getting Started as a Service Provider
 
 Let us assume we have a simple web application to protect. We'll modify this application so it uses SAML to authenticate users.
+
 ```golang
 package main
 
@@ -54,6 +107,7 @@ func main() {
     http.ListenAndServe(":8000", nil)
 }
 ```
+
 Each service provider must have an self-signed X.509 key pair established. You can generate your own with something like this:
 
     openssl req -x509 -newkey rsa:2048 -keyout myservice.key -out myservice.cert -days 365 -nodes -subj "/CN=myservice.example.com"
@@ -146,9 +200,9 @@ The package can produce signed SAML assertions, and can validate both signed and
 
 ## RelayState
 
-The *RelayState* parameter allows you to pass user state information across the authentication flow. The most common use for this is to allow a user to request a deep link into your site, be redirected through the SAML login flow, and upon successful completion, be directed to the originally requested link, rather than the root.
+The _RelayState_ parameter allows you to pass user state information across the authentication flow. The most common use for this is to allow a user to request a deep link into your site, be redirected through the SAML login flow, and upon successful completion, be directed to the originally requested link, rather than the root.
 
-Unfortunately, *RelayState* is less useful than it could be. Firstly, it is **not** authenticated, so anything you supply must be signed to avoid XSS or CSRF. Secondly, it is limited to 80 bytes in length, which precludes signing. (See section 3.6.3.1 of SAMLProfiles.)
+Unfortunately, _RelayState_ is less useful than it could be. Firstly, it is **not** authenticated, so anything you supply must be signed to avoid XSS or CSRF. Secondly, it is limited to 80 bytes in length, which precludes signing. (See section 3.6.3.1 of SAMLProfiles.)
 
 ## References
 
