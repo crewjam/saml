@@ -51,6 +51,10 @@ const (
 // See the example directory for an example of a web application using
 // the service provider interface.
 type ServiceProvider struct {
+
+	// Entity ID
+	EntityID string
+
 	// Key is the RSA private key we use to sign requests.
 	Key *rsa.PrivateKey
 
@@ -148,7 +152,7 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 	}
 
 	return &EntityDescriptor{
-		EntityID:   sp.MetadataURL.String(),
+		EntityID:   sp.EntityID,
 		ValidUntil: validUntil,
 
 		SPSSODescriptors: []SPSSODescriptor{
@@ -308,7 +312,7 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string) (*AuthnReque
 		Version:                     "2.0",
 		Issuer: &Issuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
-			Value:  sp.MetadataURL.String(),
+			Value:  sp.EntityID,
 		},
 		NameIDPolicy: &NameIDPolicy{
 			AllowCreate: &allowCreate,
@@ -467,6 +471,7 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 	}
 	retErr.Response = string(rawResponseBuf)
 	assertion, err := sp.ParseXMLResponse(rawResponseBuf, possibleRequestIDs)
+	// fmt.Printf("\n\n%+v\n\n", err.(*InvalidResponseError).PrivateErr)
 	if err != nil {
 		return nil, err
 	}
@@ -788,7 +793,7 @@ func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string) (*LogoutRequ
 		Destination:  idpURL,
 		Issuer: &Issuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
-			Value:  sp.MetadataURL.String(),
+			Value:  sp.EntityID,
 		},
 		NameID: &NameID{
 			Format:          sp.nameIDFormat(),

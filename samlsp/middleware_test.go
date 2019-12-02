@@ -110,6 +110,7 @@ func NewMiddlewareTest() *MiddlewareTest {
 
 	test.Middleware = Middleware{
 		ServiceProvider: saml.ServiceProvider{
+			EntityID:    "https://15661444.ngrok.io/saml2/metadata",
 			Key:         test.Key,
 			Certificate: test.Certificate,
 			MetadataURL: mustParseURL("https://15661444.ngrok.io/saml2/metadata"),

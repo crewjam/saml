@@ -21,6 +21,7 @@ const defaultTokenMaxAge = time.Hour
 
 // Options represents the parameters for creating a new middleware
 type Options struct {
+	EntityID          string
 	URL               url.URL
 	Key               *rsa.PrivateKey
 	Logger            logger.Interface
@@ -55,8 +56,13 @@ func New(opts Options) (*Middleware, error) {
 		tokenMaxAge = defaultTokenMaxAge
 	}
 
+	if opts.EntityID == "" {
+		opts.EntityID = metadataURL.String()
+	}
+
 	m := &Middleware{
 		ServiceProvider: saml.ServiceProvider{
+			EntityID: 		   opts.EntityID,
 			Key:               opts.Key,
 			Logger:            logr,
 			Certificate:       opts.Certificate,

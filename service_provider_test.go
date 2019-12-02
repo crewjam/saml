@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
-	dsig "github.com/russellhaering/goxmldsig"
+	"github.com/russellhaering/goxmldsig"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/crewjam/saml/testsaml"
@@ -101,6 +101,7 @@ func TestSPCanSetAuthenticationNameIDFormat(t *testing.T) {
 func TestSPCanProduceMetadata(t *testing.T) {
 	test := NewServiceProviderTest()
 	s := ServiceProvider{
+		EntityID:    "https://example.com/saml2/metadata",
 		Key:         test.Key,
 		Certificate: test.Certificate,
 		MetadataURL: mustParseURL("https://example.com/saml2/metadata"),
@@ -144,6 +145,7 @@ func TestSPCanProduceMetadata(t *testing.T) {
 func TestCanProduceMetadataNoSigningKey(t *testing.T) {
 	test := NewServiceProviderTest()
 	s := ServiceProvider{
+		EntityID:    "https://example.com/saml2/metadata",
 		MetadataURL: mustParseURL("https://example.com/saml2/metadata"),
 		AcsURL:      mustParseURL("https://example.com/saml2/acs"),
 		IDPMetadata: &EntityDescriptor{},
@@ -171,6 +173,7 @@ func TestSPCanProduceRedirectRequest(t *testing.T) {
 	}
 	Clock = dsig.NewFakeClockAt(TimeNow())
 	s := ServiceProvider{
+		EntityID:    "https://15661444.ngrok.io/saml2/metadata",
 		Key:         test.Key,
 		Certificate: test.Certificate,
 		MetadataURL: mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
@@ -203,6 +206,7 @@ func TestSPCanProducePostRequest(t *testing.T) {
 		return rv
 	}
 	s := ServiceProvider{
+		EntityID:    "https://15661444.ngrok.io/saml2/metadata",
 		Key:         test.Key,
 		Certificate: test.Certificate,
 		MetadataURL: mustParseURL("https://15661444.ngrok.io/saml2/metadata"),

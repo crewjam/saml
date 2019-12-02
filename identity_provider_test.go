@@ -113,6 +113,7 @@ OwJlNCASPZRH/JmF8tX0hoHuAQ==
 -----END CERTIFICATE-----
 `)
 	test.SP = ServiceProvider{
+		EntityID:    "https://sp.example.com/saml2/metadata",
 		Key:         test.SPKey,
 		Certificate: test.SPCertificate,
 		MetadataURL: mustParseURL("https://sp.example.com/saml2/metadata"),
