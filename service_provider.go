@@ -40,6 +40,14 @@ const (
 	PersistentNameIDFormat   NameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
 )
 
+// SignatureVerifier verifies a signature
+//
+// Can be implemented in order to override ServiceProvider's default
+// way of verifying signatures.
+type SignatureVerifier interface {
+	VerifySignature(validationContext *dsig.ValidationContext, el *etree.Element) error
+}
+
 // ServiceProvider implements SAML Service provider.
 //
 // In SAML, service providers delegate responsibility for identifying
@@ -86,6 +94,10 @@ type ServiceProvider struct {
 
 	// AllowIdpInitiated
 	AllowIDPInitiated bool
+
+	// SignatureVerifier, if non-nil, allows you to implement an alternative way
+	// to verify signatures.
+	SignatureVerifier SignatureVerifier
 }
 
 // MaxIssueDelay is the longest allowed time between when a SAML assertion is
@@ -768,6 +780,10 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	el, err = etreeutils.NSDetatch(ctx, el)
 	if err != nil {
 		return err
+	}
+
+	if sp.SignatureVerifier != nil {
+		return sp.SignatureVerifier.VerifySignature(validationContext, el)
 	}
 
 	_, err = validationContext.Validate(el)
