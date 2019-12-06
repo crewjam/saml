@@ -76,11 +76,11 @@ func (m *Middleware) serveACS(w http.ResponseWriter, r *http.Request) {
 	possibleRequestIDs := []string{}
 	if m.ServiceProvider.AllowIDPInitiated {
 		possibleRequestIDs = append(possibleRequestIDs, "")
-	} else {
-		trackedRequests := m.RequestTracker.GetTrackedRequests(r)
-		for _, tr := range trackedRequests {
-			possibleRequestIDs = append(possibleRequestIDs, tr.SAMLRequestID)
-		}
+	}
+
+	trackedRequests := m.RequestTracker.GetTrackedRequests(r)
+	for _, tr := range trackedRequests {
+		possibleRequestIDs = append(possibleRequestIDs, tr.SAMLRequestID)
 	}
 
 	assertion, err := m.ServiceProvider.ParseResponse(r, possibleRequestIDs)
