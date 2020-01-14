@@ -17,6 +17,7 @@ var _ SessionProvider = CookieSessionProvider{}
 type CookieSessionProvider struct {
 	Name   string
 	Domain string
+	HttpOnly bool
 	Secure bool
 	MaxAge time.Duration
 	Codec  SessionCodec
@@ -46,7 +47,7 @@ func (c CookieSessionProvider) CreateSession(w http.ResponseWriter, r *http.Requ
 		Domain:   c.Domain,
 		Value:    value,
 		MaxAge:   int(c.MaxAge.Seconds()),
-		HttpOnly: true,
+		HttpOnly: c.HttpOnly,
 		Secure:   c.Secure || r.URL.Scheme == "https",
 		Path:     "/",
 	})

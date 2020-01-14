@@ -84,6 +84,7 @@ func DefaultSessionProvider(opts Options) CookieSessionProvider {
 		Name:   cookieName,
 		Domain: cookieDomain,
 		MaxAge: maxAge,
+		HttpOnly: true,
 		Secure: cookieSecure,
 		Codec:  DefaultSessionCodec(opts),
 	}
