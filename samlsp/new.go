@@ -81,11 +81,12 @@ func DefaultSessionProvider(opts Options) CookieSessionProvider {
 	}
 
 	return CookieSessionProvider{
-		Name:   cookieName,
-		Domain: cookieDomain,
-		MaxAge: maxAge,
-		Secure: cookieSecure,
-		Codec:  DefaultSessionCodec(opts),
+		Name:     cookieName,
+		Domain:   cookieDomain,
+		MaxAge:   maxAge,
+		HTTPOnly: true,
+		Secure:   cookieSecure,
+		Codec:    DefaultSessionCodec(opts),
 	}
 }
 
