@@ -15,7 +15,7 @@ The core package contains the implementation of SAML. The package samlsp provide
 
 ## Breaking Changes
 
-Version 0.4.0 introduces a few breaking changes to the _samlsp_ package in order to make the package more extensible, and to clean up the interfaces a bit. The default behavior remains the same, but you can now provide interface implementations of _RequestTracker_ (which tracks pending requests), _Session_ (which handles maintaining a session) and _OnError_ which handles reporting errors.
+**Version 0.4.0** introduces a few breaking changes to the _samlsp_ package in order to make the package more extensible, and to clean up the interfaces a bit. The default behavior remains the same, but you can now provide interface implementations of _RequestTracker_ (which tracks pending requests), _Session_ (which handles maintaining a session) and _OnError_ which handles reporting errors.
 
 Public fields of _samlsp.Middleware_ have changed, so some usages may require adjustment. See [issue 231](https://github.com/crewjam/saml/issues/231) for details.
 
@@ -25,65 +25,18 @@ Similarly, the _HTTPClient_ field is now deprecated because it was only used for
 
 The fields that manage how cookies are set are deprecated as well. To customize how cookies are managed, provide custom implementation of _RequestTracker_ and/or _Session_, perhaps by extending the default implementations.
 
-The deprecated fields have not been removed from the Options structure,
-
-don't need it any more other )
-
-We have
+The deprecated fields have not been removed from the Options structure, but will be in future.
 
 In particular we have deprecated the following fields in
 _samlsp.Options_:
 
-- _Logger_ -- this was used to emit errors while
-
-IDPMetadataURL *url.URL // DEPRECATED: this field will be removed, instead use FetchMetadata
-HTTPClient *http.Client // DEPRECATED: this field will be removed, instead pass httpClient to FetchMetadata
-CookieMaxAge time.Duration // DEPRECATED: this field will be removed. Instead, assign a custom CookieRequestTracker or CookieSessionProvider
-CookieName string // DEPRECATED: this field will be removed. Instead, assign a custom CookieRequestTracker or CookieSessionProvider
-CookieDomain string // DEPRECATED: this field will be removed. Instead, assign a custom CookieRequestTracker or CookieSessionProvider
-CookieSecure
-
-URL url.URL
-Key *rsa.PrivateKey
-Certificate *x509.Certificate
-Intermediates []*x509.Certificate
-AllowIDPInitiated bool
-IDPMetadata *saml.EntityDescriptor
-ForceAuthn bool // TODO(ross): this should be \*bool
-
-    URL               url.URL
-    Key               *rsa.PrivateKey
-    Logger            logger.Interface
-    Certificate       *x509.Certificate
-    Intermediates     []*x509.Certificate
-    AllowIDPInitiated bool
-    IDPMetadata       *saml.EntityDescriptor
-    IDPMetadataURL    *url.URL
-    HTTPClient        *http.Client
-    CookieMaxAge      time.Duration
-    CookieName        string
-    CookieDomain      string
-    CookieSecure      bool
-    ForceAuthn        bool
-
-Note: between version 0.2.0 and the current master include changes to the API
-that will break your existing code a little.
-
-This change turned some fields from pointers to a single optional struct into
-the more correct slice of struct, and to pluralize the field name. For example,
-`IDPSSODescriptor *IDPSSODescriptor` has become
-`IDPSSODescriptors []IDPSSODescriptor`. This more accurately reflects the
-standard.
-
-The struct `Metadata` has been renamed to `EntityDescriptor`. In 0.2.0 and before,
-every struct derived from the standard has the same name as in the standard,
-_except_ for `Metadata` which should always have been called `EntityDescriptor`.
-
-In various places `url.URL` is now used where `string` was used <= version 0.1.0.
-
-In various places where keys and certificates were modeled as `string`
-<= version 0.1.0 (what was I thinking?!) they are now modeled as
-`*rsa.PrivateKey`, `*x509.Certificate`, or `crypto.PrivateKey` as appropriate.
+- `Logger` - This was used to emit errors while validating, which is an anti-pattern.
+- `IDPMetadataURL` - Instead use `FetchMetadata()`
+- `HTTPClient` - Instead pass httpClient to FetchMetadata
+- `CookieMaxAge` - Instead assign a custom CookieRequestTracker or CookieSessionProvider
+- `CookieName` - Instead assign a custom CookieRequestTracker or CookieSessionProvider
+- `CookieDomain` - Instead assign a custom CookieRequestTracker or CookieSessionProvider
+- `CookieDomain` - Instead assign a custom CookieRequestTracker or CookieSessionProvider
 
 ## Getting Started as a Service Provider
 
