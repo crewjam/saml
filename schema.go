@@ -1,6 +1,8 @@
 package saml
 
 import (
+	"bytes"
+	"compress/flate"
 	"encoding/xml"
 	"strconv"
 	"time"
@@ -110,6 +112,43 @@ func (r *LogoutRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) err
 	}
 	r.IssueInstant = time.Time(aux.IssueInstant)
 	return nil
+}
+
+// Bytes returns a byte array representation of the LogoutRequest
+func (r *LogoutRequest) Bytes() ([]byte, error) {
+	doc := etree.NewDocument()
+	doc.SetRoot(r.Element())
+
+	buf, err := doc.WriteToBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	return buf, nil
+}
+
+// Deflate returns a compressed byte array of the LogoutRequest
+func (r *LogoutRequest) Deflate() ([]byte, error) {
+	buf, err := r.Bytes()
+	if err != nil {
+		return nil, err
+	}
+
+	var b bytes.Buffer
+	writer, err := flate.NewWriter(&b, flate.DefaultCompression)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := writer.Write(buf); err != nil {
+		return nil, err
+	}
+
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+
+	return b.Bytes(), nil
 }
 
 // Element returns an etree.Element representing the object
