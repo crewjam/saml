@@ -934,3 +934,102 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 	
 	return nil
 }
+
+// ValidateLogoutRequestRequest validates the LogoutRequest content from the request
+func (sp *ServiceProvider) ValidateLogoutRequestRequest(req *http.Request) error {
+	if data := req.URL.Query().Get("SAMLRequest"); data != "" {
+		return sp.ValidateLogoutRequestRedirect(data)
+	}
+
+	err := req.ParseForm()
+	if err != nil {
+		return fmt.Errorf("unable to parse form: %v", err)
+	}
+
+	return sp.ValidateLogoutRequestForm(req.PostForm.Get("SAMLRequest"))
+}
+
+// ValidatePostLogoutRequest returns a nil error if the logout response is valid.
+func (sp *ServiceProvider) ValidateLogoutRequestForm(postFormData string) error {
+	rawRequestBuf, err := base64.StdEncoding.DecodeString(postFormData)
+	if err != nil {
+		return fmt.Errorf("unable to parse base64: %s", err)
+	}
+
+	var resp LogoutRequest
+
+	if err := xml.Unmarshal(rawRequestBuf, &resp); err != nil {
+		return fmt.Errorf("cannot unmarshal response: %s", err)
+	}
+
+	if err := sp.validateLogoutRequest(&resp); err != nil {
+		return err
+	}
+
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(rawRequestBuf); err != nil {
+		return err
+	}
+
+	requestEl := doc.Root()
+	if err = sp.validateSigned(requestEl); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ValidateRedirectLogoutRequest returns a nil error if the logout response is valid.
+// URL Binding appears to be gzip / flate encoded
+// See https://www.oasis-open.org/committees/download.php/20645/sstc-saml-tech-overview-2%200-draft-10.pdf  6.6
+func (sp *ServiceProvider) ValidateLogoutRequestRedirect(queryParameterData string) error {
+	rawRequestBuf, err := base64.StdEncoding.DecodeString(queryParameterData)
+	if err != nil {
+		return fmt.Errorf("unable to parse base64: %s", err)
+	}
+
+	gr := flate.NewReader(bytes.NewBuffer(rawRequestBuf))
+
+	decoder := xml.NewDecoder(gr)
+
+	var resp LogoutRequest
+
+	err = decoder.Decode(&resp)
+	if err != nil {
+		return fmt.Errorf("unable to flate decode: %s", err)
+	}
+
+	if err := sp.validateLogoutRequest(&resp); err != nil {
+		return err
+	}
+
+	doc := etree.NewDocument()
+	if _, err := doc.ReadFrom(gr); err != nil {
+		return err
+	}
+
+	responseEl := doc.Root()
+	if err = sp.validateSigned(responseEl); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+
+// validateLogoutRequest validates the LogoutRequest fields. Returns a nil error if the LogoutRequest is valid.
+func (sp *ServiceProvider) validateLogoutRequest(resp *LogoutRequest) error {
+	if resp.Destination != sp.SloURL.String() {
+		return fmt.Errorf("`Destination` does not match SloURL (expected %q)", sp.SloURL.String())
+	}
+
+	now := time.Now()
+	if resp.IssueInstant.Add(MaxIssueDelay).Before(now) {
+		return fmt.Errorf("issueInstant expired at %s", resp.IssueInstant.Add(MaxIssueDelay))
+	}
+	if resp.Issuer.Value != sp.IDPMetadata.EntityID {
+		return fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
+	}
+
+	return nil
+}
