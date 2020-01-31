@@ -1009,6 +1009,10 @@ func (sp *ServiceProvider) ValidateLogoutRequestRedirect(queryParameterData stri
 	}
 
 	responseEl := doc.Root()
+	if responseEl == nil {
+		// TODO: Signature and SigAlg can be carried via the query parameter instead of being passed in the SAMLResponse
+		return nil
+	}
 	if err = sp.validateSigned(responseEl); err != nil {
 		return err
 	}
