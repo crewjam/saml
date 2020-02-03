@@ -58,6 +58,9 @@ type SignatureVerifier interface {
 // See the example directory for an example of a web application using
 // the service provider interface.
 type ServiceProvider struct {
+	// Entity ID is optional - if not specified then MetadataURL will be used
+	EntityID string
+
 	// Key is the RSA private key we use to sign requests.
 	Key *rsa.PrivateKey
 
@@ -156,7 +159,7 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 	}
 
 	return &EntityDescriptor{
-		EntityID:   sp.MetadataURL.String(),
+		EntityID:   firstSet(sp.EntityID, sp.MetadataURL.String()),
 		ValidUntil: validUntil,
 
 		SPSSODescriptors: []SPSSODescriptor{
@@ -316,7 +319,7 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string) (*AuthnReque
 		Version:                     "2.0",
 		Issuer: &Issuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
-			Value:  sp.MetadataURL.String(),
+			Value:  firstSet(sp.EntityID, sp.MetadataURL.String()),
 		},
 		NameIDPolicy: &NameIDPolicy{
 			AllowCreate: &allowCreate,
@@ -656,13 +659,14 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	}
 
 	audienceRestrictionsValid := len(assertion.Conditions.AudienceRestrictions) == 0
+	audience := firstSet(sp.EntityID, sp.MetadataURL.String())
 	for _, audienceRestriction := range assertion.Conditions.AudienceRestrictions {
-		if audienceRestriction.Audience.Value == sp.MetadataURL.String() {
+		if audienceRestriction.Audience.Value == audience {
 			audienceRestrictionsValid = true
 		}
 	}
 	if !audienceRestrictionsValid {
-		return fmt.Errorf("assertion Conditions AudienceRestriction does not contain %q", sp.MetadataURL.String())
+		return fmt.Errorf("assertion Conditions AudienceRestriction does not contain %q", audience)
 	}
 	return nil
 }
@@ -802,7 +806,7 @@ func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string) (*LogoutRequ
 		Destination:  idpURL,
 		Issuer: &Issuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
-			Value:  sp.MetadataURL.String(),
+			Value:  firstSet(sp.EntityID, sp.MetadataURL.String()),
 		},
 		NameID: &NameID{
 			Format:          sp.nameIDFormat(),
@@ -934,4 +938,11 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 	}
 
 	return nil
+}
+
+func firstSet(a, b string) string {
+	if a == "" {
+		return b
+	}
+	return a
 }
