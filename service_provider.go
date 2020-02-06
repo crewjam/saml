@@ -821,8 +821,84 @@ func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string) (*LogoutRequ
 // MakeRedirectLogoutRequest creates a SAML authentication request using
 // the HTTP-Redirect binding. It returns a URL that we will redirect the user to
 // in order to start the auth process.
-func (sp *ServiceProvider) MakeRedirectLogoutRequest(nameID string) (*LogoutRequest, error) {
-	return sp.MakeLogoutRequest(sp.GetSLOBindingLocation(HTTPRedirectBinding), nameID)
+func (sp *ServiceProvider) MakeRedirectLogoutRequest(nameID, relayState string) (*url.URL, error) {
+	req, err := sp.MakeLogoutRequest(sp.GetSLOBindingLocation(HTTPRedirectBinding), nameID)
+	if err != nil {
+		return nil, err
+	}
+	return req.Redirect(relayState), nil
+}
+
+// Redirect returns a URL suitable for using the redirect binding with the request
+func (req *LogoutRequest) Redirect(relayState string) *url.URL {
+	w := &bytes.Buffer{}
+	w1 := base64.NewEncoder(base64.StdEncoding, w)
+	w2, _ := flate.NewWriter(w1, 9)
+	doc := etree.NewDocument()
+	doc.SetRoot(req.Element())
+	if _, err := doc.WriteTo(w2); err != nil {
+		panic(err)
+	}
+	w2.Close()
+	w1.Close()
+
+	rv, _ := url.Parse(req.Destination)
+
+	query := rv.Query()
+	query.Set("SAMLRequest", string(w.Bytes()))
+	if relayState != "" {
+		query.Set("RelayState", relayState)
+	}
+	rv.RawQuery = query.Encode()
+
+	return rv
+}
+
+// MakePostLogoutRequest creates a SAML authentication request using
+// the HTTP-POST binding. It returns HTML text representing an HTML form that
+// can be sent presented to a browser to initiate the logout process.
+func (sp *ServiceProvider) MakePostLogoutRequest(nameID, relayState string) ([]byte, error) {
+	req, err := sp.MakeLogoutRequest(sp.GetSLOBindingLocation(HTTPPostBinding), nameID)
+	if err != nil {
+		return nil, err
+	}
+	return req.Post(relayState), nil
+}
+
+// Post returns an HTML form suitable for using the HTTP-POST binding with the request
+func (req *LogoutRequest) Post(relayState string) []byte {
+	doc := etree.NewDocument()
+	doc.SetRoot(req.Element())
+	reqBuf, err := doc.WriteToBytes()
+	if err != nil {
+		panic(err)
+	}
+	encodedReqBuf := base64.StdEncoding.EncodeToString(reqBuf)
+
+	tmpl := template.Must(template.New("saml-post-form").Parse(`` +
+		`<form method="post" action="{{.URL}}" id="SAMLRequestForm">` +
+		`<input type="hidden" name="SAMLRequest" value="{{.SAMLRequest}}" />` +
+		`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
+		`<input id="SAMLSubmitButton" type="submit" value="Submit" />` +
+		`</form>` +
+		`<script>document.getElementById('SAMLSubmitButton').style.visibility="hidden";` +
+		`document.getElementById('SAMLRequestForm').submit();</script>`))
+	data := struct {
+		URL         string
+		SAMLRequest string
+		RelayState  string
+	}{
+		URL:         req.Destination,
+		SAMLRequest: encodedReqBuf,
+		RelayState:  relayState,
+	}
+
+	rv := bytes.Buffer{}
+	if err := tmpl.Execute(&rv, data); err != nil {
+		panic(err)
+	}
+
+	return rv.Bytes()
 }
 
 func (sp *ServiceProvider) nameIDFormat() string {
