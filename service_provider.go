@@ -416,7 +416,7 @@ type InvalidResponseError struct {
 }
 
 func (ivr *InvalidResponseError) Error() string {
-	return fmt.Sprintf("Authentication failed")
+	return fmt.Sprintf("Authentication failed, %s", ivr.PrivateErr)
 }
 
 // ErrBadStatus is returned when the assertion provided is valid but the

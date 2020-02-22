@@ -575,7 +575,8 @@ func TestMiddlewareRejectsInvalidCookie(t *testing.T) {
 	test := NewMiddlewareTest()
 
 	test.Middleware.OnError = func(w http.ResponseWriter, r *http.Request, err error) {
-		assert.EqualError(t, err, "Authentication failed")
+		assert.Contains(t, err.Error(), "Authentication failed")
+		//assert.EqualError(t, err, "Authentication failed")
 		http.Error(w, "forbidden", http.StatusTeapot)
 	}
 
