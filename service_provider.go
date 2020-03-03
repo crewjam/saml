@@ -578,6 +578,21 @@ func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleR
 			retErr.PrivateErr = err
 			return nil, retErr
 		}
+
+		// encrypted assertions are part of the signature
+		// before decrypting the response verify that
+		responseSigned, err := responseIsSigned(doc)
+		if err != nil {
+			retErr.PrivateErr = err
+			return nil, retErr
+		}
+		if responseSigned {
+			if err := sp.validateSigned(doc.Root()); err != nil {
+				retErr.PrivateErr = err
+				return nil, retErr
+			}
+		}
+
 		var key interface{} = sp.Key
 		keyEl := doc.FindElement("//EncryptedAssertion/EncryptedKey")
 		if keyEl != nil {
@@ -602,7 +617,9 @@ func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleR
 			return nil, retErr
 		}
 
-		if err := sp.validateSigned(doc.Root()); err != nil {
+		// the decrypted assertion may be signed too
+		// otherwise, a signed response is sufficient
+		if err := sp.validateSigned(doc.Root()); err != nil && !responseSigned {
 			retErr.PrivateErr = err
 			return nil, retErr
 		}
