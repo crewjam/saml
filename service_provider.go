@@ -635,10 +635,17 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	}
 	for _, subjectConfirmation := range assertion.Subject.SubjectConfirmations {
 		requestIDvalid := false
-		for _, possibleRequestID := range possibleRequestIDs {
-			if subjectConfirmation.SubjectConfirmationData.InResponseTo == possibleRequestID {
-				requestIDvalid = true
-				break
+		// If it is an IDP Initiated Flow,
+		// then inResponseTo will not exist in the SubjectConfirmationData. And hence,
+		// in this case we are marking requestIDvalid as true by default.
+		if sp.AllowIDPInitiated {
+			requestIDvalid = true
+		} else {
+			for _, possibleRequestID := range possibleRequestIDs {
+				if subjectConfirmation.SubjectConfirmationData.InResponseTo == possibleRequestID {
+					requestIDvalid = true
+					break
+				}
 			}
 		}
 		if !requestIDvalid {
