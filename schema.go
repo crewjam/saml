@@ -892,7 +892,7 @@ func (a *ProxyRestriction) Element() *etree.Element {
 type AuthnStatement struct {
 	AuthnInstant        time.Time  `xml:",attr"`
 	SessionIndex        string     `xml:",attr"`
-	SessionNotOnOrAfter *time.Time `xml:",attr"`
+	SessionNotOnOrAfter *time.Time `xml:",attr,omitempty"`
 	SubjectLocality     *SubjectLocality
 	AuthnContext        AuthnContext
 }
@@ -903,6 +903,9 @@ func (a *AuthnStatement) Element() *etree.Element {
 	el.CreateAttr("AuthnInstant", a.AuthnInstant.Format(timeFormat))
 	if a.SessionIndex != "" {
 		el.CreateAttr("SessionIndex", a.SessionIndex)
+	}
+	if a.SessionNotOnOrAfter != nil {
+		el.CreateAttr("SessionNotOnOrAfter", a.SessionNotOnOrAfter.Format(timeFormat))
 	}
 	if a.SubjectLocality != nil {
 		el.AddChild(a.SubjectLocality.Element())
@@ -915,11 +918,13 @@ func (a *AuthnStatement) Element() *etree.Element {
 func (a *AuthnStatement) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type Alias AuthnStatement
 	aux := &struct {
-		AuthnInstant RelaxedTime `xml:",attr"`
+		AuthnInstant        RelaxedTime  `xml:",attr"`
+		SessionNotOnOrAfter *RelaxedTime `xml:",attr,omitempty"`
 		*Alias
 	}{
-		AuthnInstant: RelaxedTime(a.AuthnInstant),
-		Alias:        (*Alias)(a),
+		AuthnInstant:        RelaxedTime(a.AuthnInstant),
+		SessionNotOnOrAfter: (*RelaxedTime)(a.SessionNotOnOrAfter),
+		Alias:               (*Alias)(a),
 	}
 	return e.EncodeElement(aux, start)
 }
@@ -928,7 +933,8 @@ func (a *AuthnStatement) MarshalXML(e *xml.Encoder, start xml.StartElement) erro
 func (a *AuthnStatement) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias AuthnStatement
 	aux := &struct {
-		AuthnInstant RelaxedTime `xml:",attr"`
+		AuthnInstant        RelaxedTime  `xml:",attr"`
+		SessionNotOnOrAfter *RelaxedTime `xml:",attr,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(a),
@@ -937,6 +943,7 @@ func (a *AuthnStatement) UnmarshalXML(d *xml.Decoder, start xml.StartElement) er
 		return err
 	}
 	a.AuthnInstant = time.Time(aux.AuthnInstant)
+	a.SessionNotOnOrAfter = (*time.Time)(aux.SessionNotOnOrAfter)
 	return nil
 }
 
