@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rsa"
 	"crypto/x509"
+	dsig "github.com/russellhaering/goxmldsig"
 	"net/http"
 	"net/url"
 	"time"
@@ -22,6 +23,7 @@ type Options struct {
 	Intermediates     []*x509.Certificate
 	AllowIDPInitiated bool
 	IDPMetadata       *saml.EntityDescriptor
+	SignRequest       bool
 	ForceAuthn        bool // TODO(ross): this should be *bool
 
 	// The following fields exist <= 0.3.0, but are superceded by the new
@@ -125,6 +127,10 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 	if opts.ForceAuthn {
 		forceAuthn = &opts.ForceAuthn
 	}
+	signatureMethod := dsig.RSASHA1SignatureMethod
+	if !opts.SignRequest {
+		signatureMethod = ""
+	}
 
 	return saml.ServiceProvider{
 		EntityID:          opts.EntityID,
@@ -136,6 +142,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		SloURL:            *sloURL,
 		IDPMetadata:       opts.IDPMetadata,
 		ForceAuthn:        forceAuthn,
+		SignatureMethod:   signatureMethod,
 		AllowIDPInitiated: opts.AllowIDPInitiated,
 	}
 }
