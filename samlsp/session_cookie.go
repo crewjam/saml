@@ -67,6 +67,7 @@ func (c CookieSessionProvider) DeleteSession(w http.ResponseWriter, r *http.Requ
 
 	cookie.Value = ""
 	cookie.Expires = time.Unix(1, 0) // past time as close to epoch as possible, but not zero time.Time{}
+	cookie.Path = "/"
 	http.SetCookie(w, cookie)
 	return nil
 }
