@@ -344,7 +344,7 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string) (*AuthnReque
 	return &req, nil
 }
 
-// MakeAssertionEl sets `AssertionEl` to a signed, possibly encrypted, version of `Assertion`.
+// SignAuthnRequest adds the `Signature` element to the `AuthnRequest`.
 func (sp *ServiceProvider) SignAuthnRequest(req *AuthnRequest) error {
 	keyPair := tls.Certificate{
 		Certificate: [][]byte{sp.Certificate.Raw},

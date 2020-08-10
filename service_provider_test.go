@@ -319,6 +319,28 @@ func TestSPCanProduceSignedRequest(t *testing.T) {
 		string(decodedRequest))
 }
 
+func TestSPFailToProduceSignedRequestWithBogusSignatureMethod(t *testing.T) {
+	test := NewServiceProviderTest()
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05.999999999 UTC 2006", "Mon Dec 1 01:31:21.123456789 UTC 2015")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
+	s := ServiceProvider{
+		Key:             test.Key,
+		Certificate:     test.Certificate,
+		MetadataURL:     mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:          mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+		IDPMetadata:     &EntityDescriptor{},
+		SignatureMethod: "bogus",
+	}
+	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	assert.NoError(t, err)
+
+	_, err = s.MakeRedirectAuthenticationRequest("relayState")
+	assert.Errorf(t, err, "invalid signing method bogus")
+}
+
 func TestSPCanProducePostLogoutRequest(t *testing.T) {
 	test := NewServiceProviderTest()
 	TimeNow = func() time.Time {
