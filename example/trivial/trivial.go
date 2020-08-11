@@ -27,7 +27,7 @@ func main() {
 	}
 
 	rootURL, _ := url.Parse("http://localhost:8000")
-	idpMetadataURL, _ := url.Parse("https://www.testshib.org/metadata/testshib-providers.xml")
+	idpMetadataURL, _ := url.Parse("https://samltest.id/saml/idp")
 
 	idpMetadata, err := samlsp.FetchMetadata(
 		context.Background(),
@@ -42,6 +42,7 @@ func main() {
 		IDPMetadata: idpMetadata,
 		Key:         keyPair.PrivateKey.(*rsa.PrivateKey),
 		Certificate: keyPair.Leaf,
+		SignRequest: true,
 	})
 	if err != nil {
 		panic(err) // TODO handle error

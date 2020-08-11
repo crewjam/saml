@@ -98,7 +98,7 @@ func TestSPCanSetAuthenticationNameIDFormat(t *testing.T) {
 	assert.Equal(t, string(EmailAddressNameIDFormat), *req.NameIDPolicy.Format)
 }
 
-func TestSPCanProduceMetadata(t *testing.T) {
+func TestSPCanProduceMetadataWithEncryptionCert(t *testing.T) {
 	test := NewServiceProviderTest()
 	s := ServiceProvider{
 		Key:         test.Key,
@@ -116,13 +116,6 @@ func TestSPCanProduceMetadata(t *testing.T) {
 	assert.Equal(t, ""+
 		"<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2015-12-03T01:57:09Z\" entityID=\"https://example.com/saml2/metadata\">\n"+
 		"  <SPSSODescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2015-12-03T01:57:09Z\" protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\" AuthnRequestsSigned=\"false\" WantAssertionsSigned=\"true\">\n"+
-		"    <KeyDescriptor use=\"signing\">\n"+
-		"      <KeyInfo xmlns=\"http://www.w3.org/2000/09/xmldsig#\">\n"+
-		"        <X509Data>\n"+
-		"          <X509Certificate>MIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJVUzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkdBMQwwCgYDVQQKDANmb28xEjAQBgNVBAMMCWxvY2FsaG9zdDCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA1PMHYmhZj308kWLhZVT4vOulqx/9ibm5B86fPWwUKKQ2i12MYtz07tzukPymisTDhQaqyJ8Kqb/6JjhmeMnEOdTvSPmHO8m1ZVveJU6NoKRn/mP/BD7FW52WhbrUXLSeHVSKfWkNk6S4hk9MV9TswTvyRIKvRsw0X/gfnqkroJcCAwEAATANBgkqhkiG9w0BAQUFAAOBgQCMMlIO+GNcGekevKgkakpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeTQLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvnOwJlNCASPZRH/JmF8tX0hoHuAQ==</X509Certificate>\n"+
-		"        </X509Data>\n"+
-		"      </KeyInfo>\n"+
-		"    </KeyDescriptor>\n"+
 		"    <KeyDescriptor use=\"encryption\">\n"+
 		"      <KeyInfo xmlns=\"http://www.w3.org/2000/09/xmldsig#\">\n"+
 		"        <X509Data>\n"+
@@ -141,7 +134,51 @@ func TestSPCanProduceMetadata(t *testing.T) {
 		string(spMetadata))
 }
 
-func TestCanProduceMetadataNoSigningKey(t *testing.T) {
+func TestSPCanProduceMetadataWithBothCerts(t *testing.T) {
+	test := NewServiceProviderTest()
+	s := ServiceProvider{
+		Key:             test.Key,
+		Certificate:     test.Certificate,
+		MetadataURL:     mustParseURL("https://example.com/saml2/metadata"),
+		AcsURL:          mustParseURL("https://example.com/saml2/acs"),
+		SloURL:          mustParseURL("https://example.com/saml2/slo"),
+		IDPMetadata:     &EntityDescriptor{},
+		SignatureMethod: "not-empty",
+	}
+	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	assert.NoError(t, err)
+
+	spMetadata, err := xml.MarshalIndent(s.Metadata(), "", "  ")
+	assert.NoError(t, err)
+	assert.Equal(t, ""+
+		"<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2015-12-03T01:57:09Z\" entityID=\"https://example.com/saml2/metadata\">\n"+
+		"  <SPSSODescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2015-12-03T01:57:09Z\" protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\" AuthnRequestsSigned=\"true\" WantAssertionsSigned=\"true\">\n"+
+		"    <KeyDescriptor use=\"encryption\">\n"+
+		"      <KeyInfo xmlns=\"http://www.w3.org/2000/09/xmldsig#\">\n"+
+		"        <X509Data>\n"+
+		"          <X509Certificate>MIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJVUzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkdBMQwwCgYDVQQKDANmb28xEjAQBgNVBAMMCWxvY2FsaG9zdDCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA1PMHYmhZj308kWLhZVT4vOulqx/9ibm5B86fPWwUKKQ2i12MYtz07tzukPymisTDhQaqyJ8Kqb/6JjhmeMnEOdTvSPmHO8m1ZVveJU6NoKRn/mP/BD7FW52WhbrUXLSeHVSKfWkNk6S4hk9MV9TswTvyRIKvRsw0X/gfnqkroJcCAwEAATANBgkqhkiG9w0BAQUFAAOBgQCMMlIO+GNcGekevKgkakpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeTQLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvnOwJlNCASPZRH/JmF8tX0hoHuAQ==</X509Certificate>\n"+
+		"        </X509Data>\n"+
+		"      </KeyInfo>\n"+
+		"      <EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes128-cbc\"></EncryptionMethod>\n"+
+		"      <EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes192-cbc\"></EncryptionMethod>\n"+
+		"      <EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes256-cbc\"></EncryptionMethod>\n"+
+		"      <EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p\"></EncryptionMethod>\n"+
+		"    </KeyDescriptor>\n"+
+		"    <KeyDescriptor use=\"signing\">\n"+
+		"      <KeyInfo xmlns=\"http://www.w3.org/2000/09/xmldsig#\">\n"+
+		"        <X509Data>\n"+
+		"          <X509Certificate>MIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJVUzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkdBMQwwCgYDVQQKDANmb28xEjAQBgNVBAMMCWxvY2FsaG9zdDCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA1PMHYmhZj308kWLhZVT4vOulqx/9ibm5B86fPWwUKKQ2i12MYtz07tzukPymisTDhQaqyJ8Kqb/6JjhmeMnEOdTvSPmHO8m1ZVveJU6NoKRn/mP/BD7FW52WhbrUXLSeHVSKfWkNk6S4hk9MV9TswTvyRIKvRsw0X/gfnqkroJcCAwEAATANBgkqhkiG9w0BAQUFAAOBgQCMMlIO+GNcGekevKgkakpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeTQLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvnOwJlNCASPZRH/JmF8tX0hoHuAQ==</X509Certificate>\n"+
+		"        </X509Data>\n"+
+		"      </KeyInfo>\n"+
+		"    </KeyDescriptor>\n"+
+		"    <SingleLogoutService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Location=\"https://example.com/saml2/slo\" ResponseLocation=\"https://example.com/saml2/slo\"></SingleLogoutService>\n"+
+		"    <AssertionConsumerService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Location=\"https://example.com/saml2/acs\" index=\"1\"></AssertionConsumerService>\n"+
+		"  </SPSSODescriptor>\n"+
+		"</EntityDescriptor>",
+		string(spMetadata))
+}
+
+func TestCanProduceMetadataNoCerts(t *testing.T) {
 	test := NewServiceProviderTest()
 	s := ServiceProvider{
 		MetadataURL: mustParseURL("https://example.com/saml2/metadata"),
@@ -246,6 +283,62 @@ func TestSPCanProducePostRequest(t *testing.T) {
 		`<script>document.getElementById('SAMLSubmitButton').style.visibility="hidden";`+
 		`document.getElementById('SAMLRequestForm').submit();</script>`,
 		string(form))
+}
+
+func TestSPCanProduceSignedRequest(t *testing.T) {
+	test := NewServiceProviderTest()
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05.999999999 UTC 2006", "Mon Dec 1 01:31:21.123456789 UTC 2015")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
+	s := ServiceProvider{
+		Key:             test.Key,
+		Certificate:     test.Certificate,
+		MetadataURL:     mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:          mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+		IDPMetadata:     &EntityDescriptor{},
+		SignatureMethod: dsig.RSASHA1SignatureMethod,
+	}
+	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	assert.NoError(t, err)
+
+	redirectURL, err := s.MakeRedirectAuthenticationRequest("relayState")
+	assert.NoError(t, err)
+
+	decodedRequest, err := testsaml.ParseRedirectRequest(redirectURL)
+	assert.NoError(t, err)
+	assert.Equal(t,
+		"idp.testshib.org",
+		redirectURL.Host)
+	assert.Equal(t,
+		"/idp/profile/SAML2/Redirect/SSO",
+		redirectURL.Path)
+	assert.Equal(t,
+		"<samlp:AuthnRequest xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:31:21.123Z\" Destination=\"https://idp.testshib.org/idp/profile/SAML2/Redirect/SSO\" AssertionConsumerServiceURL=\"https://15661444.ngrok.io/saml2/acs\" ProtocolBinding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\"><saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://15661444.ngrok.io/saml2/metadata</saml:Issuer><ds:Signature xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\"><ds:SignedInfo><ds:CanonicalizationMethod Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\"/><ds:SignatureMethod Algorithm=\"http://www.w3.org/2000/09/xmldsig#rsa-sha1\"/><ds:Reference URI=\"#id-00020406080a0c0e10121416181a1c1e20222426\"><ds:Transforms><ds:Transform Algorithm=\"http://www.w3.org/2000/09/xmldsig#enveloped-signature\"/><ds:Transform Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\"/></ds:Transforms><ds:DigestMethod Algorithm=\"http://www.w3.org/2000/09/xmldsig#sha1\"/><ds:DigestValue>XQ5+kdgOf34vpAemZRFalLlzjr0=</ds:DigestValue></ds:Reference></ds:SignedInfo><ds:SignatureValue>Wtomi/PiWx0bMFlImy5soCrrDbdY4BR2Qb8woGqc8KsVtXAwvl6lfYE2tuoT0YS5ipPLMMsFG8dB1TmLcA+0lnUcqfBiTiiHEwTIo3193RIsoH3STlOmXqBQf9Ax2nRdX+/4HwIYF58lgUzOb+nur+zGL6mYw2xjQBw6YGaX9Cc=</ds:SignatureValue><ds:KeyInfo><ds:X509Data><ds:X509Certificate>MIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJVUzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkdBMQwwCgYDVQQKDANmb28xEjAQBgNVBAMMCWxvY2FsaG9zdDCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA1PMHYmhZj308kWLhZVT4vOulqx/9ibm5B86fPWwUKKQ2i12MYtz07tzukPymisTDhQaqyJ8Kqb/6JjhmeMnEOdTvSPmHO8m1ZVveJU6NoKRn/mP/BD7FW52WhbrUXLSeHVSKfWkNk6S4hk9MV9TswTvyRIKvRsw0X/gfnqkroJcCAwEAATANBgkqhkiG9w0BAQUFAAOBgQCMMlIO+GNcGekevKgkakpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeTQLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvnOwJlNCASPZRH/JmF8tX0hoHuAQ==</ds:X509Certificate></ds:X509Data></ds:KeyInfo></ds:Signature><samlp:NameIDPolicy Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" AllowCreate=\"true\"/></samlp:AuthnRequest>",
+		string(decodedRequest))
+}
+
+func TestSPFailToProduceSignedRequestWithBogusSignatureMethod(t *testing.T) {
+	test := NewServiceProviderTest()
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05.999999999 UTC 2006", "Mon Dec 1 01:31:21.123456789 UTC 2015")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
+	s := ServiceProvider{
+		Key:             test.Key,
+		Certificate:     test.Certificate,
+		MetadataURL:     mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:          mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+		IDPMetadata:     &EntityDescriptor{},
+		SignatureMethod: "bogus",
+	}
+	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	assert.NoError(t, err)
+
+	_, err = s.MakeRedirectAuthenticationRequest("relayState")
+	assert.Errorf(t, err, "invalid signing method bogus")
 }
 
 func TestSPCanProducePostLogoutRequest(t *testing.T) {

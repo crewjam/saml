@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/xml"
@@ -101,6 +102,9 @@ type ServiceProvider struct {
 	// SignatureVerifier, if non-nil, allows you to implement an alternative way
 	// to verify signatures.
 	SignatureVerifier SignatureVerifier
+
+	// SignatureMethod, if non-empty, authentication requests will be signed
+	SignatureMethod string
 }
 
 // MaxIssueDelay is the longest allowed time between when a SAML assertion is
@@ -126,7 +130,7 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 		validDuration = sp.MetadataValidDuration
 	}
 
-	authnRequestsSigned := false
+	authnRequestsSigned := len(sp.SignatureMethod) > 0
 	wantAssertionsSigned := true
 	validUntil := TimeNow().Add(validDuration)
 
@@ -137,12 +141,6 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 			certBytes = append(certBytes, intermediate.Raw...)
 		}
 		keyDescriptors = []KeyDescriptor{
-			{
-				Use: "signing",
-				KeyInfo: KeyInfo{
-					Certificate: base64.StdEncoding.EncodeToString(certBytes),
-				},
-			},
 			{
 				Use: "encryption",
 				KeyInfo: KeyInfo{
@@ -155,6 +153,14 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 					{Algorithm: "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"},
 				},
 			},
+		}
+		if len(sp.SignatureMethod) > 0 {
+			keyDescriptors = append(keyDescriptors, KeyDescriptor{
+				Use: "signing",
+				KeyInfo: KeyInfo{
+					Certificate: base64.StdEncoding.EncodeToString(certBytes),
+				},
+			})
 		}
 	}
 
@@ -330,7 +336,49 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string) (*AuthnReque
 		},
 		ForceAuthn: sp.ForceAuthn,
 	}
+	if len(sp.SignatureMethod) > 0 {
+		if err := sp.SignAuthnRequest(&req); err != nil {
+			return nil, err
+		}
+	}
 	return &req, nil
+}
+
+// SignAuthnRequest adds the `Signature` element to the `AuthnRequest`.
+func (sp *ServiceProvider) SignAuthnRequest(req *AuthnRequest) error {
+	keyPair := tls.Certificate{
+		Certificate: [][]byte{sp.Certificate.Raw},
+		PrivateKey:  sp.Key,
+		Leaf:        sp.Certificate,
+	}
+	// TODO: add intermediates for SP
+	//for _, cert := range sp.Intermediates {
+	//	keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
+	//}
+	keyStore := dsig.TLSCertKeyStore(keyPair)
+
+	if sp.SignatureMethod != dsig.RSASHA1SignatureMethod &&
+		sp.SignatureMethod != dsig.RSASHA256SignatureMethod &&
+		sp.SignatureMethod != dsig.RSASHA512SignatureMethod {
+		return fmt.Errorf("invalid signing method %s", sp.SignatureMethod)
+	}
+	signatureMethod := sp.SignatureMethod
+	signingContext := dsig.NewDefaultSigningContext(keyStore)
+	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
+	if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
+		return err
+	}
+
+	assertionEl := req.Element()
+
+	signedRequestEl, err := signingContext.SignEnveloped(assertionEl)
+	if err != nil {
+		return err
+	}
+
+	sigEl := signedRequestEl.Child[len(signedRequestEl.Child)-1]
+	req.Signature = sigEl.(*etree.Element)
+	return nil
 }
 
 // MakePostAuthenticationRequest creates a SAML authentication request using
