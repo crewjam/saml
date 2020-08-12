@@ -10,4 +10,4 @@ script:
   - go test -v ./...
 
 go:
-  - tip
+  - 1.15
