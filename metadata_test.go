@@ -45,7 +45,7 @@ func TestCanParseMetadata(t *testing.T) {
 					{
 						Index:        1,
 						IsDefault:    &True,
-						ServiceNames: []LocalizedName{{Value: "Required attributes"}},
+						ServiceNames: []LocalizedName{{Lang: "en", Value: "Required attributes"}},
 						RequestedAttributes: []RequestedAttribute{
 							{
 								Attribute: Attribute{

@@ -5,8 +5,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/crewjam/saml"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/crewjam/saml"
 )
 
 func TestCookieSameSite(t *testing.T) {

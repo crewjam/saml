@@ -5,10 +5,11 @@ import (
 	"context"
 	"crypto/rsa"
 	"crypto/x509"
-	dsig "github.com/russellhaering/goxmldsig"
 	"net/http"
 	"net/url"
 	"time"
+
+	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/logger"
