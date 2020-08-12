@@ -25,6 +25,7 @@ type Options struct {
 	IDPMetadata       *saml.EntityDescriptor
 	SignRequest       bool
 	ForceAuthn        bool // TODO(ross): this should be *bool
+	CookieSameSite    http.SameSite
 
 	// The following fields exist <= 0.3.0, but are superceded by the new
 	// SessionProvider and RequestTracker interfaces.
@@ -40,7 +41,6 @@ type Options struct {
 // DefaultSessionCodec returns the default SessionCodec for the provided options,
 // a JWTSessionCodec configured to issue signed tokens.
 func DefaultSessionCodec(opts Options) JWTSessionCodec {
-
 	// for backwards compatibility, support CookieMaxAge
 	maxAge := defaultSessionMaxAge
 	if opts.CookieMaxAge > 0 {
@@ -89,6 +89,7 @@ func DefaultSessionProvider(opts Options) CookieSessionProvider {
 		MaxAge:   maxAge,
 		HTTPOnly: true,
 		Secure:   cookieSecure,
+		SameSite: opts.CookieSameSite,
 		Codec:    DefaultSessionCodec(opts),
 	}
 }
