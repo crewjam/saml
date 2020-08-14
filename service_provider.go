@@ -88,8 +88,12 @@ type ServiceProvider struct {
 	// authentication requests
 	AuthnNameIDFormat NameIDFormat
 
+	// MetadataValidUntil is a time used as the validUntil attribute in the
+	// metadata endpoint
+	MetadataValidUntil *time.Time
+
 	// MetadataValidDuration is a duration used to calculate validUntil
-	// attribute in the metadata endpoint
+	// attribute in the metadata endpoint if MetadataValidUntil is nil
 	MetadataValidDuration time.Duration
 
 	// ForceAuthn allows you to force re-authentication of users even if the user
@@ -125,14 +129,19 @@ const DefaultCacheDuration = time.Hour * 24 * 1
 
 // Metadata returns the service provider metadata
 func (sp *ServiceProvider) Metadata() *EntityDescriptor {
-	validDuration := DefaultValidDuration
-	if sp.MetadataValidDuration > 0 {
-		validDuration = sp.MetadataValidDuration
+	var validUntil time.Time
+	if sp.MetadataValidUntil != nil {
+		validUntil = *sp.MetadataValidUntil
+	} else {
+		validDuration := DefaultValidDuration
+		if sp.MetadataValidDuration > 0 {
+			validDuration = sp.MetadataValidDuration
+		}
+		validUntil = TimeNow().Add(validDuration)
 	}
 
 	authnRequestsSigned := len(sp.SignatureMethod) > 0
 	wantAssertionsSigned := true
-	validUntil := TimeNow().Add(validDuration)
 
 	var keyDescriptors []KeyDescriptor
 	if sp.Certificate != nil {

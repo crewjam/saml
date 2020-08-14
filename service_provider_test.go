@@ -223,6 +223,30 @@ func TestCanProduceMetadataEntityID(t *testing.T) {
 		string(spMetadata))
 }
 
+func TestCanProduceMetadataFixedValidUntil(t *testing.T) {
+	test := NewServiceProviderTest()
+	validUntil := time.Date(2020, time.August, 14, 8, 34, 0, 0, time.UTC)
+	s := ServiceProvider{
+		MetadataURL:        mustParseURL("https://example.com/saml2/metadata"),
+		AcsURL:             mustParseURL("https://example.com/saml2/acs"),
+		IDPMetadata:        &EntityDescriptor{},
+		MetadataValidUntil: &validUntil,
+	}
+	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	assert.NoError(t, err)
+
+	spMetadata, err := xml.MarshalIndent(s.Metadata(), "", "  ")
+	assert.NoError(t, err)
+	assert.Equal(t, ""+
+		"<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2020-08-14T08:34:00Z\" entityID=\"https://example.com/saml2/metadata\">\n"+
+		"  <SPSSODescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2020-08-14T08:34:00Z\" protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\" AuthnRequestsSigned=\"false\" WantAssertionsSigned=\"true\">\n"+
+		"    <SingleLogoutService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Location=\"\"></SingleLogoutService>\n"+
+		"    <AssertionConsumerService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Location=\"https://example.com/saml2/acs\" index=\"1\"></AssertionConsumerService>\n"+
+		"  </SPSSODescriptor>\n"+
+		"</EntityDescriptor>",
+		string(spMetadata))
+}
+
 func TestSPCanProduceRedirectRequest(t *testing.T) {
 	test := NewServiceProviderTest()
 	TimeNow = func() time.Time {
