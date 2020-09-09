@@ -3,6 +3,7 @@ package samlsp
 import (
 	"encoding/xml"
 	"net/http"
+	"strings"
 
 	"github.com/crewjam/saml"
 )
@@ -177,15 +178,18 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 // CreateSessionFromAssertion is invoked by ServeHTTP when we have a new, valid SAML assertion.
 func (m *Middleware) CreateSessionFromAssertion(w http.ResponseWriter, r *http.Request, assertion *saml.Assertion) {
 	redirectURI := "/"
-	if trackedRequestIndex := r.Form.Get("RelayState"); trackedRequestIndex != "" {
-		trackedRequest, err := m.RequestTracker.GetTrackedRequest(r, trackedRequestIndex)
+	relayState := r.Form.Get("RelayState")
+	if strings.HasPrefix(relayState, TrackedRequestIndexPrefix) {
+		trackedRequest, err := m.RequestTracker.GetTrackedRequest(r, relayState)
 		if err != nil {
 			m.OnError(w, r, err)
 			return
 		}
-		m.RequestTracker.StopTrackingRequest(w, r, trackedRequestIndex)
+		m.RequestTracker.StopTrackingRequest(w, r, relayState)
 
 		redirectURI = trackedRequest.URI
+	} else if relayState != "" {
+		redirectURI = relayState
 	}
 
 	if err := m.Session.CreateSession(w, r, assertion); err != nil {

@@ -154,7 +154,7 @@ func NewMiddlewareTest() *MiddlewareTest {
 func (test *MiddlewareTest) makeTrackedRequest(id string) string {
 	codec := test.Middleware.RequestTracker.(CookieRequestTracker).Codec
 	token, err := codec.Encode(TrackedRequest{
-		Index:         "KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6",
+		Index:         "idx-KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6",
 		SAMLRequestID: id,
 		URI:           "/frob",
 	})
@@ -221,7 +221,7 @@ func TestMiddlewareRequireAccountNoCreds(t *testing.T) {
 
 	assert.Equal(t, http.StatusFound, resp.Code)
 	assert.Equal(t,
-		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
+		"saml_idx-KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 			test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly",
 		resp.Header().Get("Set-Cookie"))
 
@@ -248,7 +248,7 @@ func TestMiddlewareRequireAccountNoCredsSecure(t *testing.T) {
 
 	assert.Equal(t, http.StatusFound, resp.Code)
 	assert.Equal(t,
-		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure",
+		"saml_idx-KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure",
 		resp.Header().Get("Set-Cookie"))
 
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
@@ -277,7 +277,7 @@ func TestMiddlewareRequireAccountNoCredsPostBinding(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.Code)
 	assert.Equal(t,
-		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure",
+		"saml_idx-KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure",
 		resp.Header().Get("Set-Cookie"))
 	assert.Equal(t, ""+
 		"<!DOCTYPE html>"+
@@ -285,7 +285,7 @@ func TestMiddlewareRequireAccountNoCredsPostBinding(t *testing.T) {
 		"<body>"+
 		"<form method=\"post\" action=\"https://idp.testshib.org/idp/profile/SAML2/POST/SSO\" id=\"SAMLRequestForm\">"+
 		"<input type=\"hidden\" name=\"SAMLRequest\" value=\"PHNhbWxwOkF1dGhuUmVxdWVzdCB4bWxuczpzYW1sPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6YXNzZXJ0aW9uIiB4bWxuczpzYW1scD0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOnByb3RvY29sIiBJRD0iaWQtMDAwMjA0MDYwODBhMGMwZTEwMTIxNDE2MTgxYTFjMWUyMDIyMjQyNiIgVmVyc2lvbj0iMi4wIiBJc3N1ZUluc3RhbnQ9IjIwMTUtMTItMDFUMDE6NTc6MDkuMTIzWiIgRGVzdGluYXRpb249Imh0dHBzOi8vaWRwLnRlc3RzaGliLm9yZy9pZHAvcHJvZmlsZS9TQU1MMi9QT1NUL1NTTyIgQXNzZXJ0aW9uQ29uc3VtZXJTZXJ2aWNlVVJMPSJodHRwczovLzE1NjYxNDQ0Lm5ncm9rLmlvL3NhbWwyL2FjcyIgUHJvdG9jb2xCaW5kaW5nPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6YmluZGluZ3M6SFRUUC1QT1NUIj48c2FtbDpJc3N1ZXIgRm9ybWF0PSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6bmFtZWlkLWZvcm1hdDplbnRpdHkiPmh0dHBzOi8vMTU2NjE0NDQubmdyb2suaW8vc2FtbDIvbWV0YWRhdGE8L3NhbWw6SXNzdWVyPjxzYW1scDpOYW1lSURQb2xpY3kgRm9ybWF0PSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6bmFtZWlkLWZvcm1hdDp0cmFuc2llbnQiIEFsbG93Q3JlYXRlPSJ0cnVlIi8&#43;PC9zYW1scDpBdXRoblJlcXVlc3Q&#43;\" />"+
-		"<input type=\"hidden\" name=\"RelayState\" value=\"KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6\" />"+
+		"<input type=\"hidden\" name=\"RelayState\" value=\"idx-KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6\" />"+
 		"<input id=\"SAMLSubmitButton\" type=\"submit\" value=\"Submit\" />"+
 		"</form>"+
 		"<script>document.getElementById('SAMLSubmitButton').style.visibility=\"hidden\";"+
@@ -351,7 +351,7 @@ func TestMiddlewareRequireAccountBadCreds(t *testing.T) {
 	assert.Equal(t, http.StatusFound, resp.Code)
 
 	assert.Equal(t,
-		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure",
+		"saml_idx-KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure",
 		resp.Header().Get("Set-Cookie"))
 
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
@@ -384,7 +384,7 @@ func TestMiddlewareRequireAccountExpiredCreds(t *testing.T) {
 
 	assert.Equal(t, http.StatusFound, resp.Code)
 	assert.Equal(t,
-		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure",
+		"saml_idx-KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure",
 		resp.Header().Get("Set-Cookie"))
 
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
@@ -486,11 +486,11 @@ func TestMiddlewareCanParseResponse(t *testing.T) {
 	test := NewMiddlewareTest()
 	v := &url.Values{}
 	v.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	v.Set("RelayState", "KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6")
+	v.Set("RelayState", "idx-KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6")
 	req, _ := http.NewRequest("POST", "/saml2/acs", bytes.NewReader([]byte(v.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Cookie", ""+
-		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-9e61753d64e928af5a7a341a97f420c9"))
+		"saml_idx-KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-9e61753d64e928af5a7a341a97f420c9"))
 
 	resp := httptest.NewRecorder()
 	test.Middleware.ServeHTTP(resp, req)
@@ -498,7 +498,27 @@ func TestMiddlewareCanParseResponse(t *testing.T) {
 
 	assert.Equal(t, "/frob", resp.Header().Get("Location"))
 	assert.Equal(t, []string{
-		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6=; Expires=Thu, 01 Jan 1970 00:00:01 GMT",
+		"saml_idx-KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6=; Expires=Thu, 01 Jan 1970 00:00:01 GMT",
+		"ttt=" + test.expectedSessionCookie + "; " +
+			"Path=/; Domain=15661444.ngrok.io; Max-Age=7200; HttpOnly; Secure"},
+		resp.Header()["Set-Cookie"])
+}
+
+func TestMiddlewareRedirectRelayState(t *testing.T) {
+	test := NewMiddlewareTest()
+	test.Middleware.ServiceProvider.AllowIDPInitiated = true
+	v := &url.Values{}
+	v.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
+	v.Set("RelayState", "/path/to/redirect")
+	req, _ := http.NewRequest("POST", "/saml2/acs", bytes.NewReader([]byte(v.Encode())))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp := httptest.NewRecorder()
+	test.Middleware.ServeHTTP(resp, req)
+	assert.Equal(t, http.StatusFound, resp.Code)
+
+	assert.Equal(t, "/path/to/redirect", resp.Header().Get("Location"))
+	assert.Equal(t, []string{
 		"ttt=" + test.expectedSessionCookie + "; " +
 			"Path=/; Domain=15661444.ngrok.io; Max-Age=7200; HttpOnly; Secure"},
 		resp.Header()["Set-Cookie"])
@@ -551,11 +571,11 @@ func TestMiddlewareRejectsInvalidRelayState(t *testing.T) {
 
 	v := &url.Values{}
 	v.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
-	v.Set("RelayState", "ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy")
+	v.Set("RelayState", "idx-ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy")
 	req, _ := http.NewRequest("POST", "/saml2/acs", bytes.NewReader([]byte(v.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Cookie", ""+
-		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-9e61753d64e928af5a7a341a97f420c9"))
+		"saml_idx-KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-9e61753d64e928af5a7a341a97f420c9"))
 
 	resp := httptest.NewRecorder()
 	test.Middleware.ServeHTTP(resp, req)
@@ -578,7 +598,7 @@ func TestMiddlewareRejectsInvalidCookie(t *testing.T) {
 	req, _ := http.NewRequest("POST", "/saml2/acs", bytes.NewReader([]byte(v.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Cookie", ""+
-		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("wrong"))
+		"saml_idx-KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("wrong"))
 
 	resp := httptest.NewRecorder()
 	test.Middleware.ServeHTTP(resp, req)
@@ -596,7 +616,7 @@ func TestMiddlewareHandlesInvalidResponse(t *testing.T) {
 	req, _ := http.NewRequest("POST", "/saml2/acs", bytes.NewReader([]byte(v.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Cookie", ""+
-		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("wrong"))
+		"saml_idx-KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("wrong"))
 
 	resp := httptest.NewRecorder()
 	test.Middleware.ServeHTTP(resp, req)
