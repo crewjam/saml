@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -1036,10 +1037,13 @@ func (sp *ServiceProvider) ValidateLogoutResponseRedirect(queryParameterData str
 
 	gr := flate.NewReader(bytes.NewBuffer(rawResponseBuf))
 
-	decoder := xml.NewDecoder(gr)
+	buf, err := ioutil.ReadAll(gr)
+	if err != nil {
+		return err
+	}
 
 	var resp LogoutResponse
-
+	decoder := xml.NewDecoder(bytes.NewReader(buf))
 	err = decoder.Decode(&resp)
 	if err != nil {
 		return fmt.Errorf("unable to flate decode: %s", err)
@@ -1050,7 +1054,7 @@ func (sp *ServiceProvider) ValidateLogoutResponseRedirect(queryParameterData str
 	}
 
 	doc := etree.NewDocument()
-	if _, err := doc.ReadFrom(gr); err != nil {
+	if _, err := doc.ReadFrom(bytes.NewReader(buf)); err != nil {
 		return err
 	}
 
