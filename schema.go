@@ -1084,7 +1084,7 @@ type LogoutResponse struct {
 
 // Element returns an etree.Element representing the object in XML form.
 func (r *LogoutResponse) Element() *etree.Element {
-	el := etree.NewElement("samlp:Response")
+	el := etree.NewElement("samlp:LogoutResponse")
 	el.CreateAttr("xmlns:saml", "urn:oasis:names:tc:SAML:2.0:assertion")
 	el.CreateAttr("xmlns:samlp", "urn:oasis:names:tc:SAML:2.0:protocol")
 
