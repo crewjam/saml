@@ -376,13 +376,6 @@ func (req *IdpAuthnRequest) Validate() error {
 	}
 	idpSsoDescriptor := req.IDP.Metadata().IDPSSODescriptors[0]
 
-	// TODO(ross): support signed authn requests
-	// For now we do the safe thing and fail in the case where we think
-	// requests might be signed.
-	if idpSsoDescriptor.WantAuthnRequestsSigned != nil && *idpSsoDescriptor.WantAuthnRequestsSigned {
-		return fmt.Errorf("authn request signature checking is not currently supported")
-	}
-
 	// In http://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf §3.4.5.2
 	// we get a description of the Destination attribute:
 	//
@@ -425,6 +418,56 @@ func (req *IdpAuthnRequest) Validate() error {
 		return fmt.Errorf("cannot find assertion consumer service: %v", err)
 	}
 
+	// Validate the signature when requested.
+	if idpSsoDescriptor.WantAuthnRequestsSigned != nil && *idpSsoDescriptor.WantAuthnRequestsSigned {
+		if err := req.validateSignature(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateSignature requires req.ServiceProviderMetadata to be initialized.
+func (req *IdpAuthnRequest) validateSignature() error {
+	// Make sure there is just one SP SSO descriptor.
+	if len(req.ServiceProviderMetadata.SPSSODescriptors) != 1 {
+		return fmt.Errorf("expected exactly one SSO descriptor in SP metadata")
+	}
+
+	spSsoDescriptor := req.ServiceProviderMetadata.SPSSODescriptors[0]
+
+	// Find the right key descriptor.
+	// Find the signing key, otherwise use the last descriptor encountered.
+	var keyDesc *KeyDescriptor
+	for i, desc := range spSsoDescriptor.KeyDescriptors {
+		if desc.Use == "signing" {
+			keyDesc = &spSsoDescriptor.KeyDescriptors[i]
+			break
+		}
+		keyDesc = &spSsoDescriptor.KeyDescriptors[i]
+	}
+	if keyDesc == nil {
+		return fmt.Errorf("no KeyDescriptor found in SP metadata")
+	}
+
+	// Decode the certificate.
+	certRaw, err := base64.StdEncoding.DecodeString(keyDesc.KeyInfo.Certificate)
+	if err != nil {
+		return fmt.Errorf("failed to decode certificate: %v", err)
+	}
+	cert, err := x509.ParseCertificate(certRaw)
+	if err != nil {
+		return fmt.Errorf("failed to parse certificate: %v", err)
+	}
+
+	// Validate the signature.
+	validationContext := dsig.NewDefaultValidationContext(&dsig.MemoryX509CertificateStore{
+		Roots: []*x509.Certificate{cert},
+	})
+	if _, err := validationContext.Validate(req.Request.Element()); err != nil {
+		return fmt.Errorf("failed to validate AuthnRequest signature: %v", err)
+	}
 	return nil
 }
 
