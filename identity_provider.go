@@ -44,8 +44,7 @@ type Session struct {
 	UserGivenName         string
 	UserScopedAffiliation string
 
-	XUserID    string
-	XAccountID string
+	CustomAttributes []Attribute
 }
 
 // SessionProvider is an interface used by IdentityProvider to determine the
@@ -645,28 +644,8 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 		})
 	}
 
-	if session.XUserID != "" {
-		attributes = append(attributes, Attribute{
-			FriendlyName: "xUserId",
-			Name:         "xUserId",
-			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []AttributeValue{{
-				Type:  "xs:string",
-				Value: session.XUserID,
-			}},
-		})
-	}
-
-	if session.XAccountID != "" {
-		attributes = append(attributes, Attribute{
-			FriendlyName: "xAccountId",
-			Name:         "xAccountId",
-			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-			Values: []AttributeValue{{
-				Type:  "xs:string",
-				Value: session.XAccountID,
-			}},
-		})
+	for _, ca := range session.CustomAttributes {
+		attributes = append(attributes, ca)
 	}
 
 	if len(session.Groups) != 0 {
