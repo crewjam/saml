@@ -67,9 +67,12 @@ func (c CookieSessionProvider) DeleteSession(w http.ResponseWriter, r *http.Requ
 		return err
 	}
 
+	// http.Request.Cookie() returns only Name and Value set.
+	// The rest must be updated manually.
 	cookie.Value = ""
 	cookie.Expires = time.Unix(1, 0) // past time as close to epoch as possible, but not zero time.Time{}
 	cookie.Path = "/"
+	cookie.Domain = c.Domain
 	http.SetCookie(w, cookie)
 	return nil
 }
