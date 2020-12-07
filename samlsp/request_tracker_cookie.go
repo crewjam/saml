@@ -19,6 +19,7 @@ type CookieRequestTracker struct {
 	NamePrefix      string
 	Codec           TrackedRequestCodec
 	MaxAge          time.Duration
+	RelayStateFunc  func(w http.ResponseWriter, r *http.Request) string
 }
 
 // TrackRequest starts tracking the SAML request with the given ID. It returns an
@@ -29,6 +30,15 @@ func (t CookieRequestTracker) TrackRequest(w http.ResponseWriter, r *http.Reques
 		SAMLRequestID: samlRequestID,
 		URI:           r.URL.String(),
 	}
+
+	if t.RelayStateFunc != nil {
+		_relayState := t.RelayStateFunc(w, r)
+
+		if _relayState != "" {
+			trackedRequest.Index = _relayState
+		}
+	}
+
 	signedTrackedRequest, err := t.Codec.Encode(trackedRequest)
 	if err != nil {
 		return "", err
