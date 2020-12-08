@@ -21,3 +21,16 @@ func ParseRedirectRequest(u *url.URL) ([]byte, error) {
 	}
 	return buf, nil
 }
+
+// ParseRedirectResponse returns the decoded SAML LogoutResponse from an HTTP-Redirect URL
+func ParseRedirectResponse(u *url.URL) ([]byte, error) {
+	compressedResponse, err := base64.StdEncoding.DecodeString(u.Query().Get("SAMLResponse"))
+	if err != nil {
+		return nil, fmt.Errorf("cannot decode response: %s", err)
+	}
+	buf, err := ioutil.ReadAll(flate.NewReader(bytes.NewReader(compressedResponse)))
+	if err != nil {
+		return nil, fmt.Errorf("cannot decompress response: %s", err)
+	}
+	return buf, nil
+}
