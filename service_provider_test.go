@@ -403,6 +403,62 @@ func TestSPCanProduceRedirectLogoutRequest(t *testing.T) {
 		string(decodedRequest))
 }
 
+func TestSPCanProducePostLogoutResponse(t *testing.T) {
+	test := NewServiceProviderTest()
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05 UTC 2006", "Mon Dec 1 01:31:21 UTC 2015")
+		return rv
+	}
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	assert.NoError(t, err)
+
+	form, err := s.MakePostLogoutResponse("id-d40c15c104b52691eccf0a2a5c8a15595be75423", "relayState")
+	assert.NoError(t, err)
+
+	assert.Equal(t, ``+
+		`<form method="post" action="https://idp.testshib.org/idp/profile/SAML2/POST/SLO" id="SAMLResponseForm">`+
+		`<input type="hidden" name="SAMLResponse" value="PHNhbWxwOlJlc3BvbnNlIHhtbG5zOnNhbWw9InVybjpvYXNpczpuYW1lczp0YzpTQU1MOjIuMDphc3NlcnRpb24iIHhtbG5zOnNhbWxwPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6cHJvdG9jb2wiIElEPSJpZC0wMDAyMDQwNjA4MGEwYzBlMTAxMjE0MTYxODFhMWMxZTIwMjIyNDI2IiBJblJlc3BvbnNlVG89ImlkLWQ0MGMxNWMxMDRiNTI2OTFlY2NmMGEyYTVjOGExNTU5NWJlNzU0MjMiIFZlcnNpb249IjIuMCIgSXNzdWVJbnN0YW50PSIyMDE1LTEyLTAxVDAxOjMxOjIxWiIgRGVzdGluYXRpb249Imh0dHBzOi8vaWRwLnRlc3RzaGliLm9yZy9pZHAvcHJvZmlsZS9TQU1MMi9QT1NUL1NMTyI&#43;PHNhbWw6SXNzdWVyIEZvcm1hdD0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOm5hbWVpZC1mb3JtYXQ6ZW50aXR5Ij5odHRwczovLzE1NjYxNDQ0Lm5ncm9rLmlvL3NhbWwyL21ldGFkYXRhPC9zYW1sOklzc3Vlcj48c2FtbHA6U3RhdHVzPjxzYW1scDpTdGF0dXNDb2RlIFZhbHVlPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6c3RhdHVzOlN1Y2Nlc3MiLz48L3NhbWxwOlN0YXR1cz48L3NhbWxwOlJlc3BvbnNlPg==" />`+
+		`<input type="hidden" name="RelayState" value="relayState" />`+
+		`<input id="SAMLSubmitButton" type="submit" value="Submit" /></form>`+
+		`<script>document.getElementById('SAMLSubmitButton').style.visibility="hidden";`+
+		`document.getElementById('SAMLResponseForm').submit();</script>`,
+		string(form))
+}
+
+func TestSPCanProduceRedirectLogoutResponse(t *testing.T) {
+	test := NewServiceProviderTest()
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05.999999999 UTC 2006", "Mon Dec 1 01:31:21.123456789 UTC 2015")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	assert.NoError(t, err)
+
+	redirectURL, err := s.MakeRedirectLogoutResponse("id-d40c15c104b52691eccf0a2a5c8a15595be75423", "relayState")
+	assert.NoError(t, err)
+
+	decodedResponse, err := testsaml.ParseRedirectResponse(redirectURL)
+	assert.NoError(t, err)
+	assert.Equal(t,
+		"<samlp:Response xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" ID=\"id-00020406080a0c0e10121416181a1c1e20222426\" InResponseTo=\"id-d40c15c104b52691eccf0a2a5c8a15595be75423\" Version=\"2.0\" IssueInstant=\"2015-12-01T01:31:21.123Z\" Destination=\"https://idp.testshib.org/idp/profile/SAML2/Redirect/SLO\"><saml:Issuer Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://15661444.ngrok.io/saml2/metadata</saml:Issuer><samlp:Status><samlp:StatusCode Value=\"urn:oasis:names:tc:SAML:2.0:status:Success\"/></samlp:Status></samlp:Response>",
+		string(decodedResponse))
+}
+
 func TestSPCanHandleOneloginResponse(t *testing.T) {
 	test := NewServiceProviderTest()
 	// An actual response from onelogin

@@ -878,6 +878,43 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	return err
 }
 
+// SignLogoutRequest adds the `Signature` element to the `LogoutRequest`.
+func (sp *ServiceProvider) SignLogoutRequest(req *LogoutRequest) error {
+	keyPair := tls.Certificate{
+		Certificate: [][]byte{sp.Certificate.Raw},
+		PrivateKey:  sp.Key,
+		Leaf:        sp.Certificate,
+	}
+	// TODO: add intermediates for SP
+	//for _, cert := range sp.Intermediates {
+	//	keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
+	//}
+	keyStore := dsig.TLSCertKeyStore(keyPair)
+
+	if sp.SignatureMethod != dsig.RSASHA1SignatureMethod &&
+		sp.SignatureMethod != dsig.RSASHA256SignatureMethod &&
+		sp.SignatureMethod != dsig.RSASHA512SignatureMethod {
+		return fmt.Errorf("invalid signing method %s", sp.SignatureMethod)
+	}
+	signatureMethod := sp.SignatureMethod
+	signingContext := dsig.NewDefaultSigningContext(keyStore)
+	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
+	if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
+		return err
+	}
+
+	assertionEl := req.Element()
+
+	signedRequestEl, err := signingContext.SignEnveloped(assertionEl)
+	if err != nil {
+		return err
+	}
+
+	sigEl := signedRequestEl.Child[len(signedRequestEl.Child)-1]
+	req.Signature = sigEl.(*etree.Element)
+	return nil
+}
+
 // MakeLogoutRequest produces a new LogoutRequest object for idpURL.
 func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string) (*LogoutRequest, error) {
 
@@ -896,6 +933,11 @@ func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string) (*LogoutRequ
 			NameQualifier:   sp.IDPMetadata.EntityID,
 			SPNameQualifier: sp.Metadata().EntityID,
 		},
+	}
+	if len(sp.SignatureMethod) > 0 {
+		if err := sp.SignLogoutRequest(&req); err != nil {
+			return nil, err
+		}
 	}
 	return &req, nil
 }
@@ -981,6 +1023,153 @@ func (req *LogoutRequest) Post(relayState string) []byte {
 	}
 
 	return rv.Bytes()
+}
+
+// MakeLogoutResponse produces a new LogoutResponse object for idpURL and logoutRequestID.
+func (sp *ServiceProvider) MakeLogoutResponse(idpURL, logoutRequestID string) (*LogoutResponse, error) {
+	response := LogoutResponse{
+		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
+		InResponseTo: logoutRequestID,
+		Version:      "2.0",
+		IssueInstant: TimeNow(),
+		Destination:  idpURL,
+		Issuer: &Issuer{
+			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
+			Value:  firstSet(sp.EntityID, sp.MetadataURL.String()),
+		},
+		Status: Status{
+			StatusCode: StatusCode{
+				Value: StatusSuccess,
+			},
+		},
+	}
+
+	if len(sp.SignatureMethod) > 0 {
+		if err := sp.SignLogoutResponse(&response); err != nil {
+			return nil, err
+		}
+	}
+	return &response, nil
+}
+
+// MakeRedirectLogoutResponse creates a SAML LogoutResponse using
+// the HTTP-Redirect binding. It returns a URL that we will redirect the user to
+// for LogoutResponse.
+func (sp *ServiceProvider) MakeRedirectLogoutResponse(logoutRequestID, relayState string) (*url.URL, error) {
+	resp, err := sp.MakeLogoutResponse(sp.GetSLOBindingLocation(HTTPRedirectBinding), logoutRequestID)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Redirect(relayState), nil
+}
+
+// Redirect returns a URL suitable for using the redirect binding with the LogoutResponse.
+func (resp *LogoutResponse) Redirect(relayState string) *url.URL {
+	w := &bytes.Buffer{}
+	w1 := base64.NewEncoder(base64.StdEncoding, w)
+	w2, _ := flate.NewWriter(w1, 9)
+	doc := etree.NewDocument()
+	doc.SetRoot(resp.Element())
+	if _, err := doc.WriteTo(w2); err != nil {
+		panic(err)
+	}
+	w2.Close()
+	w1.Close()
+
+	rv, _ := url.Parse(resp.Destination)
+
+	query := rv.Query()
+	query.Set("SAMLResponse", string(w.Bytes()))
+	if relayState != "" {
+		query.Set("RelayState", relayState)
+	}
+	rv.RawQuery = query.Encode()
+
+	return rv
+}
+
+// MakePostLogoutResponse creates a SAML LogoutResponse using
+// the HTTP-POST binding. It returns HTML text representing an HTML form that
+// can be sent presented to a browser for LogoutResponse.
+func (sp *ServiceProvider) MakePostLogoutResponse(logoutRequestID, relayState string) ([]byte, error) {
+	resp, err := sp.MakeLogoutResponse(sp.GetSLOBindingLocation(HTTPPostBinding), logoutRequestID)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Post(relayState), nil
+}
+
+// Post returns an HTML form suitable for using the HTTP-POST binding with the LogoutResponse.
+func (resp *LogoutResponse) Post(relayState string) []byte {
+	doc := etree.NewDocument()
+	doc.SetRoot(resp.Element())
+	reqBuf, err := doc.WriteToBytes()
+	if err != nil {
+		panic(err)
+	}
+	encodedReqBuf := base64.StdEncoding.EncodeToString(reqBuf)
+
+	tmpl := template.Must(template.New("saml-post-form").Parse(`` +
+		`<form method="post" action="{{.URL}}" id="SAMLResponseForm">` +
+		`<input type="hidden" name="SAMLResponse" value="{{.SAMLResponse}}" />` +
+		`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
+		`<input id="SAMLSubmitButton" type="submit" value="Submit" />` +
+		`</form>` +
+		`<script>document.getElementById('SAMLSubmitButton').style.visibility="hidden";` +
+		`document.getElementById('SAMLResponseForm').submit();</script>`))
+	data := struct {
+		URL          string
+		SAMLResponse string
+		RelayState   string
+	}{
+		URL:          resp.Destination,
+		SAMLResponse: encodedReqBuf,
+		RelayState:   relayState,
+	}
+
+	rv := bytes.Buffer{}
+	if err := tmpl.Execute(&rv, data); err != nil {
+		panic(err)
+	}
+
+	return rv.Bytes()
+}
+
+// SignLogoutResponse adds the `Signature` element to the `LogoutResponse`.
+func (sp *ServiceProvider) SignLogoutResponse(resp *LogoutResponse) error {
+	keyPair := tls.Certificate{
+		Certificate: [][]byte{sp.Certificate.Raw},
+		PrivateKey:  sp.Key,
+		Leaf:        sp.Certificate,
+	}
+	// TODO: add intermediates for SP
+	//for _, cert := range sp.Intermediates {
+	//	keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
+	//}
+	keyStore := dsig.TLSCertKeyStore(keyPair)
+
+	if sp.SignatureMethod != dsig.RSASHA1SignatureMethod &&
+		sp.SignatureMethod != dsig.RSASHA256SignatureMethod &&
+		sp.SignatureMethod != dsig.RSASHA512SignatureMethod {
+		return fmt.Errorf("invalid signing method %s", sp.SignatureMethod)
+	}
+	signatureMethod := sp.SignatureMethod
+	signingContext := dsig.NewDefaultSigningContext(keyStore)
+	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
+	if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
+		return err
+	}
+
+	assertionEl := resp.Element()
+
+	signedRequestEl, err := signingContext.SignEnveloped(assertionEl)
+	if err != nil {
+		return err
+	}
+
+	sigEl := signedRequestEl.Child[len(signedRequestEl.Child)-1]
+	resp.Signature = sigEl.(*etree.Element)
+	return nil
 }
 
 func (sp *ServiceProvider) nameIDFormat() string {
