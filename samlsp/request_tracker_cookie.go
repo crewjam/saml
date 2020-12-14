@@ -56,6 +56,7 @@ func (t CookieRequestTracker) StopTrackingRequest(w http.ResponseWriter, r *http
 		return err
 	}
 	cookie.Value = ""
+	cookie.Domain = t.ServiceProvider.AcsURL.Hostname()
 	cookie.Expires = time.Unix(1, 0) // past time as close to epoch as possible, but not zero time.Time{}
 	http.SetCookie(w, cookie)
 	return nil
