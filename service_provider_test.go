@@ -953,7 +953,6 @@ PUkfbaYHQGP6IS0lzeCeDX0wab3qRoh7/jJt5/BR8Iwf</ds:X509Certificate>
 	}
 }
 
-
 func TestSPRejectsMalformedResponse(t *testing.T) {
 	test := NewServiceProviderTest()
 	// An actual response from google
