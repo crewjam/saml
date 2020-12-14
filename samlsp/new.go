@@ -2,17 +2,14 @@
 package samlsp
 
 import (
-	"context"
 	"crypto/rsa"
 	"crypto/x509"
 	"net/http"
 	"net/url"
-	"time"
 
 	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/logger"
 )
 
 // Options represents the parameters for creating a new middleware
@@ -27,32 +24,16 @@ type Options struct {
 	SignRequest       bool
 	ForceAuthn        bool // TODO(ross): this should be *bool
 	CookieSameSite    http.SameSite
-
-	// The following fields exist <= 0.3.0, but are superceded by the new
-	// SessionProvider and RequestTracker interfaces.
-	Logger         logger.Interface // DEPRECATED: this field will be removed, instead provide a custom OnError function to handle errors
-	IDPMetadataURL *url.URL         // DEPRECATED: this field will be removed, instead use FetchMetadata
-	HTTPClient     *http.Client     // DEPRECATED: this field will be removed, instead pass httpClient to FetchMetadata
-	CookieMaxAge   time.Duration    // DEPRECATED: this field will be removed. Instead, assign a custom CookieRequestTracker or CookieSessionProvider
-	CookieName     string           // DEPRECATED: this field will be removed. Instead, assign a custom CookieRequestTracker or CookieSessionProvider
-	CookieDomain   string           // DEPRECATED: this field will be removed. Instead, assign a custom CookieRequestTracker or CookieSessionProvider
-	CookieSecure   bool             // DEPRECATED: this field will be removed, the Secure flag is set on cookies when the root URL uses the https scheme
 }
 
 // DefaultSessionCodec returns the default SessionCodec for the provided options,
 // a JWTSessionCodec configured to issue signed tokens.
 func DefaultSessionCodec(opts Options) JWTSessionCodec {
-	// for backwards compatibility, support CookieMaxAge
-	maxAge := defaultSessionMaxAge
-	if opts.CookieMaxAge > 0 {
-		maxAge = opts.CookieMaxAge
-	}
-
 	return JWTSessionCodec{
 		SigningMethod: defaultJWTSigningMethod,
 		Audience:      opts.URL.String(),
 		Issuer:        opts.URL.String(),
-		MaxAge:        maxAge,
+		MaxAge:        defaultSessionMaxAge,
 		Key:           opts.Key,
 	}
 }
@@ -60,36 +41,12 @@ func DefaultSessionCodec(opts Options) JWTSessionCodec {
 // DefaultSessionProvider returns the default SessionProvider for the provided options,
 // a CookieSessionProvider configured to store sessions in a cookie.
 func DefaultSessionProvider(opts Options) CookieSessionProvider {
-	// for backwards compatibility, support CookieMaxAge
-	maxAge := defaultSessionMaxAge
-	if opts.CookieMaxAge > 0 {
-		maxAge = opts.CookieMaxAge
-	}
-
-	// for backwards compatibility, support CookieName
-	cookieName := defaultSessionCookieName
-	if opts.CookieName != "" {
-		cookieName = opts.CookieName
-	}
-
-	// for backwards compatibility, support CookieDomain
-	cookieDomain := opts.URL.Host
-	if opts.CookieDomain != "" {
-		cookieDomain = opts.CookieDomain
-	}
-
-	// for backwards compatibility, support CookieDomain
-	cookieSecure := opts.URL.Scheme == "https"
-	if opts.CookieSecure {
-		cookieSecure = true
-	}
-
 	return CookieSessionProvider{
-		Name:     cookieName,
-		Domain:   cookieDomain,
-		MaxAge:   maxAge,
+		Name:     defaultSessionCookieName,
+		Domain:   opts.URL.Host,
+		MaxAge:   defaultSessionMaxAge,
 		HTTPOnly: true,
-		Secure:   cookieSecure,
+		Secure:   opts.URL.Scheme == "https",
 		SameSite: opts.CookieSameSite,
 		Codec:    DefaultSessionCodec(opts),
 	}
@@ -157,29 +114,10 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 // replacing and/or changing Session, RequestTracker, and ServiceProvider
 // in the returned Middleware.
 func New(opts Options) (*Middleware, error) {
-	// for backwards compatibility, support Logger
-	onError := DefaultOnError
-	if opts.Logger != nil {
-		onError = defaultOnErrorWithLogger(opts.Logger)
-	}
-
-	// for backwards compatibility, support IDPMetadataURL
-	if opts.IDPMetadataURL != nil && opts.IDPMetadata == nil {
-		httpClient := opts.HTTPClient
-		if httpClient == nil {
-			httpClient = http.DefaultClient
-		}
-		metadata, err := FetchMetadata(context.TODO(), httpClient, *opts.IDPMetadataURL)
-		if err != nil {
-			return nil, err
-		}
-		opts.IDPMetadata = metadata
-	}
-
 	m := &Middleware{
 		ServiceProvider: DefaultServiceProvider(opts),
 		Binding:         "",
-		OnError:         onError,
+		OnError:         DefaultOnError,
 		Session:         DefaultSessionProvider(opts),
 	}
 	m.RequestTracker = DefaultRequestTracker(opts, &m.ServiceProvider)
