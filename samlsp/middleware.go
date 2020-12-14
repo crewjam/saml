@@ -71,7 +71,7 @@ func (m *Middleware) ServeMetadata(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-// ServeMetadata handles requests for the SAML ACS endpoint.
+// ServeACS handles requests for the SAML ACS endpoint.
 func (m *Middleware) ServeACS(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 
