@@ -44,6 +44,8 @@ type Session struct {
 	UserSurname           string
 	UserGivenName         string
 	UserScopedAffiliation string
+
+	CustomAttributes []Attribute
 }
 
 // SessionProvider is an interface used by IdentityProvider to determine the
@@ -646,6 +648,10 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 				Value: session.UserScopedAffiliation,
 			}},
 		})
+	}
+
+	for _, ca := range session.CustomAttributes {
+		attributes = append(attributes, ca)
 	}
 
 	if len(session.Groups) != 0 {
