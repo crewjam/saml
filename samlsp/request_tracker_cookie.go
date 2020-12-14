@@ -19,6 +19,7 @@ type CookieRequestTracker struct {
 	NamePrefix      string
 	Codec           TrackedRequestCodec
 	MaxAge          time.Duration
+	SameSite        http.SameSite
 }
 
 // TrackRequest starts tracking the SAML request with the given ID. It returns an
@@ -39,6 +40,7 @@ func (t CookieRequestTracker) TrackRequest(w http.ResponseWriter, r *http.Reques
 		Value:    signedTrackedRequest,
 		MaxAge:   int(t.MaxAge.Seconds()),
 		HttpOnly: true,
+		SameSite: t.SameSite,
 		Secure:   t.ServiceProvider.AcsURL.Scheme == "https",
 		Path:     t.ServiceProvider.AcsURL.Path,
 	})

@@ -115,6 +115,7 @@ func DefaultRequestTracker(opts Options, serviceProvider *saml.ServiceProvider) 
 		NamePrefix:      "saml_",
 		Codec:           DefaultTrackedRequestCodec(opts),
 		MaxAge:          saml.MaxIssueDelay,
+		SameSite:        opts.CookieSameSite,
 	}
 }
 
