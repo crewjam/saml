@@ -49,6 +49,6 @@ func TestRelaxedTimeParse(t *testing.T) {
 		var rt RelaxedTime
 		err := rt.UnmarshalText([]byte("1981-02-03T14:15:16Z04:00"))
 		assert.EqualError(t, err,
-			"parsing time \"1981-02-03T14:15:16Z04:00\": extra text: 04:00")
+			"parsing time \"1981-02-03T14:15:16Z04:00\": extra text: \"04:00\"")
 	}
 }

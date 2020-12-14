@@ -55,6 +55,9 @@ var tokenJSON = []byte(`{
   "nbf": 1448935029,
   "sub": "_41bd295976dadd70e1480f318e772841",
   "attr": {
+    "SessionIndex": [
+      "_6149230ee8fb88d3635c238509d9a35a"
+    ], 
     "cn": [
       "Me Myself And I"
     ],
