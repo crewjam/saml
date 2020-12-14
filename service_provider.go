@@ -11,10 +11,13 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"regexp"
 	"time"
+
+	xrv "github.com/mattermost/xml-roundtrip-validator"
 
 	"github.com/beevik/etree"
 	dsig "github.com/russellhaering/goxmldsig"
@@ -553,9 +556,15 @@ func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleR
 		Response: string(decodedResponseXML),
 	}
 
+	// ensure that the response XML is well formed before we parse it
+	if err := xrv.Validate(bytes.NewReader(decodedResponseXML)); err != nil {
+		retErr.PrivateErr = fmt.Errorf("invalid xml: %s", err)
+		return nil, retErr
+	}
+
 	// do some validation first before we decrypt
 	resp := Response{}
-	if err := xml.Unmarshal([]byte(decodedResponseXML), &resp); err != nil {
+	if err := xml.Unmarshal(decodedResponseXML, &resp); err != nil {
 		retErr.PrivateErr = fmt.Errorf("cannot unmarshal response: %s", err)
 		return nil, retErr
 	}
@@ -659,6 +668,12 @@ func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleR
 		}
 		retErr.Response = string(plaintextAssertion)
 
+		// TODO(ross): add test case for this
+		if err := xrv.Validate(bytes.NewReader(plaintextAssertion)); err != nil {
+			retErr.PrivateErr = fmt.Errorf("plaintext response contains invalid XML: %s", err)
+			return nil, retErr
+		}
+
 		doc = etree.NewDocument()
 		if err := doc.ReadFromBytes(plaintextAssertion); err != nil {
 			retErr.PrivateErr = fmt.Errorf("cannot parse plaintext response %v", err)
@@ -673,6 +688,8 @@ func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleR
 		}
 
 		assertion = &Assertion{}
+		// Note: plaintextAssertion is known to be safe to parse because
+		// plaintextAssertion is unmodified from when xrv.Validate() was called above.
 		if err := xml.Unmarshal(plaintextAssertion, assertion); err != nil {
 			retErr.PrivateErr = err
 			return nil, retErr
@@ -1001,8 +1018,12 @@ func (sp *ServiceProvider) ValidateLogoutResponseForm(postFormData string) error
 		return fmt.Errorf("unable to parse base64: %s", err)
 	}
 
-	var resp LogoutResponse
+	// TODO(ross): add test case for this (SLO does not have tests right now)
+	if err := xrv.Validate(bytes.NewReader(rawResponseBuf)); err != nil {
+		return fmt.Errorf("response contains invalid XML: %s", err)
+	}
 
+	var resp LogoutResponse
 	if err := xml.Unmarshal(rawResponseBuf, &resp); err != nil {
 		return fmt.Errorf("cannot unmarshal response: %s", err)
 	}
@@ -1034,9 +1055,16 @@ func (sp *ServiceProvider) ValidateLogoutResponseRedirect(queryParameterData str
 		return fmt.Errorf("unable to parse base64: %s", err)
 	}
 
-	gr := flate.NewReader(bytes.NewBuffer(rawResponseBuf))
+	gr, err := ioutil.ReadAll(flate.NewReader(bytes.NewBuffer(rawResponseBuf)))
+	if err != nil {
+		return err
+	}
 
-	decoder := xml.NewDecoder(gr)
+	if err := xrv.Validate(bytes.NewReader(gr)); err != nil {
+		return err
+	}
+
+	decoder := xml.NewDecoder(bytes.NewReader(gr))
 
 	var resp LogoutResponse
 
@@ -1050,7 +1078,7 @@ func (sp *ServiceProvider) ValidateLogoutResponseRedirect(queryParameterData str
 	}
 
 	doc := etree.NewDocument()
-	if _, err := doc.ReadFrom(gr); err != nil {
+	if _, err := doc.ReadFrom(bytes.NewReader(gr)); err != nil {
 		return err
 	}
 

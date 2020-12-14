@@ -1,12 +1,13 @@
 package samlidp
 
 import (
+	"bytes"
+	"encoding/xml"
 	"errors"
+	"io"
 	"io/ioutil"
 
-	"encoding/xml"
-
-	"io"
+	xrv "github.com/mattermost/xml-roundtrip-validator"
 
 	"github.com/crewjam/saml"
 )
@@ -20,19 +21,20 @@ func randomBytes(n int) []byte {
 }
 
 func getSPMetadata(r io.Reader) (spMetadata *saml.EntityDescriptor, err error) {
-	var bytes []byte
-
-	if bytes, err = ioutil.ReadAll(r); err != nil {
+	var data []byte
+	if data, err = ioutil.ReadAll(r); err != nil {
 		return nil, err
 	}
 
 	spMetadata = &saml.EntityDescriptor{}
+	if err := xrv.Validate(bytes.NewBuffer(data)); err != nil {
+		return nil, err
+	}
 
-	if err := xml.Unmarshal(bytes, &spMetadata); err != nil {
+	if err := xml.Unmarshal(data, &spMetadata); err != nil {
 		if err.Error() == "expected element type <EntityDescriptor> but have <EntitiesDescriptor>" {
 			entities := &saml.EntitiesDescriptor{}
-
-			if err := xml.Unmarshal(bytes, &entities); err != nil {
+			if err := xml.Unmarshal(data, &entities); err != nil {
 				return nil, err
 			}
 

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
+	xrv "github.com/mattermost/xml-roundtrip-validator"
 	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml/logger"
@@ -359,6 +360,7 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 	default:
 		return nil, fmt.Errorf("method not allowed")
 	}
+
 	return req, nil
 }
 
@@ -366,6 +368,10 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 // the AuthnRequest and Metadata properties. Returns a non-nil error if the
 // request is not valid.
 func (req *IdpAuthnRequest) Validate() error {
+	if err := xrv.Validate(bytes.NewReader(req.RequestBuffer)); err != nil {
+		return err
+	}
+
 	if err := xml.Unmarshal(req.RequestBuffer, &req.Request); err != nil {
 		return err
 	}

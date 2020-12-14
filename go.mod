@@ -10,6 +10,7 @@ require (
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/jonboulle/clockwork v0.2.1 // indirect
 	github.com/kr/pretty v0.2.1
+	github.com/mattermost/xml-roundtrip-validator v0.0.0-00010101000000-000000000000
 	github.com/pkg/errors v0.8.1 // indirect
 	github.com/russellhaering/goxmldsig v1.1.0
 	github.com/stretchr/testify v1.6.1
