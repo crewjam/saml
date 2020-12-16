@@ -76,3 +76,25 @@ func TestAuthnStatementXMLRoundTrip(t *testing.T) {
 		`<AuthnStatement AuthnInstant="2020-07-21T12:30:45Z" SessionIndex="index" SessionNotOnOrAfter="2020-07-22T15:00:00Z"><AuthnContext></AuthnContext></AuthnStatement>`,
 		string(x))
 }
+
+func TestAuthnStatementMarshalWithoutSessionNotOnOrAfter(t *testing.T) {
+	authnInstant := time.Date(2020, 7, 21, 12, 30, 45, 0, time.UTC)
+	expected := AuthnStatement{
+		AuthnInstant:        authnInstant,
+		SessionIndex:        "index",
+		SessionNotOnOrAfter: nil,
+	}
+
+	doc := etree.NewDocument()
+	doc.SetRoot(expected.Element())
+	x, err := doc.WriteToBytes()
+	assert.NoError(t, err)
+	assert.Equal(t,
+		`<saml:AuthnStatement AuthnInstant="2020-07-21T12:30:45Z" SessionIndex="index"><saml:AuthnContext/></saml:AuthnStatement>`,
+		string(x))
+
+	var actual AuthnStatement
+	err = xml.Unmarshal(x, &actual)
+	assert.NoError(t, err)
+	assert.Equal(t, expected, actual)
+}
