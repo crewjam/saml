@@ -13,7 +13,7 @@ import (
 )
 
 func TestFetchMetadata(t *testing.T) {
-	test := NewMiddlewareTest()
+	test := NewMiddlewareTest(t)
 
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/metadata", r.URL.String())
@@ -28,7 +28,7 @@ func TestFetchMetadata(t *testing.T) {
 }
 
 func TestFetchMetadataRejectsInvalid(t *testing.T) {
-	test := NewMiddlewareTest()
+	test := NewMiddlewareTest(t)
 	test.IDPMetadata = strings.Replace(test.IDPMetadata, "<EntityDescriptor ", "<EntityDescriptor ::foo=\"bar\"", -1)
 
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

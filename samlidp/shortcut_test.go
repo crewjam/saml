@@ -10,7 +10,7 @@ import (
 )
 
 func TestShortcutsCrud(t *testing.T) {
-	test := NewServerTest()
+	test := NewServerTest(t)
 	w := httptest.NewRecorder()
 	r, _ := http.NewRequest("GET", "https://idp.example.com/shortcuts/", nil)
 	test.Server.ServeHTTP(w, r)
@@ -56,7 +56,7 @@ func TestShortcutsCrud(t *testing.T) {
 }
 
 func TestShortcut(t *testing.T) {
-	test := NewServerTest()
+	test := NewServerTest(t)
 	w := httptest.NewRecorder()
 	r, _ := http.NewRequest("PUT", "https://idp.example.com/shortcuts/bob",
 		strings.NewReader("{\"url_suffix_as_relay_state\": true, \"service_provider\": \"https://sp.example.com/saml2/metadata\"}"))
