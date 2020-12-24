@@ -595,7 +595,7 @@ func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleR
 		retErr.PrivateErr = fmt.Errorf("response IssueInstant expired at %s", resp.IssueInstant.Add(MaxIssueDelay))
 		return nil, retErr
 	}
-	if resp.Issuer.Value != sp.IDPMetadata.EntityID {
+	if resp.Issuer != nil && resp.Issuer.Value != sp.IDPMetadata.EntityID {
 		retErr.PrivateErr = fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
 		return nil, retErr
 	}
