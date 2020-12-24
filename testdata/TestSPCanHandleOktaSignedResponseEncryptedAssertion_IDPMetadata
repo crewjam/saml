@@ -1,0 +1,21 @@
+<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="http://www.okta.com/exkppsa1qwuFV4D7z0h7">
+<md:IDPSSODescriptor WantAuthnRequestsSigned="false" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+<md:KeyDescriptor use="signing">
+<ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+<ds:X509Data>
+<ds:X509Certificate>
+MIIDpDCCAoygAwIBAgIGAWW0dDUQMA0GCSqGSIb3DQEBCwUAMIGSMQswCQYDVQQGEwJVUzETMBEG A1UECAwKQ2FsaWZvcm5pYTEWMBQGA1UEBwwNU2FuIEZyYW5jaXNjbzENMAsGA1UECgwET2t0YTEU MBIGA1UECwwLU1NPUHJvdmlkZXIxEzARBgNVBAMMCmRldi01MTMzOTQxHDAaBgkqhkiG9w0BCQEW DWluZm9Ab2t0YS5jb20wHhcNMTgwOTA3MTQzMjU5WhcNMjgwOTA3MTQzMzU5WjCBkjELMAkGA1UE BhMCVVMxEzARBgNVBAgMCkNhbGlmb3JuaWExFjAUBgNVBAcMDVNhbiBGcmFuY2lzY28xDTALBgNV BAoMBE9rdGExFDASBgNVBAsMC1NTT1Byb3ZpZGVyMRMwEQYDVQQDDApkZXYtNTEzMzk0MRwwGgYJ KoZIhvcNAQkBFg1pbmZvQG9rdGEuY29tMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA oggcfiSRJ6PGoI8XHKUYd89/BPMmduzR365yUEKSK6TIOcA/jrnJzxWHT9PsvB4znaoEdg27dmX0 IZ2I0bjSoyvp4BT8ZtsuqpamsJOFDajfzrU/dMLIQCwY0+38F+x/gNNL+BhYb6zmrdvomb7yqI2E JuHMXMS786UY5GfD+/n0gRSvd+DpIW8ZlsZMG/llyxO1ZccuUqzkbiVV4w1y5PMvSBL7BAWsTn9G IckQsyF+fsG0bKlN3JQjHmjFUrT0cnWkAJjGIVmmrp9NUWyc/SI01i6WlwcQsKw4PB7EU3J8BINv 9mCGXpwp5vWXRdRGjTT4BmFm8lY0QXHqXa/2+QIDAQABMA0GCSqGSIb3DQEBCwUAA4IBAQBypFox /IaTXAKFsRQi6WUG0QiBLCR8eLhSUDF3xkgELkNYDErQKNyVaXrYoHwPoWYpok6MYddMkoo2YuPG W6V4zDa0k0ulbzKlvbbZQpkzIJEj4dr+PaqmtHAe7C7YNkj4jlfJP6QdqMK+rCBVU3kCX2c/ARun Vy/pIuLowXrQUCF0cccePD8jryej+cmm9jjHWmQNfHDMAv/vpGSXV2W3bzNALXxfCoKqU15ii6YQ hXU85OE5qXEY92ab3D67gppte7eNn/G7D7cuAZhkt7wfLsjoCVK4bZOwxqUw6mPoXXFpkTnlSo86 p7wkbeii7Epjm5HcXTPPC7jd7ZOu3Hsr
+</ds:X509Certificate>
+</ds:X509Data>
+</ds:KeyInfo>
+</md:KeyDescriptor>
+<md:NameIDFormat>
+urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified
+</md:NameIDFormat>
+<md:NameIDFormat>
+urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress
+</md:NameIDFormat>
+<md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://dev-513394.oktapreview.com/app/rstudioincdev513394_dev_1/exkppsa1qwuFV4D7z0h7/sso/saml"/>
+<md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://dev-513394.oktapreview.com/app/rstudioincdev513394_dev_1/exkppsa1qwuFV4D7z0h7/sso/saml"/>
+</md:IDPSSODescriptor>
+</md:EntityDescriptor>

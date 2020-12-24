@@ -10,7 +10,7 @@ import (
 )
 
 func TestUsersCrud(t *testing.T) {
-	test := NewServerTest()
+	test := NewServerTest(t)
 	w := httptest.NewRecorder()
 	r, _ := http.NewRequest("GET", "https://idp.example.com/users/", nil)
 	test.Server.ServeHTTP(w, r)

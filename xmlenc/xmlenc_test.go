@@ -11,7 +11,7 @@ import (
 
 func TestDataAES128CBC(t *testing.T) {
 	RandReader = rand.New(rand.NewSource(0)) // deterministic random numbers for tests
-	plaintext, err := ioutil.ReadFile("test_data/encrypt-data-aes128-cbc.data")
+	plaintext, err := ioutil.ReadFile("testdata/encrypt-data-aes128-cbc.data")
 	assert.NoError(t, err)
 
 	var ciphertext string
@@ -42,7 +42,7 @@ func TestDataAES128CBC(t *testing.T) {
 	{
 		decrypter := AES128CBC
 		doc := etree.NewDocument()
-		err := doc.ReadFromFile("test_data/encrypt-data-aes128-cbc.xml")
+		err := doc.ReadFromFile("testdata/encrypt-data-aes128-cbc.xml")
 		assert.NoError(t, err)
 
 		actualPlaintext, err := decrypter.Decrypt([]byte("abcdefghijklmnop"), doc.Root())
@@ -55,7 +55,7 @@ func TestDataAES128CBC(t *testing.T) {
 func TestAES256CBC(t *testing.T) {
 	RandReader = rand.New(rand.NewSource(0)) // deterministic random numbers for tests
 	doc := etree.NewDocument()
-	err := doc.ReadFromFile("test_data/plaintext.xml")
+	err := doc.ReadFromFile("testdata/plaintext.xml")
 	assert.NoError(t, err)
 
 	el := doc.FindElement("//PaymentInfo")
