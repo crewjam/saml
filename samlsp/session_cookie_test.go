@@ -5,9 +5,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-
 	"github.com/crewjam/saml"
+	"gotest.tools/assert"
+	is "gotest.tools/assert/cmp"
 )
 
 func TestCookieSameSite(t *testing.T) {
@@ -25,22 +25,22 @@ func TestCookieSameSite(t *testing.T) {
 		resp := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		err := csp.CreateSession(resp, req, &saml.Assertion{})
-		assert.NoError(t, err)
+		assert.Check(t, err)
 
 		cookies := resp.Result().Cookies()
-		assert.Len(t, cookies, 1, "Expected to have a cookie set")
+		assert.Check(t, is.Len(cookies, 1), "Expected to have a cookie set")
 
 		return cookies[0]
 	}
 
 	t.Run("no same site", func(t *testing.T) {
 		cookie := getSessionCookie(t)
-		assert.EqualValues(t, http.SameSite(0), cookie.SameSite)
+		assert.Check(t, is.Equal(http.SameSite(0), cookie.SameSite))
 	})
 
 	t.Run("with same site", func(t *testing.T) {
 		csp.SameSite = http.SameSiteStrictMode
 		cookie := getSessionCookie(t)
-		assert.EqualValues(t, http.SameSiteStrictMode, cookie.SameSite)
+		assert.Check(t, is.Equal(http.SameSiteStrictMode, cookie.SameSite))
 	})
 }

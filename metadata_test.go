@@ -2,11 +2,12 @@ package saml
 
 import (
 	"encoding/xml"
-	"gotest.tools/golden"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
+	"gotest.tools/assert"
+	is "gotest.tools/assert/cmp"
+	"gotest.tools/golden"
 )
 
 func TestCanParseMetadata(t *testing.T) {
@@ -14,7 +15,7 @@ func TestCanParseMetadata(t *testing.T) {
 
 	metadata := EntityDescriptor{}
 	err := xml.Unmarshal(buf, &metadata)
-	assert.NoError(t, err)
+	assert.Check(t, err)
 
 	var False = false
 	var True = true
@@ -82,7 +83,7 @@ func TestCanParseMetadata(t *testing.T) {
 			},
 		},
 	}
-	assert.Equal(t, expected, metadata)
+	assert.Check(t, is.DeepEqual(expected, metadata))
 
 }
 
@@ -149,6 +150,6 @@ cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvnOwJlNCASPZRH/JmF8tX0hoHuAQ==`,
 	}
 
 	buf, err := xml.MarshalIndent(metadata, "", "  ")
-	assert.NoError(t, err)
+	assert.Check(t, err)
 	golden.Assert(t, string(buf), "TestCanProduceSPMetadata_expected")
 }
