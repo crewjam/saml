@@ -1,6 +1,7 @@
 package saml
 
 import (
+	"bytes"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
@@ -22,11 +23,11 @@ import (
 )
 
 type ServiceProviderTest struct {
-	AuthnRequest string
-	SamlResponse string
+	AuthnRequest []byte
+	SamlResponse []byte
 	Key          *rsa.PrivateKey
 	Certificate  *x509.Certificate
-	IDPMetadata  string
+	IDPMetadata  []byte
 }
 
 // Helper to decode SAML redirect binding requests
@@ -59,11 +60,11 @@ func NewServiceProviderTest(t *testing.T) *ServiceProviderTest {
 	RandReader = &testRandomReader{}
 
 	test := ServiceProviderTest{}
-	test.AuthnRequest = string(golden.Get(t, "SP_AuthnRequest"))
-	test.SamlResponse = string(golden.Get(t, "SP_SAMLResponse"))
+	test.AuthnRequest = golden.Get(t, "SP_AuthnRequest")
+	test.SamlResponse = golden.Get(t, "SP_SAMLResponse")
 	test.Key = mustParsePrivateKey(golden.Get(t, "sp_key.pem")).(*rsa.PrivateKey)
 	test.Certificate = mustParseCertificate(golden.Get(t, "sp_cert.pem"))
-	test.IDPMetadata = string(golden.Get(t, "SP_IDPMetadata"))
+	test.IDPMetadata = golden.Get(t, "SP_IDPMetadata")
 	return &test
 }
 
@@ -111,7 +112,7 @@ func TestSPCanProduceMetadataWithEncryptionCert(t *testing.T) {
 		SloURL:      mustParseURL("https://example.com/saml2/slo"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	spMetadata, err := xml.MarshalIndent(s.Metadata(), "", "  ")
@@ -130,7 +131,7 @@ func TestSPCanProduceMetadataWithBothCerts(t *testing.T) {
 		IDPMetadata:     &EntityDescriptor{},
 		SignatureMethod: "not-empty",
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	spMetadata, err := xml.MarshalIndent(s.Metadata(), "", "  ")
@@ -146,7 +147,7 @@ func TestCanProduceMetadataNoCerts(t *testing.T) {
 		AcsURL:      mustParseURL("https://example.com/saml2/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	spMetadata, err := xml.MarshalIndent(s.Metadata(), "", "  ")
@@ -162,7 +163,7 @@ func TestCanProduceMetadataEntityID(t *testing.T) {
 		AcsURL:      mustParseURL("https://example.com/saml2/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	spMetadata, err := xml.MarshalIndent(s.Metadata(), "", "  ")
@@ -184,7 +185,7 @@ func TestSPCanProduceRedirectRequest(t *testing.T) {
 		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	redirectURL, err := s.MakeRedirectAuthenticationRequest("relayState")
@@ -212,7 +213,7 @@ func TestSPCanProducePostRequest(t *testing.T) {
 		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	form, err := s.MakePostAuthenticationRequest("relayState")
@@ -235,7 +236,7 @@ func TestSPCanProduceSignedRequest(t *testing.T) {
 		IDPMetadata:     &EntityDescriptor{},
 		SignatureMethod: dsig.RSASHA1SignatureMethod,
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	redirectURL, err := s.MakeRedirectAuthenticationRequest("relayState")
@@ -265,7 +266,7 @@ func TestSPFailToProduceSignedRequestWithBogusSignatureMethod(t *testing.T) {
 		IDPMetadata:     &EntityDescriptor{},
 		SignatureMethod: "bogus",
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	_, err = s.MakeRedirectAuthenticationRequest("relayState")
@@ -285,7 +286,7 @@ func TestSPCanProducePostLogoutRequest(t *testing.T) {
 		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	form, err := s.MakePostLogoutRequest("ros@octolabs.io", "relayState")
@@ -307,7 +308,7 @@ func TestSPCanProduceRedirectLogoutRequest(t *testing.T) {
 		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	redirectURL, err := s.MakeRedirectLogoutRequest("ross@octolabs.io", "relayState")
@@ -335,7 +336,7 @@ func TestSPCanProducePostLogoutResponse(t *testing.T) {
 		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	form, err := s.MakePostLogoutResponse("id-d40c15c104b52691eccf0a2a5c8a15595be75423", "relayState")
@@ -357,7 +358,7 @@ func TestSPCanProduceRedirectLogoutResponse(t *testing.T) {
 		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	redirectURL, err := s.MakeRedirectLogoutResponse("id-d40c15c104b52691eccf0a2a5c8a15595be75423", "relayState")
@@ -377,8 +378,8 @@ func TestSPCanHandleOneloginResponse(t *testing.T) {
 	}
 	Clock = dsig.NewFakeClockAt(TimeNow())
 
-	SamlResponse := string(golden.Get(t, "TestSPCanHandleOneloginResponse_response"))
-	test.IDPMetadata = string(golden.Get(t, "TestSPCanHandleOneloginResponse_IDPMetadata"))
+	SamlResponse := golden.Get(t, "TestSPCanHandleOneloginResponse_response")
+	test.IDPMetadata = golden.Get(t, "TestSPCanHandleOneloginResponse_IDPMetadata")
 
 	s := ServiceProvider{
 		Key:         test.Key,
@@ -387,11 +388,11 @@ func TestSPCanHandleOneloginResponse(t *testing.T) {
 		AcsURL:      mustParseURL("https://29ee6d2e.ngrok.io/saml/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	req := http.Request{PostForm: url.Values{}}
-	req.PostForm.Set("SAMLResponse", SamlResponse)
+	req.PostForm.Set("SAMLResponse", string(SamlResponse))
 	assertion, err := s.ParseResponse(&req, []string{"id-d40c15c104b52691eccf0a2a5c8a15595be75423"})
 	assert.Check(t, err)
 
@@ -459,8 +460,8 @@ func TestSPCanHandleOktaSignedResponseEncryptedAssertion(t *testing.T) {
 		return rv
 	}
 	Clock = dsig.NewFakeClockAt(TimeNow())
-	SamlResponse := string(golden.Get(t, "TestSPCanHandleOktaSignedResponseEncryptedAssertion_response"))
-	test.IDPMetadata = string(golden.Get(t, "TestSPCanHandleOktaSignedResponseEncryptedAssertion_IDPMetadata"))
+	SamlResponse := golden.Get(t, "TestSPCanHandleOktaSignedResponseEncryptedAssertion_response")
+	test.IDPMetadata = golden.Get(t, "TestSPCanHandleOktaSignedResponseEncryptedAssertion_IDPMetadata")
 	s := ServiceProvider{
 		Key:         test.Key,
 		Certificate: test.Certificate,
@@ -468,11 +469,11 @@ func TestSPCanHandleOktaSignedResponseEncryptedAssertion(t *testing.T) {
 		AcsURL:      mustParseURL("http://localhost:8000/saml/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	req := http.Request{PostForm: url.Values{}}
-	req.PostForm.Set("SAMLResponse", SamlResponse)
+	req.PostForm.Set("SAMLResponse", string(SamlResponse))
 	assertion, err := s.ParseResponse(&req, []string{"id-a7364d1e4432aa9085a7a8bd824ea2fa8fa8f684"})
 	assert.Check(t, err)
 
@@ -499,8 +500,8 @@ func TestSPCanHandleOktaResponseEncryptedSignedAssertion(t *testing.T) {
 		return rv
 	}
 	Clock = dsig.NewFakeClockAt(TimeNow())
-	SamlResponse := string(golden.Get(t, "TestSPCanHandleOktaResponseEncryptedSignedAssertion_response"))
-	test.IDPMetadata = string(golden.Get(t, "TestSPCanHandleOktaResponseEncryptedSignedAssertion_IDPMetadata"))
+	SamlResponse := golden.Get(t, "TestSPCanHandleOktaResponseEncryptedSignedAssertion_response")
+	test.IDPMetadata = golden.Get(t, "TestSPCanHandleOktaResponseEncryptedSignedAssertion_IDPMetadata")
 
 	s := ServiceProvider{
 		Key:         test.Key,
@@ -509,11 +510,11 @@ func TestSPCanHandleOktaResponseEncryptedSignedAssertion(t *testing.T) {
 		AcsURL:      mustParseURL("http://localhost:8000/saml/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	req := http.Request{PostForm: url.Values{}}
-	req.PostForm.Set("SAMLResponse", SamlResponse)
+	req.PostForm.Set("SAMLResponse", string(SamlResponse))
 	assertion, err := s.ParseResponse(&req, []string{"id-6d976cdde8e76df5df0a8ff58148fc0b7ec6796d"})
 	assert.Check(t, err)
 
@@ -540,8 +541,8 @@ func TestSPCanHandleOktaResponseEncryptedAssertionBothSigned(t *testing.T) {
 		return rv
 	}
 	Clock = dsig.NewFakeClockAt(TimeNow())
-	SamlResponse := string(golden.Get(t, "TestSPCanHandleOktaResponseEncryptedAssertionBothSigned_response"))
-	test.IDPMetadata = string(golden.Get(t, "TestSPCanHandleOktaResponseEncryptedAssertionBothSigned_IDPMetadata"))
+	SamlResponse := golden.Get(t, "TestSPCanHandleOktaResponseEncryptedAssertionBothSigned_response")
+	test.IDPMetadata = golden.Get(t, "TestSPCanHandleOktaResponseEncryptedAssertionBothSigned_IDPMetadata")
 
 	s := ServiceProvider{
 		Key:         test.Key,
@@ -550,11 +551,11 @@ func TestSPCanHandleOktaResponseEncryptedAssertionBothSigned(t *testing.T) {
 		AcsURL:      mustParseURL("http://localhost:8000/saml/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	req := http.Request{PostForm: url.Values{}}
-	req.PostForm.Set("SAMLResponse", SamlResponse)
+	req.PostForm.Set("SAMLResponse", string(SamlResponse))
 	assertion, err := s.ParseResponse(&req, []string{"id-953d4cab69ff475c5901d12e585b0bb15a7b85fe"})
 	assert.Check(t, err)
 
@@ -581,8 +582,8 @@ func TestSPCanHandlePlaintextResponse(t *testing.T) {
 		return rv
 	}
 	Clock = dsig.NewFakeClockAt(TimeNow())
-	SamlResponse := string(golden.Get(t, "TestSPCanHandlePlaintextResponse_response"))
-	test.IDPMetadata = string(golden.Get(t, "TestSPCanHandlePlaintextResponse_IDPMetadata"))
+	SamlResponse := golden.Get(t, "TestSPCanHandlePlaintextResponse_response")
+	test.IDPMetadata = golden.Get(t, "TestSPCanHandlePlaintextResponse_IDPMetadata")
 
 	s := ServiceProvider{
 		Key:         test.Key,
@@ -591,11 +592,11 @@ func TestSPCanHandlePlaintextResponse(t *testing.T) {
 		AcsURL:      mustParseURL("https://29ee6d2e.ngrok.io/saml/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	req := http.Request{PostForm: url.Values{}}
-	req.PostForm.Set("SAMLResponse", SamlResponse)
+	req.PostForm.Set("SAMLResponse", string(SamlResponse))
 	assertion, err := s.ParseResponse(&req, []string{"id-fd419a5ab0472645427f8e07d87a3a5dd0b2e9a6"})
 	assert.Check(t, err)
 
@@ -643,8 +644,8 @@ func TestSPRejectsInjectedComment(t *testing.T) {
 	}
 	Clock = dsig.NewFakeClockAt(TimeNow())
 
-	SamlResponse := string(golden.Get(t, "TestSPRejectsInjectedComment_response"))
-	test.IDPMetadata = string(golden.Get(t, "TestSPRejectsInjectedComment_IDPMetadata"))
+	SamlResponse := golden.Get(t, "TestSPRejectsInjectedComment_response")
+	test.IDPMetadata = golden.Get(t, "TestSPRejectsInjectedComment_IDPMetadata")
 
 	s := ServiceProvider{
 		Key:         test.Key,
@@ -653,13 +654,13 @@ func TestSPRejectsInjectedComment(t *testing.T) {
 		AcsURL:      mustParseURL("https://29ee6d2e.ngrok.io/saml/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	// this is a valid response
 	{
 		req := http.Request{PostForm: url.Values{}}
-		req.PostForm.Set("SAMLResponse", SamlResponse)
+		req.PostForm.Set("SAMLResponse", string(SamlResponse))
 		assertion, err := s.ParseResponse(&req, []string{"id-fd419a5ab0472645427f8e07d87a3a5dd0b2e9a6"})
 		assert.Check(t, err)
 		assert.Check(t, is.Equal("ross@octolabs.io", assertion.Subject.NameID.Value))
@@ -667,12 +668,12 @@ func TestSPRejectsInjectedComment(t *testing.T) {
 
 	// this is a valid response but with a comment injected
 	{
-		x, _ := base64.StdEncoding.DecodeString(SamlResponse)
+		x, _ := base64.StdEncoding.DecodeString(string(SamlResponse))
 		y := strings.Replace(string(x), "ross@octolabs.io", "ross@<!-- and a comment -->octolabs.io", 1)
-		SamlResponse = base64.StdEncoding.EncodeToString([]byte(y))
+		SamlResponse = []byte(base64.StdEncoding.EncodeToString([]byte(y)))
 
 		req := http.Request{PostForm: url.Values{}}
-		req.PostForm.Set("SAMLResponse", SamlResponse)
+		req.PostForm.Set("SAMLResponse", string(SamlResponse))
 		assertion, err := s.ParseResponse(&req, []string{"id-fd419a5ab0472645427f8e07d87a3a5dd0b2e9a6"})
 
 		// Note: I would expect the injected comment to be stripped and for the signature
@@ -689,12 +690,12 @@ func TestSPRejectsInjectedComment(t *testing.T) {
 	// ref: https://duo.com/blog/duo-finds-saml-vulnerabilities-affecting-multiple-implementations
 	// it *MUST NOT* validate
 	{
-		x, _ := base64.StdEncoding.DecodeString(SamlResponse)
+		x, _ := base64.StdEncoding.DecodeString(string(SamlResponse))
 		y := strings.Replace(string(x), "ross@octolabs.io", "ross@octolabs.io<!-- and a comment -->.example.com", 1)
-		SamlResponse = base64.StdEncoding.EncodeToString([]byte(y))
+		SamlResponse = []byte(base64.StdEncoding.EncodeToString([]byte(y)))
 
 		req := http.Request{PostForm: url.Values{}}
-		req.PostForm.Set("SAMLResponse", SamlResponse)
+		req.PostForm.Set("SAMLResponse", string(SamlResponse))
 		_, err := s.ParseResponse(&req, []string{"id-fd419a5ab0472645427f8e07d87a3a5dd0b2e9a6"})
 		assert.Check(t, err != nil)
 
@@ -712,8 +713,8 @@ func TestSPRejectsMalformedResponse(t *testing.T) {
 		return rv
 	}
 	Clock = dsig.NewFakeClockAt(TimeNow())
-	SamlResponse := string(golden.Get(t, "TestSPRejectsMalformedResponse_response"))
-	test.IDPMetadata = string(golden.Get(t, "TestSPRejectsMalformedResponse_IDPMetadata"))
+	SamlResponse := golden.Get(t, "TestSPRejectsMalformedResponse_response")
+	test.IDPMetadata = golden.Get(t, "TestSPRejectsMalformedResponse_IDPMetadata")
 
 	s := ServiceProvider{
 		Key:         test.Key,
@@ -722,13 +723,13 @@ func TestSPRejectsMalformedResponse(t *testing.T) {
 		AcsURL:      mustParseURL("https://29ee6d2e.ngrok.io/saml/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	// this is a valid response
 	{
 		req := http.Request{PostForm: url.Values{}}
-		req.PostForm.Set("SAMLResponse", SamlResponse)
+		req.PostForm.Set("SAMLResponse", string(SamlResponse))
 		assertion, err := s.ParseResponse(&req, []string{"id-fd419a5ab0472645427f8e07d87a3a5dd0b2e9a6"})
 		assert.Check(t, err)
 		assert.Check(t, is.Equal("ross@octolabs.io", assertion.Subject.NameID.Value))
@@ -736,12 +737,12 @@ func TestSPRejectsMalformedResponse(t *testing.T) {
 
 	// this is a valid response but with a comment injected
 	{
-		x, _ := base64.StdEncoding.DecodeString(SamlResponse)
+		x, _ := base64.StdEncoding.DecodeString(string(SamlResponse))
 		y := strings.Replace(string(x), "<saml2p:Response", "<saml2p:Response ::foo=\"bar\"", 1)
-		SamlResponse = base64.StdEncoding.EncodeToString([]byte(y))
+		SamlResponse = []byte(base64.StdEncoding.EncodeToString([]byte(y)))
 
 		req := http.Request{PostForm: url.Values{}}
-		req.PostForm.Set("SAMLResponse", SamlResponse)
+		req.PostForm.Set("SAMLResponse", string(SamlResponse))
 		assertion, err := s.ParseResponse(&req, []string{"id-fd419a5ab0472645427f8e07d87a3a5dd0b2e9a6"})
 		assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
 			"invalid xml: validator: in token starting at 1:55: roundtrip error: expected {{saml2p Response} [{{ :foo} bar} {{xmlns saml2p} urn:oasis:names:tc:SAML:2.0:protocol} {{ Destination} https://29ee6d2e.ngrok.io/saml/acs} {{ ID} _fc141db284eb3098605351bde4d9be59} {{ InResponseTo} id-fd419a5ab0472645427f8e07d87a3a5dd0b2e9a6} {{ IssueInstant} 2016-01-05T16:55:39.348Z} {{ Version} 2.0}]}, observed {{ Response} [{{ xmlns} saml2p} {{ foo} bar} {{xmlns saml2p} urn:oasis:names:tc:SAML:2.0:protocol} {{ Destination} https://29ee6d2e.ngrok.io/saml/acs} {{ ID} _fc141db284eb3098605351bde4d9be59} {{ InResponseTo} id-fd419a5ab0472645427f8e07d87a3a5dd0b2e9a6} {{ IssueInstant} 2016-01-05T16:55:39.348Z} {{ Version} 2.0} {{ Version} 2.0}]}"))
@@ -758,11 +759,11 @@ func TestSPCanParseResponse(t *testing.T) {
 		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	req := http.Request{PostForm: url.Values{}}
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(test.SamlResponse))
 	assertion, err := s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	assert.Check(t, err)
 
@@ -892,7 +893,8 @@ func (test *ServiceProviderTest) replaceDestination(newDestination string) {
 	if newDestination != "" {
 		newStr = `Destination="` + newDestination + `"`
 	}
-	test.SamlResponse = strings.Replace(test.SamlResponse, `Destination="https://15661444.ngrok.io/saml2/acs"`, newStr, 1)
+	test.SamlResponse = bytes.Replace(test.SamlResponse,
+		[]byte(`Destination="https://15661444.ngrok.io/saml2/acs"`), []byte(newStr), 1)
 }
 
 func TestSPCanProcessResponseWithoutDestination(t *testing.T) {
@@ -904,19 +906,19 @@ func TestSPCanProcessResponseWithoutDestination(t *testing.T) {
 		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	req := http.Request{PostForm: url.Values{}}
 	test.replaceDestination("")
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(test.SamlResponse))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	assert.Check(t, err)
 }
 
 func (test *ServiceProviderTest) responseDom() (doc *etree.Document) {
 	doc = etree.NewDocument()
-	doc.ReadFromString(test.SamlResponse)
+	doc.ReadFromBytes(test.SamlResponse)
 	return doc
 }
 
@@ -943,7 +945,7 @@ func TestServiceProviderMismatchedDestinationsWithSignaturePresent(t *testing.T)
 		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	req := http.Request{PostForm: url.Values{}}
@@ -964,7 +966,7 @@ func TestServiceProviderMissingDestinationWithSignaturePresent(t *testing.T) {
 		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	req := http.Request{PostForm: url.Values{}}
@@ -984,7 +986,7 @@ func TestSPMismatchedDestinationsWithSignaturePresent(t *testing.T) {
 		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	req := http.Request{PostForm: url.Values{}}
@@ -1005,7 +1007,7 @@ func TestSPMismatchedDestinationsWithNoSignaturePresent(t *testing.T) {
 		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	req := http.Request{PostForm: url.Values{}}
@@ -1026,7 +1028,7 @@ func TestSPMissingDestinationWithSignaturePresent(t *testing.T) {
 		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	req := http.Request{PostForm: url.Values{}}
@@ -1047,7 +1049,7 @@ func TestSPInvalidResponses(t *testing.T) {
 		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	req := http.Request{PostForm: url.Values{}}
@@ -1061,7 +1063,7 @@ func TestSPInvalidResponses(t *testing.T) {
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
 		"cannot unmarshal response: expected element type <Response> but have <hello>"))
 
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(test.SamlResponse))
 	_, err = s.ParseResponse(&req, []string{"wrongRequestID"})
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
 		"`InResponseTo` does not match any of the possible request IDs (expected [wrongRequestID])"))
@@ -1071,7 +1073,7 @@ func TestSPInvalidResponses(t *testing.T) {
 		return rv
 	}
 	Clock = dsig.NewFakeClockAt(TimeNow())
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(test.SamlResponse))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
 		"response IssueInstant expired at 2015-12-01 01:57:51.375 +0000 UTC"))
@@ -1082,7 +1084,7 @@ func TestSPInvalidResponses(t *testing.T) {
 	Clock = dsig.NewFakeClockAt(TimeNow())
 
 	s.IDPMetadata.EntityID = "http://snakeoil.com"
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(test.SamlResponse))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
 		"response Issuer does not match the IDP metadata (expected \"http://snakeoil.com\")"))
@@ -1090,20 +1092,20 @@ func TestSPInvalidResponses(t *testing.T) {
 
 	oldSpStatusSuccess := StatusSuccess
 	StatusSuccess = "not:the:success:value"
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(test.SamlResponse))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
 		"urn:oasis:names:tc:SAML:2.0:status:Success"))
 	StatusSuccess = oldSpStatusSuccess
 
 	s.IDPMetadata.IDPSSODescriptors[0].KeyDescriptors[0].KeyInfo.Certificate = "invalid"
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(test.SamlResponse))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
 		"cannot validate signature on Response: cannot parse certificate: illegal base64 data at input byte 4"))
 
 	s.IDPMetadata.IDPSSODescriptors[0].KeyDescriptors[0].KeyInfo.Certificate = "aW52YWxpZA=="
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(test.SamlResponse))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
@@ -1119,11 +1121,11 @@ func TestSPInvalidAssertions(t *testing.T) {
 		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	req := http.Request{PostForm: url.Values{}}
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(test.SamlResponse))
 	s.IDPMetadata.IDPSSODescriptors[0].KeyDescriptors[0].KeyInfo.Certificate = "invalid"
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	assertionBuf := []byte(err.(*InvalidResponseError).Response)
@@ -1194,25 +1196,25 @@ func TestSPInvalidAssertions(t *testing.T) {
 
 func TestSPRealWorldKeyInfoHasRSAPublicKeyNotX509Cert(t *testing.T) {
 	// This is a real world SAML response that we observed. It contains <ds:RSAKeyValue> elements
-	idpMetadata := string(golden.Get(t, "TestSPRealWorldKeyInfoHasRSAPublicKeyNotX509Cert_idp_metadata"))
-	respStr := string(golden.Get(t, "TestSPRealWorldKeyInfoHasRSAPublicKeyNotX509Cert_response"))
+	idpMetadata := golden.Get(t, "TestSPRealWorldKeyInfoHasRSAPublicKeyNotX509Cert_idp_metadata")
+	respStr := golden.Get(t, "TestSPRealWorldKeyInfoHasRSAPublicKeyNotX509Cert_response")
 	TimeNow = func() time.Time {
 		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Fri Apr 21 13:12:51 UTC 2017")
 		return rv
 	}
 	Clock = dsig.NewFakeClockAt(TimeNow())
 	s := ServiceProvider{
-		Key:         mustParsePrivateKey(golden.Get(t, "TestSPRealWorldKeyInfoHasRSAPublicKeyNotX509Cert_key.pem")).(*rsa.PrivateKey),
-		Certificate: mustParseCertificate(golden.Get(t, "TestSPRealWorldKeyInfoHasRSAPublicKeyNotX509Cert_cert.pem")),
+		Key:         mustParsePrivateKey(golden.Get(t, "key_2017.pem")).(*rsa.PrivateKey),
+		Certificate: mustParseCertificate(golden.Get(t, "cert_2017.pem")),
 		MetadataURL: mustParseURL("https://preview.docrocket-ross.test.octolabs.io/saml/metadata"),
 		AcsURL:      mustParseURL("https://preview.docrocket-ross.test.octolabs.io/saml/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(idpMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(idpMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	req := http.Request{PostForm: url.Values{}}
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(respStr)))
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(respStr))
 	_, err = s.ParseResponse(&req, []string{"id-3992f74e652d89c3cf1efd6c7e472abaac9bc917"})
 	if err != nil {
 		assert.Check(t, err.(*InvalidResponseError).PrivateErr)
@@ -1223,8 +1225,8 @@ func TestSPRealWorldKeyInfoHasRSAPublicKeyNotX509Cert(t *testing.T) {
 func TestSPRealWorldAssertionSignedNotResponse(t *testing.T) {
 	// This is a real world SAML response that we observed. It contains <ds:RSAKeyValue> elements rather than
 	// a certificate in the response.
-	idpMetadata := string(golden.Get(t, "TestSPRealWorldAssertionSignedNotResponse_idp_metadata"))
-	respStr := string(golden.Get(t, "TestSPRealWorldAssertionSignedNotResponse_response"))
+	idpMetadata := golden.Get(t, "TestSPRealWorldAssertionSignedNotResponse_idp_metadata")
+	respStr := golden.Get(t, "TestSPRealWorldAssertionSignedNotResponse_response")
 
 	TimeNow = func() time.Time {
 		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Fri Apr 21 13:12:51 UTC 2017")
@@ -1239,11 +1241,11 @@ func TestSPRealWorldAssertionSignedNotResponse(t *testing.T) {
 		AcsURL:      mustParseURL("https://preview.docrocket-ross.test.octolabs.io/saml/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(idpMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(idpMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	req := http.Request{PostForm: url.Values{}}
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(respStr)))
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(respStr))
 	_, err = s.ParseResponse(&req, []string{"id-3992f74e652d89c3cf1efd6c7e472abaac9bc917"})
 	if err != nil {
 		assert.Check(t, err.(*InvalidResponseError).PrivateErr)
@@ -1269,8 +1271,8 @@ func TestServiceProviderCanHandleSignedAssertionsResponse(t *testing.T) {
 		return rv
 	}
 
-	SamlResponse := string(golden.Get(t, "TestServiceProviderCanHandleSignedAssertionsResponse_response"))
-	test.IDPMetadata = string(golden.Get(t, "TestServiceProviderCanHandleSignedAssertionsResponse_IDPMetadata"))
+	SamlResponse := golden.Get(t, "TestServiceProviderCanHandleSignedAssertionsResponse_response")
+	test.IDPMetadata = golden.Get(t, "TestServiceProviderCanHandleSignedAssertionsResponse_IDPMetadata")
 	s := ServiceProvider{
 		Key:         test.Key,
 		Certificate: test.Certificate,
@@ -1278,11 +1280,11 @@ func TestServiceProviderCanHandleSignedAssertionsResponse(t *testing.T) {
 		AcsURL:      mustParseURL("http://sp.example.com/demo1/index.php?acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	req := http.Request{PostForm: url.Values{}}
-	req.PostForm.Set("SAMLResponse", SamlResponse)
+	req.PostForm.Set("SAMLResponse", string(SamlResponse))
 	assertion, err := s.ParseResponse(&req, []string{"ONELOGIN_4fee3b046395c4e751011e97f8900b5273d56685"})
 	if err != nil {
 		t.Logf("%s", err.(*InvalidResponseError).PrivateErr)
@@ -1341,14 +1343,14 @@ func TestSPResponseWithNoIssuer(t *testing.T) {
 		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
 		IDPMetadata: &EntityDescriptor{},
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	req := http.Request{PostForm: url.Values{}}
 
 	// Response with no <Issuer> (modified ServiceProviderTest.SamlResponse)
-	samlResponse := string(golden.Get(t, "TestSPResponseWithNoIssuer_response"))
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(samlResponse)))
+	samlResponse := golden.Get(t, "TestSPResponseWithNoIssuer_response")
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(samlResponse))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	assert.Check(t, err)
 }

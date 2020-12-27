@@ -28,11 +28,11 @@ import (
 )
 
 type MiddlewareTest struct {
-	AuthnRequest          string
-	SamlResponse          string
+	AuthnRequest          []byte
+	SamlResponse          []byte
 	Key                   *rsa.PrivateKey
 	Certificate           *x509.Certificate
-	IDPMetadata           string
+	IDPMetadata           []byte
 	Middleware            *Middleware
 	expectedSessionCookie string
 }
@@ -59,14 +59,14 @@ func NewMiddlewareTest(t *testing.T) *MiddlewareTest {
 	saml.Clock = dsig.NewFakeClockAt(saml.TimeNow())
 	saml.RandReader = &testRandomReader{}
 
-	test.AuthnRequest = string(golden.Get(t, "authn_request.url"))
-	test.SamlResponse = string(golden.Get(t, "saml_response.xml"))
-	test.Key = mustParsePrivateKey(string(golden.Get(t, "key.pem"))).(*rsa.PrivateKey)
-	test.Certificate = mustParseCertificate(string(golden.Get(t, "cert.pem")))
-	test.IDPMetadata = string(golden.Get(t, "idp_metadata.xml"))
+	test.AuthnRequest = golden.Get(t, "authn_request.url")
+	test.SamlResponse = golden.Get(t, "saml_response.xml")
+	test.Key = mustParsePrivateKey(golden.Get(t, "key.pem")).(*rsa.PrivateKey)
+	test.Certificate = mustParseCertificate(golden.Get(t, "cert.pem"))
+	test.IDPMetadata = golden.Get(t, "idp_metadata.xml")
 
 	var metadata saml.EntityDescriptor
-	if err := xml.Unmarshal([]byte(test.IDPMetadata), &metadata); err != nil {
+	if err := xml.Unmarshal(test.IDPMetadata, &metadata); err != nil {
 		panic(err)
 	}
 
@@ -131,8 +131,7 @@ func TestMiddlewareCanProduceMetadata(t *testing.T) {
 	assert.Check(t, is.Equal(http.StatusOK, resp.Code))
 	assert.Check(t, is.Equal("application/samlmetadata+xml",
 		resp.Header().Get("Content-type")))
-	assert.Check(t, is.Equal(string(golden.Get(t, "expected_middleware_metadata.xml")),
-		resp.Body.String()))
+	golden.Assert(t, resp.Body.String(), "expected_middleware_metadata.xml")
 }
 
 func TestMiddlewareFourOhFour(t *testing.T) {
@@ -168,8 +167,7 @@ func TestMiddlewareRequireAccountNoCreds(t *testing.T) {
 	assert.Check(t, err)
 	decodedRequest, err := testsaml.ParseRedirectRequest(redirectURL)
 	assert.Check(t, err)
-	assert.Check(t, is.Equal(string(golden.Get(t, "expected_authn_request.xml")),
-		string(decodedRequest)))
+	golden.Assert(t, string(decodedRequest), "expected_authn_request.xml")
 }
 
 func TestMiddlewareRequireAccountNoCredsSecure(t *testing.T) {
@@ -192,8 +190,7 @@ func TestMiddlewareRequireAccountNoCredsSecure(t *testing.T) {
 	assert.Check(t, err)
 	decodedRequest, err := testsaml.ParseRedirectRequest(redirectURL)
 	assert.Check(t, err)
-	assert.Check(t, is.Equal(string(golden.Get(t, "expected_authn_request_secure.xml")),
-		string(decodedRequest)))
+	golden.Assert(t, string(decodedRequest), "expected_authn_request_secure.xml")
 }
 
 func TestMiddlewareRequireAccountNoCredsPostBinding(t *testing.T) {
@@ -214,8 +211,8 @@ func TestMiddlewareRequireAccountNoCredsPostBinding(t *testing.T) {
 	assert.Check(t, is.Equal(http.StatusOK, resp.Code))
 	assert.Check(t, is.Equal("saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure",
 		resp.Header().Get("Set-Cookie")))
-	assert.Check(t, is.Equal(string(golden.Get(t, "expected_post_binding_response.html")),
-		string(resp.Body.Bytes())))
+
+	golden.Assert(t, resp.Body.String(), "expected_post_binding_response.html")
 
 	// check that the CSP script hash is set correctly
 	scriptContent := "document.getElementById('SAMLSubmitButton').style.visibility=\"hidden\";document.getElementById('SAMLRequestForm').submit();"
@@ -279,8 +276,7 @@ func TestMiddlewareRequireAccountBadCreds(t *testing.T) {
 	assert.Check(t, err)
 	decodedRequest, err := testsaml.ParseRedirectRequest(redirectURL)
 	assert.Check(t, err)
-	assert.Check(t, is.Equal(string(golden.Get(t, "expected_authn_request_secure.xml")),
-		string(decodedRequest)))
+	golden.Assert(t, string(decodedRequest), "expected_authn_request_secure.xml")
 }
 
 func TestMiddlewareRequireAccountExpiredCreds(t *testing.T) {
@@ -310,8 +306,7 @@ func TestMiddlewareRequireAccountExpiredCreds(t *testing.T) {
 	assert.Check(t, err)
 	decodedRequest, err := testsaml.ParseRedirectRequest(redirectURL)
 	assert.Check(t, err)
-	assert.Check(t, is.Equal(string(golden.Get(t, "expected_authn_request_secure.xml")),
-		string(decodedRequest)))
+	golden.Assert(t, string(decodedRequest), "expected_authn_request_secure.xml")
 }
 
 func TestMiddlewareRequireAccountPanicOnRequestToACS(t *testing.T) {
@@ -401,7 +396,7 @@ func TestMiddlewareRequireAttributeMissingAccount(t *testing.T) {
 func TestMiddlewareCanParseResponse(t *testing.T) {
 	test := NewMiddlewareTest(t)
 	v := &url.Values{}
-	v.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
+	v.Set("SAMLResponse", base64.StdEncoding.EncodeToString(test.SamlResponse))
 	v.Set("RelayState", "KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6")
 	req, _ := http.NewRequest("POST", "/saml2/acs", bytes.NewReader([]byte(v.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -466,7 +461,7 @@ func TestMiddlewareRejectsInvalidRelayState(t *testing.T) {
 	}
 
 	v := &url.Values{}
-	v.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
+	v.Set("SAMLResponse", base64.StdEncoding.EncodeToString(test.SamlResponse))
 	v.Set("RelayState", "ICIkJigqLC4wMjQ2ODo8PkBCREZISkxOUFJUVlhaXF5gYmRmaGpsbnBy")
 	req, _ := http.NewRequest("POST", "/saml2/acs", bytes.NewReader([]byte(v.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -489,7 +484,7 @@ func TestMiddlewareRejectsInvalidCookie(t *testing.T) {
 	}
 
 	v := &url.Values{}
-	v.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(test.SamlResponse)))
+	v.Set("SAMLResponse", base64.StdEncoding.EncodeToString(test.SamlResponse))
 	v.Set("RelayState", "KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6")
 	req, _ := http.NewRequest("POST", "/saml2/acs", bytes.NewReader([]byte(v.Encode())))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

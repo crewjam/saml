@@ -1,12 +1,12 @@
 package samlsp
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
 	"testing"
 
 	"gotest.tools/assert"
@@ -18,7 +18,7 @@ func TestFetchMetadata(t *testing.T) {
 
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Check(t, is.Equal("/metadata", r.URL.String()))
-		fmt.Fprint(w, test.IDPMetadata)
+		w.Write(test.IDPMetadata)
 	}))
 
 	fmt.Println(testServer.URL + "/metadata")
@@ -30,11 +30,12 @@ func TestFetchMetadata(t *testing.T) {
 
 func TestFetchMetadataRejectsInvalid(t *testing.T) {
 	test := NewMiddlewareTest(t)
-	test.IDPMetadata = strings.Replace(test.IDPMetadata, "<EntityDescriptor ", "<EntityDescriptor ::foo=\"bar\"", -1)
+	test.IDPMetadata = bytes.Replace(test.IDPMetadata,
+		[]byte("<EntityDescriptor "), []byte("<EntityDescriptor ::foo=\"bar\""), -1)
 
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Check(t, is.Equal("/metadata", r.URL.String()))
-		fmt.Fprint(w, test.IDPMetadata)
+		w.Write(test.IDPMetadata)
 	}))
 
 	fmt.Println(testServer.URL + "/metadata")

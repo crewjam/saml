@@ -1,9 +1,10 @@
 package saml
 
 import (
-	"github.com/google/go-cmp/cmp"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 
 	"gotest.tools/assert"
 	is "gotest.tools/assert/cmp"

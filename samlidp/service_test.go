@@ -30,7 +30,7 @@ func TestServicesCrud(t *testing.T) {
 	r, _ = http.NewRequest("GET", "https://idp.example.com/services/sp", nil)
 	test.Server.ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
-	assert.Check(t, is.Equal(w.Body.String(), string(golden.Get(t, "sp_metadata.xml"))))
+	golden.Assert(t, w.Body.String(), "sp_metadata.xml")
 
 	w = httptest.NewRecorder()
 	r, _ = http.NewRequest("GET", "https://idp.example.com/services/", nil)

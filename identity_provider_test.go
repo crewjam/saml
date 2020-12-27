@@ -52,7 +52,7 @@ func mustParseURL(s string) url.URL {
 }
 
 func mustParsePrivateKey(pemStr []byte) crypto.PrivateKey {
-	b, _ := pem.Decode([]byte(pemStr))
+	b, _ := pem.Decode(pemStr)
 	if b == nil {
 		panic("cannot parse PEM")
 	}
@@ -64,7 +64,7 @@ func mustParsePrivateKey(pemStr []byte) crypto.PrivateKey {
 }
 
 func mustParseCertificate(pemStr []byte) *x509.Certificate {
-	b, _ := pem.Decode([]byte(pemStr))
+	b, _ := pem.Decode(pemStr)
 	if b == nil {
 		panic("cannot parse PEM")
 	}
@@ -83,7 +83,7 @@ func NewIdentifyProviderTest(t *testing.T) *IdentityProviderTest {
 	}
 	jwt.TimeFunc = TimeNow
 	RandReader = &testRandomReader{}                // TODO(ross): remove this and use the below generator
-	xmlenc.RandReader = rand.New(rand.NewSource(0)) // deterministic random numbers for tests
+	xmlenc.RandReader = rand.New(rand.NewSource(0)) //nolint:gosec  // deterministic random numbers for tests
 
 	test.SPKey = mustParsePrivateKey(golden.Get(t, "sp_key.pem")).(*rsa.PrivateKey)
 	test.SPCertificate = mustParseCertificate(golden.Get(t, "sp_cert.pem"))
@@ -261,7 +261,7 @@ func TestIDPCanHandleRequestWithNewSession(t *testing.T) {
 
 	decodedRequest, err := testsaml.ParseRedirectRequest(requestURL)
 	assert.Check(t, err)
-	assert.Check(t, is.Equal(string(golden.Get(t, "idp_authn_request.xml")), string(decodedRequest)))
+	golden.Assert(t, string(decodedRequest), "idp_authn_request.xml")
 	assert.Check(t, is.Equal("ThisIsTheRelayState", requestURL.Query().Get("RelayState")))
 
 	r, _ := http.NewRequest("GET", requestURL.String(), nil)

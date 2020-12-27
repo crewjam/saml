@@ -11,14 +11,14 @@ import (
 )
 
 func TestDataAES128CBC(t *testing.T) {
-	RandReader = rand.New(rand.NewSource(0)) // deterministic random numbers for tests
+	RandReader = rand.New(rand.NewSource(0)) //nolint:gosec  // deterministic random numbers for tests
 	plaintext, err := ioutil.ReadFile("testdata/encrypt-data-aes128-cbc.data")
 	assert.Check(t, err)
 
 	var ciphertext string
 	{
 		encrypter := AES128CBC
-		cipherEl, encErr := encrypter.Encrypt([]byte("abcdefghijklmnop"), []byte(plaintext))
+		cipherEl, encErr := encrypter.Encrypt([]byte("abcdefghijklmnop"), plaintext)
 		assert.Check(t, encErr)
 
 		doc := etree.NewDocument()

@@ -29,8 +29,8 @@ func mustParseURL(s string) url.URL {
 	return *rv
 }
 
-func mustParsePrivateKey(pemStr string) crypto.PrivateKey {
-	b, _ := pem.Decode([]byte(pemStr))
+func mustParsePrivateKey(pemStr []byte) crypto.PrivateKey {
+	b, _ := pem.Decode(pemStr)
 	if b == nil {
 		panic("cannot parse PEM")
 	}
@@ -41,8 +41,8 @@ func mustParsePrivateKey(pemStr string) crypto.PrivateKey {
 	return k
 }
 
-func mustParseCertificate(pemStr string) *x509.Certificate {
-	b, _ := pem.Decode([]byte(pemStr))
+func mustParseCertificate(pemStr []byte) *x509.Certificate {
+	b, _ := pem.Decode(pemStr)
 	if b == nil {
 		panic("cannot parse PEM")
 	}
