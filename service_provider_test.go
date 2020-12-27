@@ -61,7 +61,7 @@ func NewServiceProviderTest(t *testing.T) *ServiceProviderTest {
 
 	test := ServiceProviderTest{}
 	test.AuthnRequest = golden.Get(t, "SP_AuthnRequest")
-	test.SamlResponse = golden.Get(t, "SP_SAMLResponse")
+	test.SamlResponse = golden.Get(t, "SP_SamlResponse")
 	test.Key = mustParsePrivateKey(golden.Get(t, "sp_key.pem")).(*rsa.PrivateKey)
 	test.Certificate = mustParseCertificate(golden.Get(t, "sp_cert.pem"))
 	test.IDPMetadata = golden.Get(t, "SP_IDPMetadata")
