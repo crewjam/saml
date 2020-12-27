@@ -5,7 +5,6 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
-	"gotest.tools/golden"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -13,8 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"gotest.tools/assert"
+	is "gotest.tools/assert/cmp"
+	"gotest.tools/golden"
+
 	"github.com/dgrijalva/jwt-go"
-	"github.com/stretchr/testify/assert"
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/logger"
@@ -120,8 +122,8 @@ func TestHTTPCanHandleMetadataRequest(t *testing.T) {
 	w := httptest.NewRecorder()
 	r, _ := http.NewRequest("GET", "https://idp.example.com/metadata", nil)
 	test.Server.ServeHTTP(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.True(t,
+	assert.Check(t, is.Equal(http.StatusOK, w.Code))
+	assert.Check(t,
 		strings.HasPrefix(string(w.Body.Bytes()), "<EntityDescriptor"),
 		string(w.Body.Bytes()))
 	golden.Assert(t, w.Body.String(), "http_metadata_response.html")
@@ -130,13 +132,13 @@ func TestHTTPCanHandleMetadataRequest(t *testing.T) {
 func TestHTTPCanSSORequest(t *testing.T) {
 	test := NewServerTest(t)
 	u, err := test.SP.MakeRedirectAuthenticationRequest("frob")
-	assert.NoError(t, err)
+	assert.Check(t, err)
 
 	w := httptest.NewRecorder()
 	r, _ := http.NewRequest("GET", u.String(), nil)
 	test.Server.ServeHTTP(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.True(t,
+	assert.Check(t, is.Equal(http.StatusOK, w.Code))
+	assert.Check(t,
 		strings.HasPrefix(string(w.Body.Bytes()), "<html><p></p><form method=\"post\" action=\"https://idp.example.com/sso\">"),
 		string(w.Body.Bytes()))
 	golden.Assert(t, w.Body.String(), "http_sso_response.html")

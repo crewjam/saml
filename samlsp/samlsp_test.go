@@ -6,13 +6,13 @@ import (
 	"crypto"
 	"crypto/x509"
 	"encoding/pem"
-	"gotest.tools/golden"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"gotest.tools/assert"
+	"gotest.tools/golden"
 )
 
 type mockTransport func(req *http.Request) (*http.Response, error)
@@ -69,5 +69,5 @@ func TestCanParseTestshibMetadata(t *testing.T) {
 	_, err := FetchMetadata(context.Background(),
 		&httpClient,
 		mustParseURL("https://ipa.example.com/idp/saml2/metadata"))
-	assert.NoError(t, err)
+	assert.Check(t, err)
 }

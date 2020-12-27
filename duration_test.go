@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
+	"gotest.tools/assert"
+	is "gotest.tools/assert/cmp"
 )
 
 var durationMarshalTests = []struct {
@@ -27,8 +28,8 @@ func TestDuration(t *testing.T) {
 	for i, testCase := range durationMarshalTests {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			actual, err := Duration(testCase.in).MarshalText()
-			assert.NoError(t, err)
-			assert.Equal(t, testCase.expected, actual)
+			assert.Check(t, err)
+			assert.Check(t, is.DeepEqual(testCase.expected, actual))
 		})
 	}
 }
@@ -74,11 +75,11 @@ func TestDurationUnmarshal(t *testing.T) {
 			var actual Duration
 			err := actual.UnmarshalText(testCase.in)
 			if testCase.err == nil {
-				assert.NoError(t, err)
+				assert.Check(t, err)
 			} else {
-				assert.EqualError(t, err, testCase.err.Error())
+				assert.Check(t, is.Error(err, testCase.err.Error()))
 			}
-			assert.Equal(t, Duration(testCase.expected), actual)
+			assert.Check(t, is.Equal(Duration(testCase.expected), actual))
 		})
 	}
 }
