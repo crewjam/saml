@@ -5,9 +5,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/crewjam/saml"
 	"gotest.tools/assert"
 	is "gotest.tools/assert/cmp"
+
+	"github.com/crewjam/saml"
 )
 
 func TestCookieSameSite(t *testing.T) {

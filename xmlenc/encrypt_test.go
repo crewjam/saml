@@ -7,16 +7,15 @@ import (
 	"testing"
 
 	"gotest.tools/assert"
-	is "gotest.tools/assert/cmp"
 	"gotest.tools/golden"
 
 	"github.com/beevik/etree"
 )
 
 func TestCanEncryptOAEP(t *testing.T) {
-	RandReader = rand.New(rand.NewSource(0)) // deterministic random numbers for tests
+	RandReader = rand.New(rand.NewSource(0)) //nolint:gosec // deterministic random numbers for tests
 
-	pemBlock, _ := pem.Decode([]byte(golden.Get(t, "cert.pem")))
+	pemBlock, _ := pem.Decode(golden.Get(t, "cert.pem"))
 	certificate, err := x509.ParseCertificate(pemBlock.Bytes)
 	assert.Check(t, err)
 
@@ -32,5 +31,5 @@ func TestCanEncryptOAEP(t *testing.T) {
 	doc.IndentTabs()
 	ciphertext, _ := doc.WriteToString()
 
-	assert.Check(t, is.Equal(ciphertext, string(golden.Get(t, "ciphertext.xml"))))
+	golden.Assert(t, ciphertext, "ciphertext.xml")
 }

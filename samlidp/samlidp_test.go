@@ -42,8 +42,8 @@ func mustParseURL(s string) url.URL {
 	return *rv
 }
 
-func mustParsePrivateKey(pemStr string) crypto.PrivateKey {
-	b, _ := pem.Decode([]byte(pemStr))
+func mustParsePrivateKey(pemStr []byte) crypto.PrivateKey {
+	b, _ := pem.Decode(pemStr)
 	if b == nil {
 		panic("cannot parse PEM")
 	}
@@ -54,8 +54,8 @@ func mustParsePrivateKey(pemStr string) crypto.PrivateKey {
 	return k
 }
 
-func mustParseCertificate(pemStr string) *x509.Certificate {
-	b, _ := pem.Decode([]byte(pemStr))
+func mustParseCertificate(pemStr []byte) *x509.Certificate {
+	b, _ := pem.Decode(pemStr)
 	if b == nil {
 		panic("cannot parse PEM")
 	}
@@ -86,8 +86,8 @@ func NewServerTest(t *testing.T) *ServerTest {
 	jwt.TimeFunc = saml.TimeNow
 	saml.RandReader = &testRandomReader{}
 
-	test.SPKey = mustParsePrivateKey(string(golden.Get(t, "sp_key.pem"))).(*rsa.PrivateKey)
-	test.SPCertificate = mustParseCertificate(string(golden.Get(t, "sp_cert.pem")))
+	test.SPKey = mustParsePrivateKey(golden.Get(t, "sp_key.pem")).(*rsa.PrivateKey)
+	test.SPCertificate = mustParseCertificate(golden.Get(t, "sp_cert.pem"))
 	test.SP = saml.ServiceProvider{
 		Key:         test.SPKey,
 		Certificate: test.SPCertificate,
@@ -95,8 +95,8 @@ func NewServerTest(t *testing.T) *ServerTest {
 		AcsURL:      mustParseURL("https://sp.example.com/saml2/acs"),
 		IDPMetadata: &saml.EntityDescriptor{},
 	}
-	test.Key = mustParsePrivateKey(string(golden.Get(t, "idp_key.pem"))).(*rsa.PrivateKey)
-	test.Certificate = mustParseCertificate(string(golden.Get(t, "idp_cert.pem")))
+	test.Key = mustParsePrivateKey(golden.Get(t, "idp_key.pem")).(*rsa.PrivateKey)
+	test.Certificate = mustParseCertificate(golden.Get(t, "idp_cert.pem"))
 
 	test.Store = MemoryStore{}
 
