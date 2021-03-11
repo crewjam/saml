@@ -11,7 +11,10 @@ import (
 	"github.com/crewjam/saml"
 )
 
-const defaultSessionMaxAge = time.Hour
+const (
+	defaultSessionMaxAge  = time.Hour
+	claimNameSessionIndex = "SessionIndex"
+)
 
 // JWTSessionCodec implements SessionCoded to encode and decode Sessions from
 // the corresponding JWT.
@@ -37,13 +40,16 @@ func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
 	claims.IssuedAt = now.Unix()
 	claims.ExpiresAt = now.Add(c.MaxAge).Unix()
 	claims.NotBefore = now.Unix()
+
 	if sub := assertion.Subject; sub != nil {
 		if nameID := sub.NameID; nameID != nil {
 			claims.Subject = nameID.Value
 		}
 	}
+
+	claims.Attributes = map[string][]string{}
+
 	for _, attributeStatement := range assertion.AttributeStatements {
-		claims.Attributes = map[string][]string{}
 		for _, attr := range attributeStatement.Attributes {
 			claimName := attr.FriendlyName
 			if claimName == "" {
@@ -53,6 +59,12 @@ func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
 				claims.Attributes[claimName] = append(claims.Attributes[claimName], value.Value)
 			}
 		}
+	}
+
+	// add SessionIndex to claims Attributes
+	for _, authnStatement := range assertion.AuthnStatements {
+		claims.Attributes[claimNameSessionIndex] = append(claims.Attributes[claimNameSessionIndex],
+			authnStatement.SessionIndex)
 	}
 
 	return claims, nil

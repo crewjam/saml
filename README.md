@@ -2,7 +2,7 @@
 
 [![](https://godoc.org/github.com/crewjam/saml?status.svg)](http://godoc.org/github.com/crewjam/saml)
 
-[![Build Status](https://travis-ci.org/crewjam/saml.svg?branch=master)](https://travis-ci.org/crewjam/saml)
+![Build Status](https://github.com/crewjam/saml/workflows/Presubmit/badge.svg)
 
 Package saml contains a partial implementation of the SAML standard in golang.
 SAML is a standard for identity federation, i.e. either allowing a third party to authenticate your users or allowing third parties to rely on us to authenticate their users.
@@ -12,31 +12,6 @@ SAML is a standard for identity federation, i.e. either allowing a third party t
 In SAML parlance an **Identity Provider** (IDP) is a service that knows how to authenticate users. A **Service Provider** (SP) is a service that delegates authentication to an IDP. If you are building a service where users log in with someone else's credentials, then you are a **Service Provider**. This package supports implementing both service providers and identity providers.
 
 The core package contains the implementation of SAML. The package samlsp provides helper middleware suitable for use in Service Provider applications. The package samlidp provides a rudimentary IDP service that is useful for testing or as a starting point for other integrations.
-
-## Breaking Changes
-
-**Version 0.4.0** introduces a few breaking changes to the _samlsp_ package in order to make the package more extensible, and to clean up the interfaces a bit. The default behavior remains the same, but you can now provide interface implementations of _RequestTracker_ (which tracks pending requests), _Session_ (which handles maintaining a session) and _OnError_ which handles reporting errors.
-
-Public fields of _samlsp.Middleware_ have changed, so some usages may require adjustment. See [issue 231](https://github.com/crewjam/saml/issues/231) for details.
-
-The option to provide an IDP metadata **URL** has been deprecated. Instead, we recommend that you use the `FetchMetadata()` function, or fetch the metadata yourself and use the new `ParseMetadata()` function, and pass the metadata in _samlsp.Options.IDPMetadata_.
-
-Similarly, the _HTTPClient_ field is now deprecated because it was only used for fetching metdata, which is no longer directly implemented.
-
-The fields that manage how cookies are set are deprecated as well. To customize how cookies are managed, provide custom implementation of _RequestTracker_ and/or _Session_, perhaps by extending the default implementations.
-
-The deprecated fields have not been removed from the Options structure, but will be in future.
-
-In particular we have deprecated the following fields in
-_samlsp.Options_:
-
-- `Logger` - This was used to emit errors while validating, which is an anti-pattern.
-- `IDPMetadataURL` - Instead use `FetchMetadata()`
-- `HTTPClient` - Instead pass httpClient to FetchMetadata
-- `CookieMaxAge` - Instead assign a custom CookieRequestTracker or CookieSessionProvider
-- `CookieName` - Instead assign a custom CookieRequestTracker or CookieSessionProvider
-- `CookieDomain` - Instead assign a custom CookieRequestTracker or CookieSessionProvider
-- `CookieDomain` - Instead assign a custom CookieRequestTracker or CookieSessionProvider
 
 ## Getting Started as a Service Provider
 
@@ -71,6 +46,7 @@ We will use `samlsp.Middleware` to wrap the endpoint we want to protect. Middlew
 package main
 
 import (
+	"context"
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
@@ -99,6 +75,11 @@ func main() {
 	if err != nil {
 		panic(err) // TODO handle error
 	}
+	idpMetadata, err := samlsp.FetchMetadata(context.Background(), http.DefaultClient,
+		*idpMetadataURL)
+	if err != nil {
+		panic(err) // TODO handle error
+	}
 
 	rootURL, err := url.Parse("http://localhost:8000")
 	if err != nil {
@@ -109,7 +90,7 @@ func main() {
 		URL:            *rootURL,
 		Key:            keyPair.PrivateKey.(*rsa.PrivateKey),
 		Certificate:    keyPair.Leaf,
-		IDPMetadataURL: idpMetadataURL,
+		IDPMetadata: idpMetadata,
 	})
 	app := http.HandlerFunc(hello)
 	http.Handle("/hello", samlSP.RequireAccount(app))

@@ -11,10 +11,13 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"regexp"
 	"time"
+
+	xrv "github.com/mattermost/xml-roundtrip-validator"
 
 	"github.com/beevik/etree"
 	dsig "github.com/russellhaering/goxmldsig"
@@ -553,9 +556,15 @@ func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleR
 		Response: string(decodedResponseXML),
 	}
 
+	// ensure that the response XML is well formed before we parse it
+	if err := xrv.Validate(bytes.NewReader(decodedResponseXML)); err != nil {
+		retErr.PrivateErr = fmt.Errorf("invalid xml: %s", err)
+		return nil, retErr
+	}
+
 	// do some validation first before we decrypt
 	resp := Response{}
-	if err := xml.Unmarshal([]byte(decodedResponseXML), &resp); err != nil {
+	if err := xml.Unmarshal(decodedResponseXML, &resp); err != nil {
 		retErr.PrivateErr = fmt.Errorf("cannot unmarshal response: %s", err)
 		return nil, retErr
 	}
@@ -586,7 +595,7 @@ func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleR
 		retErr.PrivateErr = fmt.Errorf("response IssueInstant expired at %s", resp.IssueInstant.Add(MaxIssueDelay))
 		return nil, retErr
 	}
-	if resp.Issuer.Value != sp.IDPMetadata.EntityID {
+	if resp.Issuer != nil && resp.Issuer.Value != sp.IDPMetadata.EntityID {
 		retErr.PrivateErr = fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
 		return nil, retErr
 	}
@@ -659,6 +668,12 @@ func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleR
 		}
 		retErr.Response = string(plaintextAssertion)
 
+		// TODO(ross): add test case for this
+		if err := xrv.Validate(bytes.NewReader(plaintextAssertion)); err != nil {
+			retErr.PrivateErr = fmt.Errorf("plaintext response contains invalid XML: %s", err)
+			return nil, retErr
+		}
+
 		doc = etree.NewDocument()
 		if err := doc.ReadFromBytes(plaintextAssertion); err != nil {
 			retErr.PrivateErr = fmt.Errorf("cannot parse plaintext response %v", err)
@@ -673,6 +688,8 @@ func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleR
 		}
 
 		assertion = &Assertion{}
+		// Note: plaintextAssertion is known to be safe to parse because
+		// plaintextAssertion is unmodified from when xrv.Validate() was called above.
 		if err := xml.Unmarshal(plaintextAssertion, assertion); err != nil {
 			retErr.PrivateErr = err
 			return nil, retErr
@@ -700,14 +717,34 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	}
 	for _, subjectConfirmation := range assertion.Subject.SubjectConfirmations {
 		requestIDvalid := false
-		for _, possibleRequestID := range possibleRequestIDs {
-			if subjectConfirmation.SubjectConfirmationData.InResponseTo == possibleRequestID {
-				requestIDvalid = true
-				break
+
+		// We *DO NOT* validate InResponseTo when AllowIDPInitiated is set. Here's why:
+		//
+		// The SAML specification does not provide clear guidance for handling InResponseTo for IDP-initiated
+		// requests where there is no request to be in response to. The specification says:
+		//
+		//   InResponseTo [Optional]
+		//       The ID of a SAML protocol message in response to which an attesting entity can present the
+		//       assertion. For example, this attribute might be used to correlate the assertion to a SAML
+		//       request that resulted in its presentation.
+		//
+		// The initial thought was that we should specify a single empty string in possibleRequestIDs for IDP-initiated
+		// requests so that we would ensure that an InResponseTo was *not* provided in those cases where it wasn't
+		// expected. Even that turns out to be frustrating for users. And in practice some IDPs (e.g. Rippling)
+		// set a specific non-empty value for InResponseTo in IDP-initiated requests.
+		//
+		// Finally, it is unclear that there is significant security value in checking InResponseTo when we allow
+		// IDP initiated assertions.
+		if !sp.AllowIDPInitiated {
+			for _, possibleRequestID := range possibleRequestIDs {
+				if subjectConfirmation.SubjectConfirmationData.InResponseTo == possibleRequestID {
+					requestIDvalid = true
+					break
+				}
 			}
-		}
-		if !requestIDvalid {
-			return fmt.Errorf("assertion SubjectConfirmation one of the possible request IDs (%v)", possibleRequestIDs)
+			if !requestIDvalid {
+				return fmt.Errorf("assertion SubjectConfirmation one of the possible request IDs (%v)", possibleRequestIDs)
+			}
 		}
 		if subjectConfirmation.SubjectConfirmationData.Recipient != sp.AcsURL.String() {
 			return fmt.Errorf("assertion SubjectConfirmation Recipient is not %s", sp.AcsURL.String())
@@ -861,6 +898,43 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	return err
 }
 
+// SignLogoutRequest adds the `Signature` element to the `LogoutRequest`.
+func (sp *ServiceProvider) SignLogoutRequest(req *LogoutRequest) error {
+	keyPair := tls.Certificate{
+		Certificate: [][]byte{sp.Certificate.Raw},
+		PrivateKey:  sp.Key,
+		Leaf:        sp.Certificate,
+	}
+	// TODO: add intermediates for SP
+	//for _, cert := range sp.Intermediates {
+	//	keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
+	//}
+	keyStore := dsig.TLSCertKeyStore(keyPair)
+
+	if sp.SignatureMethod != dsig.RSASHA1SignatureMethod &&
+		sp.SignatureMethod != dsig.RSASHA256SignatureMethod &&
+		sp.SignatureMethod != dsig.RSASHA512SignatureMethod {
+		return fmt.Errorf("invalid signing method %s", sp.SignatureMethod)
+	}
+	signatureMethod := sp.SignatureMethod
+	signingContext := dsig.NewDefaultSigningContext(keyStore)
+	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
+	if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
+		return err
+	}
+
+	assertionEl := req.Element()
+
+	signedRequestEl, err := signingContext.SignEnveloped(assertionEl)
+	if err != nil {
+		return err
+	}
+
+	sigEl := signedRequestEl.Child[len(signedRequestEl.Child)-1]
+	req.Signature = sigEl.(*etree.Element)
+	return nil
+}
+
 // MakeLogoutRequest produces a new LogoutRequest object for idpURL.
 func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string) (*LogoutRequest, error) {
 
@@ -879,6 +953,11 @@ func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string) (*LogoutRequ
 			NameQualifier:   sp.IDPMetadata.EntityID,
 			SPNameQualifier: sp.Metadata().EntityID,
 		},
+	}
+	if len(sp.SignatureMethod) > 0 {
+		if err := sp.SignLogoutRequest(&req); err != nil {
+			return nil, err
+		}
 	}
 	return &req, nil
 }
@@ -966,6 +1045,153 @@ func (req *LogoutRequest) Post(relayState string) []byte {
 	return rv.Bytes()
 }
 
+// MakeLogoutResponse produces a new LogoutResponse object for idpURL and logoutRequestID.
+func (sp *ServiceProvider) MakeLogoutResponse(idpURL, logoutRequestID string) (*LogoutResponse, error) {
+	response := LogoutResponse{
+		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
+		InResponseTo: logoutRequestID,
+		Version:      "2.0",
+		IssueInstant: TimeNow(),
+		Destination:  idpURL,
+		Issuer: &Issuer{
+			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
+			Value:  firstSet(sp.EntityID, sp.MetadataURL.String()),
+		},
+		Status: Status{
+			StatusCode: StatusCode{
+				Value: StatusSuccess,
+			},
+		},
+	}
+
+	if len(sp.SignatureMethod) > 0 {
+		if err := sp.SignLogoutResponse(&response); err != nil {
+			return nil, err
+		}
+	}
+	return &response, nil
+}
+
+// MakeRedirectLogoutResponse creates a SAML LogoutResponse using
+// the HTTP-Redirect binding. It returns a URL that we will redirect the user to
+// for LogoutResponse.
+func (sp *ServiceProvider) MakeRedirectLogoutResponse(logoutRequestID, relayState string) (*url.URL, error) {
+	resp, err := sp.MakeLogoutResponse(sp.GetSLOBindingLocation(HTTPRedirectBinding), logoutRequestID)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Redirect(relayState), nil
+}
+
+// Redirect returns a URL suitable for using the redirect binding with the LogoutResponse.
+func (resp *LogoutResponse) Redirect(relayState string) *url.URL {
+	w := &bytes.Buffer{}
+	w1 := base64.NewEncoder(base64.StdEncoding, w)
+	w2, _ := flate.NewWriter(w1, 9)
+	doc := etree.NewDocument()
+	doc.SetRoot(resp.Element())
+	if _, err := doc.WriteTo(w2); err != nil {
+		panic(err)
+	}
+	w2.Close()
+	w1.Close()
+
+	rv, _ := url.Parse(resp.Destination)
+
+	query := rv.Query()
+	query.Set("SAMLResponse", string(w.Bytes()))
+	if relayState != "" {
+		query.Set("RelayState", relayState)
+	}
+	rv.RawQuery = query.Encode()
+
+	return rv
+}
+
+// MakePostLogoutResponse creates a SAML LogoutResponse using
+// the HTTP-POST binding. It returns HTML text representing an HTML form that
+// can be sent presented to a browser for LogoutResponse.
+func (sp *ServiceProvider) MakePostLogoutResponse(logoutRequestID, relayState string) ([]byte, error) {
+	resp, err := sp.MakeLogoutResponse(sp.GetSLOBindingLocation(HTTPPostBinding), logoutRequestID)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Post(relayState), nil
+}
+
+// Post returns an HTML form suitable for using the HTTP-POST binding with the LogoutResponse.
+func (resp *LogoutResponse) Post(relayState string) []byte {
+	doc := etree.NewDocument()
+	doc.SetRoot(resp.Element())
+	reqBuf, err := doc.WriteToBytes()
+	if err != nil {
+		panic(err)
+	}
+	encodedReqBuf := base64.StdEncoding.EncodeToString(reqBuf)
+
+	tmpl := template.Must(template.New("saml-post-form").Parse(`` +
+		`<form method="post" action="{{.URL}}" id="SAMLResponseForm">` +
+		`<input type="hidden" name="SAMLResponse" value="{{.SAMLResponse}}" />` +
+		`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
+		`<input id="SAMLSubmitButton" type="submit" value="Submit" />` +
+		`</form>` +
+		`<script>document.getElementById('SAMLSubmitButton').style.visibility="hidden";` +
+		`document.getElementById('SAMLResponseForm').submit();</script>`))
+	data := struct {
+		URL          string
+		SAMLResponse string
+		RelayState   string
+	}{
+		URL:          resp.Destination,
+		SAMLResponse: encodedReqBuf,
+		RelayState:   relayState,
+	}
+
+	rv := bytes.Buffer{}
+	if err := tmpl.Execute(&rv, data); err != nil {
+		panic(err)
+	}
+
+	return rv.Bytes()
+}
+
+// SignLogoutResponse adds the `Signature` element to the `LogoutResponse`.
+func (sp *ServiceProvider) SignLogoutResponse(resp *LogoutResponse) error {
+	keyPair := tls.Certificate{
+		Certificate: [][]byte{sp.Certificate.Raw},
+		PrivateKey:  sp.Key,
+		Leaf:        sp.Certificate,
+	}
+	// TODO: add intermediates for SP
+	//for _, cert := range sp.Intermediates {
+	//	keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
+	//}
+	keyStore := dsig.TLSCertKeyStore(keyPair)
+
+	if sp.SignatureMethod != dsig.RSASHA1SignatureMethod &&
+		sp.SignatureMethod != dsig.RSASHA256SignatureMethod &&
+		sp.SignatureMethod != dsig.RSASHA512SignatureMethod {
+		return fmt.Errorf("invalid signing method %s", sp.SignatureMethod)
+	}
+	signatureMethod := sp.SignatureMethod
+	signingContext := dsig.NewDefaultSigningContext(keyStore)
+	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
+	if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
+		return err
+	}
+
+	assertionEl := resp.Element()
+
+	signedRequestEl, err := signingContext.SignEnveloped(assertionEl)
+	if err != nil {
+		return err
+	}
+
+	sigEl := signedRequestEl.Child[len(signedRequestEl.Child)-1]
+	resp.Signature = sigEl.(*etree.Element)
+	return nil
+}
+
 func (sp *ServiceProvider) nameIDFormat() string {
 	var nameIDFormat string
 	switch sp.AuthnNameIDFormat {
@@ -1001,8 +1227,12 @@ func (sp *ServiceProvider) ValidateLogoutResponseForm(postFormData string) error
 		return fmt.Errorf("unable to parse base64: %s", err)
 	}
 
-	var resp LogoutResponse
+	// TODO(ross): add test case for this (SLO does not have tests right now)
+	if err := xrv.Validate(bytes.NewReader(rawResponseBuf)); err != nil {
+		return fmt.Errorf("response contains invalid XML: %s", err)
+	}
 
+	var resp LogoutResponse
 	if err := xml.Unmarshal(rawResponseBuf, &resp); err != nil {
 		return fmt.Errorf("cannot unmarshal response: %s", err)
 	}
@@ -1034,9 +1264,16 @@ func (sp *ServiceProvider) ValidateLogoutResponseRedirect(queryParameterData str
 		return fmt.Errorf("unable to parse base64: %s", err)
 	}
 
-	gr := flate.NewReader(bytes.NewBuffer(rawResponseBuf))
+	gr, err := ioutil.ReadAll(flate.NewReader(bytes.NewBuffer(rawResponseBuf)))
+	if err != nil {
+		return err
+	}
 
-	decoder := xml.NewDecoder(gr)
+	if err := xrv.Validate(bytes.NewReader(gr)); err != nil {
+		return err
+	}
+
+	decoder := xml.NewDecoder(bytes.NewReader(gr))
 
 	var resp LogoutResponse
 
@@ -1050,7 +1287,7 @@ func (sp *ServiceProvider) ValidateLogoutResponseRedirect(queryParameterData str
 	}
 
 	doc := etree.NewDocument()
-	if _, err := doc.ReadFrom(gr); err != nil {
+	if _, err := doc.ReadFrom(bytes.NewReader(gr)); err != nil {
 		return err
 	}
 
