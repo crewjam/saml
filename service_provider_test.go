@@ -6,8 +6,10 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/xml"
+	"html"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -79,25 +81,25 @@ func TestSPCanSetAuthenticationNameIDFormat(t *testing.T) {
 	}
 
 	// defaults to "transient"
-	req, err := s.MakeAuthenticationRequest("")
+	req, err := s.MakeAuthenticationRequest("", HTTPRedirectBinding)
 	assert.Check(t, err)
 	assert.Check(t, is.Equal(string(TransientNameIDFormat), *req.NameIDPolicy.Format))
 
 	// explicitly set to "transient"
 	s.AuthnNameIDFormat = TransientNameIDFormat
-	req, err = s.MakeAuthenticationRequest("")
+	req, err = s.MakeAuthenticationRequest("", HTTPRedirectBinding)
 	assert.Check(t, err)
 	assert.Check(t, is.Equal(string(TransientNameIDFormat), *req.NameIDPolicy.Format))
 
 	// explicitly set to "unspecified"
 	s.AuthnNameIDFormat = UnspecifiedNameIDFormat
-	req, err = s.MakeAuthenticationRequest("")
+	req, err = s.MakeAuthenticationRequest("", HTTPRedirectBinding)
 	assert.Check(t, err)
 	assert.Check(t, is.Equal("", *req.NameIDPolicy.Format))
 
 	// explicitly set to "emailAddress"
 	s.AuthnNameIDFormat = EmailAddressNameIDFormat
-	req, err = s.MakeAuthenticationRequest("")
+	req, err = s.MakeAuthenticationRequest("", HTTPRedirectBinding)
 	assert.Check(t, err)
 	assert.Check(t, is.Equal(string(EmailAddressNameIDFormat), *req.NameIDPolicy.Format))
 }
@@ -221,7 +223,7 @@ func TestSPCanProducePostRequest(t *testing.T) {
 	golden.Assert(t, string(form), t.Name()+"_form")
 }
 
-func TestSPCanProduceSignedRequest(t *testing.T) {
+func TestSPCanProduceSignedRequestRedirectBinding(t *testing.T) {
 	test := NewServiceProviderTest(t)
 	TimeNow = func() time.Time {
 		rv, _ := time.Parse("Mon Jan 2 15:04:05.999999999 UTC 2006", "Mon Dec 1 01:31:21.123456789 UTC 2015")
@@ -241,6 +243,11 @@ func TestSPCanProduceSignedRequest(t *testing.T) {
 
 	redirectURL, err := s.MakeRedirectAuthenticationRequest("relayState")
 	assert.Check(t, err)
+	// Signature we check against in the query string was validated with
+	// https://www.samltool.com/validate_authn_req.php . Once we add
+	// support for validating signed AuthN requests in the IDP implementation
+	// we can switch to testing using that.
+	golden.Assert(t, redirectURL.RawQuery, t.Name()+"_queryString")
 
 	decodedRequest, err := testsaml.ParseRedirectRequest(redirectURL)
 	assert.Check(t, err)
@@ -248,6 +255,36 @@ func TestSPCanProduceSignedRequest(t *testing.T) {
 		redirectURL.Host))
 	assert.Check(t, is.Equal("/idp/profile/SAML2/Redirect/SSO",
 		redirectURL.Path))
+	// Contains no enveloped signature
+	golden.Assert(t, string(decodedRequest), t.Name()+"_decodedRequest")
+}
+
+func TestSPCanProduceSignedRequestPostBinding(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05.999999999 UTC 2006", "Mon Dec 1 01:31:21.123456789 UTC 2015")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
+	s := ServiceProvider{
+		Key:             test.Key,
+		Certificate:     test.Certificate,
+		MetadataURL:     mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:          mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+		IDPMetadata:     &EntityDescriptor{},
+		SignatureMethod: dsig.RSASHA1SignatureMethod,
+	}
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	htmlForm, err := s.MakePostAuthenticationRequest("relayState")
+	assert.Check(t, err)
+	rgx := regexp.MustCompile(`\"SAMLRequest\" value=\"(.*?)\" /><input`)
+	rs := rgx.FindStringSubmatch(string(htmlForm))
+	assert.Check(t, len(rs) == 2)
+
+	decodedRequest, err := base64.StdEncoding.DecodeString(html.UnescapeString(rs[1]))
+	assert.Check(t, err)
 	golden.Assert(t, string(decodedRequest), t.Name()+"_decodedRequest")
 }
 
