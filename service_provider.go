@@ -369,6 +369,7 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding stri
 	return &req, nil
 }
 
+// Returns a dsig.SigningContext initialized based on the Service Provider's configuration
 func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 	keyPair := tls.Certificate{
 		Certificate: [][]byte{sp.Certificate.Raw},
