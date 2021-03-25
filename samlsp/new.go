@@ -24,8 +24,7 @@ type Options struct {
 	SignRequest       bool
 	ForceAuthn        bool // TODO(ross): this should be *bool
 	CookieSameSite    http.SameSite
-
-	RelayStateFunc func(w http.ResponseWriter, r *http.Request) string
+	RelayStateFunc   func(w http.ResponseWriter, r *http.Request) string
 }
 
 // DefaultSessionCodec returns the default SessionCodec for the provided options,
