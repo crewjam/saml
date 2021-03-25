@@ -1231,6 +1231,263 @@ func TestSPInvalidAssertions(t *testing.T) {
 	assert.Check(t, err)
 }
 
+func TestXswPermutationOneIsRejected(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	idpMetadata := golden.Get(t, "TestSPCanHandleOneloginResponse_IDPMetadata")
+	respStr := golden.Get(t, "TestXswPermutationOneIsRejected_response")
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05 UTC 2006", "Tue Jan 5 17:53:12 UTC 2016")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
+
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("https://29ee6d2e.ngrok.io/saml/metadata"),
+		AcsURL:      mustParseURL("https://29ee6d2e.ngrok.io/saml/acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal(idpMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	req := http.Request{PostForm: url.Values{}}
+	req.PostForm.Set("SAMLResponse", string(respStr))
+	_, err = s.ParseResponse(&req, []string{"id-d40c15c104b52691eccf0a2a5c8a15595be75423"})
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
+		"cannot validate signature on Response: Missing signature referencing the top-level element"))
+}
+
+func TestXswPermutationTwoIsRejected(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	idpMetadata := golden.Get(t, "TestSPCanHandleOneloginResponse_IDPMetadata")
+	respStr := golden.Get(t, "TestXswPermutationTwoIsRejected_response")
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05 UTC 2006", "Tue Jan 5 17:53:12 UTC 2016")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
+
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("https://29ee6d2e.ngrok.io/saml/metadata"),
+		AcsURL:      mustParseURL("https://29ee6d2e.ngrok.io/saml/acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal(idpMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	req := http.Request{PostForm: url.Values{}}
+	req.PostForm.Set("SAMLResponse", string(respStr))
+	_, err = s.ParseResponse(&req, []string{"id-d40c15c104b52691eccf0a2a5c8a15595be75423"})
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
+		"cannot validate signature on Response: Missing signature referencing the top-level element"))
+}
+
+func TestXswPermutationThreeIsRejected(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	idpMetadata := golden.Get(t, "TestServiceProviderCanHandleSignedAssertionsResponse_IDPMetadata")
+	respStr := golden.Get(t, "TestXswPermutationThreeIsRejected_response")
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse(timeFormat, "2014-07-17T01:02:59Z")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
+
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("http://sp.example.com/demo1/metadata.php"),
+		AcsURL:      mustParseURL("http://sp.example.com/demo1/index.php?acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal(idpMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	req := http.Request{PostForm: url.Values{}}
+	req.PostForm.Set("SAMLResponse", string(respStr))
+	_, err = s.ParseResponse(&req, []string{"ONELOGIN_4fee3b046395c4e751011e97f8900b5273d56685"})
+	// Because this permutation contains an unsigned assertion as child of the response
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
+		"either the Response or Assertion must be signed"))
+}
+
+func TestXswPermutationFourIsRejected(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	idpMetadata := golden.Get(t, "TestServiceProviderCanHandleSignedAssertionsResponse_IDPMetadata")
+	respStr := golden.Get(t, "TestXswPermutationFourIsRejected_response")
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse(timeFormat, "2014-07-17T01:02:59Z")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
+
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("http://sp.example.com/demo1/metadata.php"),
+		AcsURL:      mustParseURL("http://sp.example.com/demo1/index.php?acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal(idpMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	req := http.Request{PostForm: url.Values{}}
+	req.PostForm.Set("SAMLResponse", string(respStr))
+	_, err = s.ParseResponse(&req, []string{"ONELOGIN_4fee3b046395c4e751011e97f8900b5273d56685"})
+	// Because this permutation contains an unsigned assertion as child of the response
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
+		"either the Response or Assertion must be signed"))
+}
+
+func TestXswPermutationFiveIsRejected(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	idpMetadata := golden.Get(t, "TestServiceProviderCanHandleSignedAssertionsResponse_IDPMetadata")
+	respStr := golden.Get(t, "TestXswPermutationFiveIsRejected_response")
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse(timeFormat, "2014-07-17T01:02:59Z")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
+
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("http://sp.example.com/demo1/metadata.php"),
+		AcsURL:      mustParseURL("http://sp.example.com/demo1/index.php?acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal(idpMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	req := http.Request{PostForm: url.Values{}}
+	req.PostForm.Set("SAMLResponse", string(respStr))
+	_, err = s.ParseResponse(&req, []string{"ONELOGIN_4fee3b046395c4e751011e97f8900b5273d56685"})
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
+		"cannot validate signature on Response: Missing signature referencing the top-level element"))
+}
+
+func TestXswPermutationSixIsRejected(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	idpMetadata := golden.Get(t, "TestServiceProviderCanHandleSignedAssertionsResponse_IDPMetadata")
+	respStr := golden.Get(t, "TestXswPermutationSixIsRejected_response")
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse(timeFormat, "2014-07-17T01:02:59Z")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
+
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("http://sp.example.com/demo1/metadata.php"),
+		AcsURL:      mustParseURL("http://sp.example.com/demo1/index.php?acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal(idpMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	req := http.Request{PostForm: url.Values{}}
+	req.PostForm.Set("SAMLResponse", string(respStr))
+	_, err = s.ParseResponse(&req, []string{"ONELOGIN_4fee3b046395c4e751011e97f8900b5273d56685"})
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
+		"cannot validate signature on Response: Missing signature referencing the top-level element"))
+}
+
+func TestXswPermutationSevenIsRejected(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	idpMetadata := golden.Get(t, "TestServiceProviderCanHandleSignedAssertionsResponse_IDPMetadata")
+	respStr := golden.Get(t, "TestXswPermutationSevenIsRejected_response")
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse(timeFormat, "2014-07-17T01:02:59Z")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(func() time.Time {
+		rv, _ := time.Parse(timeFormat, "2014-07-17T14:12:57Z")
+		return rv
+	}())
+
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("http://sp.example.com/demo1/metadata.php"),
+		AcsURL:      mustParseURL("http://sp.example.com/demo1/index.php?acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal(idpMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	req := http.Request{PostForm: url.Values{}}
+	req.PostForm.Set("SAMLResponse", string(respStr))
+	_, err = s.ParseResponse(&req, []string{"ONELOGIN_4fee3b046395c4e751011e97f8900b5273d56685"})
+	//It's the assertion signature that can't be verified. The error message is generic and always mentions Response
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
+		"cannot validate signature on Response: Signature could not be verified"))
+}
+
+func TestXswPermutationEightIsRejected(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	idpMetadata := golden.Get(t, "TestServiceProviderCanHandleSignedAssertionsResponse_IDPMetadata")
+	respStr := golden.Get(t, "TestXswPermutationEightIsRejected_response")
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse(timeFormat, "2014-07-17T01:02:59Z")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(func() time.Time {
+		rv, _ := time.Parse(timeFormat, "2014-07-17T14:12:57Z")
+		return rv
+	}())
+
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("http://sp.example.com/demo1/metadata.php"),
+		AcsURL:      mustParseURL("http://sp.example.com/demo1/index.php?acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal(idpMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	req := http.Request{PostForm: url.Values{}}
+	req.PostForm.Set("SAMLResponse", string(respStr))
+	_, err = s.ParseResponse(&req, []string{"ONELOGIN_4fee3b046395c4e751011e97f8900b5273d56685"})
+	//It's the assertion signature that can't be verified. The error message is generic and always mentions Response
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
+		"cannot validate signature on Response: Signature could not be verified"))
+}
+
+func TestXswPermutationNineIsRejected(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	idpMetadata := golden.Get(t, "TestServiceProviderCanHandleSignedAssertionsResponse_IDPMetadata")
+	respStr := golden.Get(t, "TestXswPermutationNineIsRejected_response")
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse(timeFormat, "2014-07-17T01:02:59Z")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(func() time.Time {
+		rv, _ := time.Parse(timeFormat, "2014-07-17T14:12:57Z")
+		return rv
+	}())
+
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("http://sp.example.com/demo1/metadata.php"),
+		AcsURL:      mustParseURL("http://sp.example.com/demo1/index.php?acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal(idpMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	req := http.Request{PostForm: url.Values{}}
+	req.PostForm.Set("SAMLResponse", string(respStr))
+	_, err = s.ParseResponse(&req, []string{"ONELOGIN_4fee3b046395c4e751011e97f8900b5273d56685"})
+	//It's the assertion signature that can't be verified. The error message is generic and always mentions Response
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
+		"cannot validate signature on Response: Missing signature referencing the top-level element"))
+}
+
 func TestSPRealWorldKeyInfoHasRSAPublicKeyNotX509Cert(t *testing.T) {
 	// This is a real world SAML response that we observed. It contains <ds:RSAKeyValue> elements
 	idpMetadata := golden.Get(t, "TestSPRealWorldKeyInfoHasRSAPublicKeyNotX509Cert_idp_metadata")
