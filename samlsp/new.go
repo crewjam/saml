@@ -24,6 +24,7 @@ type Options struct {
 	SignRequest       bool
 	ForceAuthn        bool // TODO(ross): this should be *bool
 	CookieSameSite    http.SameSite
+	RelayStateFunc    func(w http.ResponseWriter, r *http.Request) string
 }
 
 // DefaultSessionCodec returns the default SessionCodec for the provided options,
@@ -72,6 +73,7 @@ func DefaultRequestTracker(opts Options, serviceProvider *saml.ServiceProvider) 
 		NamePrefix:      "saml_",
 		Codec:           DefaultTrackedRequestCodec(opts),
 		MaxAge:          saml.MaxIssueDelay,
+		RelayStateFunc:  opts.RelayStateFunc,
 		SameSite:        opts.CookieSameSite,
 	}
 }
