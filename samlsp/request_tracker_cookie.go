@@ -33,10 +33,9 @@ func (t CookieRequestTracker) TrackRequest(w http.ResponseWriter, r *http.Reques
 	}
 
 	if t.RelayStateFunc != nil {
-		_relayState := t.RelayStateFunc(w, r)
-
-		if _relayState != "" {
-			trackedRequest.Index = _relayState
+		relayState := t.RelayStateFunc(w, r)
+		if relayState != "" {
+			trackedRequest.Index = relayState
 		}
 	}
 
