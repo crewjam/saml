@@ -25,7 +25,7 @@ import (
 	"gotest.tools/golden"
 
 	"github.com/beevik/etree"
-	"github.com/dgrijalva/jwt-go"
+	"github.com/form3tech-oss/jwt-go"
 
 	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/testsaml"
