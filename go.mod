@@ -1,10 +1,11 @@
-module github.com/crewjam/saml
+module github.com/InVisionApp/saml
 
 go 1.13
 
 require (
 	github.com/beevik/etree v1.1.0
 	github.com/crewjam/httperr v0.2.0
+	github.com/crewjam/saml v0.4.5 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dchest/uniuri v0.0.0-20200228104902-7aecb25e1fe5
 	github.com/form3tech-oss/jwt-go v3.2.2+incompatible
