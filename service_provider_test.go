@@ -1648,3 +1648,68 @@ func TestSPResponseWithNoIssuer(t *testing.T) {
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	assert.Check(t, err)
 }
+
+func TestSkipDestinationCheck(t *testing.T) {
+	test := NewServiceProviderTest(t)
+
+	s := ServiceProvider{
+		Key:                  test.Key,
+		Certificate:          test.Certificate,
+		MetadataURL:          mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:               mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+		IDPMetadata:          &EntityDescriptor{},
+		SkipDestinationCheck: true,
+	}
+	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	assert.Check(t, err)
+
+	req := http.Request{PostForm: url.Values{}}
+	test.replaceDestination("")
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(test.SamlResponse))
+	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
+	assert.Check(t, err)
+}
+
+func TestSkipIssuerCheck(t *testing.T) {
+	test := NewServiceProviderTest(t)
+
+	s := ServiceProvider{
+		Key:             test.Key,
+		Certificate:     test.Certificate,
+		MetadataURL:     mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:          mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+		IDPMetadata:     &EntityDescriptor{},
+		SkipIssuerCheck: true,
+	}
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	req := http.Request{PostForm: url.Values{}}
+	test.SamlResponse = bytes.Replace(test.SamlResponse,
+		[]byte(`https://idp.testshib.org/idp/shibboleth`), []byte("PINEAPPLE"), 1)
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(test.SamlResponse))
+	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
+	assert.Check(t, err)
+}
+
+func TestEaseAudienceRestrictions(t *testing.T) {
+	test := NewServiceProviderTest(t)
+
+	s := ServiceProvider{
+		Key:             test.Key,
+		Certificate:     test.Certificate,
+		MetadataURL:     mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:          mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+		IDPMetadata:     &EntityDescriptor{},
+		SkipIssuerCheck: true,
+	}
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	req := http.Request{PostForm: url.Values{}}
+	test.SamlResponse = bytes.Replace(test.SamlResponse,
+		[]byte(`https://idp.testshib.org/idp/shibboleth`), []byte("PINEAPPLE"), 1)
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(test.SamlResponse))
+	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
+	assert.Check(t, err)
+}

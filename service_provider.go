@@ -108,6 +108,37 @@ type ServiceProvider struct {
 
 	// SignatureMethod, if non-empty, authentication requests will be signed
 	SignatureMethod string
+
+	//
+	// INVISION CHANGES BELOW
+	//
+
+	// SkipDestinationCheck, if true, will skip the Destination validation when parsing the response.
+	//
+	// AUTH-2414: If the message is signed, the Destination XML attribute in the root SAML element of the protocol
+	// message MUST contain the URL to which the sender has instructed the user agent to deliver the
+	// message. The recipient MUST then verify that the value matches the location at which the message has
+	// been received. Ref: http://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf @ 3.4.5.2
+	//
+	// Unfortunately, PingFederate does not send Destination, but Okta and OneLogin do.
+	// This will check Destination only if provided. The Recipient is checked to the ACSURL in validateAssertion()
+	// so this particular check is not terribly important.
+	SkipDestinationCheck bool
+
+	// SkipIssuerCheck, if true, will skip Issuer validation when parsing the response.
+	//
+	// Most IdP's allow anything as value for the Issuer, even empty string, which makes checking
+	// the Issuer rather pointless.
+	SkipIssuerCheck bool
+
+	// EaseAudienceRestrictions, if true, will only check that the value has the same host as the metadata URL.
+	//
+	// This has been changed from the upstream which forces the AudienceRestriction
+	// value to equal the metadata URL. That is not a requirement in the SAML spec
+	// and does not meet work with conversions. V6 was implemented such that the
+	// AudienceRestriction value is the unique company URL (with subdomain).
+	// In order to maintain backwards compatibility, allow the URL without path.
+	EaseAudienceRestrictions bool
 }
 
 // MaxIssueDelay is the longest allowed time between when a SAML assertion is
@@ -529,6 +560,10 @@ func (sp *ServiceProvider) validateDestination(response []byte, responseDom *Res
 		return err
 	}
 
+	if sp.SkipDestinationCheck && responseDom.Destination == "" {
+		return nil
+	}
+
 	signed, err := responseIsSigned(responseXML)
 	if err != nil {
 		return err
@@ -608,14 +643,14 @@ func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleR
 
 	requestIDvalid := false
 
-	if sp.AllowIDPInitiated {
-		requestIDvalid = true
-	} else {
-		for _, possibleRequestID := range possibleRequestIDs {
-			if resp.InResponseTo == possibleRequestID {
-				requestIDvalid = true
-			}
+	for _, possibleRequestID := range possibleRequestIDs {
+		if resp.InResponseTo == possibleRequestID {
+			requestIDvalid = true
 		}
+	}
+
+	if sp.AllowIDPInitiated && !requestIDvalid {
+		requestIDvalid = true
 	}
 
 	if !requestIDvalid {
@@ -627,7 +662,7 @@ func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleR
 		retErr.PrivateErr = fmt.Errorf("response IssueInstant expired at %s", resp.IssueInstant.Add(MaxIssueDelay))
 		return nil, retErr
 	}
-	if resp.Issuer != nil && resp.Issuer.Value != sp.IDPMetadata.EntityID {
+	if !sp.SkipIssuerCheck && resp.Issuer != nil && resp.Issuer.Value != sp.IDPMetadata.EntityID {
 		retErr.PrivateErr = fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
 		return nil, retErr
 	}
@@ -744,11 +779,18 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if assertion.IssueInstant.Add(MaxIssueDelay).Before(now) {
 		return fmt.Errorf("expired on %s", assertion.IssueInstant.Add(MaxIssueDelay))
 	}
-	if assertion.Issuer.Value != sp.IDPMetadata.EntityID {
+	if !sp.SkipIssuerCheck && assertion.Issuer.Value != sp.IDPMetadata.EntityID {
 		return fmt.Errorf("issuer is not %q", sp.IDPMetadata.EntityID)
 	}
 	for _, subjectConfirmation := range assertion.Subject.SubjectConfirmations {
 		requestIDvalid := false
+
+		for _, possibleRequestID := range possibleRequestIDs {
+			if subjectConfirmation.SubjectConfirmationData.InResponseTo == possibleRequestID {
+				requestIDvalid = true
+				break
+			}
+		}
 
 		// We *DO NOT* validate InResponseTo when AllowIDPInitiated is set. Here's why:
 		//
@@ -767,16 +809,12 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 		//
 		// Finally, it is unclear that there is significant security value in checking InResponseTo when we allow
 		// IDP initiated assertions.
-		if !sp.AllowIDPInitiated {
-			for _, possibleRequestID := range possibleRequestIDs {
-				if subjectConfirmation.SubjectConfirmationData.InResponseTo == possibleRequestID {
-					requestIDvalid = true
-					break
-				}
-			}
-			if !requestIDvalid {
-				return fmt.Errorf("assertion SubjectConfirmation one of the possible request IDs (%v)", possibleRequestIDs)
-			}
+		if sp.AllowIDPInitiated && !requestIDvalid {
+			requestIDvalid = true
+		}
+
+		if !requestIDvalid {
+			return fmt.Errorf("assertion SubjectConfirmation one of the possible request IDs (%v)", possibleRequestIDs)
 		}
 		if subjectConfirmation.SubjectConfirmationData.Recipient != sp.AcsURL.String() {
 			return fmt.Errorf("assertion SubjectConfirmation Recipient is not %s", sp.AcsURL.String())
@@ -797,6 +835,9 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	for _, audienceRestriction := range assertion.Conditions.AudienceRestrictions {
 		if audienceRestriction.Audience.Value == audience {
 			audienceRestrictionsValid = true
+		}
+		if !audienceRestrictionsValid && sp.EaseAudienceRestrictions {
+			audienceRestrictionsValid = IsSameBase(audience, audienceRestriction.Audience.Value)
 		}
 	}
 	if !audienceRestrictionsValid {
