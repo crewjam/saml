@@ -123,6 +123,37 @@ type ServiceProvider struct {
 	// LogoutBindings specify the bindings available for SLO endpoint. If empty,
 	// HTTP-POST binding is used.
 	LogoutBindings []string
+
+	//
+	// INVISION CHANGES BELOW
+	//
+
+	// SkipDestinationCheck, if true, will skip the Destination validation when parsing the response.
+	//
+	// AUTH-2414: If the message is signed, the Destination XML attribute in the root SAML element of the protocol
+	// message MUST contain the URL to which the sender has instructed the user agent to deliver the
+	// message. The recipient MUST then verify that the value matches the location at which the message has
+	// been received. Ref: http://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf @ 3.4.5.2
+	//
+	// Unfortunately, PingFederate does not send Destination, but Okta and OneLogin do.
+	// This will check Destination only if provided. The Recipient is checked to the ACSURL in validateAssertion()
+	// so this particular check is not terribly important.
+	SkipDestinationCheck bool
+
+	// SkipIssuerCheck, if true, will skip Issuer validation when parsing the response.
+	//
+	// Most IdP's allow anything as value for the Issuer, even empty string, which makes checking
+	// the Issuer rather pointless.
+	SkipIssuerCheck bool
+
+	// EaseAudienceRestrictions, if true, will only check that the value has the same host as the metadata URL.
+	//
+	// This has been changed from the upstream which forces the AudienceRestriction
+	// value to equal the metadata URL. That is not a requirement in the SAML spec
+	// and does not meet work with conversions. V6 was implemented such that the
+	// AudienceRestriction value is the unique company URL (with subdomain).
+	// In order to maintain backwards compatibility, allow the URL without path.
+	EaseAudienceRestrictions bool
 }
 
 // MaxIssueDelay is the longest allowed time between when a SAML assertion is
@@ -277,7 +308,6 @@ func (r *AuthnRequest) Redirect(relayState string, sp *ServiceProvider) (*url.UR
 	if len(sp.SignatureMethod) > 0 {
 		query += "&SigAlg=" + url.QueryEscape(sp.SignatureMethod)
 		signingContext, err := GetSigningContext(sp)
-
 		if err != nil {
 			return nil, err
 		}
@@ -403,7 +433,6 @@ func (sp *ServiceProvider) MakeArtifactResolveRequest(artifactID string) (*Artif
 // MakeAuthenticationRequest produces a new AuthnRequest object to send to the idpURL
 // that uses the specified binding (HTTPRedirectBinding or HTTPPostBinding)
 func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding string, resultBinding string) (*AuthnRequest, error) {
-
 	allowCreate := true
 	nameIDFormat := sp.nameIDFormat()
 	req := AuthnRequest{
@@ -484,7 +513,6 @@ func (sp *ServiceProvider) SignArtifactResolve(req *ArtifactResolve) error {
 
 // SignAuthnRequest adds the `Signature` element to the `AuthnRequest`.
 func (sp *ServiceProvider) SignAuthnRequest(req *AuthnRequest) error {
-
 	signingContext, err := GetSigningContext(sp)
 	if err != nil {
 		return err
@@ -865,10 +893,12 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 			return nil, fmt.Errorf("cannot unmarshal response: %v", err)
 		}
 
-		// If the response is *not* signed, the Destination may be omitted.
-		if responseHasSignature || response.Destination != "" {
-			if response.Destination != sp.AcsURL.String() {
-				return nil, fmt.Errorf("`Destination` does not match AcsURL (expected %q, actual %q)", sp.AcsURL.String(), response.Destination)
+		if !sp.SkipDestinationCheck || response.Destination != "" {
+			// If the response is *not* signed, the Destination may be omitted.
+			if responseHasSignature || response.Destination != "" {
+				if response.Destination != sp.AcsURL.String() {
+					return nil, fmt.Errorf("`Destination` does not match AcsURL (expected %q, actual %q)", sp.AcsURL.String(), response.Destination)
+				}
 			}
 		}
 
@@ -889,7 +919,7 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 		if response.IssueInstant.Add(MaxIssueDelay).Before(now) {
 			return nil, fmt.Errorf("response IssueInstant expired at %s", response.IssueInstant.Add(MaxIssueDelay))
 		}
-		if response.Issuer != nil && response.Issuer.Value != sp.IDPMetadata.EntityID {
+		if !sp.SkipIssuerCheck && response.Issuer != nil && response.Issuer.Value != sp.IDPMetadata.EntityID {
 			return nil, fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
 		}
 		if response.Status.StatusCode.Value != StatusSuccess {
@@ -1028,11 +1058,18 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if assertion.IssueInstant.Add(MaxIssueDelay).Before(now) {
 		return fmt.Errorf("expired on %s", assertion.IssueInstant.Add(MaxIssueDelay))
 	}
-	if assertion.Issuer.Value != sp.IDPMetadata.EntityID {
+	if !sp.SkipIssuerCheck && assertion.Issuer.Value != sp.IDPMetadata.EntityID {
 		return fmt.Errorf("issuer is not %q", sp.IDPMetadata.EntityID)
 	}
 	for _, subjectConfirmation := range assertion.Subject.SubjectConfirmations {
 		requestIDvalid := false
+
+		for _, possibleRequestID := range possibleRequestIDs {
+			if subjectConfirmation.SubjectConfirmationData.InResponseTo == possibleRequestID {
+				requestIDvalid = true
+				break
+			}
+		}
 
 		// We *DO NOT* validate InResponseTo when AllowIDPInitiated is set. Here's why:
 		//
@@ -1051,16 +1088,12 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 		//
 		// Finally, it is unclear that there is significant security value in checking InResponseTo when we allow
 		// IDP initiated assertions.
-		if !sp.AllowIDPInitiated {
-			for _, possibleRequestID := range possibleRequestIDs {
-				if subjectConfirmation.SubjectConfirmationData.InResponseTo == possibleRequestID {
-					requestIDvalid = true
-					break
-				}
-			}
-			if !requestIDvalid {
-				return fmt.Errorf("assertion SubjectConfirmation one of the possible request IDs (%v)", possibleRequestIDs)
-			}
+		if sp.AllowIDPInitiated && !requestIDvalid {
+			requestIDvalid = true
+		}
+
+		if !requestIDvalid {
+			return fmt.Errorf("assertion SubjectConfirmation one of the possible request IDs (%v)", possibleRequestIDs)
 		}
 		if subjectConfirmation.SubjectConfirmationData.Recipient != sp.AcsURL.String() {
 			return fmt.Errorf("assertion SubjectConfirmation Recipient is not %s", sp.AcsURL.String())
@@ -1081,6 +1114,9 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	for _, audienceRestriction := range assertion.Conditions.AudienceRestrictions {
 		if audienceRestriction.Audience.Value == audience {
 			audienceRestrictionsValid = true
+		}
+		if !audienceRestrictionsValid && sp.EaseAudienceRestrictions {
+			audienceRestrictionsValid = IsSameBase(audience, audienceRestriction.Audience.Value)
 		}
 	}
 	if !audienceRestrictionsValid {
@@ -1196,7 +1232,6 @@ func (sp *ServiceProvider) SignLogoutRequest(req *LogoutRequest) error {
 
 // MakeLogoutRequest produces a new LogoutRequest object for idpURL.
 func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string) (*LogoutRequest, error) {
-
 	req := LogoutRequest{
 		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
 		IssueInstant: TimeNow(),

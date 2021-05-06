@@ -3,6 +3,8 @@ package saml
 import (
 	"crypto/rand"
 	"io"
+	"net/url"
+	"strings"
 	"time"
 
 	dsig "github.com/russellhaering/goxmldsig"
@@ -29,4 +31,29 @@ func randomBytes(n int) []byte {
 		panic(err)
 	}
 	return rv
+}
+
+// IsSameBase returns true if both urls have the same base URI, false otherwise.
+func IsSameBase(refURL, someURL string) bool {
+	if refURL == someURL {
+		return true
+	}
+
+	ref, err := url.Parse(refURL)
+	if err != nil {
+		return false
+	}
+
+	if ref.Host == "" {
+		return false
+	}
+
+	base := ref.ResolveReference(&url.URL{Path: "/"})
+	base.Path = "" // Strip path "/"
+
+	if strings.HasPrefix(someURL, base.String()) {
+		return true
+	}
+
+	return false
 }
