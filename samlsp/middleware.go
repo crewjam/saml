@@ -44,6 +44,7 @@ type Middleware struct {
 	Binding         string // either saml.HTTPPostBinding or saml.HTTPRedirectBinding
 	RequestTracker  RequestTracker
 	Session         SessionProvider
+	RedirectURI       string
 }
 
 // ServeHTTP implements http.Handler and serves the SAML-specific HTTP endpoints
@@ -183,6 +184,9 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 // CreateSessionFromAssertion is invoked by ServeHTTP when we have a new, valid SAML assertion.
 func (m *Middleware) CreateSessionFromAssertion(w http.ResponseWriter, r *http.Request, assertion *saml.Assertion) {
 	redirectURI := "/"
+	if m.RedirectURI != "" {
+		redirectURI = m.RedirectURI
+	}
 	if trackedRequestIndex := r.Form.Get("RelayState"); trackedRequestIndex != "" {
 		trackedRequest, err := m.RequestTracker.GetTrackedRequest(r, trackedRequestIndex)
 		if err != nil {

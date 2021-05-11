@@ -25,6 +25,7 @@ type Options struct {
 	ForceAuthn        bool // TODO(ross): this should be *bool
 	CookieSameSite    http.SameSite
 	RelayStateFunc    func(w http.ResponseWriter, r *http.Request) string
+	RedirectURI       string
 }
 
 // DefaultSessionCodec returns the default SessionCodec for the provided options,
@@ -121,6 +122,7 @@ func New(opts Options) (*Middleware, error) {
 		Binding:         "",
 		OnError:         DefaultOnError,
 		Session:         DefaultSessionProvider(opts),
+		RedirectURI:     opts.RedirectURI,
 	}
 	m.RequestTracker = DefaultRequestTracker(opts, &m.ServiceProvider)
 
