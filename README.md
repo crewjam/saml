@@ -1,6 +1,6 @@
 # SAML
 
-[![](https://godoc.org/github.com/crewjam/saml?status.svg)](http://godoc.org/github.com/crewjam/saml)
+[![](https://godoc.org/github.com/yext/saml?status.svg)](http://godoc.org/github.com/yext/saml)
 
 ![Build Status](https://github.com/crewjam/saml/workflows/Presubmit/badge.svg)
 
@@ -54,7 +54,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/crewjam/saml/samlsp"
+	"github.com/yext/saml/samlsp"
 )
 
 func hello(w http.ResponseWriter, r *http.Request) {
