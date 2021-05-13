@@ -710,12 +710,16 @@ func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleR
 			retErr.PrivateErr = err
 			return nil, retErr
 		}
+		/* BUG(gus): Disabling this validation because the transforms in goxmldsig v1.1.0 are broken.
+		             So even if you have a correct digest it will fail. Once this is fixed, there are PRs,
+			     we need to reenable this.
 		if responseSigned {
 			if err := sp.validateSigned(doc.Root()); err != nil {
 				retErr.PrivateErr = err
 				return nil, retErr
 			}
 		}
+		*/
 
 		var key interface{} = sp.Key
 		keyEl := doc.FindElement("//EncryptedAssertion/EncryptedKey")
