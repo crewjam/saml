@@ -841,7 +841,14 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 			audienceRestrictionsValid = true
 		}
 		if !audienceRestrictionsValid && sp.EaseAudienceRestrictions {
-			audienceRestrictionsValid = IsSameBase(audience, audienceRestriction.Audience.Value)
+			// This has been changed from the original implementation which forces the
+			// AudienceRestriction to equal the metadata URL. That is not a requirement
+			// in the SAML spec and does not meet our requirements. V6 was implemented
+			// such that the AudienceRestriction is just the scheme and host of the target
+			// company (containing its unique subdomain). In order to maintain backwards
+			// compatibility, we will allow both forms of the URL with and without the path.
+			audienceRestrictionsValid = len(audienceRestriction.Audience.Value) == 0 ||
+				IsSameBase(audience, audienceRestriction.Audience.Value)
 		}
 	}
 	if !audienceRestrictionsValid {

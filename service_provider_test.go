@@ -1696,20 +1696,35 @@ func TestEaseAudienceRestrictions(t *testing.T) {
 	test := NewServiceProviderTest(t)
 
 	s := ServiceProvider{
-		Key:             test.Key,
-		Certificate:     test.Certificate,
-		MetadataURL:     mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
-		AcsURL:          mustParseURL("https://15661444.ngrok.io/saml2/acs"),
-		IDPMetadata:     &EntityDescriptor{},
-		SkipIssuerCheck: true,
+		Key:                      test.Key,
+		Certificate:              test.Certificate,
+		MetadataURL:              mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:                   mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+		IDPMetadata:              &EntityDescriptor{},
+		EaseAudienceRestrictions: true,
 	}
 	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
 	req := http.Request{PostForm: url.Values{}}
-	test.SamlResponse = bytes.Replace(test.SamlResponse,
-		[]byte(`https://idp.testshib.org/idp/shibboleth`), []byte("PINEAPPLE"), 1)
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(test.SamlResponse))
-	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
+	assertion, err := s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
+	assert.Check(t, err)
+
+	assertion.Conditions.AudienceRestrictions[0].Audience.Value = "PINEAPPLE"
+	err = s.validateAssertion(assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
+	assert.Check(t, is.Error(err, "assertion Conditions AudienceRestriction does not contain \"https://15661444.ngrok.io/saml2/metadata\""))
+
+	assertion.Conditions.AudienceRestrictions[0].Audience.Value = "https://15661444.ngrok.io"
+	err = s.validateAssertion(assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
+	assert.Check(t, err)
+
+	assertion.Conditions.AudienceRestrictions[0].Audience.Value = ""
+	err = s.validateAssertion(assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
+	assert.Check(t, err)
+
+	// // Not having an audience is not an error
+	assertion.Conditions.AudienceRestrictions = []AudienceRestriction{}
+	err = s.validateAssertion(assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
 	assert.Check(t, err)
 }
