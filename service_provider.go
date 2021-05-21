@@ -288,22 +288,15 @@ func (sp *ServiceProvider) GetSLOBindingLocation(binding string) string {
 // signed by the IDP in PEM format, or nil if no such certificate is found.
 func (sp *ServiceProvider) getIDPSigningCerts() ([]*x509.Certificate, error) {
 	var certStrs []string
+
+	// We need to include non-empty certs where the "use" attribute is
+	// either set to "signing" or is missing
 	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
 		for _, keyDescriptor := range idpSSODescriptor.KeyDescriptors {
-			if keyDescriptor.Use == "signing" {
-				certStrs = append(certStrs, keyDescriptor.KeyInfo.Certificate)
-			}
-		}
-	}
-
-	// If there are no explicitly signing certs, just return the first
-	// non-empty cert we find.
-	if len(certStrs) == 0 {
-		for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
-			for _, keyDescriptor := range idpSSODescriptor.KeyDescriptors {
-				if keyDescriptor.Use == "" && keyDescriptor.KeyInfo.Certificate != "" {
+			if keyDescriptor.KeyInfo.Certificate != "" {
+				switch keyDescriptor.Use {
+				case "", "signing":
 					certStrs = append(certStrs, keyDescriptor.KeyInfo.Certificate)
-					break
 				}
 			}
 		}
