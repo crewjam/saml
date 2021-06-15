@@ -23,6 +23,7 @@ type Options struct {
 	DefaultRedirectURI string
 	IDPMetadata        *saml.EntityDescriptor
 	SignRequest        bool
+	UseArtifactResponse bool
 	ForceAuthn         bool // TODO(ross): this should be *bool
 	CookieSameSite     http.SameSite
 	RelayStateFunc     func(w http.ResponseWriter, r *http.Request) string
@@ -125,10 +126,14 @@ func New(opts Options) (*Middleware, error) {
 	m := &Middleware{
 		ServiceProvider: DefaultServiceProvider(opts),
 		Binding:         "",
+		ResponseBinding: saml.HTTPPostBinding,
 		OnError:         DefaultOnError,
 		Session:         DefaultSessionProvider(opts),
 	}
 	m.RequestTracker = DefaultRequestTracker(opts, &m.ServiceProvider)
+	if opts.UseArtifactResponse {
+		m.ResponseBinding = saml.HTTPArtifactBinding
+	}
 
 	return m, nil
 }
