@@ -308,7 +308,7 @@ func TestIDPCanHandlePostRequestWithExistingSession(t *testing.T) {
 
 	w := httptest.NewRecorder()
 
-	authRequest, err := test.SP.MakeAuthenticationRequest(test.SP.GetSSOBindingLocation(HTTPRedirectBinding), HTTPRedirectBinding)
+	authRequest, err := test.SP.MakeAuthenticationRequest(test.SP.GetSSOBindingLocation(HTTPRedirectBinding), HTTPRedirectBinding, HTTPPostBinding)
 	assert.Check(t, err)
 	authRequestBuf, err := xml.Marshal(authRequest)
 	assert.Check(t, err)

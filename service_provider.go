@@ -196,6 +196,11 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 						Location: sp.AcsURL.String(),
 						Index:    1,
 					},
+					{
+						Binding:  HTTPArtifactBinding,
+						Location: sp.AcsURL.String(),
+						Index:    2,
+					},
 				},
 			},
 		},
@@ -206,7 +211,7 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 // the HTTP-Redirect binding. It returns a URL that we will redirect the user to
 // in order to start the auth process.
 func (sp *ServiceProvider) MakeRedirectAuthenticationRequest(relayState string) (*url.URL, error) {
-	req, err := sp.MakeAuthenticationRequest(sp.GetSSOBindingLocation(HTTPRedirectBinding), HTTPRedirectBinding)
+	req, err := sp.MakeAuthenticationRequest(sp.GetSSOBindingLocation(HTTPRedirectBinding), HTTPRedirectBinding, HTTPPostBinding)
 	if err != nil {
 		return nil, err
 	}
@@ -340,16 +345,38 @@ func (sp *ServiceProvider) getIDPSigningCerts() ([]*x509.Certificate, error) {
 	return certs, nil
 }
 
+// MakeArtifactResolveRequest produces a new ArtifactResolve object to send to the idp's Artifact resolver
+func (sp *ServiceProvider) MakeArtifactResolveRequest(artifactID string) (*ArtifactResolve, error) {
+	req := ArtifactResolve{
+		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
+		IssueInstant: TimeNow(),
+		Version:      "2.0",
+		Issuer: &Issuer{
+			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
+			Value:  firstSet(sp.EntityID, sp.MetadataURL.String()),
+		},
+		Artifact: artifactID,
+	}
+
+	if len(sp.SignatureMethod) > 0 {
+		if err := sp.SignArtifactResolve(&req); err != nil {
+			return nil, err
+		}
+	}
+
+	return &req, nil
+}
+
 // MakeAuthenticationRequest produces a new AuthnRequest object to send to the idpURL
 // that uses the specified binding (HTTPRedirectBinding or HTTPPostBinding)
-func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding string) (*AuthnRequest, error) {
+func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding string, resultBinding string) (*AuthnRequest, error) {
 
 	allowCreate := true
 	nameIDFormat := sp.nameIDFormat()
 	req := AuthnRequest{
 		AssertionConsumerServiceURL: sp.AcsURL.String(),
 		Destination:                 idpURL,
-		ProtocolBinding:             HTTPPostBinding, // default binding for the response
+		ProtocolBinding:             resultBinding, // default binding for the response
 		ID:                          fmt.Sprintf("id-%x", randomBytes(20)),
 		IssueInstant:                TimeNow(),
 		Version:                     "2.0",
@@ -403,6 +430,24 @@ func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 	return signingContext, nil
 }
 
+// SignArtifactResolve adds the `Signature` element to the `ArtifactResolve`.
+func (sp *ServiceProvider) SignArtifactResolve(req *ArtifactResolve) error {
+	signingContext, err := GetSigningContext(sp)
+	if err != nil {
+		return err
+	}
+	assertionEl := req.Element()
+
+	signedRequestEl, err := signingContext.SignEnveloped(assertionEl)
+	if err != nil {
+		return err
+	}
+
+	sigEl := signedRequestEl.Child[len(signedRequestEl.Child)-1]
+	req.Signature = sigEl.(*etree.Element)
+	return nil
+}
+
 // SignAuthnRequest adds the `Signature` element to the `AuthnRequest`.
 func (sp *ServiceProvider) SignAuthnRequest(req *AuthnRequest) error {
 
@@ -426,7 +471,7 @@ func (sp *ServiceProvider) SignAuthnRequest(req *AuthnRequest) error {
 // the HTTP-POST binding. It returns HTML text representing an HTML form that
 // can be sent presented to a browser to initiate the login process.
 func (sp *ServiceProvider) MakePostAuthenticationRequest(relayState string) ([]byte, error) {
-	req, err := sp.MakeAuthenticationRequest(sp.GetSSOBindingLocation(HTTPPostBinding), HTTPPostBinding)
+	req, err := sp.MakeAuthenticationRequest(sp.GetSSOBindingLocation(HTTPPostBinding), HTTPPostBinding, HTTPPostBinding)
 	if err != nil {
 		return nil, err
 	}
@@ -545,24 +590,62 @@ func (sp *ServiceProvider) validateDestination(response *etree.Element, response
 	return nil
 }
 
-// ParseResponse extracts the SAML IDP response received in req, validates
-// it, and returns the verified assertion.
+// ParseResponse extracts the SAML IDP response received in req, resolves
+// artifacts when neccessary, validates it, and returns the verified assertion.
 func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs []string) (*Assertion, error) {
 	now := TimeNow()
+
+	var assertion *Assertion
+
 	retErr := &InvalidResponseError{
 		Now:      now,
 		Response: req.PostForm.Get("SAMLResponse"),
 	}
 
-	rawResponseBuf, err := base64.StdEncoding.DecodeString(req.PostForm.Get("SAMLResponse"))
-	if err != nil {
-		retErr.PrivateErr = fmt.Errorf("cannot parse base64: %s", err)
-		return nil, retErr
-	}
-	retErr.Response = string(rawResponseBuf)
-	assertion, err := sp.ParseXMLResponse(rawResponseBuf, possibleRequestIDs)
-	if err != nil {
-		return nil, err
+	if req.Form.Get("SAMLart") != "" {
+		retErr.Response = req.Form.Get("SAMLart")
+
+		req, err := sp.MakeArtifactResolveRequest(req.Form.Get("SAMLart"))
+		if err != nil {
+			retErr.PrivateErr = fmt.Errorf("Cannot generate artifact resolution request: %s", err)
+			return nil, retErr
+		}
+
+		doc := etree.NewDocument()
+		doc.SetRoot(req.SoapRequest())
+
+		var requestBuffer bytes.Buffer
+		doc.WriteTo(&requestBuffer)
+		response, err := http.Post(sp.GetArtifactBindingLocation(SOAPBinding), "text/xml", &requestBuffer)
+		if err != nil {
+			retErr.PrivateErr = fmt.Errorf("Error during artifact resolution: %s", err)
+			return nil, retErr
+		}
+		defer response.Body.Close()
+		if response.StatusCode != 200 {
+			retErr.PrivateErr = fmt.Errorf("Error during artifact resolution: HTTP status %d (%s)", response.StatusCode, response.Status)
+			return nil, retErr
+		}
+		rawResponseBuf, err := ioutil.ReadAll(response.Body)
+		if err != nil {
+			retErr.PrivateErr = fmt.Errorf("Error during artifact resolution: %s", err)
+			return nil, retErr
+		}
+		assertion, err = sp.ParseXMLArtifactResponse(rawResponseBuf, possibleRequestIDs, req.ID)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		rawResponseBuf, err := base64.StdEncoding.DecodeString(req.PostForm.Get("SAMLResponse"))
+		if err != nil {
+			retErr.PrivateErr = fmt.Errorf("cannot parse base64: %s", err)
+			return nil, retErr
+		}
+		retErr.Response = string(rawResponseBuf)
+		assertion, err = sp.ParseXMLResponse(rawResponseBuf, possibleRequestIDs)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return assertion, nil
@@ -607,7 +690,7 @@ func (sp *ServiceProvider) ParseXMLArtifactResponse(decodedResponseXML []byte, p
 	resp := envelope.Body.ArtifactResponse
 
 	// Validate ArtifactResponse
-	if resp.ID != artifactRequestID {
+	if resp.InResponseTo != artifactRequestID {
 		retErr.PrivateErr = fmt.Errorf("`InResponseTo` does not match the artifact request ID (expected %v)", artifactRequestID)
 		return nil, retErr
 	}
