@@ -11,6 +11,23 @@ import (
 	"github.com/russellhaering/goxmldsig/etreeutils"
 )
 
+// RequestedAuthnContext represents the SAML object of the same name, an indication of the
+// requirements on the authentication process.
+type RequestedAuthnContext struct {
+	XMLName              xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol RequestedAuthnContext"`
+	Comparison           string   `xml:",attr"`
+	AuthnContextClassRef string   `xml:"urn:oasis:names:tc:SAML:2.0:assertion AuthnContextClassRef"`
+}
+
+func (r *RequestedAuthnContext) Element() *etree.Element {
+	el := etree.NewElement("samlp:RequestedAuthnContext")
+	el.CreateAttr("Comparison", r.Comparison)
+	elContext := etree.NewElement("saml:AuthnContextClassRef")
+	elContext.SetText(r.AuthnContextClassRef)
+	el.AddChild(elContext)
+	return el
+}
+
 // AuthnRequest represents the SAML object of the same name, a request from a service provider
 // to authenticate a user.
 //
@@ -26,10 +43,10 @@ type AuthnRequest struct {
 	Issuer       *Issuer   `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
 	Signature    *etree.Element
 
-	Subject      *Subject
-	NameIDPolicy *NameIDPolicy `xml:"urn:oasis:names:tc:SAML:2.0:protocol NameIDPolicy"`
-	Conditions   *Conditions
-	//RequestedAuthnContext *RequestedAuthnContext // TODO
+	Subject               *Subject
+	NameIDPolicy          *NameIDPolicy `xml:"urn:oasis:names:tc:SAML:2.0:protocol NameIDPolicy"`
+	Conditions            *Conditions
+	RequestedAuthnContext *RequestedAuthnContext // TODO
 	//Scoping               *Scoping // TODO
 
 	ForceAuthn                     *bool  `xml:",attr"`
@@ -181,9 +198,9 @@ func (r *AuthnRequest) Element() *etree.Element {
 	if r.Conditions != nil {
 		el.AddChild(r.Conditions.Element())
 	}
-	//if r.RequestedAuthnContext != nil {
-	//	el.AddChild(r.RequestedAuthnContext.Element())
-	//}
+	if r.RequestedAuthnContext != nil {
+		el.AddChild(r.RequestedAuthnContext.Element())
+	}
 	//if r.Scoping != nil {
 	//	el.AddChild(r.Scoping.Element())
 	//}
