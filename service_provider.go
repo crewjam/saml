@@ -99,6 +99,10 @@ type ServiceProvider struct {
 	// has a SSO session at the IdP.
 	ForceAuthn *bool
 
+	// RequestedAuthnContext allow you to specify the requested authentication
+	// context in authentication requests
+	RequestedAuthnContext *RequestedAuthnContext
+
 	// AllowIdpInitiated
 	AllowIDPInitiated bool
 
@@ -404,7 +408,8 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding stri
 			// urn:oasis:names:tc:SAML:2.0:nameid-format:transient
 			Format: &nameIDFormat,
 		},
-		ForceAuthn: sp.ForceAuthn,
+		ForceAuthn:            sp.ForceAuthn,
+		RequestedAuthnContext: sp.RequestedAuthnContext,
 	}
 	// We don't need to sign the XML document if the IDP uses HTTP-Redirect binding
 	if len(sp.SignatureMethod) > 0 && binding == HTTPPostBinding {
