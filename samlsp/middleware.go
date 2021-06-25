@@ -42,6 +42,7 @@ type Middleware struct {
 	ServiceProvider saml.ServiceProvider
 	OnError         func(w http.ResponseWriter, r *http.Request, err error)
 	Binding         string // either saml.HTTPPostBinding or saml.HTTPRedirectBinding
+	ResponseBinding string // either saml.HTTPPostBinding or saml.HTTPArtifactBinding
 	RequestTracker  RequestTracker
 	Session         SessionProvider
 }
@@ -140,7 +141,7 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	authReq, err := m.ServiceProvider.MakeAuthenticationRequest(bindingLocation, binding)
+	authReq, err := m.ServiceProvider.MakeAuthenticationRequest(bindingLocation, binding, m.ResponseBinding)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

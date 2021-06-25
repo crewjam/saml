@@ -81,25 +81,25 @@ func TestSPCanSetAuthenticationNameIDFormat(t *testing.T) {
 	}
 
 	// defaults to "transient"
-	req, err := s.MakeAuthenticationRequest("", HTTPRedirectBinding)
+	req, err := s.MakeAuthenticationRequest("", HTTPRedirectBinding, HTTPPostBinding)
 	assert.Check(t, err)
 	assert.Check(t, is.Equal(string(TransientNameIDFormat), *req.NameIDPolicy.Format))
 
 	// explicitly set to "transient"
 	s.AuthnNameIDFormat = TransientNameIDFormat
-	req, err = s.MakeAuthenticationRequest("", HTTPRedirectBinding)
+	req, err = s.MakeAuthenticationRequest("", HTTPRedirectBinding, HTTPPostBinding)
 	assert.Check(t, err)
 	assert.Check(t, is.Equal(string(TransientNameIDFormat), *req.NameIDPolicy.Format))
 
 	// explicitly set to "unspecified"
 	s.AuthnNameIDFormat = UnspecifiedNameIDFormat
-	req, err = s.MakeAuthenticationRequest("", HTTPRedirectBinding)
+	req, err = s.MakeAuthenticationRequest("", HTTPRedirectBinding, HTTPPostBinding)
 	assert.Check(t, err)
 	assert.Check(t, is.Equal("", *req.NameIDPolicy.Format))
 
 	// explicitly set to "emailAddress"
 	s.AuthnNameIDFormat = EmailAddressNameIDFormat
-	req, err = s.MakeAuthenticationRequest("", HTTPRedirectBinding)
+	req, err = s.MakeAuthenticationRequest("", HTTPRedirectBinding, HTTPPostBinding)
 	assert.Check(t, err)
 	assert.Check(t, is.Equal(string(EmailAddressNameIDFormat), *req.NameIDPolicy.Format))
 }
