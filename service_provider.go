@@ -1393,7 +1393,8 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 	if resp.IssueInstant.Add(MaxIssueDelay).Before(now) {
 		return fmt.Errorf("issueInstant expired at %s", resp.IssueInstant.Add(MaxIssueDelay))
 	}
-	if resp.Issuer.Value != sp.IDPMetadata.EntityID {
+	// Imitating login response check in logout response. See the SP interface docs for more details on SkipIssuerCheck.
+	if !sp.SkipIssuerCheck && resp.Issuer.Value != "" && resp.Issuer.Value != sp.IDPMetadata.EntityID {
 		return fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
 	}
 	if resp.Status.StatusCode.Value != StatusSuccess {
