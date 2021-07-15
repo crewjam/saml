@@ -72,6 +72,9 @@ type ServiceProvider struct {
 	Certificate   *x509.Certificate
 	Intermediates []*x509.Certificate
 
+	// Certificate to use as tls client certificate during SAML artifact resolution
+	TLSClientCertificate *tls.Certificate
+
 	// MetadataURL is the full URL to the metadata endpoint on this host,
 	// i.e. https://example.com/saml/metadata
 	MetadataURL url.URL
@@ -629,7 +632,17 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 
 		var requestBuffer bytes.Buffer
 		doc.WriteTo(&requestBuffer)
-		response, err := http.Post(sp.GetArtifactBindingLocation(SOAPBinding), "text/xml", &requestBuffer)
+		var client *http.Client
+		if sp.TLSClientCertificate != nil {
+			tlsConfig := &tls.Config{
+				Certificates: []tls.Certificate{*sp.TLSClientCertificate},
+			}
+			transport := &http.Transport{TLSClientConfig: tlsConfig}
+			client = &http.Client{Transport: transport}
+		} else {
+			client = http.DefaultClient
+		}
+		response, err := client.Post(sp.GetArtifactBindingLocation(SOAPBinding), "text/xml", &requestBuffer)
 		if err != nil {
 			retErr.PrivateErr = fmt.Errorf("Error during artifact resolution: %s", err)
 			return nil, retErr
