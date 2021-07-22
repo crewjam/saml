@@ -14,17 +14,18 @@ import (
 
 // Options represents the parameters for creating a new middleware
 type Options struct {
-	EntityID          string
-	URL               url.URL
-	Key               *rsa.PrivateKey
-	Certificate       *x509.Certificate
-	Intermediates     []*x509.Certificate
-	AllowIDPInitiated bool
-	IDPMetadata       *saml.EntityDescriptor
-	SignRequest       bool
-	ForceAuthn        bool // TODO(ross): this should be *bool
-	CookieSameSite    http.SameSite
-	RelayStateFunc    func(w http.ResponseWriter, r *http.Request) string
+	EntityID           string
+	URL                url.URL
+	Key                *rsa.PrivateKey
+	Certificate        *x509.Certificate
+	Intermediates      []*x509.Certificate
+	AllowIDPInitiated  bool
+	DefaultRedirectURI string
+	IDPMetadata        *saml.EntityDescriptor
+	SignRequest        bool
+	ForceAuthn         bool // TODO(ross): this should be *bool
+	CookieSameSite     http.SameSite
+	RelayStateFunc     func(w http.ResponseWriter, r *http.Request) string
 }
 
 // DefaultSessionCodec returns the default SessionCodec for the provided options,
@@ -94,18 +95,23 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		signatureMethod = ""
 	}
 
+	if opts.DefaultRedirectURI == "" {
+		opts.DefaultRedirectURI = "/"
+	}
+
 	return saml.ServiceProvider{
-		EntityID:          opts.EntityID,
-		Key:               opts.Key,
-		Certificate:       opts.Certificate,
-		Intermediates:     opts.Intermediates,
-		MetadataURL:       *metadataURL,
-		AcsURL:            *acsURL,
-		SloURL:            *sloURL,
-		IDPMetadata:       opts.IDPMetadata,
-		ForceAuthn:        forceAuthn,
-		SignatureMethod:   signatureMethod,
-		AllowIDPInitiated: opts.AllowIDPInitiated,
+		EntityID:           opts.EntityID,
+		Key:                opts.Key,
+		Certificate:        opts.Certificate,
+		Intermediates:      opts.Intermediates,
+		MetadataURL:        *metadataURL,
+		AcsURL:             *acsURL,
+		SloURL:             *sloURL,
+		IDPMetadata:        opts.IDPMetadata,
+		ForceAuthn:         forceAuthn,
+		SignatureMethod:    signatureMethod,
+		AllowIDPInitiated:  opts.AllowIDPInitiated,
+		DefaultRedirectURI: opts.DefaultRedirectURI,
 	}
 }
 

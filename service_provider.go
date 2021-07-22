@@ -102,6 +102,9 @@ type ServiceProvider struct {
 	// AllowIdpInitiated
 	AllowIDPInitiated bool
 
+	// DefaultRedirectURI where untracked requests (as of IDPInitiated) are redirected to
+	DefaultRedirectURI string
+
 	// SignatureVerifier, if non-nil, allows you to implement an alternative way
 	// to verify signatures.
 	SignatureVerifier SignatureVerifier
