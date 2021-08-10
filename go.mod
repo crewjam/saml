@@ -7,7 +7,7 @@ require (
 	github.com/crewjam/httperr v0.2.0
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dchest/uniuri v0.0.0-20200228104902-7aecb25e1fe5
-	github.com/form3tech-oss/jwt-go v3.2.2+incompatible
+	github.com/form3tech-oss/jwt-go v3.2.5+incompatible
 	github.com/google/go-cmp v0.5.5
 	github.com/jonboulle/clockwork v0.2.2 // indirect
 	github.com/kr/pretty v0.2.1
