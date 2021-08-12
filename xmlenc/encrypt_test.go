@@ -23,7 +23,7 @@ func TestCanEncryptOAEP(t *testing.T) {
 		e.BlockCipher = AES128CBC
 		e.DigestMethod = &SHA1
 
-		el, err := e.Encrypt(certificate, golden.Get(t, "plaintext.xml"))
+		el, err := e.Encrypt(certificate, golden.Get(t, "plaintext.xml"), nil)
 		assert.Check(t, err)
 
 		doc := etree.NewDocument()
@@ -46,7 +46,13 @@ func TestCanEncryptOAEP(t *testing.T) {
 		e.BlockCipher = AES128GCM
 		e.DigestMethod = &SHA1
 
-		_, err = e.Encrypt(certificate, golden.Get(t, "plaintext_gcm.xml"))
+		el, err := e.Encrypt(certificate, golden.Get(t, "plaintext_gcm.xml"), []byte("1234567890AZ"))
 		assert.Check(t, err)
+
+		doc := etree.NewDocument()
+		doc.SetRoot(el)
+		doc.Indent(4)
+		ciphertext, _ := doc.WriteToString()
+		golden.Assert(t, ciphertext, "ciphertext_gcm.xml")
 	})
 }

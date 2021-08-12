@@ -28,7 +28,7 @@ func (e GCM) Algorithm() string {
 	return e.algorithm
 }
 
-func (e GCM) Encrypt(key interface{}, plaintext []byte) (*etree.Element, error) {
+func (e GCM) Encrypt(key interface{}, plaintext []byte, nonce []byte) (*etree.Element, error) {
 	keyBuf, ok := key.([]byte)
 	if !ok {
 		return nil, ErrIncorrectKeyType("[]byte")
@@ -63,9 +63,12 @@ func (e GCM) Encrypt(key interface{}, plaintext []byte) (*etree.Element, error) 
 		return nil, err
 	}
 
-	nonce := make([]byte, aesgcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		panic(err.Error())
+	if nonce == nil {
+		// generate random nonce when it's nil
+		nonce := make([]byte, aesgcm.NonceSize())
+		if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+			panic(err.Error())
+		}
 	}
 
 	ciphertext := make([]byte, len(plaintext))
