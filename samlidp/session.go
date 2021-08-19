@@ -16,7 +16,7 @@ import (
 	"github.com/crewjam/saml"
 )
 
-var sessionMaxAge = time.Hour
+var sessionMaxAge = time.Hour * 8
 
 // GetSession returns the *Session for this request.
 //
