@@ -23,12 +23,12 @@ func logout(w http.ResponseWriter, r *http.Request) {
 	nameID := samlsp.AttributeFromContext(r.Context(), "urn:oasis:names:tc:SAML:attribute:subject-id")
 	url, err := samlMiddleware.ServiceProvider.MakeRedirectLogoutRequest(nameID, "")
 	if err != nil {
-		log.Fatal(err)
+		panic(err) // TODO handle error
 	}
 
 	err = samlMiddleware.Session.DeleteSession(w, r)
 	if err != nil {
-		log.Fatal(err)
+		panic(err) // TODO handle error
 	}
 
 	w.Header().Add("Location", url.String())
@@ -65,7 +65,7 @@ func main() {
 		Key:         keyPair.PrivateKey.(*rsa.PrivateKey),
 		Certificate: keyPair.Leaf,
 		IDPMetadata: idpMetadata,
-		SignRequest: true,
+		SignRequest: true, // some IdP require the SLO request to be signed
 	})
 	app := http.HandlerFunc(hello)
 	slo := http.HandlerFunc(logout)
