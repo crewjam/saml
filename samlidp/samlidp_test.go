@@ -16,7 +16,7 @@ import (
 	is "gotest.tools/assert/cmp"
 	"gotest.tools/golden"
 
-	"github.com/form3tech-oss/jwt-go"
+	"github.com/golang-jwt/jwt/v4"
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/logger"
