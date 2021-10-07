@@ -159,8 +159,19 @@ type EncryptionMethod struct {
 //
 // TODO(ross): revisit xmldsig and make this type more complete
 type KeyInfo struct {
-	XMLName     xml.Name `xml:"http://www.w3.org/2000/09/xmldsig# KeyInfo"`
-	Certificate string   `xml:"X509Data>X509Certificate"`
+	XMLName xml.Name `xml:"http://www.w3.org/2000/09/xmldsig# KeyInfo"`
+	// Certificate string   `xml:"X509Data>X509Certificate"`
+	X509Data X509Data `xml:"X509Data"`
+}
+
+type X509Data struct {
+	XMLName          xml.Name          `xml:"http://www.w3.org/2000/09/xmldsig# X509Data"`
+	X509Certificates []X509Certificate `xml:"X509Certificate"`
+}
+
+type X509Certificate struct {
+	XMLName xml.Name `xml:"http://www.w3.org/2000/09/xmldsig# X509Certificate"`
+	Data    string   `xml:",chardata"`
 }
 
 // Endpoint represents the SAML EndpointType object.
