@@ -46,7 +46,7 @@
                 </DHKeyValue>
               </KeyValue>
               <X509Data xmlns="http://www.w3.org/2000/09/xmldsig#">
-                <X509Certificate>
+                <X509Certificate xmlns="http://www.w3.org/2000/09/xmldsig#">
                   MIIDvjCCA36gAwIBAgIGAOxN39MIMAkGByqGSM44BAMwbjELMAkGA1UEBhMCSUUx
                   DzANBgNVBAgTBkR1YmxpbjEkMCIGA1UEChMbQmFsdGltb3JlIFRlY2hub2xvZ2ll
                   cyBMdGQuMREwDwYDVQQLEwhYL1NlY3VyZTEVMBMGA1UEAxMMVHJhbnNpZW50IENB
@@ -73,7 +73,7 @@
             </OriginatorKeyInfo>
             <RecipientKeyInfo>
               <X509Data xmlns="http://www.w3.org/2000/09/xmldsig#">
-                <X509Certificate>
+                <X509Certificate xmlns="http://www.w3.org/2000/09/xmldsig#">
                   MIIDvjCCA36gAwIBAgIGAOxN3+EMMAkGByqGSM44BAMwbjELMAkGA1UEBhMCSUUx
                   DzANBgNVBAgTBkR1YmxpbjEkMCIGA1UEChMbQmFsdGltb3JlIFRlY2hub2xvZ2ll
                   cyBMdGQuMREwDwYDVQQLEwhYL1NlY3VyZTEVMBMGA1UEAxMMVHJhbnNpZW50IENB
