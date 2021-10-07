@@ -162,11 +162,8 @@ type EncryptionMethod struct {
 }
 
 // KeyInfo represents the XMLSEC object of the same name
-//
-// TODO(ross): revisit xmldsig and make this type more complete
 type KeyInfo struct {
-	XMLName xml.Name `xml:"http://www.w3.org/2000/09/xmldsig# KeyInfo"`
-	// Certificate string   `xml:"X509Data>X509Certificate"`
+	XMLName  xml.Name `xml:"http://www.w3.org/2000/09/xmldsig# KeyInfo"`
 	X509Data X509Data `xml:"X509Data"`
 }
 
