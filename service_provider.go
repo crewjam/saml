@@ -23,7 +23,7 @@ import (
 	dsig "github.com/russellhaering/goxmldsig"
 	"github.com/russellhaering/goxmldsig/etreeutils"
 
-	"github.com/crewjam/saml/xmlenc"
+	"github.com/JBake/saml/xmlenc"
 )
 
 // NameIDFormat is the format of the id
@@ -370,9 +370,9 @@ func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 		Leaf:        sp.Certificate,
 	}
 	// TODO: add intermediates for SP
-	//for _, cert := range sp.Intermediates {
+	// for _, cert := range sp.Intermediates {
 	//	keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
-	//}
+	// }
 	keyStore := dsig.TLSCertKeyStore(keyPair)
 
 	if sp.SignatureMethod != dsig.RSASHA1SignatureMethod &&
@@ -931,9 +931,9 @@ func (sp *ServiceProvider) SignLogoutRequest(req *LogoutRequest) error {
 		Leaf:        sp.Certificate,
 	}
 	// TODO: add intermediates for SP
-	//for _, cert := range sp.Intermediates {
+	// for _, cert := range sp.Intermediates {
 	//	keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
-	//}
+	// }
 	keyStore := dsig.TLSCertKeyStore(keyPair)
 
 	if sp.SignatureMethod != dsig.RSASHA1SignatureMethod &&
@@ -1188,9 +1188,9 @@ func (sp *ServiceProvider) SignLogoutResponse(resp *LogoutResponse) error {
 		Leaf:        sp.Certificate,
 	}
 	// TODO: add intermediates for SP
-	//for _, cert := range sp.Intermediates {
+	// for _, cert := range sp.Intermediates {
 	//	keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
-	//}
+	// }
 	keyStore := dsig.TLSCertKeyStore(keyPair)
 
 	if sp.SignatureMethod != dsig.RSASHA1SignatureMethod &&

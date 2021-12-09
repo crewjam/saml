@@ -18,8 +18,8 @@ import (
 
 	"github.com/form3tech-oss/jwt-go"
 
-	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/logger"
+	"github.com/JBake/saml"
+	"github.com/JBake/saml/logger"
 )
 
 type testRandomReader struct {

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/crewjam/saml"
+	"github.com/JBake/saml"
 )
 
 // Session is an interface implemented to contain a session.
