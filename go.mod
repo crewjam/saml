@@ -8,7 +8,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dchest/uniuri v0.0.0-20200228104902-7aecb25e1fe5
 	github.com/golang-jwt/jwt/v4 v4.1.0
-	github.com/google/go-cmp v0.5.5
+	github.com/google/go-cmp v0.5.6
 	github.com/kr/pretty v0.3.0
 	github.com/mattermost/xml-roundtrip-validator v0.1.0
 	github.com/pkg/errors v0.9.1 // indirect
