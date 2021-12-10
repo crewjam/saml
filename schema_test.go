@@ -94,3 +94,78 @@ func TestAuthnStatementMarshalWithoutSessionNotOnOrAfter(t *testing.T) {
 	assert.Check(t, err)
 	assert.Check(t, is.DeepEqual(expected, actual))
 }
+
+func TestLogoutRequestXMLRoundTrip(t *testing.T) {
+	issueInstant := time.Date(2021, 10, 8, 12, 30, 0, 0, time.UTC)
+	notOnOrAfter := time.Date(2021, 10, 8, 12, 35, 0, 0, time.UTC)
+	expected := LogoutRequest{
+		ID:           "request-id",
+		Version:      "2.0",
+		IssueInstant: issueInstant,
+		NotOnOrAfter: &notOnOrAfter,
+		Issuer: &Issuer{
+			XMLName: xml.Name{
+				Space: "urn:oasis:names:tc:SAML:2.0:assertion",
+				Local: "Issuer",
+			},
+			Value: "uri:issuer",
+		},
+		NameID: &NameID{
+			Value: "name-id",
+		},
+		SessionIndex: &SessionIndex{
+			Value: "index",
+		},
+	}
+
+	doc := etree.NewDocument()
+	doc.SetRoot(expected.Element())
+	x, err := doc.WriteToBytes()
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(`<samlp:LogoutRequest xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="request-id" Version="2.0" IssueInstant="2021-10-08T12:30:00Z" NotOnOrAfter="2021-10-08T12:35:00Z"><saml:Issuer>uri:issuer</saml:Issuer><saml:NameID>name-id</saml:NameID><samlp:SessionIndex xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol">index</samlp:SessionIndex></samlp:LogoutRequest>`,
+		string(x)))
+
+	var actual LogoutRequest
+	err = xml.Unmarshal(x, &actual)
+	assert.Check(t, err)
+	assert.Check(t, is.DeepEqual(expected, actual))
+
+	x, err = xml.Marshal(expected)
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(`<LogoutRequest xmlns="urn:oasis:names:tc:SAML:2.0:protocol" ID="request-id" Version="2.0" IssueInstant="2021-10-08T12:30:00Z" NotOnOrAfter="2021-10-08T12:35:00Z" Destination=""><Issuer xmlns="urn:oasis:names:tc:SAML:2.0:assertion" NameQualifier="" SPNameQualifier="" Format="" SPProvidedID="">uri:issuer</Issuer><NameID NameQualifier="" SPNameQualifier="" Format="" SPProvidedID="">name-id</NameID><SessionIndex>index</SessionIndex></LogoutRequest>`,
+		string(x)))
+}
+
+func TestLogoutRequestMarshalWithoutNotOnOrAfter(t *testing.T) {
+	issueInstant := time.Date(2021, 10, 8, 12, 30, 0, 0, time.UTC)
+	expected := LogoutRequest{
+		ID:           "request-id",
+		Version:      "2.0",
+		IssueInstant: issueInstant,
+		Issuer: &Issuer{
+			XMLName: xml.Name{
+				Space: "urn:oasis:names:tc:SAML:2.0:assertion",
+				Local: "Issuer",
+			},
+			Value: "uri:issuer",
+		},
+		NameID: &NameID{
+			Value: "name-id",
+		},
+		SessionIndex: &SessionIndex{
+			Value: "index",
+		},
+	}
+
+	doc := etree.NewDocument()
+	doc.SetRoot(expected.Element())
+	x, err := doc.WriteToBytes()
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(`<samlp:LogoutRequest xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="request-id" Version="2.0" IssueInstant="2021-10-08T12:30:00Z"><saml:Issuer>uri:issuer</saml:Issuer><saml:NameID>name-id</saml:NameID><samlp:SessionIndex xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol">index</samlp:SessionIndex></samlp:LogoutRequest>`,
+		string(x)))
+
+	var actual LogoutRequest
+	err = xml.Unmarshal(x, &actual)
+	assert.Check(t, err)
+	assert.Check(t, is.DeepEqual(expected, actual))
+}

@@ -51,6 +51,7 @@ type LogoutRequest struct {
 	ID           string    `xml:",attr"`
 	Version      string    `xml:",attr"`
 	IssueInstant time.Time `xml:",attr"`
+	NotOnOrAfter *time.Time `xml:",attr"`
 	Destination  string    `xml:",attr"`
 	Issuer       *Issuer   `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
 	NameID       *NameID
@@ -67,6 +68,9 @@ func (r *LogoutRequest) Element() *etree.Element {
 	el.CreateAttr("ID", r.ID)
 	el.CreateAttr("Version", r.Version)
 	el.CreateAttr("IssueInstant", r.IssueInstant.Format(timeFormat))
+	if r.NotOnOrAfter != nil {
+		el.CreateAttr("NotOnOrAfter", r.NotOnOrAfter.Format(timeFormat))
+	}
 	if r.Destination != "" {
 		el.CreateAttr("Destination", r.Destination)
 	}
@@ -90,9 +94,11 @@ func (r *LogoutRequest) MarshalXML(e *xml.Encoder, start xml.StartElement) error
 	type Alias LogoutRequest
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
+		NotOnOrAfter *RelaxedTime `xml:",attr"`
 		*Alias
 	}{
 		IssueInstant: RelaxedTime(r.IssueInstant),
+		NotOnOrAfter: (*RelaxedTime)(r.NotOnOrAfter),
 		Alias:        (*Alias)(r),
 	}
 	return e.Encode(aux)
@@ -103,6 +109,7 @@ func (r *LogoutRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) err
 	type Alias LogoutRequest
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
+		NotOnOrAfter *RelaxedTime `xml:",attr"`
 		*Alias
 	}{
 		Alias: (*Alias)(r),
@@ -111,6 +118,7 @@ func (r *LogoutRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) err
 		return err
 	}
 	r.IssueInstant = time.Time(aux.IssueInstant)
+	r.NotOnOrAfter = (*time.Time)(aux.NotOnOrAfter)
 	return nil
 }
 
