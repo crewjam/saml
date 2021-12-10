@@ -1,0 +1,104 @@
+<saml2:Assertion xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion" ID="_ac20566bce59381530a999d089048bf6"
+                 IssueInstant="2021-08-11T15:32:45.169Z" Version="2.0">
+    <saml2:Issuer>https://testidp2.com/idp/shibboleth</saml2:Issuer>
+    <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+        <ds:SignedInfo>
+            <ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"></ds:CanonicalizationMethod>
+            <ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"></ds:SignatureMethod>
+            <ds:Reference URI="#_ac20566bce59381530a999d089048bf6">
+                <ds:Transforms>
+                    <ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"></ds:Transform>
+                    <ds:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"></ds:Transform>
+                </ds:Transforms>
+                <ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"></ds:DigestMethod>
+                <ds:DigestValue>gYIc30qUhP+BV4KzOEZ4DBBvxc6ehHkzUgxe7RKo1L8=</ds:DigestValue>
+            </ds:Reference>
+        </ds:SignedInfo>
+        <ds:SignatureValue>
+            dPsW50R3xIlq7Sus7kFWTsmzKJ3MU5vN7SL6yACXvqt1s2bWPCf1HQuEEh1MKxsHC6fuknbdWKgHF4lhWFs35CGc6q4mA9wt4AC8XD7qN2Ps5oPmT7DNynB1G9y2p/yYIuspjjRE5yHNyuPEg6Qgi6OR22sp5bv5XOP+bslmdGGjC5xAYML7JG6iPW56fwxTXFmKwlnjWHZwYohNOzbaZ7k1GDvNNSjbJvv8+BcgsH7yJnmFS6IUlxcQs33q+XGRAki+Q8Cw0NFzCV4xLLIs8JIutXUjvI00vrHnJjEHi/6yaXITxpgRShkrn2/zbzYOCmy5JgRkVXjyccAWT0jWZSBJ20Rchov9q1PAbda6/FO1x9ln6EzqCWKEaEa0OLMiQei0P2vQ2ZoKdfm36fKKrYdQGxtHFAyWt4k7WKlw71fZFFRNLpfLuocH8pjRRfapNwfBWcfHuZshvqML/O0150+1GcUUYPZrkamPvrzekPVllL7XqKpmKe2BDGLH4t3iSwC1+NU14Hq/wlQi7HhEzxm7YVK6LQhMyH4GP9MJmoc6Yhnn4emAz25TPDj8VmhTmtXlrHcHPXCTW5axYDvXm0oQNISaAcTuLzyBF4eRiswQaEsymHQn6HDybADODKESjYMbxxD/zDy+FAMwszHaVe7bcUPa9MISgAcUV3dpLvk=
+        </ds:SignatureValue>
+        <ds:KeyInfo>
+            <ds:X509Data>
+                <ds:X509Certificate>MIIJJzCCCA+gAwIBAgIMJSC7cHRrXZg60Eo/MA0GCSqGSIb3DQEBCwUAMIGNMQswCQYDVQQGEwJE
+                    RTFFMEMGA1UECgw8VmVyZWluIHp1ciBGb2VyZGVydW5nIGVpbmVzIERldXRzY2hlbiBGb3JzY2h1
+                    bmdzbmV0emVzIGUuIFYuMRAwDgYDVQQLDAdERk4tUEtJMSUwIwYDVQQDDBxERk4tVmVyZWluIEds
+                    b2JhbCBJc3N1aW5nIENBMB4XDTIxMDcyODExMjIxMFoXDTIyMDgyODExMjIxMFowga8xCzAJBgNV
+                    BAYTAkRFMQ8wDQYDVQQIDAZCZXJsaW4xDzANBgNVBAcMBkJlcmxpbjFFMEMGA1UECgw8VmVyZWlu
+                    IHp1ciBGb2VyZGVydW5nIGVpbmVzIERldXRzY2hlbiBGb3JzY2h1bmdzbmV0emVzIGUuIFYuMRkw
+                    FwYDVQQLDBBHZXNjaGFlZnRzc3RlbGxlMRwwGgYDVQQDDBN0ZXN0aWRwMi5hYWkuZGZuLmRlMIIC
+                    IjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAvMXPQpcH57g+I5qLmSHTuGewKaqg/xHSkEza
+                    7P3dAVg4sHslBdtPN5ngoA2D2x5/zz078BszczYSeVlXH5Jj8nJ5EXesEdBTlWTk1eq4tWy1X2fW
+                    CcALbs6RvCVAmweWyfNMGBTDdk8TG/Xn58HzXLgDlpBcoNmIiVgtYQ1z7vZyTkVhy7DhmOLDHZ0B
+                    IhWJnl3wsmBTLwkAG41vzlWqA/03R50TcTc1QKF1St5YX7AIjaruZZs2BOTKcQhk9/vqooD8aXZ0
+                    O2+FAtiQivbxldZUuUuuenx2dwlMY2FxCSTwEFdyW8sAapF+9YhrRKzFEtcihAZxLR+ggqJch8Zi
+                    gAC1I/xuFH4KUXOuOdDF4mRVMRNDYw207h2s2ur9hBSw5yRgQG/oQVO6QFr8d6taf14QDcVF3ZC8
+                    zxYsx0Az/HdRYPBV2urSsk+ln3vg7HOMFtUuAACU0ejeYriMpDgGzWEji4K3m9CaFkEMT4jo6zRk
+                    OeKXpNnZsXT8tQ1huvkNG4lqNHVGLN5NI3tYPMSkRhdI+tHgRcYEn+gnRoTHfoSJAsZv/UeLH0gZ
+                    LKDBDBmvdCADP2I4uLOEYqqh5MDtIOY5/vBN3CDw4wDO3lCzF6YhWJh336AT5baVmpZvlYe35w8u
+                    fdAbpcKzuuB9UcvYOsYUKDBw+FucMDlttFtA5l0CAwEAAaOCBGEwggRdMFcGA1UdIARQME4wCAYG
+                    Z4EMAQICMA0GCysGAQQBga0hgiweMA8GDSsGAQQBga0hgiwBAQQwEAYOKwYBBAGBrSGCLAEBBAkw
+                    EAYOKwYBBAGBrSGCLAIBBAkwCQYDVR0TBAIwADAOBgNVHQ8BAf8EBAMCBaAwHQYDVR0lBBYwFAYI
+                    KwYBBQUHAwIGCCsGAQUFBwMBMB0GA1UdDgQWBBTuOFXROs368znJJLquZbkABIi0mTAfBgNVHSME
+                    GDAWgBRrOpiL+fJTidrgrbIyHgkf6Ko7dDAeBgNVHREEFzAVghN0ZXN0aWRwMi5hYWkuZGZuLmRl
+                    MIGNBgNVHR8EgYUwgYIwP6A9oDuGOWh0dHA6Ly9jZHAxLnBjYS5kZm4uZGUvZGZuLWNhLWdsb2Jh
+                    bC1nMi9wdWIvY3JsL2NhY3JsLmNybDA/oD2gO4Y5aHR0cDovL2NkcDIucGNhLmRmbi5kZS9kZm4t
+                    Y2EtZ2xvYmFsLWcyL3B1Yi9jcmwvY2FjcmwuY3JsMIHbBggrBgEFBQcBAQSBzjCByzAzBggrBgEF
+                    BQcwAYYnaHR0cDovL29jc3AucGNhLmRmbi5kZS9PQ1NQLVNlcnZlci9PQ1NQMEkGCCsGAQUFBzAC
+                    hj1odHRwOi8vY2RwMS5wY2EuZGZuLmRlL2Rmbi1jYS1nbG9iYWwtZzIvcHViL2NhY2VydC9jYWNl
+                    cnQuY3J0MEkGCCsGAQUFBzAChj1odHRwOi8vY2RwMi5wY2EuZGZuLmRlL2Rmbi1jYS1nbG9iYWwt
+                    ZzIvcHViL2NhY2VydC9jYWNlcnQuY3J0MIIB+AYKKwYBBAHWeQIEAgSCAegEggHkAeIAdgBGpVXr
+                    dfqRIDC1oolp9PN9ESxBdL79SbiFq/L8cP5tRwAAAXrs2cfNAAAEAwBHMEUCIQDNfyPxXrQl7gIc
+                    Lw7wEH537JUD41i06NNZUTxBdn4iHwIgK990g8JF36529aiweqqQC59H8/T03I9yHi2N/lMthY8A
+                    dgApeb7wnjk5IfBWc59jpXflvld9nGAK+PlNXSZcJV3HhAAAAXrs2cz2AAAEAwBHMEUCIQCLlz4B
+                    upCeqi8KyO7T7jp8+GRlxRyWyO2C8vqbeiFD1gIgHanhzYpnfD5JwyATOH5/iCc6vqR9vJIW8ttj
+                    DADOqSkAdwBvU3asMfAxGdiZAKRRFf93FRwR2QLBACkGjbIImjfZEwAAAXrs2cgeAAAEAwBIMEYC
+                    IQD/h0+qUXYOK8sj+F+qoypjQ+uCHFu1b+wFJpnvQ00D/gIhAJFNPtbfAFl1m0m11u7kAuM2bPk3
+                    LCx6471dRixZvrLpAHcAVYHUwhaQNgFK6gubVzxT8MDkOHhwJQgXL6OqHQcT0wwAAAF67NnJKgAA
+                    BAMASDBGAiEA/+o2fEeFg73eCZ2UawSnZcZIXycHs+9CXNRntbfRmIUCIQDPSvvsmphFvYPeQy7B
+                    QDG+3EyrvyKqichkwKLNjgIc9TANBgkqhkiG9w0BAQsFAAOCAQEAVg7v+aFqn5443l88dXR1JGeP
+                    6qzL0jDB6EYREhWvxeb2JEl1kn7jvLPMF+LKatADykBWxV3L2IHxEcmtP9hDnv39t7P92FN9zssn
+                    hHs49LZPwl3gsoErdbB1jMCkVC+0qTA0JoeEbkixlZXwarUf6UF/17jBKSLdlA3CkTv51Td7dqsl
+                    FBihFzLxzTLpkuFYxtN8Ax5BfqbCPnNQ+XAlTenClyrgB7wzZ3qgoCS+saW7rn1MbdBcuOmUS8+A
+                    jQnr+mBWWZJPXpZnlR7FIo/krCmxhEWpwsBf5taIguDbZ3oE92oQOtYsJ561ATAtDpxZMr91ljmk
+                    hVoyt2aEjDtCgg==
+                </ds:X509Certificate>
+            </ds:X509Data>
+        </ds:KeyInfo>
+    </ds:Signature>
+    <saml2:Subject>
+        <saml2:NameID xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion"
+                      Format="urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
+                      NameQualifier="https://testidp2.com/idp/shibboleth"
+                      SPNameQualifier="https://example.com/saml/metadata">
+            AAdzZWNyZXQxm924IEWIZegn9l1NChK4GXWETDW/ca4xRwNHuV21SA25MzW2bWqqCudhmNUrUsXk+Ci8W5MrwFiLKqJkNm4NwmHFsnvpUMVHlH8raI+xLVwwa2lf/poCXml0kE8D6cbtEBBACazlvgYMHHLud5+6uSDbta1xlp8S2G6aDOzWWYJluw==
+        </saml2:NameID>
+        <saml2:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">
+            <saml2:SubjectConfirmationData Address="2a02:2454:46c:4100:f073:2077:b066:c54c"
+                                           InResponseTo="id-e6f187b9a8bc8790b976805c5888a8635a0f5b18"
+                                           NotOnOrAfter="2021-08-11T15:37:45.173Z"
+                                           Recipient="https://example.com/saml/metadata"></saml2:SubjectConfirmationData>
+        </saml2:SubjectConfirmation>
+    </saml2:Subject>
+    <saml2:Conditions NotBefore="2021-08-11T15:32:45.169Z" NotOnOrAfter="2021-08-11T15:37:45.169Z">
+        <saml2:AudienceRestriction>
+            <saml2:Audience>https://example.com/saml/metadata</saml2:Audience>
+        </saml2:AudienceRestriction>
+    </saml2:Conditions>
+    <saml2:AuthnStatement AuthnInstant="2021-08-11T15:32:44.993Z" SessionIndex="_56b185c79b693a032350fcf0a432ad26">
+        <saml2:SubjectLocality Address="2a02:2454:46c:4100:f073:2077:b066:c54c"></saml2:SubjectLocality>
+        <saml2:AuthnContext>
+            <saml2:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport
+            </saml2:AuthnContextClassRef>
+        </saml2:AuthnContext>
+    </saml2:AuthnStatement>
+    <saml2:AttributeStatement>
+        <saml2:Attribute FriendlyName="eduPersonEntitlement" Name="urn:oid:1.3.6.1.4.1.5923.1.1.1.7"
+                         NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri">
+            <saml2:AttributeValue>urn:mace:dir:entitlement:common-lib-terms</saml2:AttributeValue>
+        </saml2:Attribute>
+        <saml2:Attribute FriendlyName="eduPersonScopedAffiliation" Name="urn:oid:1.3.6.1.4.1.5923.1.1.1.9"
+                         NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri">
+            <saml2:AttributeValue>member@testscope.aai.dfn.de</saml2:AttributeValue>
+        </saml2:Attribute>
+    </saml2:AttributeStatement>
+</saml2:Assertion>
