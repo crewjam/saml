@@ -167,11 +167,13 @@ type KeyInfo struct {
 	X509Data X509Data `xml:"X509Data"`
 }
 
+// X509Data represents the XMLSEC object of the same name
 type X509Data struct {
 	XMLName          xml.Name          `xml:"http://www.w3.org/2000/09/xmldsig# X509Data"`
 	X509Certificates []X509Certificate `xml:"X509Certificate"`
 }
 
+// X509Certificate represents the XMLSEC object of the same name
 type X509Certificate struct {
 	XMLName xml.Name `xml:"http://www.w3.org/2000/09/xmldsig# X509Certificate"`
 	Data    string   `xml:",chardata"`
