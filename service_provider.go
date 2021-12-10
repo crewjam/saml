@@ -150,7 +150,11 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 			{
 				Use: "encryption",
 				KeyInfo: KeyInfo{
-					Certificate: base64.StdEncoding.EncodeToString(certBytes),
+					X509Data: X509Data{
+						X509Certificates: []X509Certificate{
+							{Data: base64.StdEncoding.EncodeToString(certBytes)},
+						},
+					},
 				},
 				EncryptionMethods: []EncryptionMethod{
 					{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
@@ -164,7 +168,11 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 			keyDescriptors = append(keyDescriptors, KeyDescriptor{
 				Use: "signing",
 				KeyInfo: KeyInfo{
-					Certificate: base64.StdEncoding.EncodeToString(certBytes),
+					X509Data: X509Data{
+						X509Certificates: []X509Certificate{
+							{Data: base64.StdEncoding.EncodeToString(certBytes)},
+						},
+					},
 				},
 			})
 		}
@@ -314,10 +322,12 @@ func (sp *ServiceProvider) getIDPSigningCerts() ([]*x509.Certificate, error) {
 	// either set to "signing" or is missing
 	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
 		for _, keyDescriptor := range idpSSODescriptor.KeyDescriptors {
-			if keyDescriptor.KeyInfo.Certificate != "" {
+			if len(keyDescriptor.KeyInfo.X509Data.X509Certificates) != 0 {
 				switch keyDescriptor.Use {
 				case "", "signing":
-					certStrs = append(certStrs, keyDescriptor.KeyInfo.Certificate)
+					for _, certificate := range keyDescriptor.KeyInfo.X509Data.X509Certificates {
+						certStrs = append(certStrs, certificate.Data)
+					}
 				}
 			}
 		}

@@ -1046,7 +1046,7 @@ func TestSPInvalidAssertions(t *testing.T) {
 
 	req := http.Request{PostForm: url.Values{}}
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(test.SamlResponse))
-	s.IDPMetadata.IDPSSODescriptors[0].KeyDescriptors[0].KeyInfo.Certificate = "invalid"
+	s.IDPMetadata.IDPSSODescriptors[0].KeyDescriptors[0].KeyInfo.X509Data.X509Certificates[0].Data = "invalid"
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	assertionBuf := []byte(err.(*InvalidResponseError).Response)
 
