@@ -12,8 +12,26 @@ import (
 	"github.com/crewjam/saml/samlsp"
 )
 
+var samlMiddleware *samlsp.Middleware
+
 func hello(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hello, %s!", samlsp.AttributeFromContext(r.Context(), "cn"))
+	fmt.Fprintf(w, "Hello, %s!", samlsp.AttributeFromContext(r.Context(), "displayName"))
+}
+
+func logout(w http.ResponseWriter, r *http.Request) {
+	nameID := samlsp.AttributeFromContext(r.Context(), "urn:oasis:names:tc:SAML:attribute:subject-id")
+	url, err := samlMiddleware.ServiceProvider.MakeRedirectLogoutRequest(nameID, "")
+	if err != nil {
+		panic(err) // TODO handle error
+	}
+
+	err = samlMiddleware.Session.DeleteSession(w, r)
+	if err != nil {
+		panic(err) // TODO handle error
+	}
+
+	w.Header().Add("Location", url.String())
+	w.WriteHeader(http.StatusFound)
 }
 
 func main() {
@@ -26,30 +44,32 @@ func main() {
 		panic(err) // TODO handle error
 	}
 
-	rootURL, _ := url.Parse("http://localhost:8000")
-	idpMetadataURL, _ := url.Parse("https://samltest.id/saml/idp")
-
-	idpMetadata, err := samlsp.FetchMetadata(
-		context.Background(),
-		http.DefaultClient,
+	idpMetadataURL, err := url.Parse("https://samltest.id/saml/idp")
+	if err != nil {
+		panic(err) // TODO handle error
+	}
+	idpMetadata, err := samlsp.FetchMetadata(context.Background(), http.DefaultClient,
 		*idpMetadataURL)
 	if err != nil {
 		panic(err) // TODO handle error
 	}
 
-	samlSP, err := samlsp.New(samlsp.Options{
-		URL:         *rootURL,
-		IDPMetadata: idpMetadata,
-		Key:         keyPair.PrivateKey.(*rsa.PrivateKey),
-		Certificate: keyPair.Leaf,
-		SignRequest: true,
-	})
+	rootURL, err := url.Parse("http://localhost:8000")
 	if err != nil {
 		panic(err) // TODO handle error
 	}
 
+	samlMiddleware, _ = samlsp.New(samlsp.Options{
+		URL:         *rootURL,
+		Key:         keyPair.PrivateKey.(*rsa.PrivateKey),
+		Certificate: keyPair.Leaf,
+		IDPMetadata: idpMetadata,
+		SignRequest: true, // some IdP require the SLO request to be signed
+	})
 	app := http.HandlerFunc(hello)
-	http.Handle("/hello", samlSP.RequireAccount(app))
-	http.Handle("/saml/", samlSP)
+	slo := http.HandlerFunc(logout)
+	http.Handle("/hello", samlMiddleware.RequireAccount(app))
+	http.Handle("/saml/", samlMiddleware)
+	http.Handle("/logout", slo)
 	http.ListenAndServe(":8000", nil)
 }
