@@ -1,12 +1,13 @@
 package xmlenc
 
 import (
-	"github.com/beevik/etree"
-	"gotest.tools/assert"
-	is "gotest.tools/assert/cmp"
 	"io/ioutil"
 	"math/rand"
 	"testing"
+
+	"github.com/beevik/etree"
+	"gotest.tools/assert"
+	is "gotest.tools/assert/cmp"
 )
 
 func TestDataAES128(t *testing.T) {
