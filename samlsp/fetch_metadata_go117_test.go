@@ -1,6 +1,10 @@
+//go:build go1.17
+// +build go1.17
+
 package samlsp
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -12,8 +16,10 @@ import (
 	is "gotest.tools/assert/cmp"
 )
 
-func TestFetchMetadata(t *testing.T) {
+func TestFetchMetadataRejectsInvalid(t *testing.T) {
 	test := NewMiddlewareTest(t)
+	test.IDPMetadata = bytes.Replace(test.IDPMetadata,
+		[]byte("<EntityDescriptor "), []byte("<EntityDescriptor ::foo=\"bar\">]]"), -1)
 
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Check(t, is.Equal("/metadata", r.URL.String()))
@@ -23,6 +29,6 @@ func TestFetchMetadata(t *testing.T) {
 	fmt.Println(testServer.URL + "/metadata")
 	u, _ := url.Parse(testServer.URL + "/metadata")
 	md, err := FetchMetadata(context.Background(), testServer.Client(), *u)
-	assert.Check(t, err)
-	assert.Check(t, is.Equal("https://idp.testshib.org/idp/shibboleth", md.EntityID))
+	assert.Check(t, is.Error(err, "expected element <EntityDescriptor> in name space urn:oasis:names:tc:SAML:2.0:metadata but have no name space"))
+	assert.Check(t, is.Nil(md))
 }
