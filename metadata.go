@@ -13,6 +13,12 @@ const HTTPPostBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
 // HTTPRedirectBinding is the official URN for the HTTP-Redirect binding (transport)
 const HTTPRedirectBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
 
+// HTTPArtifactBinding is the official URN for the HTTP-Artifact binding (transport)
+const HTTPArtifactBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Artifact"
+
+// SOAPBinding is the official URN for the SOAP binding (transport)
+const SOAPBinding = "urn:oasis:names:tc:SAML:2.0:bindings:SOAP"
+
 // EntitiesDescriptor represents the SAML object of the same name.
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-metadata-2.0-os.pdf §2.3.1
@@ -203,6 +209,7 @@ type IDPSSODescriptor struct {
 	WantAuthnRequestsSigned *bool `xml:",attr"`
 
 	SingleSignOnServices       []Endpoint  `xml:"SingleSignOnService"`
+	ArtifactResolutionServices []Endpoint  `xml:"ArtifactResolutionService"`
 	NameIDMappingServices      []Endpoint  `xml:"NameIDMappingService"`
 	AssertionIDRequestServices []Endpoint  `xml:"AssertionIDRequestService"`
 	AttributeProfiles          []string    `xml:"AttributeProfile"`
