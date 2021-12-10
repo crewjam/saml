@@ -3,11 +3,12 @@ package xmlenc
 import (
 	"crypto/x509"
 	"encoding/pem"
+	"math/rand"
+	"testing"
+
 	"github.com/beevik/etree"
 	"gotest.tools/assert"
 	"gotest.tools/golden"
-	"math/rand"
-	"testing"
 )
 
 func TestCanEncryptOAEP(t *testing.T) {

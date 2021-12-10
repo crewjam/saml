@@ -594,7 +594,7 @@ func (sp *ServiceProvider) validateDestination(response *etree.Element, response
 }
 
 // ParseResponse extracts the SAML IDP response received in req, resolves
-// artifacts when neccessary, validates it, and returns the verified assertion.
+// artifacts when necessary, validates it, and returns the verified assertion.
 func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs []string) (*Assertion, error) {
 	now := TimeNow()
 
@@ -736,7 +736,7 @@ func (sp *ServiceProvider) ParseXMLArtifactResponse(decodedResponseXML []byte, p
 	if err == nil {
 		haveSignature = true
 	}
-	assertion, err, updatedResponse := sp.validateXMLResponse(&resp.Response, responseEl, possibleRequestIDs, now, !haveSignature)
+	assertion, updatedResponse, err := sp.validateXMLResponse(&resp.Response, responseEl, possibleRequestIDs, now, !haveSignature)
 	if err != nil {
 		retErr.PrivateErr = err
 		if updatedResponse != nil {
@@ -786,7 +786,7 @@ func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleR
 		return nil, retErr
 	}
 
-	assertion, err, updatedResponse := sp.validateXMLResponse(&resp, doc.Root(), possibleRequestIDs, now, true)
+	assertion, updatedResponse, err := sp.validateXMLResponse(&resp, doc.Root(), possibleRequestIDs, now, true)
 	if err != nil {
 		retErr.PrivateErr = err
 		if updatedResponse != nil {
@@ -804,11 +804,11 @@ func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleR
 // This function handles decrypting the message, verifying the digital
 // signature on the assertion, and verifying that the specified conditions
 // and properties are met.
-func (sp *ServiceProvider) validateXMLResponse(resp *Response, responseEl *etree.Element, possibleRequestIDs []string, now time.Time, needSig bool) (*Assertion, error, *string) {
+func (sp *ServiceProvider) validateXMLResponse(resp *Response, responseEl *etree.Element, possibleRequestIDs []string, now time.Time, needSig bool) (*Assertion, *string, error) {
 	var err error
 	var updatedResponse *string
 	if err := sp.validateDestination(responseEl, resp); err != nil {
-		return nil, err, updatedResponse
+		return nil, updatedResponse, err
 	}
 
 	requestIDvalid := false
@@ -824,28 +824,28 @@ func (sp *ServiceProvider) validateXMLResponse(resp *Response, responseEl *etree
 	}
 
 	if !requestIDvalid {
-		return nil, fmt.Errorf("`InResponseTo` does not match any of the possible request IDs (expected %v)", possibleRequestIDs), updatedResponse
+		return nil, updatedResponse, fmt.Errorf("`InResponseTo` does not match any of the possible request IDs (expected %v)", possibleRequestIDs)
 	}
 
 	if resp.IssueInstant.Add(MaxIssueDelay).Before(now) {
-		return nil, fmt.Errorf("response IssueInstant expired at %s", resp.IssueInstant.Add(MaxIssueDelay)), updatedResponse
+		return nil, updatedResponse, fmt.Errorf("response IssueInstant expired at %s", resp.IssueInstant.Add(MaxIssueDelay))
 	}
 	if resp.Issuer != nil && resp.Issuer.Value != sp.IDPMetadata.EntityID {
-		return nil, fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), updatedResponse
+		return nil, updatedResponse, fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
 	}
 	if resp.Status.StatusCode.Value != StatusSuccess {
-		return nil, ErrBadStatus{Status: resp.Status.StatusCode.Value}, updatedResponse
+		return nil, updatedResponse, ErrBadStatus{Status: resp.Status.StatusCode.Value}
 	}
 
 	var assertion *Assertion
 	if resp.EncryptedAssertion == nil {
 		// TODO(ross): verify that the namespace is urn:oasis:names:tc:SAML:2.0:protocol
 		if responseEl.Tag != "Response" {
-			return nil, fmt.Errorf("expected to find a response object, not %s", responseEl.Tag), updatedResponse
+			return nil, updatedResponse, fmt.Errorf("expected to find a response object, not %s", responseEl.Tag)
 		}
 
 		if err = sp.validateSigned(responseEl); err != nil && !(!needSig && err.Error() == "either the Response or Assertion must be signed") {
-			return nil, err, updatedResponse
+			return nil, updatedResponse, err
 		}
 
 		assertion = resp.Assertion
@@ -857,11 +857,11 @@ func (sp *ServiceProvider) validateXMLResponse(resp *Response, responseEl *etree
 		// before decrypting the response verify that
 		responseSigned, err := responseIsSigned(responseEl)
 		if err != nil {
-			return nil, err, updatedResponse
+			return nil, updatedResponse, err
 		}
 		if responseSigned {
 			if err := sp.validateSigned(responseEl); err != nil {
-				return nil, err, updatedResponse
+				return nil, updatedResponse, err
 			}
 		}
 
@@ -870,47 +870,47 @@ func (sp *ServiceProvider) validateXMLResponse(resp *Response, responseEl *etree
 		if keyEl != nil {
 			key, err = xmlenc.Decrypt(sp.Key, keyEl)
 			if err != nil {
-				return nil, fmt.Errorf("failed to decrypt key from response: %s", err), updatedResponse
+				return nil, updatedResponse, fmt.Errorf("failed to decrypt key from response: %s", err)
 			}
 		}
 
 		el := responseEl.FindElement("//EncryptedAssertion/EncryptedData")
 		plaintextAssertion, err := xmlenc.Decrypt(key, el)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt response: %s", err), updatedResponse
+			return nil, updatedResponse, fmt.Errorf("failed to decrypt response: %s", err)
 		}
 		updatedResponse = new(string)
 		*updatedResponse = string(plaintextAssertion)
 
 		// TODO(ross): add test case for this
 		if err := xrv.Validate(bytes.NewReader(plaintextAssertion)); err != nil {
-			return nil, fmt.Errorf("plaintext response contains invalid XML: %s", err), updatedResponse
+			return nil, updatedResponse, fmt.Errorf("plaintext response contains invalid XML: %s", err)
 		}
 
 		doc := etree.NewDocument()
 		if err := doc.ReadFromBytes(plaintextAssertion); err != nil {
-			return nil, fmt.Errorf("cannot parse plaintext response %v", err), updatedResponse
+			return nil, updatedResponse, fmt.Errorf("cannot parse plaintext response %v", err)
 		}
 
 		// the decrypted assertion may be signed too
 		// otherwise, a signed response is sufficient
 		if err := sp.validateSigned(doc.Root()); err != nil && !((responseSigned || !needSig) && err.Error() == "either the Response or Assertion must be signed") {
-			return nil, err, updatedResponse
+			return nil, updatedResponse, err
 		}
 
 		assertion = &Assertion{}
 		// Note: plaintextAssertion is known to be safe to parse because
 		// plaintextAssertion is unmodified from when xrv.Validate() was called above.
 		if err := xml.Unmarshal(plaintextAssertion, assertion); err != nil {
-			return nil, err, updatedResponse
+			return nil, updatedResponse, err
 		}
 	}
 
 	if err := sp.validateAssertion(assertion, possibleRequestIDs, now); err != nil {
-		return nil, fmt.Errorf("assertion invalid: %s", err), updatedResponse
+		return nil, updatedResponse, fmt.Errorf("assertion invalid: %s", err)
 	}
 
-	return assertion, nil, updatedResponse
+	return assertion, updatedResponse, nil
 }
 
 // validateAssertion checks that the conditions specified in assertion match
@@ -1492,11 +1492,7 @@ func (sp *ServiceProvider) ValidateLogoutResponseForm(postFormData string) error
 	}
 
 	responseEl := doc.Root()
-	if err = sp.validateSigned(responseEl); err != nil {
-		return err
-	}
-
-	return nil
+	return sp.validateSigned(responseEl)
 }
 
 // ValidateLogoutResponseRedirect returns a nil error if the logout response is valid.
@@ -1537,11 +1533,7 @@ func (sp *ServiceProvider) ValidateLogoutResponseRedirect(queryParameterData str
 	}
 
 	responseEl := doc.Root()
-	if err = sp.validateSigned(responseEl); err != nil {
-		return err
-	}
-
-	return nil
+	return sp.validateSigned(responseEl)
 }
 
 // validateLogoutResponse validates the LogoutResponse fields. Returns a nil error if the LogoutResponse is valid.

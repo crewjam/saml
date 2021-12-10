@@ -6,11 +6,12 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
-	"github.com/beevik/etree"
 	"io"
+
+	"github.com/beevik/etree"
 )
 
-// struct implements Decrypter and Encrypter for block ciphers in struct mode
+// GCM implements Decrypter and Encrypter for block ciphers in struct mode
 type GCM struct {
 	keySize   int
 	algorithm string
@@ -28,6 +29,7 @@ func (e GCM) Algorithm() string {
 	return e.algorithm
 }
 
+// Encrypt encrypts plaintext with key and nonce
 func (e GCM) Encrypt(key interface{}, plaintext []byte, nonce []byte) (*etree.Element, error) {
 	keyBuf, ok := key.([]byte)
 	if !ok {

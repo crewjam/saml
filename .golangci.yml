@@ -12,7 +12,7 @@ linters:
     - gosec # Errcheck is a program for checking for unchecked errors in go programs. These unchecked errors can be critical bugs in some cases [fast: true, auto-fix: false]
     - misspell # Finds commonly misspelled English words in comments [fast: true, auto-fix: true]
     - deadcode # Finds unused code [fast: true, auto-fix: false]
-    - golint # Golint differs from gofmt. Gofmt reformats Go source code, whereas golint prints out style mistakes [fast: true, auto-fix: false]
+    - revive # Golint differs from gofmt. Gofmt reformats Go source code, whereas golint prints out style mistakes [fast: true, auto-fix: false]
     - unconvert # Remove unnecessary type conversions [fast: true, auto-fix: false]
 
   disable:

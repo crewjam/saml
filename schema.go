@@ -48,12 +48,12 @@ type AuthnRequest struct {
 type LogoutRequest struct {
 	XMLName xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol LogoutRequest"`
 
-	ID           string    `xml:",attr"`
-	Version      string    `xml:",attr"`
-	IssueInstant time.Time `xml:",attr"`
+	ID           string     `xml:",attr"`
+	Version      string     `xml:",attr"`
+	IssueInstant time.Time  `xml:",attr"`
 	NotOnOrAfter *time.Time `xml:",attr"`
-	Destination  string    `xml:",attr"`
-	Issuer       *Issuer   `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
+	Destination  string     `xml:",attr"`
+	Issuer       *Issuer    `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
 	NameID       *NameID
 	Signature    *etree.Element
 
@@ -93,7 +93,7 @@ func (r *LogoutRequest) Element() *etree.Element {
 func (r *LogoutRequest) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type Alias LogoutRequest
 	aux := &struct {
-		IssueInstant RelaxedTime `xml:",attr"`
+		IssueInstant RelaxedTime  `xml:",attr"`
 		NotOnOrAfter *RelaxedTime `xml:",attr"`
 		*Alias
 	}{
@@ -108,7 +108,7 @@ func (r *LogoutRequest) MarshalXML(e *xml.Encoder, start xml.StartElement) error
 func (r *LogoutRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias LogoutRequest
 	aux := &struct {
-		IssueInstant RelaxedTime `xml:",attr"`
+		IssueInstant RelaxedTime  `xml:",attr"`
 		NotOnOrAfter *RelaxedTime `xml:",attr"`
 		*Alias
 	}{
@@ -304,7 +304,7 @@ func (a *NameIDPolicy) Element() *etree.Element {
 	return el
 }
 
-// ArtifactRequest represents the SAML object of the same name.
+// ArtifactResolve represents the SAML object of the same name.
 type ArtifactResolve struct {
 	XMLName      xml.Name  `xml:"urn:oasis:names:tc:SAML:2.0:protocol ArtifactResponse"`
 	ID           string    `xml:",attr"`
@@ -315,6 +315,7 @@ type ArtifactResolve struct {
 	Artifact     string `xml:"urn:oasis:names:tc:SAML:2.0:protocol Artifact"`
 }
 
+// Element returns an etree.Element representing the object in XML form.
 func (r *ArtifactResolve) Element() *etree.Element {
 	el := etree.NewElement("samlp:ArtifactResolve")
 	el.CreateAttr("xmlns:saml", "urn:oasis:names:tc:SAML:2.0:assertion")
@@ -344,7 +345,7 @@ func (r *ArtifactResolve) Element() *etree.Element {
 	return el
 }
 
-// Return a SOAP Envelope contining the ArtifactResolve request
+// SoapRequest returns a SOAP Envelope contining the ArtifactResolve request
 func (r *ArtifactResolve) SoapRequest() *etree.Element {
 	envelope := etree.NewElement("soapenv:Envelope")
 	envelope.CreateAttr("xmlns:soapenv", "http://schemas.xmlsoap.org/soap/envelope/")
@@ -677,8 +678,8 @@ const (
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf §3.2.2.3
 type StatusMessage struct {
-	XMLName    xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol StatusMessage"`
-	Value      string   `xml:",chardata"`
+	XMLName xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol StatusMessage"`
+	Value   string   `xml:",chardata"`
 }
 
 // Element returns an etree.Element representing the object in XML form.
