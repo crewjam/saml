@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/form3tech-oss/jwt-go"
+	"github.com/golang-jwt/jwt/v4"
 
 	"github.com/crewjam/saml"
 )
@@ -35,7 +35,7 @@ func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
 	now := saml.TimeNow()
 	claims := JWTSessionClaims{}
 	claims.SAMLSession = true
-	claims.Audience = []string{c.Audience}
+	claims.Audience = c.Audience
 	claims.Issuer = c.Issuer
 	claims.IssuedAt = now.Unix()
 	claims.ExpiresAt = now.Add(c.MaxAge).Unix()

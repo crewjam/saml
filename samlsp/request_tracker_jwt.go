@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/form3tech-oss/jwt-go"
+	"github.com/golang-jwt/jwt/v4"
 
 	"github.com/crewjam/saml"
 )
@@ -35,7 +35,7 @@ func (s JWTTrackedRequestCodec) Encode(value TrackedRequest) (string, error) {
 	now := saml.TimeNow()
 	claims := JWTTrackedRequestClaims{
 		StandardClaims: jwt.StandardClaims{
-			Audience:  []string{s.Audience},
+			Audience:  s.Audience,
 			ExpiresAt: now.Add(s.MaxAge).Unix(),
 			IssuedAt:  now.Unix(),
 			Issuer:    s.Issuer,
