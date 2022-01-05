@@ -21,4 +21,4 @@ jobs:
         with:
           go-version: ${{ matrix.go }}
       - name: Run Go tests
-        run: go test -v ./...
+        run: find . -name go.mod -execdir go test -v ./... \;
