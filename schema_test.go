@@ -95,6 +95,19 @@ func TestAuthnStatementMarshalWithoutSessionNotOnOrAfter(t *testing.T) {
 	assert.Check(t, is.DeepEqual(expected, actual))
 }
 
+func TestRequestedAuthnContext(t *testing.T) {
+	expected := RequestedAuthnContext{
+		Comparison: "comparison",
+	}
+
+	doc := etree.NewDocument()
+	doc.SetRoot(expected.Element())
+	x, err := doc.WriteToBytes()
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(`<samlp:RequestedAuthnContext Comparison="comparison"><saml:AuthnContextClassRef/></samlp:RequestedAuthnContext>`,
+		string(x)))
+}
+
 func TestLogoutRequestXMLRoundTrip(t *testing.T) {
 	issueInstant := time.Date(2021, 10, 8, 12, 30, 0, 0, time.UTC)
 	notOnOrAfter := time.Date(2021, 10, 8, 12, 35, 0, 0, time.UTC)
