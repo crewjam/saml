@@ -1,0 +1,32 @@
+name: topology-sonarqube-ci
+
+# Run scan every 6 hours
+#on:
+#  schedule:
+#  - cron: '0 */6 * * *'
+# ==================> Enable To Test <=====================
+# NOTE: Disable Schedule above and enable this rule to test
+on:
+  push:
+  pull_request:
+    types: [opened, closed]
+# =========================================================
+
+defaults:
+  run:
+     shell: bash -eo pipefail {0}
+
+jobs:
+  sonarqube-scan:
+    runs-on: "main-cicd"
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+      with:
+         ref: ${{ github.ref }}
+         fetch-depth: 0
+
+    - name: Run SonarQube Scan
+      shell: bash
+      run: |
+         /opt/sonar-scanner/bin/sonar-scanner -Dsonar.host.url=${{ secrets.SONARQUBE_HOST }} -Dsonar.login=${{ secrets.SONARQUBE_TOKEN }}
