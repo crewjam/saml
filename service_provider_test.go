@@ -6,9 +6,6 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/xml"
-	"gotest.tools/assert"
-	is "gotest.tools/assert/cmp"
-	"gotest.tools/golden"
 	"html"
 	"net/http"
 	"net/url"
@@ -16,6 +13,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gotest.tools/assert"
+	is "gotest.tools/assert/cmp"
+	"gotest.tools/golden"
 
 	"github.com/beevik/etree"
 	dsig "github.com/russellhaering/goxmldsig"
