@@ -114,7 +114,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		RequestedAuthnContext: opts.RequestedAuthnContext,
 		SignatureMethod:       signatureMethod,
 		AllowIDPInitiated:     opts.AllowIDPInitiated,
-		DefaultRedirectURI: opts.DefaultRedirectURI,
+		DefaultRedirectURI:    opts.DefaultRedirectURI,
 	}
 }
 
