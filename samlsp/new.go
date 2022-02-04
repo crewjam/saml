@@ -105,7 +105,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		EntityID:           opts.EntityID,
 		Key:                opts.Key,
 		Certificate:        opts.Certificate,
- 		HTTPClient:         opts.HTTPClient,
+		HTTPClient:         opts.HTTPClient,
 		Intermediates:      opts.Intermediates,
 		MetadataURL:        *metadataURL,
 		AcsURL:             *acsURL,
