@@ -77,11 +77,11 @@ func (r *LogoutRequest) Element() *etree.Element {
 	if r.Issuer != nil {
 		el.AddChild(r.Issuer.Element())
 	}
-	if r.NameID != nil {
-		el.AddChild(r.NameID.Element())
-	}
 	if r.Signature != nil {
 		el.AddChild(r.Signature)
+	}
+	if r.NameID != nil {
+		el.AddChild(r.NameID.Element())
 	}
 	if r.SessionIndex != nil {
 		el.AddChild(r.SessionIndex.Element())
