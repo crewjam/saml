@@ -19,6 +19,7 @@ type Options struct {
 	Key                 *rsa.PrivateKey
 	Certificate         *x509.Certificate
 	Intermediates       []*x509.Certificate
+	HTTPClient          *http.Client
 	AllowIDPInitiated   bool
 	DefaultRedirectURI  string
 	IDPMetadata         *saml.EntityDescriptor
@@ -104,6 +105,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		EntityID:           opts.EntityID,
 		Key:                opts.Key,
 		Certificate:        opts.Certificate,
+		HTTPClient:         opts.HTTPClient,
 		Intermediates:      opts.Intermediates,
 		MetadataURL:        *metadataURL,
 		AcsURL:             *acsURL,
