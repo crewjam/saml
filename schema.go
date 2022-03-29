@@ -19,6 +19,7 @@ type RequestedAuthnContext struct {
 	AuthnContextClassRef string   `xml:"urn:oasis:names:tc:SAML:2.0:assertion AuthnContextClassRef"`
 }
 
+// Element returns an etree.Element representing the object in XML form.
 func (r *RequestedAuthnContext) Element() *etree.Element {
 	el := etree.NewElement("samlp:RequestedAuthnContext")
 	el.CreateAttr("Comparison", r.Comparison)
@@ -176,7 +177,6 @@ func (r *LogoutRequest) Deflate() ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-// Element returns an etree.Element representing the object
 // Element returns an etree.Element representing the object in XML form.
 func (r *AuthnRequest) Element() *etree.Element {
 	el := etree.NewElement("samlp:AuthnRequest")
