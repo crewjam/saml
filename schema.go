@@ -323,7 +323,7 @@ func (a *NameIDPolicy) Element() *etree.Element {
 
 // ArtifactResolve represents the SAML object of the same name.
 type ArtifactResolve struct {
-	XMLName      xml.Name  `xml:"urn:oasis:names:tc:SAML:2.0:protocol ArtifactResponse"`
+	XMLName      xml.Name  `xml:"urn:oasis:names:tc:SAML:2.0:protocol ArtifactResolve"`
 	ID           string    `xml:",attr"`
 	Version      string    `xml:",attr"`
 	IssueInstant time.Time `xml:",attr"`

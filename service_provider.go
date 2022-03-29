@@ -72,6 +72,9 @@ type ServiceProvider struct {
 	Certificate   *x509.Certificate
 	Intermediates []*x509.Certificate
 
+	// HTTPClient to use during SAML artifact resolution
+	HTTPClient *http.Client
+
 	// MetadataURL is the full URL to the metadata endpoint on this host,
 	// i.e. https://example.com/saml/metadata
 	MetadataURL url.URL
@@ -634,7 +637,11 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 
 		var requestBuffer bytes.Buffer
 		doc.WriteTo(&requestBuffer)
-		response, err := http.Post(sp.GetArtifactBindingLocation(SOAPBinding), "text/xml", &requestBuffer)
+		client := sp.HTTPClient
+		if client == nil {
+			client = http.DefaultClient
+		}
+		response, err := client.Post(sp.GetArtifactBindingLocation(SOAPBinding), "text/xml", &requestBuffer)
 		if err != nil {
 			retErr.PrivateErr = fmt.Errorf("Error during artifact resolution: %s", err)
 			return nil, retErr
