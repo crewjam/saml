@@ -29,6 +29,7 @@ type Options struct {
 	RequestedAuthnContext *saml.RequestedAuthnContext
 	CookieSameSite        http.SameSite
 	RelayStateFunc        func(w http.ResponseWriter, r *http.Request) string
+	LogoutBindings        []string
 }
 
 // DefaultSessionCodec returns the default SessionCodec for the provided options,
@@ -102,6 +103,10 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		opts.DefaultRedirectURI = "/"
 	}
 
+	if len(opts.LogoutBindings) == 0 {
+		opts.LogoutBindings = []string{saml.HTTPPostBinding}
+	}
+
 	return saml.ServiceProvider{
 		EntityID:              opts.EntityID,
 		Key:                   opts.Key,
@@ -117,6 +122,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		SignatureMethod:       signatureMethod,
 		AllowIDPInitiated:     opts.AllowIDPInitiated,
 		DefaultRedirectURI:    opts.DefaultRedirectURI,
+		LogoutBindings:        opts.LogoutBindings,
 	}
 }
 
