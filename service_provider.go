@@ -111,6 +111,10 @@ type ServiceProvider struct {
 
 	// SignatureMethod, if non-empty, authentication requests will be signed
 	SignatureMethod string
+
+	// LogoutBindings specify the bindings available for SLO endpoint. If empty,
+	// HTTP-POST binding is used.
+	LogoutBindings []string
 }
 
 // MaxIssueDelay is the longest allowed time between when a SAML assertion is
@@ -178,6 +182,15 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 		}
 	}
 
+	var sloEndpoints []Endpoint
+	for _, binding := range sp.LogoutBindings {
+		sloEndpoints = append(sloEndpoints, Endpoint{
+			Binding:          binding,
+			Location:         sp.SloURL.String(),
+			ResponseLocation: sp.SloURL.String(),
+		})
+	}
+
 	return &EntityDescriptor{
 		EntityID:   firstSet(sp.EntityID, sp.MetadataURL.String()),
 		ValidUntil: validUntil,
@@ -190,13 +203,7 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 						KeyDescriptors:             keyDescriptors,
 						ValidUntil:                 &validUntil,
 					},
-					SingleLogoutServices: []Endpoint{
-						{
-							Binding:          HTTPPostBinding,
-							Location:         sp.SloURL.String(),
-							ResponseLocation: sp.SloURL.String(),
-						},
-					},
+					SingleLogoutServices: sloEndpoints,
 				},
 				AuthnRequestsSigned:  &authnRequestsSigned,
 				WantAssertionsSigned: &wantAssertionsSigned,

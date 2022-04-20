@@ -107,12 +107,13 @@ func TestSPCanSetAuthenticationNameIDFormat(t *testing.T) {
 func TestSPCanProduceMetadataWithEncryptionCert(t *testing.T) {
 	test := NewServiceProviderTest(t)
 	s := ServiceProvider{
-		Key:         test.Key,
-		Certificate: test.Certificate,
-		MetadataURL: mustParseURL("https://example.com/saml2/metadata"),
-		AcsURL:      mustParseURL("https://example.com/saml2/acs"),
-		SloURL:      mustParseURL("https://example.com/saml2/slo"),
-		IDPMetadata: &EntityDescriptor{},
+		Key:            test.Key,
+		Certificate:    test.Certificate,
+		MetadataURL:    mustParseURL("https://example.com/saml2/metadata"),
+		AcsURL:         mustParseURL("https://example.com/saml2/acs"),
+		SloURL:         mustParseURL("https://example.com/saml2/slo"),
+		IDPMetadata:    &EntityDescriptor{},
+		LogoutBindings: []string{HTTPPostBinding},
 	}
 	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
@@ -131,6 +132,7 @@ func TestSPCanProduceMetadataWithBothCerts(t *testing.T) {
 		AcsURL:          mustParseURL("https://example.com/saml2/acs"),
 		SloURL:          mustParseURL("https://example.com/saml2/slo"),
 		IDPMetadata:     &EntityDescriptor{},
+		LogoutBindings:  []string{HTTPPostBinding},
 		SignatureMethod: "not-empty",
 	}
 	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
@@ -145,9 +147,10 @@ func TestSPCanProduceMetadataWithBothCerts(t *testing.T) {
 func TestCanProduceMetadataNoCerts(t *testing.T) {
 	test := NewServiceProviderTest(t)
 	s := ServiceProvider{
-		MetadataURL: mustParseURL("https://example.com/saml2/metadata"),
-		AcsURL:      mustParseURL("https://example.com/saml2/acs"),
-		IDPMetadata: &EntityDescriptor{},
+		MetadataURL:    mustParseURL("https://example.com/saml2/metadata"),
+		AcsURL:         mustParseURL("https://example.com/saml2/acs"),
+		IDPMetadata:    &EntityDescriptor{},
+		LogoutBindings: []string{HTTPPostBinding},
 	}
 	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
@@ -160,10 +163,48 @@ func TestCanProduceMetadataNoCerts(t *testing.T) {
 func TestCanProduceMetadataEntityID(t *testing.T) {
 	test := NewServiceProviderTest(t)
 	s := ServiceProvider{
-		EntityID:    "spn:11111111-2222-3333-4444-555555555555",
+		EntityID:       "spn:11111111-2222-3333-4444-555555555555",
+		MetadataURL:    mustParseURL("https://example.com/saml2/metadata"),
+		AcsURL:         mustParseURL("https://example.com/saml2/acs"),
+		IDPMetadata:    &EntityDescriptor{},
+		LogoutBindings: []string{HTTPPostBinding},
+	}
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	spMetadata, err := xml.MarshalIndent(s.Metadata(), "", "  ")
+	assert.Check(t, err)
+	golden.Assert(t, string(spMetadata), t.Name()+"_metadata")
+}
+
+func TestSPCanProduceMetadataWithNoLougoutBindings(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
 		MetadataURL: mustParseURL("https://example.com/saml2/metadata"),
 		AcsURL:      mustParseURL("https://example.com/saml2/acs"),
+		SloURL:      mustParseURL("https://example.com/saml2/slo"),
 		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	spMetadata, err := xml.MarshalIndent(s.Metadata(), "", "  ")
+	assert.Check(t, err)
+	golden.Assert(t, string(spMetadata), t.Name()+"_metadata")
+}
+
+func TestSPCanProduceMetadataWithBothLougoutBindings(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	s := ServiceProvider{
+		Key:            test.Key,
+		Certificate:    test.Certificate,
+		MetadataURL:    mustParseURL("https://example.com/saml2/metadata"),
+		AcsURL:         mustParseURL("https://example.com/saml2/acs"),
+		SloURL:         mustParseURL("https://example.com/saml2/slo"),
+		IDPMetadata:    &EntityDescriptor{},
+		LogoutBindings: []string{HTTPPostBinding, HTTPRedirectBinding},
 	}
 	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
