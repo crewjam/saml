@@ -1126,7 +1126,7 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 			audienceRestrictionsValid = len(audienceRestriction.Audience.Value) == 0 ||
 				IsSameBase(audience, audienceRestriction.Audience.Value)
 
-			if !audienceRestrictionsValid {
+			if !audienceRestrictionsValid && sp.AllowIDPInitiated {
 				audienceRestrictionsValid = hasCompanyName(audienceRestriction.Audience.Value)
 			}
 		}
