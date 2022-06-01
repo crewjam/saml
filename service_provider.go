@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/beevik/etree"
@@ -1124,6 +1125,10 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 			// compatibility, we will allow both forms of the URL with and without the path.
 			audienceRestrictionsValid = len(audienceRestriction.Audience.Value) == 0 ||
 				IsSameBase(audience, audienceRestriction.Audience.Value)
+
+			if !audienceRestrictionsValid {
+				audienceRestrictionsValid = hasCompanyName(audienceRestriction.Audience.Value)
+			}
 		}
 	}
 	if !audienceRestrictionsValid {
@@ -1736,4 +1741,9 @@ func elementToString(el *etree.Element) string {
 		return ""
 	}
 	return string(buf)
+}
+
+// TODO: Remove this code after 06/10/2022 (Added for CITI)
+func hasCompanyName(a string) bool {
+	return strings.Contains(strings.ToLower(a), "invision")
 }
