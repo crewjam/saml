@@ -125,13 +125,14 @@ func TestSPCanProduceMetadataWithEncryptionCert(t *testing.T) {
 func TestSPCanProduceMetadataWithBothCerts(t *testing.T) {
 	test := NewServiceProviderTest(t)
 	s := ServiceProvider{
-		Key:             test.Key,
-		Certificate:     test.Certificate,
-		MetadataURL:     mustParseURL("https://example.com/saml2/metadata"),
-		AcsURL:          mustParseURL("https://example.com/saml2/acs"),
-		SloURL:          mustParseURL("https://example.com/saml2/slo"),
-		IDPMetadata:     &EntityDescriptor{},
-		SignatureMethod: "not-empty",
+		Key:               test.Key,
+		Certificate:       test.Certificate,
+		MetadataURL:       mustParseURL("https://example.com/saml2/metadata"),
+		AcsURL:            mustParseURL("https://example.com/saml2/acs"),
+		SloURL:            mustParseURL("https://example.com/saml2/slo"),
+		IDPMetadata:       &EntityDescriptor{},
+		AuthnNameIDFormat: TransientNameIDFormat,
+		SignatureMethod:   "not-empty",
 	}
 	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
@@ -145,9 +146,10 @@ func TestSPCanProduceMetadataWithBothCerts(t *testing.T) {
 func TestCanProduceMetadataNoCerts(t *testing.T) {
 	test := NewServiceProviderTest(t)
 	s := ServiceProvider{
-		MetadataURL: mustParseURL("https://example.com/saml2/metadata"),
-		AcsURL:      mustParseURL("https://example.com/saml2/acs"),
-		IDPMetadata: &EntityDescriptor{},
+		MetadataURL:       mustParseURL("https://example.com/saml2/metadata"),
+		AcsURL:            mustParseURL("https://example.com/saml2/acs"),
+		IDPMetadata:       &EntityDescriptor{},
+		AuthnNameIDFormat: TransientNameIDFormat,
 	}
 	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)

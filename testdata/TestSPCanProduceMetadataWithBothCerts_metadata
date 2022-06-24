@@ -19,6 +19,7 @@
       </KeyInfo>
     </KeyDescriptor>
     <SingleLogoutService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://example.com/saml2/slo" ResponseLocation="https://example.com/saml2/slo"></SingleLogoutService>
+    <NameIDFormat>urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDFormat>
     <AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://example.com/saml2/acs" index="1"></AssertionConsumerService>
     <AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Artifact" Location="https://example.com/saml2/acs" index="2"></AssertionConsumerService>
   </SPSSODescriptor>

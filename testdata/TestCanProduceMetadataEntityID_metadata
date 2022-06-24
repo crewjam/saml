@@ -1,6 +1,7 @@
 <EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" validUntil="2015-12-03T01:57:09Z" entityID="spn:11111111-2222-3333-4444-555555555555">
   <SPSSODescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" validUntil="2015-12-03T01:57:09Z" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol" AuthnRequestsSigned="false" WantAssertionsSigned="true">
     <SingleLogoutService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location=""></SingleLogoutService>
+    <NameIDFormat></NameIDFormat>
     <AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://example.com/saml2/acs" index="1"></AssertionConsumerService>
     <AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Artifact" Location="https://example.com/saml2/acs" index="2"></AssertionConsumerService>
   </SPSSODescriptor>
