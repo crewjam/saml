@@ -22,4 +22,7 @@ jobs:
       - name: Go version
         run: go version
       - name: Run Go tests
-        run: find . -name go.mod -execdir go test -v ./... \;
+        run: |
+          go test -v ./...
+          (cd samlidp && go test -v ./...)
+          (cd example && go test -v ./...)
