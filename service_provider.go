@@ -204,6 +204,7 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 							ResponseLocation: sp.SloURL.String(),
 						},
 					},
+					NameIDFormats: []NameIDFormat{sp.AuthnNameIDFormat},
 				},
 				AuthnRequestsSigned:  &authnRequestsSigned,
 				WantAssertionsSigned: &wantAssertionsSigned,
