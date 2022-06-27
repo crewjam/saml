@@ -37,6 +37,7 @@ type Session struct {
 	Index      string
 
 	NameID                string
+	NameIDFormat          string
 	Groups                []string
 	UserName              string
 	UserEmail             string
@@ -743,6 +744,10 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 		notOnOrAfterAfter = notBefore.Add(MaxIssueDelay)
 	}
 
+	if session.NameIDFormat == "" {
+		session.NameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
+	}
+
 	req.Assertion = &Assertion{
 		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
 		IssueInstant: TimeNow(),
@@ -753,7 +758,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 		},
 		Subject: &Subject{
 			NameID: &NameID{
-				Format:          "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+				Format:          session.NameIDFormat,
 				NameQualifier:   req.IDP.Metadata().EntityID,
 				SPNameQualifier: req.ServiceProviderMetadata.EntityID,
 				Value:           session.NameID,
