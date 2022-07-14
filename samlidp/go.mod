@@ -1,5 +1,7 @@
 module github.com/crewjam/saml/samlidp
 
+replace github.com/crewjam/saml => ../
+
 go 1.16
 
 require (
