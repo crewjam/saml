@@ -776,12 +776,14 @@ func TestSPRejectsInjectedComment(t *testing.T) {
 
 		req := http.Request{PostForm: url.Values{}}
 		req.PostForm.Set("SAMLResponse", string(SamlResponse))
-		_, err := s.ParseResponse(&req, []string{"id-fd419a5ab0472645427f8e07d87a3a5dd0b2e9a6"})
-		assert.Check(t, err != nil)
+		assertion, err := s.ParseResponse(&req, []string{"id-fd419a5ab0472645427f8e07d87a3a5dd0b2e9a6"})
 
-		realErr := err.(*InvalidResponseError).PrivateErr
-		assert.Check(t, is.Error(realErr,
-			"cannot validate signature on Response: Signature could not be verified"))
+		// Note: The latest version of github.com/russellhaering/goxmldsig now correctly reads and
+		// switches on the CanonicalizationMethod presented in the assertion. The test assertion
+		// currently has the CanonicalizationMethod set to "http://www.w3.org/2001/10/xml-exc-c14n#WithComments"
+		// meaning the above comment injection will now be correctly stripped
+		assert.Check(t, err)
+		assert.Check(t, is.Equal("ross@octolabs.io", assertion.Subject.NameID.Value))
 	}
 }
 
