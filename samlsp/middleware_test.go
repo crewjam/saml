@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
+	"github.com/golang-jwt/jwt/v4"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -22,8 +23,8 @@ import (
 	is "gotest.tools/assert/cmp"
 	"gotest.tools/golden"
 
-	"github.com/crewjam/saml/testsaml"
 	"github.com/jaak-ai/saml"
+	"github.com/jaak-ai/saml/testsaml"
 )
 
 type MiddlewareTest struct {
