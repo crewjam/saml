@@ -102,7 +102,6 @@ func TestSPCanSetAuthenticationNameIDFormat(t *testing.T) {
 	req, err = s.MakeAuthenticationRequest("", HTTPRedirectBinding, HTTPPostBinding)
 	assert.Check(t, err)
 	assert.Check(t, is.Equal(string(EmailAddressNameIDFormat), *req.NameIDPolicy.Format))
-
 }
 
 func TestSPCanProduceMetadataWithEncryptionCert(t *testing.T) {
