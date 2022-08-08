@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"encoding/xml"
 	"fmt"
+	"github.com/golang-jwt/jwt/v4"
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
@@ -22,11 +23,9 @@ import (
 	"gotest.tools/golden"
 
 	"github.com/beevik/etree"
-	"github.com/golang-jwt/jwt/v4"
-
-	"github.com/crewjam/saml/logger"
-	"github.com/crewjam/saml/testsaml"
-	"github.com/crewjam/saml/xmlenc"
+	"github.com/jaak-ai/saml/logger"
+	"github.com/jaak-ai/saml/testsaml"
+	"github.com/jaak-ai/saml/xmlenc"
 )
 
 type IdentityProviderTest struct {

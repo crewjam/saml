@@ -17,14 +17,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang-jwt/jwt/v4"
 	dsig "github.com/russellhaering/goxmldsig"
 	"gotest.tools/assert"
 	is "gotest.tools/assert/cmp"
 	"gotest.tools/golden"
 
-	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/testsaml"
+	"github.com/jaak-ai/saml"
 )
 
 type MiddlewareTest struct {
