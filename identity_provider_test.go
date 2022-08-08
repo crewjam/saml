@@ -688,6 +688,7 @@ func TestIDPMarshalAssertion(t *testing.T) {
 	assertionBuffer, err := doc.WriteToBytes()
 	assert.Check(t, err)
 	golden.Assert(t, string(assertionBuffer), t.Name()+"_encrypted_assertion")
+	fmt.Println("test")
 }
 
 func TestIDPMakeResponse(t *testing.T) {
