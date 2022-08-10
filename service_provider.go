@@ -17,13 +17,11 @@ import (
 	"regexp"
 	"time"
 
-	xrv "github.com/mattermost/xml-roundtrip-validator"
-
 	"github.com/beevik/etree"
+	"github.com/crewjam/saml/xmlenc"
+	xrv "github.com/mattermost/xml-roundtrip-validator"
 	dsig "github.com/russellhaering/goxmldsig"
 	"github.com/russellhaering/goxmldsig/etreeutils"
-
-	"github.com/crewjam/saml/xmlenc"
 )
 
 // NameIDFormat is the format of the id
@@ -446,7 +444,10 @@ func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 
 	if sp.SignatureMethod != dsig.RSASHA1SignatureMethod &&
 		sp.SignatureMethod != dsig.RSASHA256SignatureMethod &&
-		sp.SignatureMethod != dsig.RSASHA512SignatureMethod {
+		sp.SignatureMethod != dsig.RSASHA512SignatureMethod &&
+		sp.SignatureMethod != dsig.ECDSASHA1SignatureMethod &&
+		sp.SignatureMethod != dsig.ECDSASHA256SignatureMethod &&
+		sp.SignatureMethod != dsig.ECDSASHA512SignatureMethod {
 		return nil, fmt.Errorf("invalid signing method %s", sp.SignatureMethod)
 	}
 	signatureMethod := sp.SignatureMethod

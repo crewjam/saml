@@ -1,5 +1,7 @@
 module github.com/crewjam/saml
 
+replace github.com/russellhaering/goxmldsig => github.com/cloudentity/goxmldsig v0.0.0-20220810145431-f5cb0a962e3a
+
 go 1.18
 
 require (
