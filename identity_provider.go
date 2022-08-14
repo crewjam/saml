@@ -36,7 +36,10 @@ type Session struct {
 	ExpireTime time.Time
 	Index      string
 
-	NameID                string
+	NameID       string
+	NameIDFormat string
+	SubjectID    string
+
 	Groups                []string
 	UserName              string
 	UserEmail             string
@@ -734,6 +737,19 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 		})
 	}
 
+	if session.SubjectID != "" {
+		attributes = append(attributes, Attribute{
+			Name:       "urn:oasis:names:tc:SAML:attribute:subject-id",
+			NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []AttributeValue{
+				{
+					Type:  "xs:string",
+					Value: session.SubjectID,
+				},
+			},
+		})
+	}
+
 	// allow for some clock skew in the validity period using the
 	// issuer's apparent clock.
 	notBefore := req.Now.Add(-1 * MaxClockSkew)
@@ -741,6 +757,12 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 	if notBefore.Before(req.Request.IssueInstant) {
 		notBefore = req.Request.IssueInstant
 		notOnOrAfterAfter = notBefore.Add(MaxIssueDelay)
+	}
+
+	nameIDFormat := "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
+
+	if session.NameIDFormat != "" {
+		nameIDFormat = session.NameIDFormat
 	}
 
 	req.Assertion = &Assertion{
@@ -753,7 +775,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 		},
 		Subject: &Subject{
 			NameID: &NameID{
-				Format:          "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+				Format:          nameIDFormat,
 				NameQualifier:   req.IDP.Metadata().EntityID,
 				SPNameQualifier: req.ServiceProviderMetadata.EntityID,
 				Value:           session.NameID,
