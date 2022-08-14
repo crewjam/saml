@@ -734,13 +734,20 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 		})
 	}
 
-	// allow for some clock skew in the validity period using the
-	// issuer's apparent clock.
-	notBefore := req.Now.Add(-1 * MaxClockSkew)
-	notOnOrAfterAfter := req.Now.Add(MaxIssueDelay)
+	notBefore := session.CreateTime
+	if notBefore.IsZero() {
+		// allow for some clock skew in the validity period using the
+		// issuer's apparent clock.
+		notBefore = req.Now.Add(-1 * MaxClockSkew)
+	}
+
 	if notBefore.Before(req.Request.IssueInstant) {
 		notBefore = req.Request.IssueInstant
-		notOnOrAfterAfter = notBefore.Add(MaxIssueDelay)
+	}
+
+	notOnOrAfter := session.ExpireTime
+	if notOnOrAfter.IsZero() || notOnOrAfter.Before(notBefore) {
+		notOnOrAfter = notBefore.Add(MaxIssueDelay)
 	}
 
 	req.Assertion = &Assertion{
@@ -772,7 +779,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 		},
 		Conditions: &Conditions{
 			NotBefore:    notBefore,
-			NotOnOrAfter: notOnOrAfterAfter,
+			NotOnOrAfter: notOnOrAfter,
 			AudienceRestrictions: []AudienceRestriction{
 				{
 					Audience: Audience{Value: req.ServiceProviderMetadata.EntityID},
@@ -781,7 +788,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 		},
 		AuthnStatements: []AuthnStatement{
 			{
-				AuthnInstant: session.CreateTime,
+				AuthnInstant: notBefore,
 				SessionIndex: session.Index,
 				SubjectLocality: &SubjectLocality{
 					Address: req.HTTPRequest.RemoteAddr,
