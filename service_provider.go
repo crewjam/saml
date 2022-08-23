@@ -823,13 +823,26 @@ func (sp *ServiceProvider) validateXMLResponse(resp *Response, responseEl *etree
 
 	requestIDvalid := false
 
-	if sp.AllowIDPInitiated {
-		requestIDvalid = true
-	} else {
-		for _, possibleRequestID := range possibleRequestIDs {
-			if resp.InResponseTo == possibleRequestID {
-				requestIDvalid = true
-			}
+	// NOTE(ryno): Upstream library ignores this check for IdP-initiated flows, which according to the spec MAY not be
+	// correct. From the spec (https://docs.oasis-open.org/security/saml/v2.0/saml-profiles-2.0-os.pdf):
+	//
+	//   4.1.5 Unsolicited Responses
+	//
+	//   An unsolicited <Response> MUST NOT contain an InResponseTo attribute, nor should any bearer
+	//   <SubjectConfirmationData> elements contain one. If metadata as specified in [SAMLMeta] is used,
+	//   the <Response> or artifact SHOULD be delivered to the <md:AssertionConsumerService> endpoint
+	//   of the service provider designated as the default.
+	//
+	// Thus, for IdP initiated flows we should check that InReponseTo is set to empty, otherwise the request we're
+	// handling can be part of a MITM attack. The upstream library notes that at least one IdP (Rippling) sends a
+	// non-empty InResponseTo value even for IdP-initiated requests. We may run into this in the future, but for now
+	// we are leaving this change in from the upstream to avoid any potential issues with MITM IdP-initiated requests.
+	for _, possibleRequestID := range possibleRequestIDs {
+		if resp.InResponseTo == "" && !sp.AllowIDPInitiated {
+			continue
+		}
+		if resp.InResponseTo == possibleRequestID {
+			requestIDvalid = true
 		}
 	}
 
