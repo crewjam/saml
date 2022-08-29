@@ -20,11 +20,10 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
-	xrv "github.com/mattermost/xml-roundtrip-validator"
-	dsig "github.com/russellhaering/goxmldsig"
-
 	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/xmlenc"
+	xrv "github.com/mattermost/xml-roundtrip-validator"
+	dsig "github.com/russellhaering/goxmldsig"
 )
 
 // Session represents a user session. It is returned by the
@@ -358,11 +357,11 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 	case "GET":
 		compressedRequest, err := base64.StdEncoding.DecodeString(r.URL.Query().Get("SAMLRequest"))
 		if err != nil {
-			return nil, fmt.Errorf("cannot decode request: %s", err)
+			return nil, ErrInvalidSAMLRequest.WithErrorf(err, "cannot decode request")
 		}
 		req.RequestBuffer, err = ioutil.ReadAll(flate.NewReader(bytes.NewReader(compressedRequest)))
 		if err != nil {
-			return nil, fmt.Errorf("cannot decompress request: %s", err)
+			return nil, ErrInvalidSAMLRequest.WithErrorf(err, "cannot decompress request")
 		}
 		req.RelayState = r.URL.Query().Get("RelayState")
 	case "POST":
@@ -372,7 +371,7 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 		var err error
 		req.RequestBuffer, err = base64.StdEncoding.DecodeString(r.PostForm.Get("SAMLRequest"))
 		if err != nil {
-			return nil, err
+			return nil, ErrInvalidSAMLRequest.WithErrorf(err, "cannot decode request")
 		}
 		req.RelayState = r.PostForm.Get("RelayState")
 	default:
@@ -387,16 +386,16 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 // request is not valid.
 func (req *IdpAuthnRequest) Validate() error {
 	if err := xrv.Validate(bytes.NewReader(req.RequestBuffer)); err != nil {
-		return err
+		return ErrInvalidSAMLRequest.WithErrorf(err, "cannot validate request")
 	}
 
 	if err := xml.Unmarshal(req.RequestBuffer, &req.Request); err != nil {
-		return err
+		return ErrInvalidSAMLRequest.WithErrorf(err, "cannot parse request")
 	}
 
 	// We always have exactly one IDP SSO descriptor
 	if len(req.IDP.Metadata().IDPSSODescriptors) != 1 {
-		panic("expected exactly one IDP SSO descriptor in IDP metadata")
+		return fmt.Errorf("expected exactly one IDP SSO descriptor in IDP metadata")
 	}
 	idpSsoDescriptor := req.IDP.Metadata().IDPSSODescriptors[0]
 
@@ -404,7 +403,7 @@ func (req *IdpAuthnRequest) Validate() error {
 	// For now we do the safe thing and fail in the case where we think
 	// requests might be signed.
 	if idpSsoDescriptor.WantAuthnRequestsSigned != nil && *idpSsoDescriptor.WantAuthnRequestsSigned {
-		return fmt.Errorf("authn request signature checking is not currently supported")
+		return ErrInvalidRequest.WithMessage("Authn request signature checking is not currently supported")
 	}
 
 	// In http://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf §3.4.5.2
@@ -422,31 +421,28 @@ func (req *IdpAuthnRequest) Validate() error {
 	mustHaveDestination = mustHaveDestination || req.Request.Destination != ""
 	if mustHaveDestination {
 		if req.Request.Destination != req.IDP.SSOURL.String() {
-			return fmt.Errorf("expected destination to be %q, not %q", req.IDP.SSOURL.String(), req.Request.Destination)
+			return ErrInvalidSAMLRequest.WithMessagef("Expected destination to be %q, not %q", req.IDP.SSOURL.String(), req.Request.Destination)
 		}
 	}
 
 	if req.Request.IssueInstant.Add(MaxIssueDelay).Before(req.Now) {
-		return fmt.Errorf("request expired at %s",
-			req.Request.IssueInstant.Add(MaxIssueDelay))
+		return ErrInvalidSAMLRequest.WithMessagef("Request expired at %s", req.Request.IssueInstant.Add(MaxIssueDelay))
 	}
 	if req.Request.Version != "2.0" {
-		return fmt.Errorf("expected SAML request version 2.0 got %v", req.Request.Version)
+		return ErrInvalidSAMLRequest.WithMessagef("Expected SAML request version 2.0 got %v", req.Request.Version)
 	}
 
 	// find the service provider
 	serviceProviderID := req.Request.Issuer.Value
 	serviceProvider, err := req.IDP.ServiceProviderProvider.GetServiceProvider(req.HTTPRequest, serviceProviderID)
-	if err == os.ErrNotExist {
-		return fmt.Errorf("cannot handle request from unknown service provider %s", serviceProviderID)
-	} else if err != nil {
-		return fmt.Errorf("cannot find service provider %s: %v", serviceProviderID, err)
+	if err != nil {
+		return ErrUnknownServiceProvider.WithErrorf(err, "cannot handle request from unknown service provider %s", serviceProviderID)
 	}
 	req.ServiceProviderMetadata = serviceProvider
 
 	// Check that the ACS URL matches an ACS endpoint in the SP metadata.
 	if err := req.getACSEndpoint(); err != nil {
-		return fmt.Errorf("cannot find assertion consumer service: %v", err)
+		return ErrUnknownACSEndpoint.WithErrorf(err, "cannot find assertion consumer service")
 	}
 
 	return nil

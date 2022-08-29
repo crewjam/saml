@@ -17,16 +17,14 @@ import (
 	"testing"
 	"time"
 
-	"gotest.tools/assert"
-	is "gotest.tools/assert/cmp"
-	"gotest.tools/golden"
-
 	"github.com/beevik/etree"
-	"github.com/golang-jwt/jwt/v4"
-
 	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/testsaml"
 	"github.com/crewjam/saml/xmlenc"
+	"github.com/golang-jwt/jwt/v4"
+	"gotest.tools/assert"
+	is "gotest.tools/assert/cmp"
+	"gotest.tools/golden"
 )
 
 type IdentityProviderTest struct {
@@ -319,15 +317,15 @@ func TestIDPCanParse(t *testing.T) {
 
 	r, _ = http.NewRequest("GET", "https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState", nil)
 	_, err = NewIdpAuthnRequest(&test.IDP, r)
-	assert.Check(t, is.Error(err, "cannot decompress request: unexpected EOF"))
+	assert.Check(t, is.ErrorContains(err, "cannot decompress request: unexpected EOF"))
 
 	r, _ = http.NewRequest("GET", "https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=NotValidBase64", nil)
 	_, err = NewIdpAuthnRequest(&test.IDP, r)
-	assert.Check(t, is.Error(err, "cannot decode request: illegal base64 data at input byte 12"))
+	assert.Check(t, is.ErrorContains(err, "cannot decode request: illegal base64 data at input byte 12"))
 
 	r, _ = http.NewRequest("GET", "https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=bm90IGZsYXRlIGVuY29kZWQ%3D", nil)
 	_, err = NewIdpAuthnRequest(&test.IDP, r)
-	assert.Check(t, is.Error(err, "cannot decompress request: flate: corrupt input before offset 1"))
+	assert.Check(t, is.ErrorContains(err, "cannot decompress request: flate: corrupt input before offset 1"))
 
 	r, _ = http.NewRequest("FROBNICATE", "https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=lJJBayoxFIX%2FypC9JhnU5wszAz7lgWCLaNtFd5fMbQ1MkmnunVb%2FfUfbUqEgdhs%2BTr5zkmLW8S5s8KVD4mzvm0Cl6FIwEciRCeCRDFuznd2sTD5Upk2Ro42NyGZEmNjFMI%2BBOo9pi%2BnVWbzfrEqxY27JSEntEPfg2waHNnpJ4JtcgiWRLfoLXYBjwDfu6p%2B8JIoiWy5K4eqBUipXIzVRUwXKKtRK53qkJ3qqQVuNPUjU4TIQQ%2BBS5EqPBzofKH2ntBn%2FMervo8jWnyX%2BuVC78FwKkT1gopNKX1JUxSklXTMIfM0gsv8xeeDL%2BPGk7%2FF0Qg0GdnwQ1cW5PDLUwFDID6uquO1Dlot1bJw9%2FPLRmia%2BzRMCYyk4dSiq6205QSDXOxfy3KAq5Pkvqt4DAAD%2F%2Fw%3D%3D", nil)
 	_, err = NewIdpAuthnRequest(&test.IDP, r)
@@ -364,7 +362,7 @@ func TestIDPCanValidate(t *testing.T) {
 		IDP:           &test.IDP,
 		RequestBuffer: []byte("<AuthnRequest"),
 	}
-	assert.Check(t, is.Error(req.Validate(), "XML syntax error on line 1: unexpected EOF"))
+	assert.Check(t, is.ErrorContains(req.Validate(), "XML syntax error on line 1: unexpected EOF"))
 
 	req = IdpAuthnRequest{
 		Now: TimeNow(),
@@ -382,7 +380,7 @@ func TestIDPCanValidate(t *testing.T) {
 			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
 			"</AuthnRequest>"),
 	}
-	assert.Check(t, is.Error(req.Validate(), "expected destination to be \"https://idp.example.com/saml/sso\", not \"https://idp.wrongDestination.com/saml/sso\""))
+	assert.Check(t, is.ErrorContains(req.Validate(), "Expected destination to be \"https://idp.example.com/saml/sso\", not \"https://idp.wrongDestination.com/saml/sso\""))
 
 	req = IdpAuthnRequest{
 		Now: TimeNow(),
@@ -400,7 +398,7 @@ func TestIDPCanValidate(t *testing.T) {
 			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
 			"</AuthnRequest>"),
 	}
-	assert.Check(t, is.Error(req.Validate(), "request expired at 2014-12-01 01:58:39 +0000 UTC"))
+	assert.Check(t, is.ErrorContains(req.Validate(), "Request expired at 2014-12-01 01:58:39 +0000 UTC"))
 
 	req = IdpAuthnRequest{
 		Now: TimeNow(),
@@ -418,7 +416,7 @@ func TestIDPCanValidate(t *testing.T) {
 			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
 			"</AuthnRequest>"),
 	}
-	assert.Check(t, is.Error(req.Validate(), "expected SAML request version 2.0 got 4.2"))
+	assert.Check(t, is.ErrorContains(req.Validate(), "Expected SAML request version 2.0 got 4.2"))
 
 	req = IdpAuthnRequest{
 		Now: TimeNow(),
@@ -436,7 +434,7 @@ func TestIDPCanValidate(t *testing.T) {
 			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
 			"</AuthnRequest>"),
 	}
-	assert.Check(t, is.Error(req.Validate(), "cannot handle request from unknown service provider https://unknownSP.example.com/saml2/metadata"))
+	assert.Check(t, is.ErrorContains(req.Validate(), "cannot handle request from unknown service provider https://unknownSP.example.com/saml2/metadata"))
 
 	req = IdpAuthnRequest{
 		Now: TimeNow(),
@@ -454,7 +452,7 @@ func TestIDPCanValidate(t *testing.T) {
 			"    AllowCreate=\"true\">urn:oasis:names:tc:SAML:2.0:nameid-format:transient</NameIDPolicy>" +
 			"</AuthnRequest>"),
 	}
-	assert.Check(t, is.Error(req.Validate(), "cannot find assertion consumer service: file does not exist"))
+	assert.Check(t, is.ErrorContains(req.Validate(), "cannot find assertion consumer service: file does not exist"))
 
 }
 
