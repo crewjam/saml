@@ -23,6 +23,7 @@ jobs:
         run: go version
       - name: Run Go tests
         run: |
+          (cd samlidp && go mod edit -replace github.com/crewjam/saml=../ && cd ..)
           go test -v ./...
-          (cd samlidp && go test -v ./...)
           (cd example && go test -v ./...)
+          (cd samlidp && go test -v ./... && go mod edit -dropreplace github.com/crewjam/saml)
