@@ -749,6 +749,7 @@ func (a *Assertion) Element() *etree.Element {
 	el.CreateAttr("ID", a.ID)
 	el.CreateAttr("IssueInstant", a.IssueInstant.Format(timeFormat))
 	el.AddChild(a.Issuer.Element())
+
 	if a.Signature != nil {
 		el.AddChild(a.Signature)
 	}
