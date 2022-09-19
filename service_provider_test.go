@@ -1862,7 +1862,7 @@ func TestSkipDestinationCheck(t *testing.T) {
 		IDPMetadata:          &EntityDescriptor{},
 		SkipDestinationCheck: true,
 	}
-	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata)
+	err := xml.Unmarshal([]byte(test.IDPMetadata), &s.IDPMetadata) //nolint: unconvert
 	assert.Check(t, err)
 
 	req := http.Request{PostForm: url.Values{}}
