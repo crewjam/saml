@@ -1,4 +1,4 @@
-module github.com/chrisrollins65/saml
+module github.com/crewjam/saml
 
 go 1.16
 
@@ -14,3 +14,5 @@ require (
 	golang.org/x/crypto v0.0.0-20220128200615-198e4374d7ed
 	gotest.tools v2.2.0+incompatible
 )
+
+replace github.com/crewjam/saml => github.com/chrisrollins65/saml v1.0.2
