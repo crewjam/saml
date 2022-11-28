@@ -934,7 +934,7 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 
 	// if we have at least one assertion, return the first one. It is almost universally true that valid responses
 	// contain only one assertion. This is less that fully correct, but we didn't realize that there could be more
-	// than one assertion at the time of establishing the public interface of ParseXMLResponse(), so for compatability
+	// than one assertion at the time of establishing the public interface of ParseXMLResponse(), so for compatibility
 	// we return the first one.
 	return &assertions[0], nil
 }
