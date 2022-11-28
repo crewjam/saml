@@ -985,7 +985,7 @@ func TestServiceProviderMismatchedDestinationsWithSignaturePresent(t *testing.T)
 
 	req := http.Request{PostForm: url.Values{}}
 	s.AcsURL = mustParseURL("https://wrong/saml2/acs")
-	bytes, _ := addSignatureToDocument(test.responseDom()).WriteToBytes()
+	bytes, _ := test.responseDom().WriteToBytes()
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(bytes))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
@@ -1087,11 +1087,20 @@ func TestSPInvalidAssertions(t *testing.T) {
 	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
-	req := http.Request{PostForm: url.Values{}}
-	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(test.SamlResponse))
-	s.IDPMetadata.IDPSSODescriptors[0].KeyDescriptors[0].KeyInfo.X509Data.X509Certificates[0].Data = "invalid"
-	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
-	assertionBuf := []byte(err.(*InvalidResponseError).Response)
+	// HACK: decrypt response without verifying assertions
+	var assertionBuf []byte
+	{
+		doc := etree.NewDocument()
+		assert.Check(t, doc.ReadFromBytes(test.SamlResponse))
+		encryptedEL := doc.Root().FindElement("//EncryptedAssertion")
+		assertionEl, err := s.decryptElement(encryptedEL)
+		assert.Check(t, err)
+
+		doc = etree.NewDocument()
+		doc.SetRoot(assertionEl)
+		assertionBuf, err = doc.WriteToBytes()
+		assert.Check(t, err)
+	}
 
 	assertion := Assertion{}
 	err = xml.Unmarshal(assertionBuf, &assertion)
@@ -1234,9 +1243,13 @@ func TestXswPermutationThreeIsRejected(t *testing.T) {
 	req := http.Request{PostForm: url.Values{}}
 	req.PostForm.Set("SAMLResponse", string(respStr))
 	_, err = s.ParseResponse(&req, []string{"ONELOGIN_4fee3b046395c4e751011e97f8900b5273d56685"})
-	// Because this permutation contains an unsigned assertion as child of the response
-	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
-		"either the Response or Assertion must be signed"))
+
+	// This response contains two assertions. The first is missing a Signature element. The second is
+	// signed by a certificate that is not yet valid at the time of issue.
+	//
+	// When no assertions are valid, we return the first error encountered, which in this case is that
+	// there is no Signature on the element.
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr, "Signature element not present"))
 }
 
 func TestXswPermutationFourIsRejected(t *testing.T) {
@@ -1262,9 +1275,11 @@ func TestXswPermutationFourIsRejected(t *testing.T) {
 	req := http.Request{PostForm: url.Values{}}
 	req.PostForm.Set("SAMLResponse", string(respStr))
 	_, err = s.ParseResponse(&req, []string{"ONELOGIN_4fee3b046395c4e751011e97f8900b5273d56685"})
-	// Because this permutation contains an unsigned assertion as child of the response
-	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
-		"either the Response or Assertion must be signed"))
+
+	// This permutation contains a signed assertion embedded within an unsigned assertion.
+	// I'm pretty sure this is just not allowed, so we properly decide that there are no
+	// signed assertions at all.
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr, "Signature element not present"))
 }
 
 func TestXswPermutationFiveIsRejected(t *testing.T) {
@@ -1291,7 +1306,7 @@ func TestXswPermutationFiveIsRejected(t *testing.T) {
 	req.PostForm.Set("SAMLResponse", string(respStr))
 	_, err = s.ParseResponse(&req, []string{"ONELOGIN_4fee3b046395c4e751011e97f8900b5273d56685"})
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
-		"cannot validate signature on Response: Missing signature referencing the top-level element"))
+		"cannot validate signature on Assertion: Missing signature referencing the top-level element"))
 }
 
 func TestXswPermutationSixIsRejected(t *testing.T) {
@@ -1318,7 +1333,7 @@ func TestXswPermutationSixIsRejected(t *testing.T) {
 	req.PostForm.Set("SAMLResponse", string(respStr))
 	_, err = s.ParseResponse(&req, []string{"ONELOGIN_4fee3b046395c4e751011e97f8900b5273d56685"})
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
-		"cannot validate signature on Response: Missing signature referencing the top-level element"))
+		"cannot validate signature on Assertion: Missing signature referencing the top-level element"))
 }
 
 func TestXswPermutationSevenIsRejected(t *testing.T) {
@@ -1349,7 +1364,7 @@ func TestXswPermutationSevenIsRejected(t *testing.T) {
 	_, err = s.ParseResponse(&req, []string{"ONELOGIN_4fee3b046395c4e751011e97f8900b5273d56685"})
 	//It's the assertion signature that can't be verified. The error message is generic and always mentions Response
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
-		"cannot validate signature on Response: Signature could not be verified"))
+		"cannot validate signature on Assertion: Signature could not be verified"))
 }
 
 func TestXswPermutationEightIsRejected(t *testing.T) {
@@ -1380,7 +1395,7 @@ func TestXswPermutationEightIsRejected(t *testing.T) {
 	_, err = s.ParseResponse(&req, []string{"ONELOGIN_4fee3b046395c4e751011e97f8900b5273d56685"})
 	//It's the assertion signature that can't be verified. The error message is generic and always mentions Response
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
-		"cannot validate signature on Response: Signature could not be verified"))
+		"cannot validate signature on Assertion: Signature could not be verified"))
 }
 
 func TestXswPermutationNineIsRejected(t *testing.T) {
@@ -1411,7 +1426,7 @@ func TestXswPermutationNineIsRejected(t *testing.T) {
 	_, err = s.ParseResponse(&req, []string{"ONELOGIN_4fee3b046395c4e751011e97f8900b5273d56685"})
 	//It's the assertion signature that can't be verified. The error message is generic and always mentions Response
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
-		"cannot validate signature on Response: Missing signature referencing the top-level element"))
+		"cannot validate signature on Assertion: Missing signature referencing the top-level element"))
 }
 
 func TestSPRealWorldKeyInfoHasRSAPublicKeyNotX509Cert(t *testing.T) {
@@ -1749,7 +1764,7 @@ func TestParseBadXMLArtifactResponse(t *testing.T) {
 
 	assertion, err = sp.ParseXMLArtifactResponse(samlResponse, possibleReqIDs, reqID)
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
-		"cannot validate signature on Response: Cert is not valid at this time"))
+		"cannot validate signature on ArtifactResponse: Cert is not valid at this time"))
 	assert.Check(t, is.Nil(assertion))
 	Clock = dsig.NewFakeClockAt(TimeNow())
 
@@ -1769,6 +1784,32 @@ func TestParseBadXMLArtifactResponse(t *testing.T) {
 	sp.Key = mustParsePrivateKey(golden.Get(t, "key_2017.pem")).(*rsa.PrivateKey)
 	assertion, err = sp.ParseXMLArtifactResponse(samlResponse, possibleReqIDs, reqID)
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
-		"failed to decrypt response: certificate does not match provided key"))
+		"failed to decrypt EncryptedAssertion: certificate does not match provided key"))
 	assert.Check(t, is.Nil(assertion))
+}
+
+func TestMultipleAssertions(t *testing.T) {
+	idpMetadata := golden.Get(t, "TestSPRealWorldKeyInfoHasRSAPublicKeyNotX509Cert_idp_metadata")
+	respStr := golden.Get(t, "TestSPMultipleAssertions")
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Fri Apr 21 13:12:51 UTC 2017")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
+	s := ServiceProvider{
+		Key:         mustParsePrivateKey(golden.Get(t, "key_2017.pem")).(*rsa.PrivateKey),
+		Certificate: mustParseCertificate(golden.Get(t, "cert_2017.pem")),
+		MetadataURL: mustParseURL("https://preview.docrocket-ross.test.octolabs.io/saml/metadata"),
+		AcsURL:      mustParseURL("https://preview.docrocket-ross.test.octolabs.io/saml/acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal(idpMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	req := http.Request{PostForm: url.Values{}}
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(respStr))
+	profile, err := s.ParseResponse(&req, []string{"id-3992f74e652d89c3cf1efd6c7e472abaac9bc917"})
+
+	assert.Check(t, err)
+	assert.Check(t, profile.Subject.NameID.Value != "admin@evil.com")
 }
