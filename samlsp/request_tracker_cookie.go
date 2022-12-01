@@ -97,7 +97,7 @@ func (t CookieRequestTracker) GetTrackedRequests(r *http.Request) []TrackedReque
 func (t CookieRequestTracker) GetTrackedRequest(r *http.Request, index string) (*TrackedRequest, error) {
 	cookie, err := r.Cookie(t.NamePrefix + index)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s; Named Cookie: %s; Request Header Cookies: %+v", err.Error(), t.NamePrefix+index, r.Cookies())
 	}
 
 	trackedRequest, err := t.Codec.Decode(cookie.Value)
