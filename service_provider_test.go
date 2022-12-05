@@ -1786,6 +1786,44 @@ func TestParseBadXMLArtifactResponse(t *testing.T) {
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
 		"failed to decrypt EncryptedAssertion: certificate does not match provided key"))
 	assert.Check(t, is.Nil(assertion))
+
+	// no input
+	assertion, err = sp.ParseXMLArtifactResponse([]byte("<!-- no xml root -->"), possibleReqIDs, reqID)
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
+		"invalid xml: no root"))
+	assert.Check(t, is.Nil(assertion))
+
+	assertion, err = sp.ParseXMLArtifactResponse([]byte("<invalid xml"), possibleReqIDs, reqID)
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
+		"invalid xml: XML syntax error on line 1: unexpected EOF"))
+	assert.Check(t, is.Nil(assertion))
+}
+
+func TestParseBadXMLResponse(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse(timeFormat, "2021-08-17T10:26:57Z")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
+
+	sp := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("http://localhost:8000/saml/metadata"),
+		AcsURL:      mustParseURL("https://example.com/saml2/acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+
+	assertion, err := sp.ParseXMLResponse([]byte("<!-- no xml root -->"), []string{})
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
+		"invalid xml: no root"))
+	assert.Check(t, is.Nil(assertion))
+
+	assertion, err = sp.ParseXMLResponse([]byte("<invalid xml"), []string{})
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
+		"invalid xml: XML syntax error on line 1: unexpected EOF"))
+	assert.Check(t, is.Nil(assertion))
 }
 
 func TestMultipleAssertions(t *testing.T) {
