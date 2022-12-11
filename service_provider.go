@@ -622,6 +622,7 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
+	req.Header.Set("Content-Type", "text/xml")
 
 	httpClient := sp.HTTPClient
 	if httpClient == nil {
