@@ -297,23 +297,29 @@ func (r *AuthnRequest) Redirect(relayState string, sp *ServiceProvider) (*url.UR
 	rv, _ := url.Parse(r.Destination)
 	// We can't depend on Query().set() as order matters for signing
 	query := rv.RawQuery
+
 	if len(query) > 0 {
 		query += "&SAMLRequest=" + url.QueryEscape(w.String())
 	} else {
 		query += "SAMLRequest=" + url.QueryEscape(w.String())
 	}
 
+	queryToBeSigned := "SAMLRequest=" + url.QueryEscape(string(w.Bytes()))
+
 	if relayState != "" {
 		query += "&RelayState=" + relayState
+		queryToBeSigned += "&RelayState=" + relayState
 	}
 	if len(sp.SignatureMethod) > 0 {
 		query += "&SigAlg=" + url.QueryEscape(sp.SignatureMethod)
+		queryToBeSigned += "&SigAlg=" + url.QueryEscape(sp.SignatureMethod)
+
 		signingContext, err := GetSigningContext(sp)
 		if err != nil {
 			return nil, err
 		}
 
-		sig, err := signingContext.SignString(query)
+		sig, err := signingContext.SignString(queryToBeSigned)
 		if err != nil {
 			return nil, err
 		}
