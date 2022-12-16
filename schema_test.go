@@ -95,6 +95,19 @@ func TestAuthnStatementMarshalWithoutSessionNotOnOrAfter(t *testing.T) {
 	assert.Check(t, is.DeepEqual(expected, actual))
 }
 
+func TestRequestedAuthnContext(t *testing.T) {
+	expected := RequestedAuthnContext{
+		Comparison: "comparison",
+	}
+
+	doc := etree.NewDocument()
+	doc.SetRoot(expected.Element())
+	x, err := doc.WriteToBytes()
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(`<samlp:RequestedAuthnContext Comparison="comparison"><saml:AuthnContextClassRef/></samlp:RequestedAuthnContext>`,
+		string(x)))
+}
+
 func TestArtifactResolveElement(t *testing.T) {
 	issueInstant := time.Date(2020, 7, 21, 12, 30, 45, 0, time.UTC)
 	expected := ArtifactResolve{

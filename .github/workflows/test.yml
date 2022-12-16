@@ -5,20 +5,24 @@ on:
     branches: [ 'main' ]
   pull_request:
     branches: [ 'main' ]
-
 jobs:
   tests:
     name: Run tests
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go: [ '1.13.x', '1.14.x', '1.15.x', '1.16.x', '1.17.x' ]
+        go: [ '1.17.x', '1.18.x', '1.19.x']
     steps:
-      - name: Set up Go ${{ matrix.go }}
-        uses: actions/setup-go@v2
       - name: Check out code into the Go module directory
         uses: actions/checkout@v2
+      - name: Set up Go ${{ matrix.go }}
+        uses: actions/setup-go@v2
         with:
           go-version: ${{ matrix.go }}
+      - name: Go version
+        run: go version
       - name: Run Go tests
-        run: find . -name go.mod -execdir go test -v ./... \;
+        run: |
+          go test -v ./...
+          (cd samlidp && go test -v ./...)
+          (cd example && go test -v ./...)
