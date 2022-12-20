@@ -704,7 +704,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 
 	if session.UserScopedAffiliation != "" {
 		attributes = append(attributes, Attribute{
-			FriendlyName: "uid",
+			FriendlyName: "eduPersonScopedAffiliation",
 			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.9",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
 			Values: []AttributeValue{{

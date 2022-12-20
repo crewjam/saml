@@ -548,17 +548,18 @@ func TestIDPMakeAssertion(t *testing.T) {
 	assert.Check(t, is.DeepEqual(expected, req.Assertion))
 
 	err = DefaultAssertionMaker{}.MakeAssertion(&req, &Session{
-		ID:             "f00df00df00d",
-		CreateTime:     TimeNow(),
-		ExpireTime:     TimeNow().Add(time.Hour),
-		Index:          "9999",
-		NameID:         "ba5eba11",
-		Groups:         []string{"Users", "Administrators", "♀"},
-		UserName:       "alice",
-		UserEmail:      "alice@example.com",
-		UserCommonName: "Alice Smith",
-		UserSurname:    "Smith",
-		UserGivenName:  "Alice",
+		ID:                    "f00df00df00d",
+		CreateTime:            TimeNow(),
+		ExpireTime:            TimeNow().Add(time.Hour),
+		Index:                 "9999",
+		NameID:                "ba5eba11",
+		Groups:                []string{"Users", "Administrators", "♀"},
+		UserName:              "alice",
+		UserEmail:             "alice@example.com",
+		UserCommonName:        "Alice Smith",
+		UserSurname:           "Smith",
+		UserGivenName:         "Alice",
+		UserScopedAffiliation: "admins@crewjam.saml",
 	})
 	assert.Check(t, err)
 
@@ -616,6 +617,17 @@ func TestIDPMakeAssertion(t *testing.T) {
 					{
 						Type:  "xs:string",
 						Value: "Alice Smith",
+					},
+				},
+			},
+			{
+				FriendlyName: "eduPersonScopedAffiliation",
+				Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.9",
+				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+				Values: []AttributeValue{
+					{
+						Type:  "xs:string",
+						Value: "admins@crewjam.saml",
 					},
 				},
 			},
