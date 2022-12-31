@@ -771,7 +771,7 @@ func TestSPRejectsInjectedComment(t *testing.T) {
 	// it *MUST NOT* validate
 	{
 		x, _ := base64.StdEncoding.DecodeString(string(SamlResponse))
-		y := strings.Replace(string(x), "ross@octolabs.io", "ross@octolabs.io<!-- and a comment -->.example.com", 1)
+		y := strings.Replace(string(x), "ross@<!-- and a comment -->octolabs.io", "ross@octolabs.io<!-- and a comment -->.example.com", 1)
 		SamlResponse = []byte(base64.StdEncoding.EncodeToString([]byte(y)))
 
 		req := http.Request{PostForm: url.Values{}}
