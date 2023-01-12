@@ -6,9 +6,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
-	"log"
 
 	"github.com/crewjam/saml/samlsp"
 )
