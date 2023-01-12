@@ -24,5 +24,3 @@ jobs:
       - name: Run Go tests
         run: |
           go test -v ./...
-          (cd samlidp && go test -v ./...)
-          (cd example && go test -v ./...)

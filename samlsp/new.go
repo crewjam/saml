@@ -28,6 +28,7 @@ type Options struct {
 	ForceAuthn            bool // TODO(ross): this should be *bool
 	RequestedAuthnContext *saml.RequestedAuthnContext
 	CookieSameSite        http.SameSite
+	CookieName            string
 	RelayStateFunc        func(w http.ResponseWriter, r *http.Request) string
 	LogoutBindings        []string
 }
@@ -47,8 +48,12 @@ func DefaultSessionCodec(opts Options) JWTSessionCodec {
 // DefaultSessionProvider returns the default SessionProvider for the provided options,
 // a CookieSessionProvider configured to store sessions in a cookie.
 func DefaultSessionProvider(opts Options) CookieSessionProvider {
+	cookieName := opts.CookieName
+	if cookieName == "" {
+		cookieName = defaultSessionCookieName
+	}
 	return CookieSessionProvider{
-		Name:     defaultSessionCookieName,
+		Name:     cookieName,
 		Domain:   opts.URL.Host,
 		MaxAge:   defaultSessionMaxAge,
 		HTTPOnly: true,

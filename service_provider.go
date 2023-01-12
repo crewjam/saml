@@ -696,6 +696,10 @@ func (sp *ServiceProvider) ParseXMLArtifactResponse(soapResponseXML []byte, poss
 		retErr.PrivateErr = fmt.Errorf("cannot unmarshal response: %s", err)
 		return nil, retErr
 	}
+	if doc.Root() == nil {
+		retErr.PrivateErr = errors.New("invalid xml: no root")
+		return nil, retErr
+	}
 	if doc.Root().NamespaceURI() != "http://schemas.xmlsoap.org/soap/envelope/" ||
 		doc.Root().Tag != "Envelope" {
 		retErr.PrivateErr = fmt.Errorf("expected a SOAP Envelope")
@@ -801,6 +805,10 @@ func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleR
 	doc := etree.NewDocument()
 	if err := doc.ReadFromBytes(decodedResponseXML); err != nil {
 		retErr.PrivateErr = err
+		return nil, retErr
+	}
+	if doc.Root() == nil {
+		retErr.PrivateErr = errors.New("invalid xml: no root")
 		return nil, retErr
 	}
 

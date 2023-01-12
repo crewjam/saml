@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sync"
 
 	"github.com/zenazn/goji/web"
@@ -110,9 +111,10 @@ func (s *Server) InitializeHTTP() {
 	mux.Put("/users/:id", s.HandlePutUser)
 	mux.Delete("/users/:id", s.HandleDeleteUser)
 
+	sessionPath := regexp.MustCompile("/sessions/(?P<id>.*)")
 	mux.Get("/sessions/", s.HandleListSessions)
-	mux.Get("/sessions/:id", s.HandleGetSession)
-	mux.Delete("/sessions/:id", s.HandleDeleteSession)
+	mux.Get(sessionPath, s.HandleGetSession)
+	mux.Delete(sessionPath, s.HandleDeleteSession)
 
 	mux.Get("/shortcuts/", s.HandleListShortcuts)
 	mux.Get("/shortcuts/:id", s.HandleGetShortcut)
