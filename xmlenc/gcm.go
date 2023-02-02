@@ -136,8 +136,17 @@ var (
 		algorithm: "http://www.w3.org/2009/xmlenc11#aes128-gcm",
 		cipher:    aes.NewCipher,
 	}
+
+	// AES256GCM implements AES256-GCM mode for encryption and decryption
+	AES256GCM BlockCipher = GCM{
+		keySize:   32,
+		algorithm: "http://www.w3.org/2009/xmlenc11#aes256-gcm",
+		cipher:    aes.NewCipher,
+	}
 )
 
 func init() {
 	RegisterDecrypter(AES128GCM)
+	RegisterDecrypter(AES256GCM)
+
 }
