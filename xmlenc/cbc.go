@@ -113,8 +113,8 @@ func (e CBC) Decrypt(key interface{}, ciphertextEl *etree.Element) ([]byte, erro
 		return nil, errors.New("ciphertext too short")
 	}
 
-	iv := ciphertext[:aes.BlockSize]
-	ciphertext = ciphertext[aes.BlockSize:]
+	iv := ciphertext[:block.BlockSize()]
+	ciphertext = ciphertext[block.BlockSize():]
 
 	mode := cipher.NewCBCDecrypter(block, iv)
 	plaintext := make([]byte, len(ciphertext))
@@ -152,9 +152,9 @@ var (
 
 	// TripleDES implements 3DES in CBC mode for encryption and decryption
 	TripleDES BlockCipher = CBC{
-		keySize:   8,
+		keySize:   24,
 		algorithm: "http://www.w3.org/2001/04/xmlenc#tripledes-cbc",
-		cipher:    des.NewCipher,
+		cipher:    des.NewTripleDESCipher,
 	}
 )
 
