@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"regexp"
 	"sync"
+	"text/template"
 
 	"github.com/zenazn/goji/web"
 
@@ -18,11 +19,12 @@ import (
 
 // Options represent the parameters to New() for creating a new IDP server
 type Options struct {
-	URL         url.URL
-	Key         crypto.PrivateKey
-	Logger      logger.Interface
-	Certificate *x509.Certificate
-	Store       Store
+	URL               url.URL
+	Key               crypto.PrivateKey
+	Logger            logger.Interface
+	Certificate       *x509.Certificate
+	Store             Store
+	LoginFormTemplate *template.Template
 }
 
 // Server represents an IDP server. The server provides the following URLs:
@@ -37,11 +39,12 @@ type Options struct {
 //	/shortcuts    - RESTful interface to Shortcut objects
 type Server struct {
 	http.Handler
-	idpConfigMu      sync.RWMutex // protects calls into the IDP
-	logger           logger.Interface
-	serviceProviders map[string]*saml.EntityDescriptor
-	IDP              saml.IdentityProvider // the underlying IDP
-	Store            Store                 // the data store
+	idpConfigMu       sync.RWMutex // protects calls into the IDP
+	logger            logger.Interface
+	serviceProviders  map[string]*saml.EntityDescriptor
+	IDP               saml.IdentityProvider // the underlying IDP
+	Store             Store                 // the data store
+	LoginFormTemplate *template.Template
 }
 
 // New returns a new Server
@@ -64,8 +67,9 @@ func New(opts Options) (*Server, error) {
 			MetadataURL: metadataURL,
 			SSOURL:      ssoURL,
 		},
-		logger: logr,
-		Store:  opts.Store,
+		logger:            logr,
+		Store:             opts.Store,
+		LoginFormTemplate: opts.LoginFormTemplate,
 	}
 
 	s.IDP.SessionProvider = s
