@@ -88,7 +88,7 @@ func TestCanParseMetadata(t *testing.T) {
 }
 
 func TestCanProduceSPMetadata(t *testing.T) {
-	validUntil, _ := time.Parse("2006-02-01T15:04:05.000000", "2013-10-03T00:32:19.104000")
+	validUntil, _ := time.Parse("2006-01-02T15:04:05.000000", "2013-03-10T00:32:19.104000")
 	AuthnRequestsSigned := true
 	WantAssertionsSigned := true
 	metadata := EntityDescriptor{
