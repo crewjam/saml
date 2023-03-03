@@ -95,6 +95,114 @@ func TestAuthnStatementMarshalWithoutSessionNotOnOrAfter(t *testing.T) {
 	assert.Check(t, is.DeepEqual(expected, actual))
 }
 
+func TestRequestedAuthnContext(t *testing.T) {
+	expected := RequestedAuthnContext{
+		Comparison: "comparison",
+	}
+
+	doc := etree.NewDocument()
+	doc.SetRoot(expected.Element())
+	x, err := doc.WriteToBytes()
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(`<samlp:RequestedAuthnContext Comparison="comparison"><saml:AuthnContextClassRef/></samlp:RequestedAuthnContext>`,
+		string(x)))
+}
+
+func TestArtifactResolveElement(t *testing.T) {
+	issueInstant := time.Date(2020, 7, 21, 12, 30, 45, 0, time.UTC)
+	expected := ArtifactResolve{
+		ID:           "index",
+		Version:      "version",
+		IssueInstant: issueInstant,
+		// Signature    *etree.Element
+	}
+
+	doc := etree.NewDocument()
+	doc.SetRoot(expected.Element())
+	x, err := doc.WriteToBytes()
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(`<samlp:ArtifactResolve xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:xs="http://www.w3.org/2001/XMLSchema" ID="index" Version="version" IssueInstant="2020-07-21T12:30:45Z"><samlp:Artifact/></samlp:ArtifactResolve>`,
+		string(x)))
+
+	var actual ArtifactResolve
+	err = xml.Unmarshal(x, &actual)
+	assert.Check(t, err)
+	assert.Check(t, is.DeepEqual(expected, actual))
+
+	x, err = xml.Marshal(expected)
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(`<ArtifactResolve xmlns="urn:oasis:names:tc:SAML:2.0:protocol" ID="index" Version="version" IssueInstant="2020-07-21T12:30:45Z"><Artifact xmlns="urn:oasis:names:tc:SAML:2.0:protocol"></Artifact></ArtifactResolve>`,
+		string(x)))
+}
+
+func TestArtifactResolveSoapRequest(t *testing.T) {
+	issueInstant := time.Date(2020, 7, 21, 12, 30, 45, 0, time.UTC)
+	expected := ArtifactResolve{
+		ID:           "index",
+		Version:      "version",
+		IssueInstant: issueInstant,
+		// Signature    *etree.Element
+	}
+
+	doc := etree.NewDocument()
+	doc.SetRoot(expected.SoapRequest())
+	x, err := doc.WriteToBytes()
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(`<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><soapenv:Body><samlp:ArtifactResolve xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:xs="http://www.w3.org/2001/XMLSchema" ID="index" Version="version" IssueInstant="2020-07-21T12:30:45Z"><samlp:Artifact/></samlp:ArtifactResolve></soapenv:Body></soapenv:Envelope>`,
+		string(x)))
+}
+
+func TestArtifactResponseElement(t *testing.T) {
+	issueInstant := time.Date(2020, 7, 21, 12, 30, 45, 0, time.UTC)
+	status := Status{
+		XMLName: xml.Name{
+			Space: "urn:oasis:names:tc:SAML:2.0:protocol",
+			Local: "Status",
+		},
+		StatusCode: StatusCode{
+			XMLName: xml.Name{
+				Space: "urn:oasis:names:tc:SAML:2.0:protocol",
+				Local: "StatusCode",
+			},
+			Value: "value",
+		},
+	}
+	expected := ArtifactResponse{
+		ID:           "index",
+		InResponseTo: "ID",
+		Version:      "version",
+		IssueInstant: issueInstant,
+		Status:       status,
+		Response: Response{
+			ID:           "index",
+			InResponseTo: "ID",
+			Version:      "version",
+			Destination:  "destination",
+			Consent:      "consent",
+			Status:       status,
+			IssueInstant: issueInstant,
+		},
+		// Signature *etree.Element
+	}
+
+	doc := etree.NewDocument()
+	doc.SetRoot(expected.Element())
+	x, err := doc.WriteToBytes()
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(`<samlp:ArtifactResponse xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:xs="http://www.w3.org/2001/XMLSchema" ID="index" InResponseTo="ID" Version="version" IssueInstant="2020-07-21T12:30:45Z"><samlp:Status><samlp:StatusCode Value="value"/></samlp:Status><samlp:Response xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:xs="http://www.w3.org/2001/XMLSchema" ID="index" InResponseTo="ID" Version="version" IssueInstant="2020-07-21T12:30:45Z" Destination="destination" Consent="consent"><samlp:Status><samlp:StatusCode Value="value"/></samlp:Status></samlp:Response></samlp:ArtifactResponse>`,
+		string(x)))
+
+	var actual ArtifactResponse
+	err = xml.Unmarshal(x, &actual)
+	assert.Check(t, err)
+	assert.Check(t, is.DeepEqual(expected, actual))
+
+	x, err = xml.Marshal(expected)
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(`<ArtifactResponse xmlns="urn:oasis:names:tc:SAML:2.0:protocol" ID="index" InResponseTo="ID" Version="version" IssueInstant="2020-07-21T12:30:45Z"><Status xmlns="urn:oasis:names:tc:SAML:2.0:protocol"><StatusCode xmlns="urn:oasis:names:tc:SAML:2.0:protocol" Value="value"></StatusCode></Status><Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol" ID="index" InResponseTo="ID" Version="version" IssueInstant="2020-07-21T12:30:45Z" Destination="destination" Consent="consent"><Status xmlns="urn:oasis:names:tc:SAML:2.0:protocol"><StatusCode xmlns="urn:oasis:names:tc:SAML:2.0:protocol" Value="value"></StatusCode></Status></Response></ArtifactResponse>`,
+		string(x)))
+}
+
 func TestLogoutRequestXMLRoundTrip(t *testing.T) {
 	issueInstant := time.Date(2021, 10, 8, 12, 30, 0, 0, time.UTC)
 	notOnOrAfter := time.Date(2021, 10, 8, 12, 35, 0, 0, time.UTC)

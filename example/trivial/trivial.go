@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 
@@ -71,5 +72,5 @@ func main() {
 	http.Handle("/hello", samlMiddleware.RequireAccount(app))
 	http.Handle("/saml/", samlMiddleware)
 	http.Handle("/logout", slo)
-	http.ListenAndServe(":8000", nil)
+	log.Fatal(http.ListenAndServe(":8000", nil))
 }
