@@ -14,6 +14,6 @@ require (
 	github.com/russellhaering/goxmldsig v1.2.0
 	github.com/stretchr/testify v1.8.1
 	github.com/zenazn/goji v1.0.1
-	golang.org/x/crypto v0.0.0-20220128200615-198e4374d7ed
+	golang.org/x/crypto v0.7.0
 	gotest.tools v2.2.0+incompatible
 )
