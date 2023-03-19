@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"regexp"
 	"sync"
+	"strings"
 
 	"github.com/zenazn/goji/web"
 
@@ -46,6 +47,9 @@ type Server struct {
 
 // New returns a new Server
 func New(opts Options) (*Server, error) {
+	if strings.HasSuffix(opts.URL.Path, "/") {
+		opts.URL.Path = opts.URL.Path[:len(opts.URL.Path)-1]
+	}
 	metadataURL := opts.URL
 	metadataURL.Path = metadataURL.Path + "/metadata"
 	ssoURL := opts.URL
