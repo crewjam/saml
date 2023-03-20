@@ -1,4 +1,4 @@
-module github.com/crewjam/saml
+module github.com/kevcoxe/grafanaSaml
 
 go 1.16
 

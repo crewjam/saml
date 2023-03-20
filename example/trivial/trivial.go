@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/crewjam/saml/samlsp"
+	"github.com/kevcoxe/grafanaSaml/samlsp"
 )
 
 var samlMiddleware *samlsp.Middleware

@@ -6,9 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/golang-jwt/jwt/v4"
-
 	"github.com/crewjam/saml"
+	"github.com/golang-jwt/jwt/v4"
 )
 
 const (
