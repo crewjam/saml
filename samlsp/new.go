@@ -131,6 +131,12 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 	}
 }
 
+// DefaultAssertionHandler returns the default AssertionHandler for the provided options,
+// a NopAssertionHandler configured to do nothing.
+func DefaultAssertionHandler(_ Options) NopAssertionHandler {
+	return NopAssertionHandler{}
+}
+
 // New creates a new Middleware with the default providers for the
 // given options.
 //
@@ -139,11 +145,12 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 // in the returned Middleware.
 func New(opts Options) (*Middleware, error) {
 	m := &Middleware{
-		ServiceProvider: DefaultServiceProvider(opts),
-		Binding:         "",
-		ResponseBinding: saml.HTTPPostBinding,
-		OnError:         DefaultOnError,
-		Session:         DefaultSessionProvider(opts),
+		ServiceProvider:  DefaultServiceProvider(opts),
+		Binding:          "",
+		ResponseBinding:  saml.HTTPPostBinding,
+		OnError:          DefaultOnError,
+		Session:          DefaultSessionProvider(opts),
+		AssertionHandler: DefaultAssertionHandler(opts),
 	}
 	m.RequestTracker = DefaultRequestTracker(opts, &m.ServiceProvider)
 	if opts.UseArtifactResponse {
