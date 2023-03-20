@@ -137,13 +137,14 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 // You can customize the behavior of the middleware in more detail by
 // replacing and/or changing Session, RequestTracker, and ServiceProvider
 // in the returned Middleware.
-func New(opts Options) (*Middleware, error) {
+func New(opts Options, applicationHandler SamlApplicationHandler) (*Middleware, error) {
 	m := &Middleware{
-		ServiceProvider: DefaultServiceProvider(opts),
-		Binding:         "",
-		ResponseBinding: saml.HTTPPostBinding,
-		OnError:         DefaultOnError,
-		Session:         DefaultSessionProvider(opts),
+		ServiceProvider:    DefaultServiceProvider(opts),
+		Binding:            "",
+		ResponseBinding:    saml.HTTPPostBinding,
+		OnError:            DefaultOnError,
+		Session:            DefaultSessionProvider(opts),
+		ApplicationHandler: applicationHandler,
 	}
 	m.RequestTracker = DefaultRequestTracker(opts, &m.ServiceProvider)
 	if opts.UseArtifactResponse {
