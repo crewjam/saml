@@ -44,7 +44,7 @@ linters:
     - varcheck # Finds unused global variables and constants [fast: true, auto-fix: false]
 linters-settings:
   goimports:
-    local-prefixes: github.com/crewjam/saml
+    local-prefixes: github.com/kevcoxe/grafanaSaml
   govet:
     disable:
       - shadow
