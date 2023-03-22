@@ -39,16 +39,16 @@ import (
 // SAML service provider already has a private key, we borrow that key
 // to sign the JWTs as well.
 type Middleware struct {
-	ServiceProvider    saml.ServiceProvider
-	OnError            func(w http.ResponseWriter, r *http.Request, err error)
-	Binding            string // either saml.HTTPPostBinding or saml.HTTPRedirectBinding
-	ResponseBinding    string // either saml.HTTPPostBinding or saml.HTTPArtifactBinding
-	RequestTracker     RequestTracker
-	Session            SessionProvider
-	ApplicationHandler SamlApplicationHandler
+	ServiceProvider  saml.ServiceProvider
+	OnError          func(w http.ResponseWriter, r *http.Request, err error)
+	Binding          string // either saml.HTTPPostBinding or saml.HTTPRedirectBinding
+	ResponseBinding  string // either saml.HTTPPostBinding or saml.HTTPArtifactBinding
+	RequestTracker   RequestTracker
+	Session          SessionProvider
+	AssertionHandler SamlAssertionHandler
 }
 
-type SamlApplicationHandler interface {
+type SamlAssertionHandler interface {
 	HandleAssertions(assertion *saml.Assertion) error
 }
 
@@ -98,7 +98,7 @@ func (m *Middleware) ServeACS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// handle grafana stuff
-	assertionErr := m.ApplicationHandler.HandleAssertions(assertion)
+	assertionErr := m.AssertionHandler.HandleAssertions(assertion)
 	if assertionErr != nil {
 		m.OnError(w, r, assertionErr)
 		return
