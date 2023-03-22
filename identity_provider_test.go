@@ -1,6 +1,8 @@
 package saml
 
 import (
+	"bytes"
+	"compress/flate"
 	"crypto"
 	"crypto/rsa"
 	"crypto/x509"
@@ -1012,4 +1014,30 @@ func TestIDPNoDestination(t *testing.T) {
 
 	err = req.MakeResponse()
 	assert.Check(t, err)
+}
+
+func TestIDPRejectDecompressionBomb(t *testing.T) {
+	test := NewIdentifyProviderTest(t)
+	test.IDP.SessionProvider = &mockSessionProvider{
+		GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
+			fmt.Fprintf(w, "RelayState: %s\nSAMLRequest: %s",
+				req.RelayState, req.RequestBuffer)
+			return nil
+		},
+	}
+
+	//w := httptest.NewRecorder()
+
+	data := bytes.Repeat([]byte("a"), 768*1024*1024)
+	var compressed bytes.Buffer
+	w, _ := flate.NewWriter(&compressed, flate.BestCompression)
+	w.Write(data)
+	w.Close()
+	encoded := base64.StdEncoding.EncodeToString(compressed.Bytes())
+
+	r, _ := http.NewRequest("GET", "/dontcare?"+url.Values{
+		"SAMLRequest": {encoded},
+	}.Encode(), nil)
+	_, err := NewIdpAuthnRequest(&test.IDP, r)
+	assert.Error(t, err, "cannot decompress request: flate: uncompress limit exceeded (10485760 bytes)")
 }
