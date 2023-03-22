@@ -48,10 +48,6 @@ type Middleware struct {
 	AssertionHandler SamlAssertionHandler
 }
 
-type SamlAssertionHandler interface {
-	HandleAssertion(assertion *saml.Assertion) error
-}
-
 // ServeHTTP implements http.Handler and serves the SAML-specific HTTP endpoints
 // on the URIs specified by m.ServiceProvider.MetadataURL and
 // m.ServiceProvider.AcsURL.

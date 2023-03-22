@@ -1,13 +1,9 @@
 package samlsp
 
-import (
-	"github.com/crewjam/saml"
-)
+import "github.com/crewjam/saml"
 
-var _ SamlAssertionHandler = BasicSamlAssertionHandler{}
-
-type BasicSamlAssertionHandler struct{}
-
-func (as BasicSamlAssertionHandler) HandleAssertion(assertion *saml.Assertion) error {
-	return nil
+// SamlAssertionHandler is an interface implemented by types that can handle
+// assertions and add extra functionality
+type SamlAssertionHandler interface {
+	HandleAssertion(assertion *saml.Assertion) error
 }
