@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	saml "github.com/kevcoxe/grafanaSaml"
+	"github.com/crewjam/saml"
 )
 
 const defaultSessionCookieName = "token"

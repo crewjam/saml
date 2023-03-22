@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	saml "github.com/kevcoxe/grafanaSaml"
+	"github.com/crewjam/saml"
 )
 
 // Session is an interface implemented to contain a session.

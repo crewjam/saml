@@ -4,7 +4,7 @@ import (
 	"encoding/xml"
 	"net/http"
 
-	saml "github.com/kevcoxe/grafanaSaml"
+	"github.com/crewjam/saml"
 )
 
 // Middleware implements middleware than allows a web application

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/crewjam/saml"
 	"github.com/golang-jwt/jwt/v4"
-	saml "github.com/kevcoxe/grafanaSaml"
 )
 
 const (

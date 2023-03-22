@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	saml "github.com/kevcoxe/grafanaSaml"
+	"github.com/crewjam/saml"
 	"gotest.tools/assert"
 	is "gotest.tools/assert/cmp"
 )
