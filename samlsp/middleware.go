@@ -49,7 +49,7 @@ type Middleware struct {
 }
 
 type SamlAssertionHandler interface {
-	HandleAssertions(assertion *saml.Assertion) error
+	HandleAssertion(assertion *saml.Assertion) error
 }
 
 // ServeHTTP implements http.Handler and serves the SAML-specific HTTP endpoints
@@ -97,7 +97,7 @@ func (m *Middleware) ServeACS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	assertionErr := m.AssertionHandler.HandleAssertions(assertion)
+	assertionErr := m.AssertionHandler.HandleAssertion(assertion)
 	if assertionErr != nil {
 		m.OnError(w, r, assertionErr)
 		return
