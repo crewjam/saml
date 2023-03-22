@@ -97,7 +97,6 @@ func (m *Middleware) ServeACS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// handle grafana stuff
 	assertionErr := m.AssertionHandler.HandleAssertions(assertion)
 	if assertionErr != nil {
 		m.OnError(w, r, assertionErr)
