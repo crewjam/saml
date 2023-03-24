@@ -1,3 +1,5 @@
+replace github.com/crewjam/saml => github.com/mnantel/saml v1.0.0
+
 module github.com/crewjam/saml
 
 go 1.16
