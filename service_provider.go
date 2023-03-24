@@ -1528,7 +1528,7 @@ func (sp *ServiceProvider) ValidateLogoutResponseRedirect(queryParameterData str
 	}
 	retErr.Response = string(rawResponseBuf)
 
-	gr, err := ioutil.ReadAll(flate.NewReader(bytes.NewBuffer(rawResponseBuf)))
+	gr, err := ioutil.ReadAll(newSaferFlateReader(bytes.NewBuffer(rawResponseBuf)))
 	if err != nil {
 		retErr.PrivateErr = err
 		return retErr

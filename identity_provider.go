@@ -2,7 +2,6 @@ package saml
 
 import (
 	"bytes"
-	"compress/flate"
 	"crypto"
 	"crypto/tls"
 	"crypto/x509"
@@ -363,7 +362,7 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 		if err != nil {
 			return nil, fmt.Errorf("cannot decode request: %s", err)
 		}
-		req.RequestBuffer, err = ioutil.ReadAll(flate.NewReader(bytes.NewReader(compressedRequest)))
+		req.RequestBuffer, err = ioutil.ReadAll(newSaferFlateReader(bytes.NewReader(compressedRequest)))
 		if err != nil {
 			return nil, fmt.Errorf("cannot decompress request: %s", err)
 		}
