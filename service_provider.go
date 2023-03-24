@@ -109,6 +109,9 @@ type ServiceProvider struct {
 	// AllowIdpInitiated
 	AllowIDPInitiated bool
 
+	// Ignore audience restrictions
+	IgnoreAudience bool
+
 	// DefaultRedirectURI where untracked requests (as of IDPInitiated) are redirected to
 	DefaultRedirectURI string
 
@@ -1072,7 +1075,8 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 			audienceRestrictionsValid = true
 		}
 	}
-	if !audienceRestrictionsValid {
+
+	if !audienceRestrictionsValid && !sp.IgnoreAudience {
 		return fmt.Errorf("assertion Conditions AudienceRestriction does not contain %q", audience)
 	}
 	return nil

@@ -9,7 +9,7 @@ import (
 
 	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/crewjam/saml"
+	"github.com/mnantel/saml"
 )
 
 // Options represents the parameters for creating a new middleware
@@ -28,6 +28,7 @@ type Options struct {
 	ForceAuthn            bool // TODO(ross): this should be *bool
 	RequestedAuthnContext *saml.RequestedAuthnContext
 	CookieSameSite        http.SameSite
+	IgnoreAudience        bool
 	CookieName            string
 	RelayStateFunc        func(w http.ResponseWriter, r *http.Request) string
 	LogoutBindings        []string
@@ -123,6 +124,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		SloURL:                *sloURL,
 		IDPMetadata:           opts.IDPMetadata,
 		ForceAuthn:            forceAuthn,
+		IgnoreAudience:        opts.IgnoreAudience,
 		RequestedAuthnContext: opts.RequestedAuthnContext,
 		SignatureMethod:       signatureMethod,
 		AllowIDPInitiated:     opts.AllowIDPInitiated,
