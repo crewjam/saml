@@ -38,7 +38,7 @@ linters:
     - depguard # Go linter that checks if package imports are in a list of acceptable packages [fast: true, auto-fix: false]
 linters-settings:
   goimports:
-    local-prefixes: github.com/crewjam/saml
+    local-prefixes: github.com/lorodoes/saml
   govet:
     disable:
       - shadow
