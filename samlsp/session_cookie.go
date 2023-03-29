@@ -7,7 +7,7 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
-	"github.com/crewjam/saml"
+	"github.com/lorodoes/saml"
 )
 
 const defaultSessionCookieName = "token"
