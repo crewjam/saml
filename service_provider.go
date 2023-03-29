@@ -212,7 +212,7 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 						ValidUntil:                 &validUntil,
 					},
 					SingleLogoutServices: sloEndpoints,
-					NameIDFormats:        []NameIDFormat{sp.AuthnNameIDFormat},
+					NameIDFormats:        []NameIDFormat{"urn:oasis:names:tc:SAML:2.0:nameid-format:transient"},
 				},
 				AuthnRequestsSigned:  &authnRequestsSigned,
 				WantAssertionsSigned: &wantAssertionsSigned,
