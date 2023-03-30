@@ -1,12 +1,18 @@
 package samlsp
 
 import (
+	"bytes"
+	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
+
+	b64 "encoding/base64"
 
 	log "github.com/sirupsen/logrus"
 
+	"github.com/andybalholm/brotli"
 	"github.com/lorodoes/saml"
 )
 
@@ -50,10 +56,14 @@ func (c CookieSessionProvider) CreateSession(w http.ResponseWriter, r *http.Requ
 		return err
 	}
 
+	b := compressBrotli([]byte(value))
+
+	uEnc := b64.URLEncoding.EncodeToString(b)
+
 	cookie := &http.Cookie{
 		Name:     c.Name,
 		Domain:   c.Domain,
-		Value:    value,
+		Value:    uEnc,
 		MaxAge:   int(c.MaxAge.Seconds()),
 		HttpOnly: c.HTTPOnly,
 		Secure:   c.Secure || r.URL.Scheme == "https",
@@ -111,11 +121,33 @@ func (c CookieSessionProvider) GetSession(r *http.Request) (Session, error) {
 		return nil, err
 	}
 
-	session, err := c.Codec.Decode(cookie.Value)
+	uDec, _ := b64.URLEncoding.DecodeString(cookie.Value)
+
+	d, _ := decompressBrotli(uDec)
+
+	session, err := c.Codec.Decode(d)
 	if err != nil {
 		log.Debugf("Get Session decode: Error No Session")
 		return nil, ErrNoSession
 	}
 	log.Debugf("Returning the session")
 	return session, nil
+}
+
+func compressBrotli(data []byte) []byte {
+	var b bytes.Buffer
+	w := brotli.NewWriterLevel(&b, brotli.BestCompression)
+	w.Write(data)
+	w.Close()
+	return b.Bytes()
+}
+
+func decompressBrotli(compressedData []byte) (string, error) {
+	reader := brotli.NewReader(bytes.NewReader(compressedData))
+	var decompressedData strings.Builder
+	_, err := io.Copy(&decompressedData, reader)
+	if err != nil {
+		return "", err
+	}
+	return decompressedData.String(), nil
 }
