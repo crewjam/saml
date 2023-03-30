@@ -220,10 +220,12 @@ func (m *Middleware) CreateSessionFromAssertion(w http.ResponseWriter, r *http.R
 	}
 
 	if err := m.Session.CreateSession(w, r, assertion); err != nil {
+		log.Debugf("Error on CreateSession line 209, %s", err)
 		m.OnError(w, r, err)
 		return
 	}
 
+	log.Debugf("Redirecting to URI")
 	http.Redirect(w, r, redirectURI, http.StatusFound)
 }
 

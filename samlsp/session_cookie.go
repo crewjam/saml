@@ -61,6 +61,7 @@ func (c CookieSessionProvider) CreateSession(w http.ResponseWriter, r *http.Requ
 		SameSite: c.SameSite,
 		Path:     "/",
 	})
+	log.Debugf("Cookie Set")
 	return nil
 }
 
