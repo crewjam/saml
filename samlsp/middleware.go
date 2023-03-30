@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/lorodoes/saml"
+	log "github.com/sirupsen/logrus"
 )
 
 // Middleware implements middleware than allows a web application
@@ -108,17 +109,21 @@ func (m *Middleware) ServeACS(w http.ResponseWriter, r *http.Request) {
 // to start the SAML auth flow.
 func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Debugf("RequireAccount: Getting the Session")
 		session, err := m.Session.GetSession(r)
 		if session != nil {
+			log.Debugf("RequireAccount: Session Not nil")
 			r = r.WithContext(ContextWithSession(r.Context(), session))
 			handler.ServeHTTP(w, r)
 			return
 		}
 		if err == ErrNoSession {
+			log.Debugf("RequireAccount: Error No Session")
 			m.HandleStartAuthFlow(w, r)
 			return
 		}
 
+		log.Debugf("RequireAccount: error")
 		m.OnError(w, r, err)
 	})
 }

@@ -36,16 +36,21 @@ func (c CookieSessionProvider) CreateSession(w http.ResponseWriter, r *http.Requ
 		c.Domain = domain
 	}
 
+	log.Debugf("Creating the assertion")
 	session, err := c.Codec.New(assertion)
 	if err != nil {
+		log.Debugf("Error Creating the assertion")
 		return err
 	}
 
+	log.Debugf("Encoding the Session")
 	value, err := c.Codec.Encode(session)
 	if err != nil {
+		log.Debugf("Error Encoding the Session")
 		return err
 	}
 
+	log.Debugf("Setting the Cookie")
 	http.SetCookie(w, &http.Cookie{
 		Name:     c.Name,
 		Domain:   c.Domain,
@@ -91,14 +96,18 @@ func (c CookieSessionProvider) GetSession(r *http.Request) (Session, error) {
 	log.Debugf("Get Session")
 	cookie, err := r.Cookie(c.Name)
 	if err == http.ErrNoCookie {
+		log.Debugf("Get Session: Error No Session")
 		return nil, ErrNoSession
 	} else if err != nil {
+		log.Debugf("Get Session: Error")
 		return nil, err
 	}
 
 	session, err := c.Codec.Decode(cookie.Value)
 	if err != nil {
+		log.Debugf("Get Session decode: Error No Session")
 		return nil, ErrNoSession
 	}
+	log.Debugf("Returning the session")
 	return session, nil
 }
