@@ -119,6 +119,7 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 		}
 		if err == ErrNoSession {
 			log.Debugf("RequireAccount: Error No Session")
+			log.Debugf("RequireAccount: Error: %s", err)
 			m.HandleStartAuthFlow(w, r)
 			return
 		}

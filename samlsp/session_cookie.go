@@ -50,8 +50,7 @@ func (c CookieSessionProvider) CreateSession(w http.ResponseWriter, r *http.Requ
 		return err
 	}
 
-	log.Debugf("Setting the Cookie")
-	http.SetCookie(w, &http.Cookie{
+	cookie := &http.Cookie{
 		Name:     c.Name,
 		Domain:   c.Domain,
 		Value:    value,
@@ -60,7 +59,12 @@ func (c CookieSessionProvider) CreateSession(w http.ResponseWriter, r *http.Requ
 		Secure:   c.Secure || r.URL.Scheme == "https",
 		SameSite: c.SameSite,
 		Path:     "/",
-	})
+	}
+
+	log.Debugf("Setting the Cookie")
+	http.SetCookie(w, cookie)
+	log.Debugf("Log Response: %#v", w)
+	log.Debugf("Log Cookie: %#v", cookie)
 	log.Debugf("Cookie Set")
 	return nil
 }
@@ -88,6 +92,8 @@ func (c CookieSessionProvider) DeleteSession(w http.ResponseWriter, r *http.Requ
 	cookie.Path = "/"
 	cookie.Domain = c.Domain
 	http.SetCookie(w, cookie)
+	log.Debugf("Log Response: %#v", w)
+	log.Debugf("Log Cookie: %#v", cookie)
 	return nil
 }
 
@@ -98,6 +104,7 @@ func (c CookieSessionProvider) GetSession(r *http.Request) (Session, error) {
 	cookie, err := r.Cookie(c.Name)
 	if err == http.ErrNoCookie {
 		log.Debugf("Get Session: Error No Session")
+		log.Debugf("Get Session: Error No Session: %s", err)
 		return nil, ErrNoSession
 	} else if err != nil {
 		log.Debugf("Get Session: Error")
