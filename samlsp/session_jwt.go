@@ -81,16 +81,12 @@ func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
 	Attributes["ExpiresAtSAML"] = append(Attributes["ExpiresAtSAML"], strExpiresAt)
 
 	log.Debugf("Turning claims in to json")
-	mapAsBytes, err := json.Marshal(Attributes)
-	if err != nil {
-		fmt.Println("Error marshaling claims to JSON:", err)
-		log.Fatalf("json marshal error: %s", err)
-	}
+	mapAsBytes, _ := json.Marshal(Attributes)
 	mapstring := string(mapAsBytes)
+	log.Debugf("attribute string: %s", mapstring)
 	id, err := uuid.NewRandom()
 	if err != nil {
-		fmt.Println("error getting uuid: ", err)
-		log.Panicf("error getting uuid: ", err)
+		log.Panicf("error getting uuid: %s", err)
 	}
 	stringid := id.String()
 	saml.UserAttributes[stringid] = mapstring
