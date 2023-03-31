@@ -96,6 +96,7 @@ func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
 	saml.UserAttributes[stringid] = mapstring
 	claims.Attributes["id"] = append(claims.Attributes["id"], stringid)
 
+	log.Debugf("Returning Claims")
 	return claims, nil
 }
 
