@@ -2,9 +2,14 @@ package samlsp
 
 import (
 	"crypto/rsa"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
+
+	log "github.com/sirupsen/logrus"
+
+	"github.com/google/uuid"
 
 	"github.com/golang-jwt/jwt/v4"
 
@@ -47,6 +52,7 @@ func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
 		}
 	}
 
+	Attributes := map[string][]string{}
 	claims.Attributes = map[string][]string{}
 
 	for _, attributeStatement := range assertion.AttributeStatements {
@@ -56,7 +62,7 @@ func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
 				claimName = attr.Name
 			}
 			for _, value := range attr.Values {
-				claims.Attributes[claimName] = append(claims.Attributes[claimName], value.Value)
+				Attributes[claimName] = append(Attributes[claimName], value.Value)
 			}
 		}
 	}
@@ -66,6 +72,21 @@ func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
 		claims.Attributes[claimNameSessionIndex] = append(claims.Attributes[claimNameSessionIndex],
 			authnStatement.SessionIndex)
 	}
+
+	log.Debugf("Attributes: %#v", Attributes)
+
+	mapAsBytes, err := json.Marshal(claims)
+	if err != nil {
+		log.Fatalf("json marshal error: %s", err)
+	}
+	mapstring := string(mapAsBytes)
+	id, err := uuid.NewRandom()
+	if err != nil {
+		log.Panicf("error getting uuid: %s", err)
+	}
+	stringid := id.String()
+	saml.UserAttributes[stringid] = mapstring
+	claims.Attributes["id"] = append(claims.Attributes["id"], stringid)
 
 	return claims, nil
 }
@@ -96,6 +117,16 @@ func (c JWTSessionCodec) Decode(signed string) (Session, error) {
 	_, err := parser.ParseWithClaims(signed, &claims, func(*jwt.Token) (interface{}, error) {
 		return c.Key.Public(), nil
 	})
+
+	UserId := claims.Attributes["id"]
+	id := fmt.Sprintf("%s", UserId)
+	mapstring := saml.UserAttributes[id]
+	attributes := map[string]string{}
+	json.Unmarshal([]byte(mapstring), &attributes)
+	for k, v := range attributes {
+		claims.Attributes[k] = append(claims.Attributes[k], v)
+	}
+
 	// TODO(ross): check for errors due to bad time and return ErrNoSession
 	if err != nil {
 		return nil, err
