@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -116,6 +117,7 @@ func (c JWTSessionCodec) Encode(s Session) (string, error) {
 // Decode parses the serialized session that may have been returned by Encode
 // and returns a Session.
 func (c JWTSessionCodec) Decode(signed string) (Session, error) {
+	log.Debugf("Starting Debug")
 	parser := jwt.Parser{
 		ValidMethods: []string{c.SigningMethod.Alg()},
 	}
@@ -125,8 +127,10 @@ func (c JWTSessionCodec) Decode(signed string) (Session, error) {
 	})
 
 	UserId := claims.Attributes["id"]
-	id := fmt.Sprintf("%s", UserId)
-	mapstring := saml.UserAttributes[id]
+	log.Debugf("UserID: %s", UserId)
+	UserIdString := strings.Join(UserId, "")
+	log.Debugf("UserID: %s", &UserIdString)
+	mapstring := saml.UserAttributes[UserIdString]
 	attributes := map[string]string{}
 	json.Unmarshal([]byte(mapstring), &attributes)
 	for k, v := range attributes {
