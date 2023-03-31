@@ -134,7 +134,9 @@ func (c JWTSessionCodec) Decode(signed string) (Session, error) {
 	log.Debugf("map String: %#v", mapstring)
 	attributes := map[string]string{}
 	json.Unmarshal([]byte(mapstring), &attributes)
+	log.Debugf("Map: %#v", attributes)
 	for k, v := range attributes {
+		log.Debugf("key: %s", k)
 		claims.Attributes[k] = append(claims.Attributes[k], v)
 	}
 
