@@ -1,3 +1,3 @@
 package saml
 
-var UserAttributes map[string]string
+var UserAttributes = map[string]string{}
