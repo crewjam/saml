@@ -84,10 +84,7 @@ func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
 	mapAsBytes, _ := json.Marshal(Attributes)
 	mapstring := string(mapAsBytes)
 	log.Debugf("attribute string: %s", mapstring)
-	id, err := uuid.NewRandom()
-	if err != nil {
-		log.Panicf("error getting uuid: %s", err)
-	}
+	id, _ := uuid.NewRandom()
 	stringid := id.String()
 	saml.UserAttributes[stringid] = mapstring
 	claims.Attributes["id"] = append(claims.Attributes["id"], stringid)
