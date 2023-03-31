@@ -43,7 +43,8 @@ func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
 	claims.Audience = c.Audience
 	claims.Issuer = c.Issuer
 	claims.IssuedAt = now.Unix()
-	claims.ExpiresAt = now.Add(c.MaxAge).Unix()
+	expiresat := now.Add(c.MaxAge).Unix()
+	claims.ExpiresAt = expiresat
 	claims.NotBefore = now.Unix()
 
 	if sub := assertion.Subject; sub != nil {
@@ -75,12 +76,14 @@ func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
 
 	log.Debugf("Attributes: %#v", Attributes)
 
+	strExpiresAt := fmt.Sprintf("%d", expiresat)
+
+	Attributes["ExpiresAtSAML"] = append(Attributes["ExpiresAtSAML"], strExpiresAt)
+
 	log.Debugf("Turning claims in to json")
-	mapAsBytes, err := json.Marshal(claims)
+	mapAsBytes, err := json.Marshal(Attributes)
 	if err != nil {
 		fmt.Println("Error marshaling claims to JSON:", err)
-		log.Errorf("%s", err)
-		log.Debugf("Error on Marshalling json")
 		log.Fatalf("json marshal error: %s", err)
 	}
 	mapstring := string(mapAsBytes)
