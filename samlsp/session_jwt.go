@@ -132,12 +132,13 @@ func (c JWTSessionCodec) Decode(signed string) (Session, error) {
 	log.Debugf("String UserID: %s", UserIdString)
 	mapstring := saml.UserAttributes[UserIdString]
 	log.Debugf("map String: %#v", mapstring)
-	var attributes map[string]interface{}
+	var attributes map[string][]string
 	json.Unmarshal([]byte(mapstring), &attributes)
 	log.Debugf("Map: %#v", attributes)
 	for k, v := range attributes {
 		log.Debugf("key: %s", k)
-		claims.Attributes[k] = append(claims.Attributes[k], v.(string))
+		log.Debugf("value: %s", v)
+		claims.Attributes[k] = v
 	}
 
 	// TODO(ross): check for errors due to bad time and return ErrNoSession
