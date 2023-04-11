@@ -1064,7 +1064,7 @@ func TestIDPNoDestination(t *testing.T) {
 }
 
 func TestIDPRejectDecompressionBomb(t *testing.T) {
-	test := NewIdentifyProviderTest(t)
+	test := NewIdentityProviderTest(t)
 	test.IDP.SessionProvider = &mockSessionProvider{
 		GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
 			fmt.Fprintf(w, "RelayState: %s\nSAMLRequest: %s",
