@@ -207,8 +207,8 @@ func TestIDPHTTPCanHandleMetadataRequest(t *testing.T) {
 	test.IDP.Handler().ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
 	assert.Check(t, is.Equal("application/samlmetadata+xml", w.Header().Get("Content-type")))
-	assert.Check(t, strings.HasPrefix(string(w.Body.Bytes()), "<EntityDescriptor"),
-		string(w.Body.Bytes()))
+	assert.Check(t, strings.HasPrefix(w.Body.String(), "<EntityDescriptor"),
+		w.Body.String())
 }
 
 func TestIDPCanHandleRequestWithNewSession(t *testing.T) {
@@ -760,7 +760,7 @@ func TestIDPIDPInitiatedNewSession(t *testing.T) {
 	r, _ := http.NewRequest("GET", "https://idp.example.com/services/sp/whoami", nil)
 	test.IDP.ServeIDPInitiated(w, r, test.SP.MetadataURL.String(), "ThisIsTheRelayState")
 	assert.Check(t, is.Equal(200, w.Code))
-	assert.Check(t, is.Equal("RelayState: ThisIsTheRelayState", string(w.Body.Bytes())))
+	assert.Check(t, is.Equal("RelayState: ThisIsTheRelayState", w.Body.String()))
 }
 
 func TestIDPIDPInitiatedExistingSession(t *testing.T) {
@@ -1026,18 +1026,18 @@ func TestIDPRejectDecompressionBomb(t *testing.T) {
 		},
 	}
 
-	//w := httptest.NewRecorder()
-
 	data := bytes.Repeat([]byte("a"), 768*1024*1024)
 	var compressed bytes.Buffer
 	w, _ := flate.NewWriter(&compressed, flate.BestCompression)
-	w.Write(data)
-	w.Close()
+	_, err := w.Write(data)
+	assert.Check(t, err)
+	err = w.Close()
+	assert.Check(t, err)
 	encoded := base64.StdEncoding.EncodeToString(compressed.Bytes())
 
 	r, _ := http.NewRequest("GET", "/dontcare?"+url.Values{
 		"SAMLRequest": {encoded},
 	}.Encode(), nil)
-	_, err := NewIdpAuthnRequest(&test.IDP, r)
+	_, err = NewIdpAuthnRequest(&test.IDP, r)
 	assert.Error(t, err, "cannot decompress request: flate: uncompress limit exceeded (10485760 bytes)")
 }

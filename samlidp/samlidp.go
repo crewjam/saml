@@ -47,9 +47,9 @@ type Server struct {
 // New returns a new Server
 func New(opts Options) (*Server, error) {
 	metadataURL := opts.URL
-	metadataURL.Path = metadataURL.Path + "/metadata"
+	metadataURL.Path += "/metadata"
 	ssoURL := opts.URL
-	ssoURL.Path = ssoURL.Path + "/sso"
+	ssoURL.Path += "/sso"
 	logr := opts.Logger
 	if logr == nil {
 		logr = logger.DefaultLogger

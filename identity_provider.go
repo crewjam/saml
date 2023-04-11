@@ -196,10 +196,13 @@ func (idp *IdentityProvider) Handler() http.Handler {
 }
 
 // ServeMetadata is an http.HandlerFunc that serves the IDP metadata
-func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, r *http.Request) {
+func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, _ *http.Request) {
 	buf, _ := xml.MarshalIndent(idp.Metadata(), "", "  ")
 	w.Header().Set("Content-Type", "application/samlmetadata+xml")
-	w.Write(buf)
+	if _, err := w.Write(buf); err != nil {
+		idp.Logger.Printf("ERROR: %s", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+	}
 }
 
 // ServeSSO handles SAML auth requests.
@@ -716,9 +719,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 		})
 	}
 
-	for _, ca := range session.CustomAttributes {
-		attributes = append(attributes, ca)
-	}
+	attributes = append(attributes, session.CustomAttributes...)
 
 	if len(session.Groups) != 0 {
 		groupMemberAttributeValues := []AttributeValue{}
