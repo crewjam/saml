@@ -43,8 +43,10 @@ func TestIDPHTTPCanHandleSSORequest(t *testing.T) {
 		d := bytes.Replace(c, []byte("<AuthnRequest"), []byte("<AuthnRequest ::foo=\"bar\">]]"), 1)
 		f := bytes.Buffer{}
 		e, _ := flate.NewWriter(&f, flate.DefaultCompression)
-		e.Write(d)
-		e.Close()
+		_, err := e.Write(d)
+		assert.Check(t, err)
+		err = e.Close()
+		assert.Check(t, err)
 		g := base64.StdEncoding.EncodeToString(f.Bytes())
 		invalidRequest := url.QueryEscape(g)
 

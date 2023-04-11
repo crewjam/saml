@@ -1,3 +1,4 @@
+// Package main contains an example identity provider implementation.
 package main
 
 import (

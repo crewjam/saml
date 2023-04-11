@@ -1,3 +1,4 @@
+// Package testsaml contains functions for use in testing SAML requests and responses.
 package testsaml
 
 import (

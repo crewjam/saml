@@ -32,7 +32,7 @@ type Link struct {
 }
 
 // CreateLink handles requests to create links
-func CreateLink(c web.C, w http.ResponseWriter, r *http.Request) {
+func CreateLink(_ web.C, w http.ResponseWriter, r *http.Request) {
 	account := r.Header.Get("X-Remote-User")
 	l := Link{
 		ShortLink: uniuri.New(),
@@ -42,22 +42,20 @@ func CreateLink(c web.C, w http.ResponseWriter, r *http.Request) {
 	links[l.ShortLink] = l
 
 	fmt.Fprintf(w, "%s\n", l.ShortLink)
-	return
 }
 
 // ServeLink handles requests to redirect to a link
-func ServeLink(c web.C, w http.ResponseWriter, r *http.Request) {
+func ServeLink(_ web.C, w http.ResponseWriter, r *http.Request) {
 	l, ok := links[strings.TrimPrefix(r.URL.Path, "/")]
 	if !ok {
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		return
 	}
 	http.Redirect(w, r, l.Target, http.StatusFound)
-	return
 }
 
 // ListLinks returns a list of the current user's links
-func ListLinks(c web.C, w http.ResponseWriter, r *http.Request) {
+func ListLinks(_ web.C, w http.ResponseWriter, r *http.Request) {
 	account := r.Header.Get("X-Remote-User")
 	for _, l := range links {
 		if l.Owner == account {
@@ -145,14 +143,24 @@ func main() {
 
 	spURL := *idpMetadataURL
 	spURL.Path = "/services/sp"
-	http.Post(spURL.String(), "text/xml", bytes.NewReader(spMetadataBuf))
+	resp, err := http.Post(spURL.String(), "text/xml", bytes.NewReader(spMetadataBuf))
+
+	if err != nil {
+		panic(err)
+	}
+
+	if err := resp.Body.Close(); err != nil {
+		panic(err)
+	}
 
 	goji.Handle("/saml/*", samlSP)
 
 	authMux := web.New()
 	authMux.Use(samlSP.RequireAccount)
 	authMux.Get("/whoami", func(w http.ResponseWriter, r *http.Request) {
-		pretty.Fprintf(w, "%# v", r)
+		if _, err := pretty.Fprintf(w, "%# v", r); err != nil {
+			panic(err)
+		}
 	})
 	authMux.Post("/", CreateLink)
 	authMux.Get("/", ListLinks)

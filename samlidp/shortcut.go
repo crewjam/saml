@@ -31,28 +31,35 @@ type Shortcut struct {
 
 // HandleListShortcuts handles the `GET /shortcuts/` request and responds with a JSON formatted list
 // of shortcut names.
-func (s *Server) HandleListShortcuts(c web.C, w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleListShortcuts(_ web.C, w http.ResponseWriter, _ *http.Request) {
 	shortcuts, err := s.Store.List("/shortcuts/")
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
-	json.NewEncoder(w).Encode(struct {
+	err = json.NewEncoder(w).Encode(struct {
 		Shortcuts []string `json:"shortcuts"`
 	}{Shortcuts: shortcuts})
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
 }
 
 // HandleGetShortcut handles the `GET /shortcuts/:id` request and responds with the shortcut
 // object in JSON format.
-func (s *Server) HandleGetShortcut(c web.C, w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleGetShortcut(c web.C, w http.ResponseWriter, _ *http.Request) {
 	shortcut := Shortcut{}
 	err := s.Store.Get(fmt.Sprintf("/shortcuts/%s", c.URLParams["id"]), &shortcut)
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(shortcut)
+	if err := json.NewEncoder(w).Encode(shortcut); err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
 }
 
 // HandlePutShortcut handles the `PUT /shortcuts/:id` request. It accepts a JSON formatted
@@ -74,7 +81,7 @@ func (s *Server) HandlePutShortcut(c web.C, w http.ResponseWriter, r *http.Reque
 }
 
 // HandleDeleteShortcut handles the `DELETE /shortcuts/:id` request.
-func (s *Server) HandleDeleteShortcut(c web.C, w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleDeleteShortcut(c web.C, w http.ResponseWriter, _ *http.Request) {
 	err := s.Store.Delete(fmt.Sprintf("/shortcuts/%s", c.URLParams["id"]))
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -100,7 +107,7 @@ func (s *Server) HandleIDPInitiated(c web.C, w http.ResponseWriter, r *http.Requ
 	case shortcut.RelayState != nil:
 		relayState = *shortcut.RelayState
 	case shortcut.URISuffixAsRelayState:
-		relayState, _ = c.URLParams["*"]
+		relayState = c.URLParams["*"]
 	}
 
 	s.idpConfigMu.RLock()
