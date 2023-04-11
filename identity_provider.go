@@ -1055,18 +1055,20 @@ func (req *IdpAuthnRequest) MakeResponse() error {
 }
 
 // signingContext will create a signing context for the request.
-func (req *IdpAuthnRequest) signingContext() (signingContext *dsig.SigningContext, err error) {
+func (req *IdpAuthnRequest) signingContext() (*dsig.SigningContext, error) {
 	// Create a cert chain based off of the IDP cert and its intermediates.
 	certificates := [][]byte{req.IDP.Certificate.Raw}
 	for _, cert := range req.IDP.Intermediates {
 		certificates = append(certificates, cert.Raw)
 	}
 
+	var signingContext *dsig.SigningContext
+	var err error
 	// If signer is set, use it instead of the private key.
 	if req.IDP.Signer != nil {
 		signingContext, err = dsig.NewSigningContext(req.IDP.Signer, certificates)
 		if err != nil {
-			return
+			return nil, err
 		}
 	} else {
 		keyPair := tls.Certificate{
@@ -1086,9 +1088,9 @@ func (req *IdpAuthnRequest) signingContext() (signingContext *dsig.SigningContex
 	}
 
 	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
-	if err = signingContext.SetSignatureMethod(signatureMethod); err != nil {
-		return
+	if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
+		return nil, err
 	}
 
-	return
+	return signingContext, nil
 }
