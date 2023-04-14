@@ -17,7 +17,8 @@ func TestFetchMetadata(t *testing.T) {
 
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Check(t, is.Equal("/metadata", r.URL.String()))
-		w.Write(test.IDPMetadata)
+		_, err := w.Write(test.IDPMetadata)
+		assert.Check(t, err)
 	}))
 
 	fmt.Println(testServer.URL + "/metadata")

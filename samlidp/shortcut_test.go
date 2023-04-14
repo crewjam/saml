@@ -17,7 +17,7 @@ func TestShortcutsCrud(t *testing.T) {
 	test.Server.ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
 	assert.Check(t, is.Equal("{\"shortcuts\":[]}\n",
-		string(w.Body.Bytes())))
+		w.Body.String()))
 
 	w = httptest.NewRecorder()
 	r, _ = http.NewRequest("PUT", "https://idp.example.com/shortcuts/bob",
@@ -30,14 +30,14 @@ func TestShortcutsCrud(t *testing.T) {
 	test.Server.ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
 	assert.Check(t, is.Equal("{\"name\":\"bob\",\"service_provider\":\"https://example.com/saml2/metadata\",\"url_suffix_as_relay_state\":true}\n",
-		string(w.Body.Bytes())))
+		w.Body.String()))
 
 	w = httptest.NewRecorder()
 	r, _ = http.NewRequest("GET", "https://idp.example.com/shortcuts/", nil)
 	test.Server.ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
 	assert.Check(t, is.Equal("{\"shortcuts\":[\"bob\"]}\n",
-		string(w.Body.Bytes())))
+		w.Body.String()))
 
 	w = httptest.NewRecorder()
 	r, _ = http.NewRequest("DELETE", "https://idp.example.com/shortcuts/bob", nil)
@@ -49,7 +49,7 @@ func TestShortcutsCrud(t *testing.T) {
 	test.Server.ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
 	assert.Check(t, is.Equal("{\"shortcuts\":[]}\n",
-		string(w.Body.Bytes())))
+		w.Body.String()))
 }
 
 func TestShortcut(t *testing.T) {
@@ -78,7 +78,7 @@ func TestShortcut(t *testing.T) {
 	r.Header.Set("Cookie", "session=AAIEBggKDA4QEhQWGBocHiAiJCYoKiwuMDI0Njg6PD4=")
 	test.Server.ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
-	body := string(w.Body.Bytes())
+	body := w.Body.String()
 
 	assert.Check(t, strings.Contains(body,
 		"<input type=\"hidden\" name=\"RelayState\" value=\"/whoami\" />"),
