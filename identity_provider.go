@@ -96,6 +96,7 @@ type AssertionMaker interface {
 // and password).
 type IdentityProvider struct {
 	Key                     crypto.PrivateKey
+	Signer                  crypto.Signer
 	Logger                  logger.Interface
 	Certificate             *x509.Certificate
 	Intermediates           []*x509.Certificate
@@ -831,24 +832,8 @@ const canonicalizerPrefixList = ""
 
 // MakeAssertionEl sets `AssertionEl` to a signed, possibly encrypted, version of `Assertion`.
 func (req *IdpAuthnRequest) MakeAssertionEl() error {
-	keyPair := tls.Certificate{
-		Certificate: [][]byte{req.IDP.Certificate.Raw},
-		PrivateKey:  req.IDP.Key,
-		Leaf:        req.IDP.Certificate,
-	}
-	for _, cert := range req.IDP.Intermediates {
-		keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
-	}
-	keyStore := dsig.TLSCertKeyStore(keyPair)
-
-	signatureMethod := req.IDP.SignatureMethod
-	if signatureMethod == "" {
-		signatureMethod = dsig.RSASHA1SignatureMethod
-	}
-
-	signingContext := dsig.NewDefaultSigningContext(keyStore)
-	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
-	if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
+	signingContext, err := req.signingContext()
+	if err != nil {
 		return err
 	}
 
@@ -1049,24 +1034,8 @@ func (req *IdpAuthnRequest) MakeResponse() error {
 
 	// Sign the response element (we've already signed the Assertion element)
 	{
-		keyPair := tls.Certificate{
-			Certificate: [][]byte{req.IDP.Certificate.Raw},
-			PrivateKey:  req.IDP.Key,
-			Leaf:        req.IDP.Certificate,
-		}
-		for _, cert := range req.IDP.Intermediates {
-			keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
-		}
-		keyStore := dsig.TLSCertKeyStore(keyPair)
-
-		signatureMethod := req.IDP.SignatureMethod
-		if signatureMethod == "" {
-			signatureMethod = dsig.RSASHA1SignatureMethod
-		}
-
-		signingContext := dsig.NewDefaultSigningContext(keyStore)
-		signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
-		if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
+		signingContext, err := req.signingContext()
+		if err != nil {
 			return err
 		}
 
@@ -1083,4 +1052,45 @@ func (req *IdpAuthnRequest) MakeResponse() error {
 
 	req.ResponseEl = responseEl
 	return nil
+}
+
+// signingContext will create a signing context for the request.
+func (req *IdpAuthnRequest) signingContext() (*dsig.SigningContext, error) {
+	// Create a cert chain based off of the IDP cert and its intermediates.
+	certificates := [][]byte{req.IDP.Certificate.Raw}
+	for _, cert := range req.IDP.Intermediates {
+		certificates = append(certificates, cert.Raw)
+	}
+
+	var signingContext *dsig.SigningContext
+	var err error
+	// If signer is set, use it instead of the private key.
+	if req.IDP.Signer != nil {
+		signingContext, err = dsig.NewSigningContext(req.IDP.Signer, certificates)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		keyPair := tls.Certificate{
+			Certificate: certificates,
+			PrivateKey:  req.IDP.Key,
+			Leaf:        req.IDP.Certificate,
+		}
+		keyStore := dsig.TLSCertKeyStore(keyPair)
+
+		signingContext = dsig.NewDefaultSigningContext(keyStore)
+	}
+
+	// Default to using SHA1 if the signature method isn't set.
+	signatureMethod := req.IDP.SignatureMethod
+	if signatureMethod == "" {
+		signatureMethod = dsig.RSASHA1SignatureMethod
+	}
+
+	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
+	if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
+		return nil, err
+	}
+
+	return signingContext, nil
 }

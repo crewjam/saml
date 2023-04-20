@@ -20,6 +20,7 @@ import (
 type Options struct {
 	URL         url.URL
 	Key         crypto.PrivateKey
+	Signer      crypto.Signer
 	Logger      logger.Interface
 	Certificate *x509.Certificate
 	Store       Store
@@ -59,6 +60,7 @@ func New(opts Options) (*Server, error) {
 		serviceProviders: map[string]*saml.EntityDescriptor{},
 		IDP: saml.IdentityProvider{
 			Key:         opts.Key,
+			Signer:      opts.Signer,
 			Logger:      logr,
 			Certificate: opts.Certificate,
 			MetadataURL: metadataURL,
