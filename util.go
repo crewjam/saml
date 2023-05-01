@@ -51,9 +51,5 @@ func IsSameBase(refURL, someURL string) bool {
 	base := ref.ResolveReference(&url.URL{Path: "/"})
 	base.Path = "" // Strip path "/"
 
-	if strings.HasPrefix(someURL, base.String()) {
-		return true
-	}
-
-	return false
+	return strings.HasPrefix(someURL, base.String())
 }

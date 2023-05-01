@@ -2,9 +2,9 @@ name: test
 
 on:
   push:
-    branches: [ 'main' ]
+    branches: [ 'main', 'invision-main', 'releases/**' ]
   pull_request:
-    branches: [ 'main' ]
+    branches: [ 'main', 'invision-main', 'releases/**' ]
 jobs:
   tests:
     name: Run tests

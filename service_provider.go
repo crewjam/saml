@@ -304,7 +304,7 @@ func (r *AuthnRequest) Redirect(relayState string, sp *ServiceProvider) (*url.UR
 		query += "SAMLRequest=" + url.QueryEscape(w.String())
 	}
 
-	queryToBeSigned := "SAMLRequest=" + url.QueryEscape(string(w.Bytes()))
+	queryToBeSigned := "SAMLRequest=" + url.QueryEscape(w.String())
 
 	if relayState != "" {
 		query += "&RelayState=" + relayState
