@@ -3,7 +3,7 @@ module github.com/crewjam/saml
 go 1.16
 
 require (
-	github.com/beevik/etree v1.1.0
+	github.com/beevik/etree v1.1.3
 	github.com/crewjam/httperr v0.2.0
 	github.com/dchest/uniuri v1.2.0
 	github.com/golang-jwt/jwt/v4 v4.4.3
