@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	defaultSessionMaxAge  = time.Hour
+	defaultSessionMaxAge  = time.Hour * 12
 	claimNameSessionIndex = "SessionIndex"
 )
 
