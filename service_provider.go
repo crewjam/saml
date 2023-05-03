@@ -155,6 +155,10 @@ type ServiceProvider struct {
 	// AudienceRestriction value is the unique company URL (with subdomain).
 	// In order to maintain backwards compatibility, allow the URL without path.
 	EaseAudienceRestrictions bool
+
+	// Required by AUTH-2448 and still occurring in the latest release.
+	// Originally: https://github.com/InVisionApp/saml/pull/5/files
+	SkipResponseSignatureCheck bool
 }
 
 // MaxIssueDelay is the longest allowed time between when a SAML assertion is
@@ -882,6 +886,11 @@ const (
 func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequestIDs []string, now time.Time, signatureRequirement signatureRequirement) (*Assertion, error) {
 	var responseSignatureErr error
 	var responseHasSignature bool
+
+	if sp.SkipResponseSignatureCheck {
+		signatureRequirement = signatureNotRequired
+	}
+
 	if signatureRequirement == signatureRequired {
 		responseSignatureErr = sp.validateSignature(responseEl)
 		if responseSignatureErr != errSignatureElementNotPresent {
