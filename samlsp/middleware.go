@@ -2,6 +2,7 @@ package samlsp
 
 import (
 	"encoding/xml"
+	"log"
 	"net/http"
 
 	"github.com/crewjam/saml"
@@ -102,6 +103,12 @@ func (m *Middleware) ServeACS(w http.ResponseWriter, r *http.Request) {
 // to start the SAML auth flow.
 func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cookies := r.Cookies()
+		for _, cookie := range cookies {
+			log.Printf("Cookie Name: %s\n", cookie.Name)
+			log.Printf("Cookie Value: %s\n", cookie.Value)
+		}
+		panic("Panic in RequireAccount!")
 		session, err := m.Session.GetSession(r)
 		if session != nil {
 			r = r.WithContext(ContextWithSession(r.Context(), session))
