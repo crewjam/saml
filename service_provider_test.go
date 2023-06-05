@@ -142,7 +142,6 @@ func TestSPCanProduceMetadataWithBothCerts(t *testing.T) {
 	spMetadata, err := xml.MarshalIndent(s.Metadata(), "", "  ")
 	assert.Check(t, err)
 	golden.Assert(t, string(spMetadata), t.Name()+"_metadata")
-
 }
 
 func TestCanProduceMetadataNoCerts(t *testing.T) {
@@ -1666,7 +1665,6 @@ func TestMakeSignedArtifactResolveRequestWithBogusSignatureMethod(t *testing.T) 
 
 	_, err := sp.MakeArtifactResolveRequest("artifactId")
 	assert.Check(t, is.ErrorContains(err, "invalid signing method bogus"))
-
 }
 
 func TestParseXMLArtifactResponse(t *testing.T) {
@@ -1851,4 +1849,55 @@ func TestMultipleAssertions(t *testing.T) {
 
 	assert.Check(t, err)
 	assert.Check(t, profile.Subject.NameID.Value != "admin@evil.com")
+}
+
+func TestSPCanProduceMetadataWithOrganizationContactPerson(t *testing.T) {
+	test := NewServiceProviderTest(t)
+
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("https://example.com/saml2/metadata"),
+		AcsURL:      mustParseURL("https://example.com/saml2/acs"),
+		SloURL:      mustParseURL("https://example.com/saml2/slo"),
+		IDPMetadata: &EntityDescriptor{},
+		Organization: &Organization{
+			OrganizationNames: []LocalizedName{
+				{
+					Value: "Test Organization",
+					Lang:  "en-US",
+				},
+			},
+			OrganizationDisplayNames: []LocalizedName{
+				{
+					Value: "Test Organization",
+					Lang:  "en-US",
+				},
+			},
+			OrganizationURLs: []LocalizedURI{
+				{
+					Value: "https://www.example.com",
+					Lang:  "en-US",
+				},
+			},
+		},
+		ContactPerson: &ContactPerson{
+			ContactType: "technical",
+			Company:     "Test Company",
+			GivenName:   "Test",
+			SurName:     "User",
+			EmailAddresses: []string{
+				"test@example.com",
+			},
+			TelephoneNumbers: []string{
+				"+1 555 555 5555",
+			},
+		},
+	}
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	spMetadata, err := xml.MarshalIndent(s.Metadata(), "", "  ")
+	assert.Check(t, err)
+	golden.Assert(t, string(spMetadata), t.Name()+"_metadata")
 }
