@@ -31,6 +31,8 @@ type Options struct {
 	CookieName            string
 	RelayStateFunc        func(w http.ResponseWriter, r *http.Request) string
 	LogoutBindings        []string
+	Organization          *saml.Organization
+	ContactPerson         *saml.ContactPerson
 }
 
 // DefaultSessionCodec returns the default SessionCodec for the provided options,
@@ -128,6 +130,8 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		AllowIDPInitiated:     opts.AllowIDPInitiated,
 		DefaultRedirectURI:    opts.DefaultRedirectURI,
 		LogoutBindings:        opts.LogoutBindings,
+		Organization:          opts.Organization,
+		ContactPerson:         opts.ContactPerson,
 	}
 }
 
