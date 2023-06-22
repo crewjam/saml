@@ -16,7 +16,7 @@ func TestUsersCrud(t *testing.T) {
 	r, _ := http.NewRequest("GET", "https://idp.example.com/users/", nil)
 	test.Server.ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
-	assert.Check(t, is.Equal("{\"users\":[]}\n", string(w.Body.Bytes())))
+	assert.Check(t, is.Equal("{\"users\":[]}\n", w.Body.String()))
 
 	w = httptest.NewRecorder()
 	r, _ = http.NewRequest("PUT", "https://idp.example.com/users/alice",
@@ -28,13 +28,13 @@ func TestUsersCrud(t *testing.T) {
 	r, _ = http.NewRequest("GET", "https://idp.example.com/users/alice", nil)
 	test.Server.ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
-	assert.Check(t, is.Equal("{\"name\":\"alice\"}\n", string(w.Body.Bytes())))
+	assert.Check(t, is.Equal("{\"name\":\"alice\"}\n", w.Body.String()))
 
 	w = httptest.NewRecorder()
 	r, _ = http.NewRequest("GET", "https://idp.example.com/users/", nil)
 	test.Server.ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
-	assert.Check(t, is.Equal("{\"users\":[\"alice\"]}\n", string(w.Body.Bytes())))
+	assert.Check(t, is.Equal("{\"users\":[\"alice\"]}\n", w.Body.String()))
 
 	w = httptest.NewRecorder()
 	r, _ = http.NewRequest("DELETE", "https://idp.example.com/users/alice", nil)
@@ -45,5 +45,5 @@ func TestUsersCrud(t *testing.T) {
 	r, _ = http.NewRequest("GET", "https://idp.example.com/users/", nil)
 	test.Server.ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
-	assert.Check(t, is.Equal("{\"users\":[]}\n", string(w.Body.Bytes())))
+	assert.Check(t, is.Equal("{\"users\":[]}\n", w.Body.String()))
 }

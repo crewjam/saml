@@ -100,6 +100,5 @@ func TestCanDecryptWithoutCertificate(t *testing.T) {
 		el = doc.Root().FindElement("//EncryptedData")
 		_, err = Decrypt(key, el)
 		assert.Check(t, err)
-		//assertion.NotNil(t, plaintext)
 	})
 }

@@ -26,10 +26,12 @@ func TestCookieSameSite(t *testing.T) {
 		resp := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		err := csp.CreateSession(resp, req, &saml.Assertion{})
-		assert.Check(t, err)
+		assert.Check(tb, err)
 
-		cookies := resp.Result().Cookies()
-		assert.Check(t, is.Len(cookies, 1), "Expected to have a cookie set")
+		result := resp.Result()
+		cookies := result.Cookies()
+		assert.Check(tb, is.Len(cookies, 1), "Expected to have a cookie set")
+		assert.Check(tb, result.Body.Close())
 
 		return cookies[0]
 	}

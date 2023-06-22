@@ -18,12 +18,13 @@ import (
 
 func TestFetchMetadataRejectsInvalid(t *testing.T) {
 	test := NewMiddlewareTest(t)
-	test.IDPMetadata = bytes.Replace(test.IDPMetadata,
-		[]byte("<EntityDescriptor "), []byte("<EntityDescriptor ::foo=\"bar\">]]"), -1)
+	test.IDPMetadata = bytes.ReplaceAll(test.IDPMetadata,
+		[]byte("<EntityDescriptor "), []byte("<EntityDescriptor ::foo=\"bar\">]]"))
 
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Check(t, is.Equal("/metadata", r.URL.String()))
-		w.Write(test.IDPMetadata)
+		_, err := w.Write(test.IDPMetadata)
+		assert.Check(t, err)
 	}))
 
 	fmt.Println(testServer.URL + "/metadata")
