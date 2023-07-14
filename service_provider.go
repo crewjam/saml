@@ -1672,7 +1672,7 @@ func elementToBytes(el *etree.Element) ([]byte, error) {
 			}
 			namespaces[childEl.Space] = ns
 		}
-		RUNCONTINUE:
+	RUNCONTINUE:
 	}
 
 	doc := etree.NewDocument()
