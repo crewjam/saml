@@ -80,6 +80,12 @@ func New(opts Options) (*Server, error) {
 	return s, nil
 }
 
+func (s *Server) InitializeLogger(logger logger.Interface) {
+	if s != nil {
+		s.logger = logger
+	}
+}
+
 // InitializeHTTP sets up the HTTP handler for the server. (This function
 // is called automatically for you by New, but you may need to call it
 // yourself if you don't create the object using New.)

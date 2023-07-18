@@ -93,6 +93,9 @@ func (s *Server) HandlePutService(c web.C, w http.ResponseWriter, r *http.Reques
 	}
 
 	s.idpConfigMu.Lock()
+	if s.serviceProviders == nil {
+		s.serviceProviders = map[string]*saml.EntityDescriptor{}
+	}
 	s.serviceProviders[service.Metadata.EntityID] = &service.Metadata
 	s.idpConfigMu.Unlock()
 
