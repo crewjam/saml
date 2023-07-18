@@ -80,7 +80,7 @@ func New(opts Options) (*Server, error) {
 	return s, nil
 }
 
-// Initialize the Server logger. (This function should be used only when
+// InitializeLogger initialize the Server logger. (This function should be used only when
 // not using the default New(opts Options) function where the logger
 // object can be passed through the options)
 func (s *Server) InitializeLogger(logger logger.Interface) {
