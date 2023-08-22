@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/crewjam/saml"
+	"github.com/elonsoc/saml"
 )
 
 const defaultSessionCookieName = "token"
@@ -42,11 +42,9 @@ func getDomainFromURI(domainPtr *string) error {
 	// the provided domain is not a URL, so it should be a hostname
 	if domain, _, err := net.SplitHostPort(*domainPtr); err == nil {
 		*domainPtr = domain
-		return nil
-	} else {
-		return err
 	}
 
+	return nil
 }
 
 // CreateSession is called when we have received a valid SAML assertion and

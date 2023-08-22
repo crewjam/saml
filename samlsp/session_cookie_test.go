@@ -8,7 +8,7 @@ import (
 	"gotest.tools/assert"
 	is "gotest.tools/assert/cmp"
 
-	"github.com/crewjam/saml"
+	"github.com/elonsoc/saml"
 )
 
 func TestCookieSameSite(t *testing.T) {
@@ -48,11 +48,15 @@ func TestCookieSameSite(t *testing.T) {
 	})
 }
 
-var domains = []string{
-	"http://idp.example.com",
-	"https://idp.example.com",
-	"HTTP://idp.example.com",
-	"HTTPS://idp.example.com",
+var domains = []struct {
+	input    string
+	expected string
+}{
+	{"http://idp.example.com", "idp.example.com"},
+	{"https://idp.example.com", "idp.example.com"},
+	{"HTTP://idp.example.com", "idp.example.com"},
+	{"HTTPS://idp.example.com", "idp.example.com"},
+	{"http://localhost", "localhost"},
 }
 
 func TestCookieHttpDomain(t *testing.T) {
@@ -62,7 +66,7 @@ func TestCookieHttpDomain(t *testing.T) {
 
 		csp := CookieSessionProvider{
 			Name:   "token",
-			Domain: domain,
+			Domain: domain.input,
 			Codec: DefaultSessionCodec(Options{
 				Key: NewMiddlewareTest(t).Key,
 			}),
@@ -84,7 +88,7 @@ func TestCookieHttpDomain(t *testing.T) {
 
 		t.Run("domain persists", func(t *testing.T) {
 			cookie := getSessionCookie(t)
-			assert.Check(t, is.Equal(cookie.Domain, "idp.example.com"))
+			assert.Check(t, is.Equal(cookie.Domain, domain.expected))
 		})
 	}
 
