@@ -3,6 +3,8 @@ package samlsp
 import (
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/crewjam/saml"
@@ -24,13 +26,37 @@ type CookieSessionProvider struct {
 	Codec    SessionCodec
 }
 
+// getDomainFromURI formats a domain string into a proper
+// domain name to be inlayed into a cookie.
+func getDomainFromURI(domainPtr *string) error {
+	domainStr := *domainPtr
+	if strings.ToLower(domainStr[:4]) == "http" {
+		u, err := url.Parse(*domainPtr)
+		if err != nil {
+			return err
+		}
+
+		*domainPtr = u.Hostname()
+		return nil
+	}
+	// the provided domain is not a URL, so it should be a hostname
+	if domain, _, err := net.SplitHostPort(*domainPtr); err == nil {
+		*domainPtr = domain
+		return nil
+	} else {
+		return err
+	}
+
+}
+
 // CreateSession is called when we have received a valid SAML assertion and
 // should create a new session and modify the http response accordingly, e.g. by
 // setting a cookie.
 func (c CookieSessionProvider) CreateSession(w http.ResponseWriter, r *http.Request, assertion *saml.Assertion) error {
 	// Cookies should not have the port attached to them so strip it off
-	if domain, _, err := net.SplitHostPort(c.Domain); err == nil {
-		c.Domain = domain
+	err := getDomainFromURI(&c.Domain)
+	if err != nil {
+		return err
 	}
 
 	session, err := c.Codec.New(assertion)

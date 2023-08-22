@@ -47,3 +47,77 @@ func TestCookieSameSite(t *testing.T) {
 		assert.Check(t, is.Equal(http.SameSiteStrictMode, cookie.SameSite))
 	})
 }
+
+var domains = []string{
+	"http://idp.example.com",
+	"https://idp.example.com",
+	"HTTP://idp.example.com",
+	"HTTPS://idp.example.com",
+}
+
+func TestCookieHttpDomain(t *testing.T) {
+	t.Parallel()
+
+	for _, domain := range domains {
+
+		csp := CookieSessionProvider{
+			Name:   "token",
+			Domain: domain,
+			Codec: DefaultSessionCodec(Options{
+				Key: NewMiddlewareTest(t).Key,
+			}),
+		}
+
+		getSessionCookie := func(tb testing.TB) *http.Cookie {
+			resp := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			err := csp.CreateSession(resp, req, &saml.Assertion{})
+			assert.Check(tb, err)
+
+			result := resp.Result()
+			cookies := result.Cookies()
+			assert.Check(tb, is.Len(cookies, 1), "Expected to have a cookie set")
+			assert.Check(tb, result.Body.Close())
+
+			return cookies[0]
+		}
+
+		t.Run("domain persists", func(t *testing.T) {
+			cookie := getSessionCookie(t)
+			assert.Check(t, is.Equal(cookie.Domain, "idp.example.com"))
+		})
+	}
+
+}
+
+func TestCookieHttpsSite(t *testing.T) {
+	t.Parallel()
+
+	csp := CookieSessionProvider{
+		Name:   "token",
+		Domain: "https://idp.example.com",
+		Codec: DefaultSessionCodec(Options{
+			Key: NewMiddlewareTest(t).Key,
+		}),
+	}
+
+	getSessionCookie := func(tb testing.TB) *http.Cookie {
+		resp := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		err := csp.CreateSession(resp, req, &saml.Assertion{})
+		assert.Check(tb, err)
+
+		result := resp.Result()
+		cookies := result.Cookies()
+		assert.Check(tb, is.Len(cookies, 1), "Expected to have a cookie set")
+		assert.Check(tb, result.Body.Close())
+
+		return cookies[0]
+	}
+
+	t.Run("domain persists", func(t *testing.T) {
+		cookie := getSessionCookie(t)
+		assert.Check(t, is.Equal(cookie.Domain, "idp.example.com"))
+	})
+
+}
