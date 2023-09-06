@@ -1665,8 +1665,14 @@ func elementToBytes(el *etree.Element) ([]byte, error) {
 	for _, childEl := range el.FindElements("//*") {
 		ns := childEl.NamespaceURI()
 		if ns != "" {
+			for _, attr := range el.Attr {
+				if childEl.Space == attr.Space {
+					goto RUNCONTINUE
+				}
+			}
 			namespaces[childEl.Space] = ns
 		}
+	RUNCONTINUE:
 	}
 
 	doc := etree.NewDocument()
