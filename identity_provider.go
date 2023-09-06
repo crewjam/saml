@@ -2,7 +2,6 @@ package saml
 
 import (
 	"bytes"
-	"compress/flate"
 	"crypto"
 	"crypto/tls"
 	"crypto/x509"
@@ -36,7 +35,10 @@ type Session struct {
 	ExpireTime time.Time
 	Index      string
 
-	NameID                string
+	NameID       string
+	NameIDFormat string
+	SubjectID    string
+
 	Groups                []string
 	UserName              string
 	UserEmail             string
@@ -94,6 +96,7 @@ type AssertionMaker interface {
 // and password).
 type IdentityProvider struct {
 	Key                     crypto.PrivateKey
+	Signer                  crypto.Signer
 	Logger                  logger.Interface
 	Certificate             *x509.Certificate
 	Intermediates           []*x509.Certificate
@@ -131,13 +134,21 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 							{
 								Use: "signing",
 								KeyInfo: KeyInfo{
-									Certificate: certStr,
+									X509Data: X509Data{
+										X509Certificates: []X509Certificate{
+											{Data: certStr},
+										},
+									},
 								},
 							},
 							{
 								Use: "encryption",
 								KeyInfo: KeyInfo{
-									Certificate: certStr,
+									X509Data: X509Data{
+										X509Certificates: []X509Certificate{
+											{Data: certStr},
+										},
+									},
 								},
 								EncryptionMethods: []EncryptionMethod{
 									{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
@@ -186,10 +197,13 @@ func (idp *IdentityProvider) Handler() http.Handler {
 }
 
 // ServeMetadata is an http.HandlerFunc that serves the IDP metadata
-func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, r *http.Request) {
+func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, _ *http.Request) {
 	buf, _ := xml.MarshalIndent(idp.Metadata(), "", "  ")
 	w.Header().Set("Content-Type", "application/samlmetadata+xml")
-	w.Write(buf)
+	if _, err := w.Write(buf); err != nil {
+		idp.Logger.Printf("ERROR: %s", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+	}
 }
 
 // ServeSSO handles SAML auth requests.
@@ -352,7 +366,7 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 		if err != nil {
 			return nil, fmt.Errorf("cannot decode request: %s", err)
 		}
-		req.RequestBuffer, err = ioutil.ReadAll(flate.NewReader(bytes.NewReader(compressedRequest)))
+		req.RequestBuffer, err = ioutil.ReadAll(newSaferFlateReader(bytes.NewReader(compressedRequest)))
 		if err != nil {
 			return nil, fmt.Errorf("cannot decompress request: %s", err)
 		}
@@ -706,9 +720,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 		})
 	}
 
-	for _, ca := range session.CustomAttributes {
-		attributes = append(attributes, ca)
-	}
+	attributes = append(attributes, session.CustomAttributes...)
 
 	if len(session.Groups) != 0 {
 		groupMemberAttributeValues := []AttributeValue{}
@@ -726,6 +738,19 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 		})
 	}
 
+	if session.SubjectID != "" {
+		attributes = append(attributes, Attribute{
+			Name:       "urn:oasis:names:tc:SAML:attribute:subject-id",
+			NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []AttributeValue{
+				{
+					Type:  "xs:string",
+					Value: session.SubjectID,
+				},
+			},
+		})
+	}
+
 	// allow for some clock skew in the validity period using the
 	// issuer's apparent clock.
 	notBefore := req.Now.Add(-1 * MaxClockSkew)
@@ -733,6 +758,12 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 	if notBefore.Before(req.Request.IssueInstant) {
 		notBefore = req.Request.IssueInstant
 		notOnOrAfterAfter = notBefore.Add(MaxIssueDelay)
+	}
+
+	nameIDFormat := "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
+
+	if session.NameIDFormat != "" {
+		nameIDFormat = session.NameIDFormat
 	}
 
 	req.Assertion = &Assertion{
@@ -745,7 +776,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 		},
 		Subject: &Subject{
 			NameID: &NameID{
-				Format:          "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+				Format:          nameIDFormat,
 				NameQualifier:   req.IDP.Metadata().EntityID,
 				SPNameQualifier: req.ServiceProviderMetadata.EntityID,
 				Value:           session.NameID,
@@ -801,24 +832,8 @@ const canonicalizerPrefixList = ""
 
 // MakeAssertionEl sets `AssertionEl` to a signed, possibly encrypted, version of `Assertion`.
 func (req *IdpAuthnRequest) MakeAssertionEl() error {
-	keyPair := tls.Certificate{
-		Certificate: [][]byte{req.IDP.Certificate.Raw},
-		PrivateKey:  req.IDP.Key,
-		Leaf:        req.IDP.Certificate,
-	}
-	for _, cert := range req.IDP.Intermediates {
-		keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
-	}
-	keyStore := dsig.TLSCertKeyStore(keyPair)
-
-	signatureMethod := req.IDP.SignatureMethod
-	if signatureMethod == "" {
-		signatureMethod = dsig.RSASHA1SignatureMethod
-	}
-
-	signingContext := dsig.NewDefaultSigningContext(keyStore)
-	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
-	if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
+	signingContext, err := req.signingContext()
+	if err != nil {
 		return err
 	}
 
@@ -854,7 +869,7 @@ func (req *IdpAuthnRequest) MakeAssertionEl() error {
 	encryptor := xmlenc.OAEP()
 	encryptor.BlockCipher = xmlenc.AES128CBC
 	encryptor.DigestMethod = &xmlenc.SHA1
-	encryptedDataEl, err := encryptor.Encrypt(certBuf, signedAssertionBuf)
+	encryptedDataEl, err := encryptor.Encrypt(certBuf, signedAssertionBuf, nil)
 	if err != nil {
 		return err
 	}
@@ -867,12 +882,23 @@ func (req *IdpAuthnRequest) MakeAssertionEl() error {
 	return nil
 }
 
-// WriteResponse writes the `Response` to the http.ResponseWriter. If
-// `Response` is not already set, it calls MakeResponse to produce it.
-func (req *IdpAuthnRequest) WriteResponse(w http.ResponseWriter) error {
+// IdpAuthnRequestForm contans HTML form information to be submitted to the
+// SAML HTTP POST binding ACS.
+type IdpAuthnRequestForm struct {
+	URL          string
+	SAMLResponse string
+	RelayState   string
+}
+
+// PostBinding creates the HTTP POST form information for this
+// `IdpAuthnRequest`. If `Response` is not already set, it calls MakeResponse
+// to produce it.
+func (req *IdpAuthnRequest) PostBinding() (IdpAuthnRequestForm, error) {
+	var form IdpAuthnRequestForm
+
 	if req.ResponseEl == nil {
 		if err := req.MakeResponse(); err != nil {
-			return err
+			return form, err
 		}
 	}
 
@@ -880,45 +906,48 @@ func (req *IdpAuthnRequest) WriteResponse(w http.ResponseWriter) error {
 	doc.SetRoot(req.ResponseEl)
 	responseBuf, err := doc.WriteToBytes()
 	if err != nil {
-		return err
+		return form, err
 	}
 
-	// the only supported binding is the HTTP-POST binding
-	switch req.ACSEndpoint.Binding {
-	case HTTPPostBinding:
-		tmpl := template.Must(template.New("saml-post-form").Parse(`<html>` +
-			`<form method="post" action="{{.URL}}" id="SAMLResponseForm">` +
-			`<input type="hidden" name="SAMLResponse" value="{{.SAMLResponse}}" />` +
-			`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
-			`<input id="SAMLSubmitButton" type="submit" value="Continue" />` +
-			`</form>` +
-			`<script>document.getElementById('SAMLSubmitButton').style.visibility='hidden';</script>` +
-			`<script>document.getElementById('SAMLResponseForm').submit();</script>` +
-			`</html>`))
-		data := struct {
-			URL          string
-			SAMLResponse string
-			RelayState   string
-		}{
-			URL:          req.ACSEndpoint.Location,
-			SAMLResponse: base64.StdEncoding.EncodeToString(responseBuf),
-			RelayState:   req.RelayState,
-		}
-
-		buf := bytes.NewBuffer(nil)
-		if err := tmpl.Execute(buf, data); err != nil {
-			return err
-		}
-		if _, err := io.Copy(w, buf); err != nil {
-			return err
-		}
-		return nil
-
-	default:
-		return fmt.Errorf("%s: unsupported binding %s",
+	if req.ACSEndpoint.Binding != HTTPPostBinding {
+		return form, fmt.Errorf("%s: unsupported binding %s",
 			req.ServiceProviderMetadata.EntityID,
 			req.ACSEndpoint.Binding)
 	}
+
+	form.URL = req.ACSEndpoint.Location
+	form.SAMLResponse = base64.StdEncoding.EncodeToString(responseBuf)
+	form.RelayState = req.RelayState
+
+	return form, nil
+}
+
+// WriteResponse writes the `Response` to the http.ResponseWriter. If
+// `Response` is not already set, it calls MakeResponse to produce it.
+func (req *IdpAuthnRequest) WriteResponse(w http.ResponseWriter) error {
+	form, err := req.PostBinding()
+	if err != nil {
+		return err
+	}
+
+	tmpl := template.Must(template.New("saml-post-form").Parse(`<html>` +
+		`<form method="post" action="{{.URL}}" id="SAMLResponseForm">` +
+		`<input type="hidden" name="SAMLResponse" value="{{.SAMLResponse}}" />` +
+		`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
+		`<input id="SAMLSubmitButton" type="submit" value="Continue" />` +
+		`</form>` +
+		`<script>document.getElementById('SAMLSubmitButton').style.visibility='hidden';</script>` +
+		`<script>document.getElementById('SAMLResponseForm').submit();</script>` +
+		`</html>`))
+
+	buf := bytes.NewBuffer(nil)
+	if err := tmpl.Execute(buf, form); err != nil {
+		return err
+	}
+	if _, err := io.Copy(w, buf); err != nil {
+		return err
+	}
+	return nil
 }
 
 // getSPEncryptionCert returns the certificate which we can use to encrypt things
@@ -927,7 +956,7 @@ func (req *IdpAuthnRequest) getSPEncryptionCert() (*x509.Certificate, error) {
 	certStr := ""
 	for _, keyDescriptor := range req.SPSSODescriptor.KeyDescriptors {
 		if keyDescriptor.Use == "encryption" {
-			certStr = keyDescriptor.KeyInfo.Certificate
+			certStr = keyDescriptor.KeyInfo.X509Data.X509Certificates[0].Data
 			break
 		}
 	}
@@ -936,8 +965,8 @@ func (req *IdpAuthnRequest) getSPEncryptionCert() (*x509.Certificate, error) {
 	// non-empty cert we find.
 	if certStr == "" {
 		for _, keyDescriptor := range req.SPSSODescriptor.KeyDescriptors {
-			if keyDescriptor.Use == "" && keyDescriptor.KeyInfo.Certificate != "" {
-				certStr = keyDescriptor.KeyInfo.Certificate
+			if keyDescriptor.Use == "" && len(keyDescriptor.KeyInfo.X509Data.X509Certificates) != 0 && keyDescriptor.KeyInfo.X509Data.X509Certificates[0].Data != "" {
+				certStr = keyDescriptor.KeyInfo.X509Data.X509Certificates[0].Data
 				break
 			}
 		}
@@ -1005,24 +1034,8 @@ func (req *IdpAuthnRequest) MakeResponse() error {
 
 	// Sign the response element (we've already signed the Assertion element)
 	{
-		keyPair := tls.Certificate{
-			Certificate: [][]byte{req.IDP.Certificate.Raw},
-			PrivateKey:  req.IDP.Key,
-			Leaf:        req.IDP.Certificate,
-		}
-		for _, cert := range req.IDP.Intermediates {
-			keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
-		}
-		keyStore := dsig.TLSCertKeyStore(keyPair)
-
-		signatureMethod := req.IDP.SignatureMethod
-		if signatureMethod == "" {
-			signatureMethod = dsig.RSASHA1SignatureMethod
-		}
-
-		signingContext := dsig.NewDefaultSigningContext(keyStore)
-		signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
-		if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
+		signingContext, err := req.signingContext()
+		if err != nil {
 			return err
 		}
 
@@ -1039,4 +1052,45 @@ func (req *IdpAuthnRequest) MakeResponse() error {
 
 	req.ResponseEl = responseEl
 	return nil
+}
+
+// signingContext will create a signing context for the request.
+func (req *IdpAuthnRequest) signingContext() (*dsig.SigningContext, error) {
+	// Create a cert chain based off of the IDP cert and its intermediates.
+	certificates := [][]byte{req.IDP.Certificate.Raw}
+	for _, cert := range req.IDP.Intermediates {
+		certificates = append(certificates, cert.Raw)
+	}
+
+	var signingContext *dsig.SigningContext
+	var err error
+	// If signer is set, use it instead of the private key.
+	if req.IDP.Signer != nil {
+		signingContext, err = dsig.NewSigningContext(req.IDP.Signer, certificates)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		keyPair := tls.Certificate{
+			Certificate: certificates,
+			PrivateKey:  req.IDP.Key,
+			Leaf:        req.IDP.Certificate,
+		}
+		keyStore := dsig.TLSCertKeyStore(keyPair)
+
+		signingContext = dsig.NewDefaultSigningContext(keyStore)
+	}
+
+	// Default to using SHA1 if the signature method isn't set.
+	signatureMethod := req.IDP.SignatureMethod
+	if signatureMethod == "" {
+		signatureMethod = dsig.RSASHA1SignatureMethod
+	}
+
+	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
+	if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
+		return nil, err
+	}
+
+	return signingContext, nil
 }

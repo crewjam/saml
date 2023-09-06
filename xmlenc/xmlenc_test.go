@@ -10,46 +10,65 @@ import (
 	is "gotest.tools/assert/cmp"
 )
 
-func TestDataAES128CBC(t *testing.T) {
-	RandReader = rand.New(rand.NewSource(0)) //nolint:gosec  // deterministic random numbers for tests
-	plaintext, err := ioutil.ReadFile("testdata/encrypt-data-aes128-cbc.data")
-	assert.Check(t, err)
-
-	var ciphertext string
-	{
-		encrypter := AES128CBC
-		cipherEl, encErr := encrypter.Encrypt([]byte("abcdefghijklmnop"), plaintext)
-		assert.Check(t, encErr)
-
-		doc := etree.NewDocument()
-		doc.SetRoot(cipherEl)
-		doc.IndentTabs()
-		ciphertext, err = doc.WriteToString()
-		assert.Check(t, err)
-	}
-
-	{
-		decrypter := AES128CBC
-		doc := etree.NewDocument()
-		err = doc.ReadFromString(ciphertext)
+func TestDataAES128(t *testing.T) {
+	t.Run("CBC", func(t *testing.T) {
+		RandReader = rand.New(rand.NewSource(0)) //nolint:gosec  // deterministic random numbers for tests
+		plaintext, err := ioutil.ReadFile("testdata/encrypt-data-aes128-cbc.data")
 		assert.Check(t, err)
 
-		actualPlaintext, err := decrypter.Decrypt(
-			[]byte("abcdefghijklmnop"), doc.Root())
-		assert.Check(t, err)
-		assert.Check(t, is.DeepEqual(plaintext, actualPlaintext))
-	}
+		var ciphertext string
+		{
+			encrypter := AES128CBC
+			cipherEl, encErr := encrypter.Encrypt([]byte("abcdefghijklmnop"), plaintext, nil)
+			assert.Check(t, encErr)
 
-	{
-		decrypter := AES128CBC
-		doc := etree.NewDocument()
-		err := doc.ReadFromFile("testdata/encrypt-data-aes128-cbc.xml")
-		assert.Check(t, err)
+			doc := etree.NewDocument()
+			doc.SetRoot(cipherEl)
+			doc.IndentTabs()
+			ciphertext, err = doc.WriteToString()
+			assert.Check(t, err)
+		}
 
-		actualPlaintext, err := decrypter.Decrypt([]byte("abcdefghijklmnop"), doc.Root())
-		assert.Check(t, err)
-		assert.Check(t, is.DeepEqual(plaintext, actualPlaintext))
-	}
+		{
+			decrypter := AES128CBC
+			doc := etree.NewDocument()
+			err = doc.ReadFromString(ciphertext)
+			assert.Check(t, err)
+
+			actualPlaintext, err := decrypter.Decrypt(
+				[]byte("abcdefghijklmnop"), doc.Root())
+			assert.Check(t, err)
+			assert.Check(t, is.DeepEqual(plaintext, actualPlaintext))
+		}
+
+		{
+			decrypter := AES128CBC
+			doc := etree.NewDocument()
+			err := doc.ReadFromFile("testdata/encrypt-data-aes128-cbc.xml")
+			assert.Check(t, err)
+
+			actualPlaintext, err := decrypter.Decrypt([]byte("abcdefghijklmnop"), doc.Root())
+			assert.Check(t, err)
+			assert.Check(t, is.DeepEqual(plaintext, actualPlaintext))
+		}
+	})
+
+	t.Run("GCM", func(t *testing.T) {
+		RandReader = rand.New(rand.NewSource(0)) //nolint:gosec  // deterministic random numbers for tests
+		plaintext := "top secret message to use with gcm"
+
+		{
+			encrypter := AES128GCM
+			cipherEl, encErr := encrypter.Encrypt([]byte("abcdefghijklmnop"), []byte(plaintext), []byte("1234567890AZ"))
+			assert.Check(t, encErr)
+
+			doc := etree.NewDocument()
+			doc.SetRoot(cipherEl)
+			doc.IndentTabs()
+			_, err := doc.WriteToString()
+			assert.Check(t, err)
+		}
+	})
 }
 
 /*

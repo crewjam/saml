@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sync"
 
 	"github.com/zenazn/goji/web"
@@ -19,6 +20,7 @@ import (
 type Options struct {
 	URL         url.URL
 	Key         crypto.PrivateKey
+	Signer      crypto.Signer
 	Logger      logger.Interface
 	Certificate *x509.Certificate
 	Store       Store
@@ -26,14 +28,14 @@ type Options struct {
 
 // Server represents an IDP server. The server provides the following URLs:
 //
-//     /metadata     - the SAML metadata
-//     /sso          - the SAML endpoint to initiate an authentication flow
-//     /login        - prompt for a username and password if no session established
-//     /login/:shortcut - kick off an IDP-initiated authentication flow
-//     /services     - RESTful interface to Service objects
-//     /users        - RESTful interface to User objects
-//     /sessions     - RESTful interface to Session objects
-//     /shortcuts    - RESTful interface to Shortcut objects
+//	/metadata     - the SAML metadata
+//	/sso          - the SAML endpoint to initiate an authentication flow
+//	/login        - prompt for a username and password if no session established
+//	/login/:shortcut - kick off an IDP-initiated authentication flow
+//	/services     - RESTful interface to Service objects
+//	/users        - RESTful interface to User objects
+//	/sessions     - RESTful interface to Session objects
+//	/shortcuts    - RESTful interface to Shortcut objects
 type Server struct {
 	http.Handler
 	idpConfigMu      sync.RWMutex // protects calls into the IDP
@@ -46,9 +48,9 @@ type Server struct {
 // New returns a new Server
 func New(opts Options) (*Server, error) {
 	metadataURL := opts.URL
-	metadataURL.Path = metadataURL.Path + "/metadata"
+	metadataURL.Path += "/metadata"
 	ssoURL := opts.URL
-	ssoURL.Path = ssoURL.Path + "/sso"
+	ssoURL.Path += "/sso"
 	logr := opts.Logger
 	if logr == nil {
 		logr = logger.DefaultLogger
@@ -58,6 +60,7 @@ func New(opts Options) (*Server, error) {
 		serviceProviders: map[string]*saml.EntityDescriptor{},
 		IDP: saml.IdentityProvider{
 			Key:         opts.Key,
+			Signer:      opts.Signer,
 			Logger:      logr,
 			Certificate: opts.Certificate,
 			MetadataURL: metadataURL,
@@ -110,9 +113,10 @@ func (s *Server) InitializeHTTP() {
 	mux.Put("/users/:id", s.HandlePutUser)
 	mux.Delete("/users/:id", s.HandleDeleteUser)
 
+	sessionPath := regexp.MustCompile("/sessions/(?P<id>.*)")
 	mux.Get("/sessions/", s.HandleListSessions)
-	mux.Get("/sessions/:id", s.HandleGetSession)
-	mux.Delete("/sessions/:id", s.HandleDeleteSession)
+	mux.Get(sessionPath, s.HandleGetSession)
+	mux.Delete(sessionPath, s.HandleDeleteSession)
 
 	mux.Get("/shortcuts/", s.HandleListShortcuts)
 	mux.Get("/shortcuts/:id", s.HandleGetShortcut)

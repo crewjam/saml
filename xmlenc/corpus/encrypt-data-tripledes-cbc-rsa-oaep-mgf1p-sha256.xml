@@ -10,8 +10,8 @@
         </OAEPparams>
       </EncryptionMethod>
       <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
-        <X509Data>
-          <X509Certificate>
+        <X509Data xmlns="http://www.w3.org/2000/09/xmldsig#">
+          <X509Certificate xmlns="http://www.w3.org/2000/09/xmldsig#">
             MIICkjCCAfugAwIBAgIGAOxN32E+MA0GCSqGSIb3DQEBBQUAMG4xCzAJBgNVBAYT
             AklFMQ8wDQYDVQQIEwZEdWJsaW4xJDAiBgNVBAoTG0JhbHRpbW9yZSBUZWNobm9s
             b2dpZXMgTHRkLjERMA8GA1UECxMIWC9TZWN1cmUxFTATBgNVBAMTDFRyYW5zaWVu

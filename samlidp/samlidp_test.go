@@ -16,7 +16,7 @@ import (
 	is "gotest.tools/assert/cmp"
 	"gotest.tools/golden"
 
-	"github.com/form3tech-oss/jwt-go"
+	"github.com/golang-jwt/jwt/v4"
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/logger"
@@ -124,8 +124,8 @@ func TestHTTPCanHandleMetadataRequest(t *testing.T) {
 	test.Server.ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
 	assert.Check(t,
-		strings.HasPrefix(string(w.Body.Bytes()), "<EntityDescriptor"),
-		string(w.Body.Bytes()))
+		strings.HasPrefix(w.Body.String(), "<EntityDescriptor"),
+		w.Body.String())
 	golden.Assert(t, w.Body.String(), "http_metadata_response.html")
 }
 
@@ -139,7 +139,7 @@ func TestHTTPCanSSORequest(t *testing.T) {
 	test.Server.ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
 	assert.Check(t,
-		strings.HasPrefix(string(w.Body.Bytes()), "<html><p></p><form method=\"post\" action=\"https://idp.example.com/sso\">"),
-		string(w.Body.Bytes()))
+		strings.HasPrefix(w.Body.String(), "<html><p></p><form method=\"post\" action=\"https://idp.example.com/sso\">"),
+		w.Body.String())
 	golden.Assert(t, w.Body.String(), "http_sso_response.html")
 }
