@@ -3,6 +3,8 @@ package samlsp
 import (
 	"bytes"
 	"encoding/xml"
+	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/crewjam/saml"
@@ -193,24 +195,31 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 
 // CreateSessionFromAssertion is invoked by ServeHTTP when we have a new, valid SAML assertion.
 func (m *Middleware) CreateSessionFromAssertion(w http.ResponseWriter, r *http.Request, assertion *saml.Assertion, redirectURI string) {
+	var err error
+
+	trackedRequest := &TrackedRequest{
+		Method: "GET",
+		URI:    redirectURI,
+	}
+
 	if trackedRequestIndex := r.Form.Get("RelayState"); trackedRequestIndex != "" {
-		trackedRequest, err := m.RequestTracker.GetTrackedRequest(r, trackedRequestIndex)
+		trackedRequest, err = m.RequestTracker.GetTrackedRequest(r, trackedRequestIndex)
 		if err != nil {
-			if err == http.ErrNoCookie && m.ServiceProvider.AllowIDPInitiated {
-				if uri := r.Form.Get("RelayState"); uri != "" {
-					redirectURI = uri
+			if errors.Is(err, http.ErrNoCookie) && m.ServiceProvider.AllowIDPInitiated {
+				// We don't need to re-read RelayState from the form and check it for nil. The test above did that
+				trackedRequest = &TrackedRequest{
+					Method: "GET",
+					URI:    trackedRequestIndex,
 				}
 			} else {
 				m.OnError(w, r, err)
 				return
 			}
 		} else {
-			if err := m.RequestTracker.StopTrackingRequest(w, r, trackedRequestIndex); err != nil {
+			if err = m.RequestTracker.StopTrackingRequest(w, r, trackedRequestIndex); err != nil {
 				m.OnError(w, r, err)
 				return
 			}
-
-			redirectURI = trackedRequest.URI
 		}
 	}
 
@@ -218,8 +227,33 @@ func (m *Middleware) CreateSessionFromAssertion(w http.ResponseWriter, r *http.R
 		m.OnError(w, r, err)
 		return
 	}
+	m.HandleRedirectAfterAssertion(w, r, trackedRequest)
+}
 
-	http.Redirect(w, r, redirectURI, http.StatusFound)
+// HandleRedirectAfterAssertion is called after we've handled receiving a SAML assertion and created a session with the
+// browser. Most normal cases are just a redirect, but if the original request was a POST, it's a little more tricky.
+func (m *Middleware) HandleRedirectAfterAssertion(w http.ResponseWriter, r *http.Request, trackedRequest *TrackedRequest) {
+	switch trackedRequest.Method {
+	case "POST":
+		text := fmt.Sprintf(`<html>`+
+			`<form method="post" action="%s" id="SAMLAfterAssertionRedirectForm">`, trackedRequest.URI)
+		for key, values := range trackedRequest.PostData {
+			for _, value := range values {
+				text = fmt.Sprintf(`%s<input type="hidden" name="%s" value="%s" />`, text, key, value)
+			}
+		}
+		text += `<input id="SAMLAfterAssertionRedirectSubmitButton" type="submit" value="Continue" />` +
+			`</form>` +
+			`<script>document.getElementById('SAMLAfterAssertionRedirectSubmitButton').style.visibility='hidden';</script>` +
+			`<script>document.getElementById('SAMLAfterAssertionRedirectForm').submit();</script>` +
+			`</html>`
+
+		w.Write([]byte(text))
+		return
+		// TODO: Handle HEAD, DELETE, etc.
+	default:
+		http.Redirect(w, r, trackedRequest.URI, http.StatusFound)
+	}
 }
 
 // RequireAttribute returns a middleware function that requires that the
