@@ -250,6 +250,7 @@ func (m *Middleware) HandleRedirectAfterAssertion(w http.ResponseWriter, r *http
 
 		w.Write([]byte(text))
 		return
+		// TODO: Handle HEAD, DELETE, etc.
 	default:
 		http.Redirect(w, r, trackedRequest.URI, http.StatusFound)
 	}
