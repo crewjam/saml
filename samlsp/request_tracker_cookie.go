@@ -27,7 +27,9 @@ type CookieRequestTracker struct {
 // `index` that should be used as the RelayState in the SAMl request flow.
 func (t CookieRequestTracker) TrackRequest(w http.ResponseWriter, r *http.Request, samlRequestID string) (string, error) {
 	if r.Method == "POST" {
-		r.ParseForm()
+		if err := r.ParseForm(); err != nil {
+			return "", err
+		}
 	}
 	trackedRequest := TrackedRequest{
 		Index:         base64.RawURLEncoding.EncodeToString(randomBytes(42)),

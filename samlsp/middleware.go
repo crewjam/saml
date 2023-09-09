@@ -248,7 +248,10 @@ func (m *Middleware) HandleRedirectAfterAssertion(w http.ResponseWriter, r *http
 			`<script>document.getElementById('SAMLAfterAssertionRedirectForm').submit();</script>` +
 			`</html>`
 
-		w.Write([]byte(text))
+		if _, err := w.Write([]byte(text)); err != nil {
+			m.OnError(w, r, err)
+			return
+		}
 		return
 		// TODO: Handle HEAD, DELETE, etc.
 	default:
