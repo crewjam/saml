@@ -26,7 +26,7 @@ type Options struct {
 	SignRequest           bool
 	UseArtifactResponse   bool
 	ForceAuthn            bool // TODO(ross): this should be *bool
-	AuthnNameIDFormat     saml.NameIDFormat
+	AuthnNameIdFormat     saml.NameIDFormat
 	RequestedAuthnContext *saml.RequestedAuthnContext
 	CookieSameSite        http.SameSite
 	CookieName            string
