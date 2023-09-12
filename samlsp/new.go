@@ -26,6 +26,7 @@ type Options struct {
 	SignRequest           bool
 	UseArtifactResponse   bool
 	ForceAuthn            bool // TODO(ross): this should be *bool
+	AuthnNameIDFormat     saml.NameIDFormat
 	RequestedAuthnContext *saml.RequestedAuthnContext
 	CookieSameSite        http.SameSite
 	CookieName            string
@@ -127,6 +128,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		ForceAuthn:            forceAuthn,
 		RequestedAuthnContext: opts.RequestedAuthnContext,
 		SignatureMethod:       signatureMethod,
+		AuthnNameIDFormat:     opts.AuthnNameIdFormat,
 		AllowIDPInitiated:     opts.AllowIDPInitiated,
 		DefaultRedirectURI:    opts.DefaultRedirectURI,
 		LogoutBindings:        opts.LogoutBindings,
