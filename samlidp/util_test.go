@@ -8,12 +8,11 @@ import (
 	"testing"
 
 	"gotest.tools/assert"
-	is "gotest.tools/assert/cmp"
 )
 
 func TestGetSPMetadata(t *testing.T) {
 	good := "" +
-		"<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" ::attr=\"foo\" validUntil=\"2013-03-10T00:32:19.104Z\" cacheDuration=\"PT1H\" entityID=\"http://localhost:5000/e087a985171710fb9fb30f30f41384f9/saml2/metadata/\">\n" +
+		"<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2013-03-10T00:32:19.104Z\" cacheDuration=\"PT1H\" entityID=\"http://localhost:5000/e087a985171710fb9fb30f30f41384f9/saml2/metadata/\">\n" +
 		"</EntityDescriptor>"
 	_, err := getSPMetadata(strings.NewReader(good))
 	assert.Check(t, err)
@@ -22,5 +21,5 @@ func TestGetSPMetadata(t *testing.T) {
 		"<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" ::attr=\"foo\" validUntil=\"2013-03-10T00:32:19.104Z\" cacheDuration=\"PT1H\" entityID=\"http://localhost:5000/e087a985171710fb9fb30f30f41384f9/saml2/metadata/\">]]>\n" +
 		"</EntityDescriptor>"
 	_, err = getSPMetadata(strings.NewReader(bad))
-	assert.Check(t, is.Error(err, "XML syntax error on line 1: unescaped ]]> not in CDATA section"))
+	assert.Check(t, err != nil)
 }

@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/xml"
 	"errors"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 
@@ -72,7 +72,7 @@ func FetchMetadata(ctx context.Context, httpClient *http.Client, metadataURL url
 		return nil, httperr.Response(*resp)
 	}
 
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}

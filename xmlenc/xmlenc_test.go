@@ -1,8 +1,8 @@
 package xmlenc
 
 import (
-	"io/ioutil"
 	"math/rand"
+	"os"
 	"testing"
 
 	"github.com/beevik/etree"
@@ -13,7 +13,7 @@ import (
 func TestDataAES128(t *testing.T) {
 	t.Run("CBC", func(t *testing.T) {
 		RandReader = rand.New(rand.NewSource(0)) //nolint:gosec  // deterministic random numbers for tests
-		plaintext, err := ioutil.ReadFile("testdata/encrypt-data-aes128-cbc.data")
+		plaintext, err := os.ReadFile("testdata/encrypt-data-aes128-cbc.data")
 		assert.Check(t, err)
 
 		var ciphertext string
