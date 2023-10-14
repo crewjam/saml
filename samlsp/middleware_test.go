@@ -8,7 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -141,7 +141,7 @@ func TestMiddlewareFourOhFour(t *testing.T) {
 	resp := httptest.NewRecorder()
 	test.Middleware.ServeHTTP(resp, req)
 	assert.Check(t, is.Equal(http.StatusNotFound, resp.Code))
-	respBuf, _ := ioutil.ReadAll(resp.Body)
+	respBuf, _ := io.ReadAll(resp.Body)
 	assert.Check(t, is.Equal("404 page not found\n", string(respBuf)))
 }
 
@@ -516,7 +516,7 @@ func TestMiddlewareHandlesInvalidResponse(t *testing.T) {
 	// the ACS handles DOES NOT reveal detailed error information in the
 	// HTTP response.
 	assert.Check(t, is.Equal(http.StatusForbidden, resp.Code))
-	respBody, _ := ioutil.ReadAll(resp.Body)
+	respBody, _ := io.ReadAll(resp.Body)
 	assert.Check(t, is.Equal("Forbidden\n", string(respBody)))
 	assert.Check(t, is.Equal("", resp.Header().Get("Location")))
 	assert.Check(t, is.Equal("", resp.Header().Get("Set-Cookie")))

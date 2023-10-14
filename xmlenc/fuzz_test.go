@@ -4,14 +4,13 @@
 package xmlenc
 
 import (
-	"io/ioutil"
 	"testing"
 
 	"strings"
 )
 
 func TestPastFuzzingFailures(t *testing.T) {
-	entries, err := ioutil.ReadDir("crashers")
+	entries, err := io.ReadDir("crashers")
 	if err != nil {
 		t.Errorf("%s", err)
 		return
@@ -24,7 +23,7 @@ func TestPastFuzzingFailures(t *testing.T) {
 			continue
 		}
 		t.Logf("%s", entry.Name())
-		data, err := ioutil.ReadFile("crashers/" + entry.Name())
+		data, err := io.ReadFile("crashers/" + entry.Name())
 		if err != nil {
 			t.Errorf("%s: %s", entry.Name(), err)
 			return
