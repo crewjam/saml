@@ -66,6 +66,15 @@ func mustParseCertificate(pemStr []byte) *x509.Certificate {
 	return cert
 }
 
+func setupTestVariables() {
+	saml.TimeNow = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Dec 1 01:57:09 UTC 2015")
+		return rv
+	}
+	jwt.TimeFunc = saml.TimeNow
+	saml.RandReader = &testRandomReader{}
+}
+
 type ServerTest struct {
 	SPKey         *rsa.PrivateKey
 	SPCertificate *x509.Certificate
@@ -79,12 +88,7 @@ type ServerTest struct {
 
 func NewServerTest(t *testing.T) *ServerTest {
 	test := ServerTest{}
-	saml.TimeNow = func() time.Time {
-		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Dec 1 01:57:09 UTC 2015")
-		return rv
-	}
-	jwt.TimeFunc = saml.TimeNow
-	saml.RandReader = &testRandomReader{}
+	setupTestVariables()
 
 	test.SPKey = mustParsePrivateKey(golden.Get(t, "sp_key.pem")).(*rsa.PrivateKey)
 	test.SPCertificate = mustParseCertificate(golden.Get(t, "sp_cert.pem"))
@@ -142,4 +146,29 @@ func TestHTTPCanSSORequest(t *testing.T) {
 		strings.HasPrefix(w.Body.String(), "<html><p></p><form method=\"post\" action=\"https://idp.example.com/sso\">"),
 		w.Body.String())
 	golden.Assert(t, w.Body.String(), "http_sso_response.html")
+}
+
+func TestHTTPMetadataResponseWithCustomEntityID(t *testing.T) {
+	setupTestVariables()
+
+	server, err := New(Options{
+		Certificate: mustParseCertificate(golden.Get(t, "idp_cert.pem")),
+		Key:         mustParsePrivateKey(golden.Get(t, "idp_key.pem")).(*rsa.PrivateKey),
+		Logger:      logger.DefaultLogger,
+		URL:         url.URL{Scheme: "https", Host: "idp.example.com"},
+		Store:       &MemoryStore{},
+		EntityIDConstructor: func() string {
+			return "https://idp.example.com/idp-id"
+		},
+	})
+	assert.Check(t, err)
+
+	w := httptest.NewRecorder()
+	r, _ := http.NewRequest("GET", "https://idp.example.com/metadata", nil)
+	server.ServeHTTP(w, r)
+	assert.Check(t, is.Equal(http.StatusOK, w.Code))
+	assert.Check(t,
+		strings.HasPrefix(w.Body.String(), "<EntityDescriptor"),
+		w.Body.String())
+	golden.Assert(t, w.Body.String(), "http_metadata_response_with_custom_entity_id.html")
 }

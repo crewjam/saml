@@ -18,12 +18,13 @@ import (
 
 // Options represent the parameters to New() for creating a new IDP server
 type Options struct {
-	URL         url.URL
-	Key         crypto.PrivateKey
-	Signer      crypto.Signer
-	Logger      logger.Interface
-	Certificate *x509.Certificate
-	Store       Store
+	URL                 url.URL
+	Key                 crypto.PrivateKey
+	Signer              crypto.Signer
+	Logger              logger.Interface
+	Certificate         *x509.Certificate
+	Store               Store
+	EntityIDConstructor saml.EntityIDConstructor
 }
 
 // Server represents an IDP server. The server provides the following URLs:
@@ -59,12 +60,13 @@ func New(opts Options) (*Server, error) {
 	s := &Server{
 		serviceProviders: map[string]*saml.EntityDescriptor{},
 		IDP: saml.IdentityProvider{
-			Key:         opts.Key,
-			Signer:      opts.Signer,
-			Logger:      logr,
-			Certificate: opts.Certificate,
-			MetadataURL: metadataURL,
-			SSOURL:      ssoURL,
+			Key:                 opts.Key,
+			Signer:              opts.Signer,
+			Logger:              logr,
+			Certificate:         opts.Certificate,
+			MetadataURL:         metadataURL,
+			SSOURL:              ssoURL,
+			EntityIDConstructor: opts.EntityIDConstructor,
 		},
 		logger: logr,
 		Store:  opts.Store,
