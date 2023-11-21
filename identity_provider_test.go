@@ -38,11 +38,12 @@ type IdentityProviderTest struct {
 	SPCertificate *x509.Certificate
 	SP            ServiceProvider
 
-	Key             crypto.PrivateKey
-	Signer          crypto.Signer
-	Certificate     *x509.Certificate
-	SessionProvider SessionProvider
-	IDP             IdentityProvider
+	Key              crypto.PrivateKey
+	Signer           crypto.Signer
+	Certificate      *x509.Certificate
+	SessionProvider  SessionProvider
+	IDP              IdentityProvider
+	ExpectedFilename string
 }
 
 func mustParseURL(s string) url.URL {
@@ -98,6 +99,24 @@ var applySigner = idpTestOpts{
 	},
 }
 
+// applyEntityIDConstructor will set the entity ID constructor for the identity provider.
+func applyEntityIDConstructor(c EntityIDConstructor) idpTestOpts {
+	return idpTestOpts{
+		apply: func(_ *testing.T, test *IdentityProviderTest) {
+			test.IDP.EntityIDConstructor = c
+		},
+	}
+}
+
+// applyExpectedFilename will set the expected filename for the identity provider.
+func applyExpectedFilename(filename string) idpTestOpts {
+	return idpTestOpts{
+		apply: func(_ *testing.T, test *IdentityProviderTest) {
+			test.ExpectedFilename = filename
+		},
+	}
+}
+
 func NewIdentityProviderTest(t *testing.T, opts ...idpTestOpts) *IdentityProviderTest {
 	test := IdentityProviderTest{}
 	TimeNow = func() time.Time {
@@ -139,6 +158,7 @@ func NewIdentityProviderTest(t *testing.T, opts ...idpTestOpts) *IdentityProvide
 			},
 		},
 	}
+	test.ExpectedFilename = "TestIDPMakeResponse_response.xml"
 
 	// apply the test options
 	for _, opt := range opts {
@@ -772,7 +792,7 @@ func testMakeResponse(t *testing.T, test *IdentityProviderTest) {
 	doc.Indent(2)
 	responseStr, err := doc.WriteToString()
 	assert.Check(t, err)
-	golden.Assert(t, responseStr, "TestIDPMakeResponse_response.xml")
+	golden.Assert(t, responseStr, test.ExpectedFilename)
 }
 
 func TestIDPWriteResponse(t *testing.T) {
@@ -1129,4 +1149,19 @@ func TestIDPHTTPCanHandleSSORequest(t *testing.T) {
 		test.IDP.Handler().ServeHTTP(w, r)
 		assert.Check(t, is.Equal(http.StatusBadRequest, w.Code))
 	}
+}
+
+func TestIdentityProviderCustomEntityID(t *testing.T) {
+	customEntityID := "https://idp.example.com/entity-id"
+	test := NewIdentityProviderTest(
+		t,
+		applyKey,
+		applyEntityIDConstructor(func() string {
+			return customEntityID
+		}),
+		applyExpectedFilename("TestIDPMakeResponse_response_with_custom_entity_id.xml"),
+	)
+
+	assert.Equal(t, customEntityID, test.IDP.Metadata().EntityID)
+	testMakeResponse(t, test)
 }
