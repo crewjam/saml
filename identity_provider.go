@@ -110,6 +110,7 @@ type IdentityProvider struct {
 	EntityIDConstructor     EntityIDConstructor
 }
 
+// EntityIDConstructor is a function that returns the entityID for customization.
 type EntityIDConstructor func() string
 
 // Metadata returns the metadata structure for this identity provider.
@@ -339,9 +340,7 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 
 // createDefaultEntityIDConstructor creates a function to return entityID from metadataURL.
 func createDefaultEntityIDConstructor(metadataURL url.URL) func() string {
-	return func() string {
-		return metadataURL.String()
-	}
+	return metadataURL.String
 }
 
 func (idp *IdentityProvider) getEntityID() string {
