@@ -99,7 +99,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 	if opts.ForceAuthn {
 		forceAuthn = &opts.ForceAuthn
 	}
-	signatureMethod := dsig.RSASHA1SignatureMethod
+	signatureMethod := dsig.RSASHA256SignatureMethod
 	if !opts.SignRequest {
 		signatureMethod = ""
 	}
