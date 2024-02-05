@@ -6,7 +6,7 @@ import (
 	"crypto"
 	"crypto/x509"
 	"encoding/pem"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"testing"
@@ -61,7 +61,7 @@ func TestCanParseTestshibMetadata(t *testing.T) {
 				Header:     http.Header{},
 				Request:    req,
 				StatusCode: http.StatusOK,
-				Body:       ioutil.NopCloser(bytes.NewReader(responseBody)),
+				Body:       io.NopCloser(bytes.NewReader(responseBody)),
 			}, nil
 		}),
 	}

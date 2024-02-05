@@ -165,3 +165,11 @@ cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvnOwJlNCASPZRH/JmF8tX0hoHuAQ==`,
 	assert.Check(t, err)
 	golden.Assert(t, string(buf), "TestCanProduceSPMetadata_expected")
 }
+
+func TestMetadataValidatesUrlSchemeForProtocolBinding(t *testing.T) {
+	buf := golden.Get(t, "TestMetadataValidatesUrlSchemeForProtocolBinding_metadata.xml")
+
+	metadata := EntityDescriptor{}
+	err := xml.Unmarshal(buf, &metadata)
+	assert.Error(t, err, "invalid url scheme \"javascript\" for binding \"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\"")
+}

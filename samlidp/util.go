@@ -5,7 +5,6 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
-	"io/ioutil"
 
 	xrv "github.com/mattermost/xml-roundtrip-validator"
 
@@ -22,7 +21,7 @@ func randomBytes(n int) []byte {
 
 func getSPMetadata(r io.Reader) (spMetadata *saml.EntityDescriptor, err error) {
 	var data []byte
-	if data, err = ioutil.ReadAll(r); err != nil {
+	if data, err = io.ReadAll(r); err != nil {
 		return nil, err
 	}
 
