@@ -915,7 +915,11 @@ func (req *IdpAuthnRequest) PostBinding() (IdpAuthnRequestForm, error) {
 			req.ACSEndpoint.Binding)
 	}
 
-	form.URL = req.ACSEndpoint.Location
+	if req.ACSEndpoint.ResponseLocation != nil {
+		form.URL = *req.ACSEndpoint.ResponseLocation
+	} else {
+		form.URL = req.ACSEndpoint.Location
+	}
 	form.SAMLResponse = base64.StdEncoding.EncodeToString(responseBuf)
 	form.RelayState = req.RelayState
 
