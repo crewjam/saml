@@ -106,6 +106,7 @@ type IdentityProvider struct {
 	SessionProvider         SessionProvider
 	AssertionMaker          AssertionMaker
 	SignatureMethod         string
+	AssertionDigestMethod   *xmlenc.DigestMethod
 	ValidDuration           *time.Duration
 }
 
@@ -867,7 +868,13 @@ func (req *IdpAuthnRequest) MakeAssertionEl() error {
 
 	encryptor := xmlenc.OAEP()
 	encryptor.BlockCipher = xmlenc.AES128CBC
-	encryptor.DigestMethod = &xmlenc.SHA1
+	// Default to using SHA1 if the signature method isn't set.
+	if req.IDP.AssertionDigestMethod == nil {
+		encryptor.DigestMethod = &xmlenc.SHA1
+	} else {
+		encryptor.DigestMethod = *req.IDP.AssertionDigestMethod
+	}
+
 	encryptedDataEl, err := encryptor.Encrypt(certBuf, signedAssertionBuf, nil)
 	if err != nil {
 		return err
