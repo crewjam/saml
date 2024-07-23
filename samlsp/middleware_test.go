@@ -115,6 +115,7 @@ func (test *MiddlewareTest) makeTrackedRequest(id string) string {
 		Index:         "KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6",
 		SAMLRequestID: id,
 		URI:           "/frob",
+		Method:        "GET",
 	})
 	if err != nil {
 		panic(err)
