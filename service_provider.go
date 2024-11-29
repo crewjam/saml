@@ -1054,7 +1054,7 @@ func (sp *ServiceProvider) parseAssertion(assertionEl *etree.Element, checkFunct
 		return nil, err
 	}
 
-	if err := sp.validateAssertion(&assertion, checkFunction, now); err != nil {
+	if err := sp.validateAssertion2(&assertion, checkFunction, now); err != nil {
 		return nil, err
 	}
 
@@ -1065,7 +1065,11 @@ func (sp *ServiceProvider) parseAssertion(assertionEl *etree.Element, checkFunct
 // the requirements to accept. If validation fails, it returns an error describing
 // the failure. (The digital signature on the assertion is not checked -- this
 // should be done before calling this function).
-func (sp *ServiceProvider) validateAssertion(assertion *Assertion, checkFunction RequestIdCheckFunction, now time.Time) error {
+func (sp *ServiceProvider) validateAssertion(assertion *Assertion, allowedRequestIds []string, now time.Time) error {
+	return sp.validateAssertion2(assertion, createDefaultChecker(allowedRequestIds), now)
+}
+
+func (sp *ServiceProvider) validateAssertion2(assertion *Assertion, checkFunction RequestIdCheckFunction, now time.Time) error {
 	if assertion.IssueInstant.Add(MaxIssueDelay).Before(now) {
 		return fmt.Errorf("expired on %s", assertion.IssueInstant.Add(MaxIssueDelay))
 	}
