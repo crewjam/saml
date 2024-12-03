@@ -1,4 +1,4 @@
-module github.com/wz2b/saml
+module github.com/crewjam/saml
 
 go 1.23
 
