@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/flate"
 	"context"
+	"crypto"
+	"crypto/ecdsa"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -68,8 +70,9 @@ type ServiceProvider struct {
 	// Entity ID is optional - if not specified then MetadataURL will be used
 	EntityID string
 
-	// Key is the RSA private key we use to sign requests.
-	Key *rsa.PrivateKey
+	// Key is private key we use to sign requests. It must be either an
+	// *rsa.PrivateKey or an *ecdsa.PrivateKey.
+	Key crypto.Signer
 
 	// Certificate is the RSA public part of Key.
 	Certificate   *x509.Certificate
@@ -131,7 +134,17 @@ type ServiceProvider struct {
 	// to verify signatures.
 	SignatureVerifier SignatureVerifier
 
-	// SignatureMethod, if non-empty, authentication requests will be signed
+	// SignatureMethod, if non-empty, authentication requests will be signed.
+	//
+	// The method specified here must be consistent with the type of Key.
+	//
+	// If Key is *rsa.PrivateKey, then this must be one of dsig.RSASHA1SignatureMethod,
+	// dsig.RSASHA256SignatureMethod, dsig.RSASHA384SignatureMethod, or
+	// dsig.RSASHA512SignatureMethod:
+	//
+	// If Key is *ecdsa.PrivateKey, then this must be one of dsig.ECDSASHA1SignatureMethod,
+	// dsig.ECDSASHA256SignatureMethod, dsig.ECDSASHA384SignatureMethod, or
+	// dsig.ECDSASHA512SignatureMethod.
 	SignatureMethod string
 
 	// LogoutBindings specify the bindings available for SLO endpoint. If empty,
@@ -548,17 +561,38 @@ func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 	// for _, cert := range sp.Intermediates {
 	// 	keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
 	// }
-	keyStore := dsig.TLSCertKeyStore(keyPair)
 
-	if sp.SignatureMethod != dsig.RSASHA1SignatureMethod &&
-		sp.SignatureMethod != dsig.RSASHA256SignatureMethod &&
-		sp.SignatureMethod != dsig.RSASHA512SignatureMethod {
+	switch sp.SignatureMethod {
+	case dsig.RSASHA1SignatureMethod,
+		dsig.RSASHA256SignatureMethod,
+		dsig.RSASHA384SignatureMethod,
+		dsig.RSASHA512SignatureMethod:
+		if _, ok := sp.Key.(*rsa.PrivateKey); !ok {
+			return nil, fmt.Errorf("signature method %s requires a key of type rsa.PrivateKey, not %T", sp.SignatureMethod, sp.Key)
+		}
+
+	case dsig.ECDSASHA1SignatureMethod,
+		dsig.ECDSASHA256SignatureMethod,
+		dsig.ECDSASHA384SignatureMethod,
+		dsig.ECDSASHA512SignatureMethod:
+		if _, ok := sp.Key.(*ecdsa.PrivateKey); !ok {
+			return nil, fmt.Errorf("signature method %s requires a key of type ecdsa.PrivateKey, not %T", sp.SignatureMethod, sp.Key)
+		}
+	default:
 		return nil, fmt.Errorf("invalid signing method %s", sp.SignatureMethod)
 	}
-	signatureMethod := sp.SignatureMethod
-	signingContext := dsig.NewDefaultSigningContext(keyStore)
+
+	keyStore := dsig.TLSCertKeyStore(keyPair)
+	chain, err := keyStore.GetChain()
+	if err != nil {
+		return nil, err
+	}
+	signingContext, err := dsig.NewSigningContext(sp.Key, chain)
+	if err != nil {
+		return nil, err
+	}
 	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
-	if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
+	if err := signingContext.SetSignatureMethod(sp.SignatureMethod); err != nil {
 		return nil, err
 	}
 
@@ -1307,31 +1341,12 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 
 // SignLogoutRequest adds the `Signature` element to the `LogoutRequest`.
 func (sp *ServiceProvider) SignLogoutRequest(req *LogoutRequest) error {
-	keyPair := tls.Certificate{
-		Certificate: [][]byte{sp.Certificate.Raw},
-		PrivateKey:  sp.Key,
-		Leaf:        sp.Certificate,
-	}
-	// TODO: add intermediates for SP
-	// for _, cert := range sp.Intermediates {
-	// 	keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
-	// }
-	keyStore := dsig.TLSCertKeyStore(keyPair)
-
-	if sp.SignatureMethod != dsig.RSASHA1SignatureMethod &&
-		sp.SignatureMethod != dsig.RSASHA256SignatureMethod &&
-		sp.SignatureMethod != dsig.RSASHA512SignatureMethod {
-		return fmt.Errorf("invalid signing method %s", sp.SignatureMethod)
-	}
-	signatureMethod := sp.SignatureMethod
-	signingContext := dsig.NewDefaultSigningContext(keyStore)
-	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
-	if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
+	signingContext, err := GetSigningContext(sp)
+	if err != nil {
 		return err
 	}
 
 	assertionEl := req.Element()
-
 	signedRequestEl, err := signingContext.SignEnveloped(assertionEl)
 	if err != nil {
 		return err
@@ -1361,7 +1376,7 @@ func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string) (*LogoutRequ
 			SPNameQualifier: sp.Metadata().EntityID,
 		},
 	}
-	if len(sp.SignatureMethod) > 0 {
+	if sp.SignatureMethod != "" {
 		if err := sp.SignLogoutRequest(&req); err != nil {
 			return nil, err
 		}
@@ -1475,7 +1490,7 @@ func (sp *ServiceProvider) MakeLogoutResponse(idpURL, logoutRequestID string) (*
 		},
 	}
 
-	if len(sp.SignatureMethod) > 0 {
+	if sp.SignatureMethod != "" {
 		if err := sp.SignLogoutResponse(&response); err != nil {
 			return nil, err
 		}
@@ -1572,31 +1587,12 @@ func (r *LogoutResponse) Post(relayState string) []byte {
 
 // SignLogoutResponse adds the `Signature` element to the `LogoutResponse`.
 func (sp *ServiceProvider) SignLogoutResponse(resp *LogoutResponse) error {
-	keyPair := tls.Certificate{
-		Certificate: [][]byte{sp.Certificate.Raw},
-		PrivateKey:  sp.Key,
-		Leaf:        sp.Certificate,
-	}
-	// TODO: add intermediates for SP
-	// for _, cert := range sp.Intermediates {
-	// 	keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
-	// }
-	keyStore := dsig.TLSCertKeyStore(keyPair)
-
-	if sp.SignatureMethod != dsig.RSASHA1SignatureMethod &&
-		sp.SignatureMethod != dsig.RSASHA256SignatureMethod &&
-		sp.SignatureMethod != dsig.RSASHA512SignatureMethod {
-		return fmt.Errorf("invalid signing method %s", sp.SignatureMethod)
-	}
-	signatureMethod := sp.SignatureMethod
-	signingContext := dsig.NewDefaultSigningContext(keyStore)
-	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
-	if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
+	signingContext, err := GetSigningContext(sp)
+	if err != nil {
 		return err
 	}
 
 	assertionEl := resp.Element()
-
 	signedRequestEl, err := signingContext.SignEnveloped(assertionEl)
 	if err != nil {
 		return err
