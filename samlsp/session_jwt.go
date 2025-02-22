@@ -1,7 +1,7 @@
 package samlsp
 
 import (
-	"crypto/rsa"
+	"crypto"
 	"errors"
 	"fmt"
 	"time"
@@ -23,7 +23,7 @@ type JWTSessionCodec struct {
 	Audience      string
 	Issuer        string
 	MaxAge        time.Duration
-	Key           *rsa.PrivateKey
+	Key           crypto.Signer
 }
 
 var _ SessionCodec = JWTSessionCodec{}

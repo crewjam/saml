@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"context"
-	"crypto/rsa"
+	"crypto"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -67,7 +67,7 @@ type ServiceProvider struct {
 	EntityID string
 
 	// Key is the RSA private key we use to sign requests.
-	Key *rsa.PrivateKey
+	Key crypto.Signer
 
 	// Certificate is the RSA public part of Key.
 	Certificate   *x509.Certificate
@@ -117,7 +117,7 @@ type ServiceProvider struct {
 	// to verify signatures.
 	SignatureVerifier SignatureVerifier
 
-	// SignatureMethod, if non-empty, authentication requests will be signed
+	// SignatureMethod, if non-empty, authentication requests will be signed. "auto" will determine method based on certificate type.
 	SignatureMethod string
 
 	// LogoutBindings specify the bindings available for SLO endpoint. If empty,
@@ -140,6 +140,11 @@ const DefaultValidDuration = time.Hour * 24 * 2
 
 // DefaultCacheDuration is how long we ask the IDP to cache the SP metadata.
 const DefaultCacheDuration = time.Hour * 24 * 1
+
+// SignRequests returns true if the service provider should sign requests.
+func (sp *ServiceProvider) SignRequests() bool {
+	return len(sp.SignatureMethod) > 0
+}
 
 // Metadata returns the service provider metadata
 func (sp *ServiceProvider) Metadata() *EntityDescriptor {
@@ -245,6 +250,19 @@ func (sp *ServiceProvider) MakeRedirectAuthenticationRequest(relayState string) 
 	return req.Redirect(relayState, sp)
 }
 
+// GetSignatureMethod returns the appropriate string to represent the
+// signature method for the service provider.
+func (sp *ServiceProvider) GetSignatureMethod() (string, error) {
+	if sp.SignatureMethod == "auto" {
+		signingContext, err := GetSigningContext(sp)
+		if err != nil {
+			return "auto", err
+		}
+		return signingContext.GetSignatureMethodIdentifier(), nil
+	}
+	return sp.SignatureMethod, nil
+}
+
 // Redirect returns a URL suitable for using the redirect binding with the request
 func (r *AuthnRequest) Redirect(relayState string, sp *ServiceProvider) (*url.URL, error) {
 	w := &bytes.Buffer{}
@@ -274,13 +292,16 @@ func (r *AuthnRequest) Redirect(relayState string, sp *ServiceProvider) (*url.UR
 	if relayState != "" {
 		query += "&RelayState=" + relayState
 	}
-	if len(sp.SignatureMethod) > 0 {
-		query += "&SigAlg=" + url.QueryEscape(sp.SignatureMethod)
+	if sp.SignRequests() {
 		signingContext, err := GetSigningContext(sp)
-
 		if err != nil {
 			return nil, err
 		}
+		sigMethod, err := sp.GetSignatureMethod()
+		if err != nil {
+			return nil, err
+		}
+		query += "&SigAlg=" + url.QueryEscape(sigMethod)
 
 		sig, err := signingContext.SignString(query)
 		if err != nil {
@@ -391,7 +412,7 @@ func (sp *ServiceProvider) MakeArtifactResolveRequest(artifactID string) (*Artif
 		Artifact: artifactID,
 	}
 
-	if len(sp.SignatureMethod) > 0 {
+	if sp.SignRequests() {
 		if err := sp.SignArtifactResolve(&req); err != nil {
 			return nil, err
 		}
@@ -428,7 +449,7 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding stri
 		RequestedAuthnContext: sp.RequestedAuthnContext,
 	}
 	// We don't need to sign the XML document if the IDP uses HTTP-Redirect binding
-	if len(sp.SignatureMethod) > 0 && binding == HTTPPostBinding {
+	if sp.SignRequests() && binding == HTTPPostBinding {
 		if err := sp.SignAuthnRequest(&req); err != nil {
 			return nil, err
 		}
@@ -449,13 +470,13 @@ func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 	// }
 	keyStore := dsig.TLSCertKeyStore(keyPair)
 
-	if sp.SignatureMethod != dsig.RSASHA1SignatureMethod &&
-		sp.SignatureMethod != dsig.RSASHA256SignatureMethod &&
-		sp.SignatureMethod != dsig.RSASHA512SignatureMethod {
-		return nil, fmt.Errorf("invalid signing method %s", sp.SignatureMethod)
+	signer, _ := sp.Key.(crypto.Signer)
+	chain, _ := keyStore.GetChain()
+	signingContext, err := dsig.NewSigningContext(signer, chain)
+	if err != nil {
+		return nil, err
 	}
-	signatureMethod := sp.SignatureMethod
-	signingContext := dsig.NewDefaultSigningContext(keyStore)
+	signatureMethod := signingContext.GetSignatureMethodIdentifier()
 	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
 	if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
 		return nil, err
@@ -1170,13 +1191,13 @@ func (sp *ServiceProvider) SignLogoutRequest(req *LogoutRequest) error {
 	// }
 	keyStore := dsig.TLSCertKeyStore(keyPair)
 
-	if sp.SignatureMethod != dsig.RSASHA1SignatureMethod &&
-		sp.SignatureMethod != dsig.RSASHA256SignatureMethod &&
-		sp.SignatureMethod != dsig.RSASHA512SignatureMethod {
-		return fmt.Errorf("invalid signing method %s", sp.SignatureMethod)
+	signer, _ := sp.Key.(crypto.Signer)
+	chain, _ := keyStore.GetChain()
+	signingContext, err := dsig.NewSigningContext(signer, chain)
+	if err != nil {
+		return err
 	}
-	signatureMethod := sp.SignatureMethod
-	signingContext := dsig.NewDefaultSigningContext(keyStore)
+	signatureMethod := signingContext.GetSignatureMethodIdentifier()
 	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
 	if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
 		return err
@@ -1213,7 +1234,7 @@ func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string) (*LogoutRequ
 			SPNameQualifier: sp.Metadata().EntityID,
 		},
 	}
-	if len(sp.SignatureMethod) > 0 {
+	if sp.SignRequests() {
 		if err := sp.SignLogoutRequest(&req); err != nil {
 			return nil, err
 		}
@@ -1327,7 +1348,7 @@ func (sp *ServiceProvider) MakeLogoutResponse(idpURL, logoutRequestID string) (*
 		},
 	}
 
-	if len(sp.SignatureMethod) > 0 {
+	if sp.SignRequests() {
 		if err := sp.SignLogoutResponse(&response); err != nil {
 			return nil, err
 		}
@@ -1435,13 +1456,13 @@ func (sp *ServiceProvider) SignLogoutResponse(resp *LogoutResponse) error {
 	// }
 	keyStore := dsig.TLSCertKeyStore(keyPair)
 
-	if sp.SignatureMethod != dsig.RSASHA1SignatureMethod &&
-		sp.SignatureMethod != dsig.RSASHA256SignatureMethod &&
-		sp.SignatureMethod != dsig.RSASHA512SignatureMethod {
-		return fmt.Errorf("invalid signing method %s", sp.SignatureMethod)
+	signer, _ := sp.Key.(crypto.Signer)
+	chain, _ := keyStore.GetChain()
+	signingContext, err := dsig.NewSigningContext(signer, chain)
+	if err != nil {
+		return err
 	}
-	signatureMethod := sp.SignatureMethod
-	signingContext := dsig.NewDefaultSigningContext(keyStore)
+	signatureMethod := signingContext.GetSignatureMethodIdentifier()
 	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
 	if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
 		return err

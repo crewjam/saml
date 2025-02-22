@@ -350,7 +350,7 @@ func TestSPFailToProduceSignedRequestWithBogusSignatureMethod(t *testing.T) {
 	assert.Check(t, err)
 
 	_, err = s.MakeRedirectAuthenticationRequest("relayState")
-	assert.Check(t, is.ErrorContains(err, "invalid signing method bogus"))
+	assert.Check(t, is.ErrorContains(err, "unknown SignatureMethod: bogus"))
 }
 
 func TestSPCanProducePostLogoutRequest(t *testing.T) {
@@ -1665,7 +1665,7 @@ func TestMakeSignedArtifactResolveRequestWithBogusSignatureMethod(t *testing.T) 
 	}
 
 	_, err := sp.MakeArtifactResolveRequest("artifactId")
-	assert.Check(t, is.ErrorContains(err, "invalid signing method bogus"))
+	assert.Check(t, is.ErrorContains(err, "unknown SignatureMethod: bogus"))
 
 }
 
