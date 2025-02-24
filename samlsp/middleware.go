@@ -193,7 +193,8 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 
 // CreateSessionFromAssertion is invoked by ServeHTTP when we have a new, valid SAML assertion.
 func (m *Middleware) CreateSessionFromAssertion(w http.ResponseWriter, r *http.Request, assertion *saml.Assertion, redirectURI string) {
-	if trackedRequestIndex := r.Form.Get("RelayState"); trackedRequestIndex != "" {
+	overridden := redirectURI != ""
+	if trackedRequestIndex := r.Form.Get("RelayState"); trackedRequestIndex != "" && !overridden {
 		trackedRequest, err := m.RequestTracker.GetTrackedRequest(r, trackedRequestIndex)
 		if err != nil {
 			if err == http.ErrNoCookie && m.ServiceProvider.AllowIDPInitiated {
