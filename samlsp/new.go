@@ -131,6 +131,12 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 	}
 }
 
+// DefaultSamlAssertionHandler returns the default SamlAssertionHandler for the provided options,
+// a BasicSamlAssertionHandler configured to do nothing.
+func DefaultSamlAssertionHandler(opts Options) BasicSamlAssertionHandler {
+	return BasicSamlAssertionHandler{}
+}
+
 // New creates a new Middleware with the default providers for the
 // given options.
 //
@@ -139,11 +145,12 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 // in the returned Middleware.
 func New(opts Options) (*Middleware, error) {
 	m := &Middleware{
-		ServiceProvider: DefaultServiceProvider(opts),
-		Binding:         "",
-		ResponseBinding: saml.HTTPPostBinding,
-		OnError:         DefaultOnError,
-		Session:         DefaultSessionProvider(opts),
+		ServiceProvider:  DefaultServiceProvider(opts),
+		Binding:          "",
+		ResponseBinding:  saml.HTTPPostBinding,
+		OnError:          DefaultOnError,
+		Session:          DefaultSessionProvider(opts),
+		AssertionHandler: DefaultSamlAssertionHandler(opts),
 	}
 	m.RequestTracker = DefaultRequestTracker(opts, &m.ServiceProvider)
 	if opts.UseArtifactResponse {
