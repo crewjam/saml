@@ -107,7 +107,11 @@ type IdentityProvider struct {
 	AssertionMaker          AssertionMaker
 	SignatureMethod         string
 	ValidDuration           *time.Duration
+	EntityIDConstructor     EntityIDConstructor
 }
+
+// EntityIDConstructor is a function that returns the entityID for customization.
+type EntityIDConstructor func() string
 
 // Metadata returns the metadata structure for this identity provider.
 func (idp *IdentityProvider) Metadata() *EntityDescriptor {
@@ -121,7 +125,7 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 	}
 
 	ed := &EntityDescriptor{
-		EntityID:      idp.MetadataURL.String(),
+		EntityID:      idp.getEntityID(),
 		ValidUntil:    TimeNow().Add(validDuration),
 		CacheDuration: validDuration,
 		IDPSSODescriptors: []IDPSSODescriptor{
@@ -332,6 +336,18 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+}
+
+// createDefaultEntityIDConstructor creates a function to return entityID from metadataURL.
+func createDefaultEntityIDConstructor(metadataURL url.URL) func() string {
+	return metadataURL.String
+}
+
+func (idp *IdentityProvider) getEntityID() string {
+	if idp.EntityIDConstructor == nil {
+		return createDefaultEntityIDConstructor(idp.MetadataURL)()
+	}
+	return idp.EntityIDConstructor()
 }
 
 // IdpAuthnRequest is used by IdentityProvider to handle a single authentication request.
@@ -1019,7 +1035,7 @@ func (req *IdpAuthnRequest) MakeResponse() error {
 		Version:      "2.0",
 		Issuer: &Issuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
-			Value:  req.IDP.MetadataURL.String(),
+			Value:  req.IDP.getEntityID(),
 		},
 		Status: Status{
 			StatusCode: StatusCode{
