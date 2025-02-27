@@ -125,11 +125,43 @@ func (e RSA) Decrypt(key interface{}, ciphertextEl *etree.Element) ([]byte, erro
 // the block cipher used is AES-256 CBC and the digest method is SHA-256. You can
 // specify other ciphers and digest methods by assigning to BlockCipher or
 // DigestMethod.
+//
+// OAEP implements the older RSA-OAEP (2001 spec) for backward compatibility
 func OAEP() RSA {
 	return RSA{
 		BlockCipher:  AES256CBC,
 		DigestMethod: SHA256,
 		algorithm:    "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p",
+		keyEncrypter: func(e RSA, pubKey *rsa.PublicKey, plaintext []byte) ([]byte, error) {
+			return rsa.EncryptOAEP(e.DigestMethod.Hash(), RandReader, pubKey, plaintext, nil)
+		},
+		keyDecrypter: func(e RSA, privKey *rsa.PrivateKey, ciphertext []byte) ([]byte, error) {
+			return rsa.DecryptOAEP(e.DigestMethod.Hash(), RandReader, privKey, ciphertext, nil)
+		},
+	}
+}
+
+func OAEP_2009_256() RSA {
+	return RSA{
+		BlockCipher:  AES256CBC,
+		DigestMethod: SHA256,
+		algorithm:    "http://www.w3.org/2009/xmlenc11#rsa-oaep",
+
+		keyEncrypter: func(e RSA, pubKey *rsa.PublicKey, plaintext []byte) ([]byte, error) {
+			return rsa.EncryptOAEP(e.DigestMethod.Hash(), RandReader, pubKey, plaintext, nil)
+		},
+		keyDecrypter: func(e RSA, privKey *rsa.PrivateKey, ciphertext []byte) ([]byte, error) {
+			return rsa.DecryptOAEP(e.DigestMethod.Hash(), RandReader, privKey, ciphertext, nil)
+		},
+	}
+}
+
+func OAEP_2009_512() RSA {
+	return RSA{
+		BlockCipher:  AES256CBC,
+		DigestMethod: SHA512,
+		algorithm:    "http://www.w3.org/2009/xmlenc11#rsa-oaep",
+
 		keyEncrypter: func(e RSA, pubKey *rsa.PublicKey, plaintext []byte) ([]byte, error) {
 			return rsa.EncryptOAEP(e.DigestMethod.Hash(), RandReader, pubKey, plaintext, nil)
 		},
@@ -158,5 +190,7 @@ func PKCS1v15() RSA {
 
 func init() {
 	RegisterDecrypter(OAEP())
+	RegisterDecrypter(OAEP_2009_256())
+	RegisterDecrypter(OAEP_2009_512())
 	RegisterDecrypter(PKCS1v15())
 }

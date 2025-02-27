@@ -113,17 +113,20 @@ type IdentityProvider struct {
 func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 	certStr := base64.StdEncoding.EncodeToString(idp.Certificate.Raw)
 
-	var validDuration time.Duration
-	if idp.ValidDuration != nil {
-		validDuration = *idp.ValidDuration
-	} else {
-		validDuration = DefaultValidDuration
+	var validUntil *time.Time
+
+	if idp.ValidDuration == nil {
+		// To avoid breaking backward compatibility, nil here means default
+		defaultValid := time.Now().Add(DefaultValidDuration)
+		validUntil = &defaultValid
+	} else if *(idp.ValidDuration) == METADATA_OMIT_VALID_UNTIL {
+		validUntil = nil
 	}
 
 	ed := &EntityDescriptor{
 		EntityID:      idp.MetadataURL.String(),
-		ValidUntil:    TimeNow().Add(validDuration),
-		CacheDuration: validDuration,
+		ValidUntil:    validUntil,
+		CacheDuration: idp.ValidDuration,
 		IDPSSODescriptors: []IDPSSODescriptor{
 			{
 				SSODescriptor: SSODescriptor{

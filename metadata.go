@@ -51,11 +51,11 @@ var Metadata = struct{}{}
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-metadata-2.0-os.pdf §2.3.2
 type EntityDescriptor struct {
-	XMLName                       xml.Name      `xml:"urn:oasis:names:tc:SAML:2.0:metadata EntityDescriptor"`
-	EntityID                      string        `xml:"entityID,attr"`
-	ID                            string        `xml:",attr,omitempty"`
-	ValidUntil                    time.Time     `xml:"validUntil,attr,omitempty"`
-	CacheDuration                 time.Duration `xml:"cacheDuration,attr,omitempty"`
+	XMLName                       xml.Name       `xml:"urn:oasis:names:tc:SAML:2.0:metadata EntityDescriptor"`
+	EntityID                      string         `xml:"entityID,attr"`
+	ID                            string         `xml:",attr,omitempty"`
+	ValidUntil                    *time.Time     `xml:"validUntil,attr,omitempty"`
+	CacheDuration                 *time.Duration `xml:"cacheDuration,attr,omitempty"`
 	Signature                     *etree.Element
 	RoleDescriptors               []RoleDescriptor               `xml:"RoleDescriptor"`
 	IDPSSODescriptors             []IDPSSODescriptor             `xml:"IDPSSODescriptor"`
@@ -69,16 +69,31 @@ type EntityDescriptor struct {
 	AdditionalMetadataLocations   []string `xml:"AdditionalMetadataLocation"`
 }
 
+const METADATA_OMIT_VALID_UNTIL = -1
+
 // MarshalXML implements xml.Marshaler
 func (m EntityDescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias EntityDescriptor
+	var rt *RelaxedTime
+
+	var cacheDuration *Duration
+	if m.CacheDuration != nil {
+		d := Duration(*m.CacheDuration)
+		cacheDuration = &d
+	}
+
+	if m.ValidUntil != nil {
+		rttemp := RelaxedTime(*m.ValidUntil)
+		rt = &rttemp
+	}
+
 	aux := &struct {
-		ValidUntil    RelaxedTime `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration    `xml:"cacheDuration,attr,omitempty"`
+		ValidUntil    *RelaxedTime `xml:"validUntil,attr,omitempty"`
+		CacheDuration *Duration    `xml:"cacheDuration,attr,omitempty"`
 		*Alias
 	}{
-		ValidUntil:    RelaxedTime(m.ValidUntil),
-		CacheDuration: Duration(m.CacheDuration),
+		ValidUntil:    rt,
+		CacheDuration: cacheDuration,
 		Alias:         (*Alias)(&m),
 	}
 	return e.Encode(aux)
@@ -88,8 +103,8 @@ func (m EntityDescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 func (m *EntityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias EntityDescriptor
 	aux := &struct {
-		ValidUntil    RelaxedTime `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration    `xml:"cacheDuration,attr,omitempty"`
+		ValidUntil    *RelaxedTime `xml:"validUntil,attr,omitempty"`
+		CacheDuration *Duration    `xml:"cacheDuration,attr,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -97,8 +112,20 @@ func (m *EntityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 	if err := d.DecodeElement(aux, &start); err != nil {
 		return err
 	}
-	m.ValidUntil = time.Time(aux.ValidUntil)
-	m.CacheDuration = time.Duration(aux.CacheDuration)
+
+	if aux.ValidUntil != nil {
+		t := time.Time(*aux.ValidUntil)
+		m.ValidUntil = &t
+	} else {
+		m.ValidUntil = nil
+	}
+
+	if aux.CacheDuration != nil {
+		d := time.Duration(*aux.CacheDuration)
+		m.CacheDuration = &d
+	} else {
+		m.ValidUntil = nil
+	}
 	return nil
 }
 
