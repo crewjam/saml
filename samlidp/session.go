@@ -38,11 +38,13 @@ func (s *Server) GetSession(w http.ResponseWriter, r *http.Request, req *saml.Id
 	if r.Method == "POST" && r.PostForm.Get("user") != "" {
 		user := User{}
 		if err := s.Store.Get(fmt.Sprintf("/users/%s", r.PostForm.Get("user")), &user); err != nil {
+			s.logger.Printf("ERROR: User '%s' doesn't exists", r.PostForm.Get("user"))
 			s.sendLoginForm(w, r, req, "Invalid username or password")
 			return nil
 		}
 
 		if err := bcrypt.CompareHashAndPassword(user.HashedPassword, []byte(r.PostForm.Get("password"))); err != nil {
+			s.logger.Printf("ERROR: Invalid password for user '%s'", r.PostForm.Get("user"))
 			s.sendLoginForm(w, r, req, "Invalid username or password")
 			return nil
 		}
@@ -75,6 +77,8 @@ func (s *Server) GetSession(w http.ResponseWriter, r *http.Request, req *saml.Id
 			Secure:   r.URL.Scheme == "https",
 			Path:     "/",
 		})
+
+		s.logger.Printf("User '%s' authenticated successfully", r.PostForm.Get("user"))
 		return session
 	}
 
