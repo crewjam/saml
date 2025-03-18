@@ -9,6 +9,7 @@ import (
 
 var (
 	ErrInvalidRequest         = &Error{Code: http.StatusBadRequest}
+	ErrUnprocessableEntity    = &Error{Code: http.StatusUnprocessableEntity}
 	ErrNotFound               = &Error{Code: http.StatusNotFound}
 	ErrInvalidSAMLRequest     = ErrInvalidRequest.WithMessage("Invalid SAML Request")
 	ErrUnknownServiceProvider = ErrNotFound.WithMessage("Unknown service provider")

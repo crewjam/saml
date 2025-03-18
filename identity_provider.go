@@ -545,8 +545,7 @@ func (req *IdpAuthnRequest) getACSEndpoint() error {
 
 // DefaultAssertionMaker produces a SAML assertion for the
 // given request and assigns it to req.Assertion.
-type DefaultAssertionMaker struct {
-}
+type DefaultAssertionMaker struct{}
 
 // MakeAssertion implements AssertionMaker. It produces a SAML assertion from the
 // given request and assigns it to req.Assertion.
@@ -991,11 +990,11 @@ func (req *IdpAuthnRequest) getSPEncryptionCert() (*x509.Certificate, error) {
 	certStr = regexp.MustCompile(`\s+`).ReplaceAllString(certStr, "")
 	certBytes, err := base64.StdEncoding.DecodeString(certStr)
 	if err != nil {
-		return nil, fmt.Errorf("cannot decode certificate base64: %v", err)
+		return nil, ErrUnprocessableEntity.WithMessage("Failed to decode encryption certificate").WithError(err)
 	}
 	cert, err := x509.ParseCertificate(certBytes)
 	if err != nil {
-		return nil, fmt.Errorf("cannot parse certificate: %v", err)
+		return nil, ErrUnprocessableEntity.WithMessage("Failed to parse encryption certificate").WithError(err)
 	}
 	return cert, nil
 }
