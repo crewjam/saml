@@ -85,10 +85,10 @@ func (s *Server) HandlePutUser(c web.C, w http.ResponseWriter, r *http.Request) 
 	} else {
 		existingUser := User{}
 		err := s.Store.Get(fmt.Sprintf("/users/%s", c.URLParams["id"]), &existingUser)
-		switch {
-		case err == nil:
+		switch err {
+		case nil:
 			user.HashedPassword = existingUser.HashedPassword
-		case err == ErrNotFound:
+		case ErrNotFound:
 			// nop
 		default:
 			s.logger.Printf("ERROR: %s", err)
