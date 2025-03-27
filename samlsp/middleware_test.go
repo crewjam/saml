@@ -150,7 +150,7 @@ func TestMiddlewareRequireAccountNoCreds(t *testing.T) {
 	test.Middleware.ServiceProvider.AcsURL.Scheme = "http"
 
 	handler := test.Middleware.RequireAccount(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 			panic("not reached")
 		}))
 
@@ -174,7 +174,7 @@ func TestMiddlewareRequireAccountNoCredsSecure(t *testing.T) {
 	test := NewMiddlewareTest(t)
 
 	handler := test.Middleware.RequireAccount(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 			panic("not reached")
 		}))
 
@@ -200,7 +200,7 @@ func TestMiddlewareRequireAccountNoCredsPostBinding(t *testing.T) {
 		test.Middleware.ServiceProvider.GetSSOBindingLocation(saml.HTTPRedirectBinding)))
 
 	handler := test.Middleware.RequireAccount(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 			panic("not reached")
 		}))
 
@@ -256,7 +256,7 @@ func TestMiddlewareRequireAccountCreds(t *testing.T) {
 func TestMiddlewareRequireAccountBadCreds(t *testing.T) {
 	test := NewMiddlewareTest(t)
 	handler := test.Middleware.RequireAccount(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 			panic("not reached")
 		}))
 
@@ -287,7 +287,7 @@ func TestMiddlewareRequireAccountExpiredCreds(t *testing.T) {
 	}
 
 	handler := test.Middleware.RequireAccount(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 			panic("not reached")
 		}))
 
@@ -312,7 +312,7 @@ func TestMiddlewareRequireAccountExpiredCreds(t *testing.T) {
 func TestMiddlewareRequireAccountPanicOnRequestToACS(t *testing.T) {
 	test := NewMiddlewareTest(t)
 	handler := test.Middleware.RequireAccount(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 			panic("not reached")
 		}))
 
@@ -326,7 +326,7 @@ func TestMiddlewareRequireAttribute(t *testing.T) {
 	test := NewMiddlewareTest(t)
 	handler := test.Middleware.RequireAccount(
 		RequireAttribute("eduPersonAffiliation", "Staff")(
-			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusTeapot)
 			})))
 
@@ -344,7 +344,7 @@ func TestMiddlewareRequireAttributeWrongValue(t *testing.T) {
 	test := NewMiddlewareTest(t)
 	handler := test.Middleware.RequireAccount(
 		RequireAttribute("eduPersonAffiliation", "DomainAdmins")(
-			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 				panic("not reached")
 			})))
 
@@ -362,7 +362,7 @@ func TestMiddlewareRequireAttributeNotPresent(t *testing.T) {
 	test := NewMiddlewareTest(t)
 	handler := test.Middleware.RequireAccount(
 		RequireAttribute("valueThatDoesntExist", "doesntMatter")(
-			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 				panic("not reached")
 			})))
 
@@ -379,7 +379,7 @@ func TestMiddlewareRequireAttributeNotPresent(t *testing.T) {
 func TestMiddlewareRequireAttributeMissingAccount(t *testing.T) {
 	test := NewMiddlewareTest(t)
 	handler := RequireAttribute("eduPersonAffiliation", "DomainAdmins")(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 			panic("not reached")
 		}))
 
@@ -455,7 +455,7 @@ func TestMiddlewareDefaultCookieDomainIPv6(t *testing.T) {
 func TestMiddlewareRejectsInvalidRelayState(t *testing.T) {
 	test := NewMiddlewareTest(t)
 
-	test.Middleware.OnError = func(w http.ResponseWriter, r *http.Request, err error) {
+	test.Middleware.OnError = func(w http.ResponseWriter, _ *http.Request, err error) {
 		assert.Check(t, is.Error(err, http.ErrNoCookie.Error()))
 		http.Error(w, "forbidden", http.StatusTeapot)
 	}
@@ -478,7 +478,7 @@ func TestMiddlewareRejectsInvalidRelayState(t *testing.T) {
 func TestMiddlewareRejectsInvalidCookie(t *testing.T) {
 	test := NewMiddlewareTest(t)
 
-	test.Middleware.OnError = func(w http.ResponseWriter, r *http.Request, err error) {
+	test.Middleware.OnError = func(w http.ResponseWriter, _ *http.Request, err error) {
 		assert.Check(t, is.Error(err, "Authentication failed"))
 		http.Error(w, "forbidden", http.StatusTeapot)
 	}
