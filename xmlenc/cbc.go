@@ -3,7 +3,7 @@ package xmlenc
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/des" // nolint: gas
+	"crypto/des" // nolint: gosec
 	"encoding/base64"
 	"errors"
 	"fmt"
