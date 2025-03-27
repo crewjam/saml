@@ -242,8 +242,9 @@ func TestIDPCanHandleRequestWithNewSession(t *testing.T) {
 	test := NewIdentityProviderTest(t, applyKey)
 	test.IDP.SessionProvider = &mockSessionProvider{
 		GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
-			fmt.Fprintf(w, "RelayState: %s\nSAMLRequest: %s",
+			_, err := fmt.Fprintf(w, "RelayState: %s\nSAMLRequest: %s",
 				req.RelayState, req.RequestBuffer)
+			assert.NilError(t, err)
 			return nil
 		},
 	}
@@ -799,7 +800,8 @@ func TestIDPIDPInitiatedNewSession(t *testing.T) {
 	test := NewIdentityProviderTest(t, applyKey)
 	test.IDP.SessionProvider = &mockSessionProvider{
 		GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
-			fmt.Fprintf(w, "RelayState: %s", req.RelayState)
+			_, err := fmt.Fprintf(w, "RelayState: %s", req.RelayState)
+			assert.NilError(t, err)
 			return nil
 		},
 	}
@@ -1068,8 +1070,9 @@ func TestIDPRejectDecompressionBomb(t *testing.T) {
 	test := NewIdentityProviderTest(t)
 	test.IDP.SessionProvider = &mockSessionProvider{
 		GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
-			fmt.Fprintf(w, "RelayState: %s\nSAMLRequest: %s",
+			_, err := fmt.Fprintf(w, "RelayState: %s\nSAMLRequest: %s",
 				req.RelayState, req.RequestBuffer)
+			assert.NilError(t, err)
 			return nil
 		},
 	}
