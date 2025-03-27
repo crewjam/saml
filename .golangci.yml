@@ -53,9 +53,7 @@ linters:
       - path: (.+)\.go$
         text: G104 # 'Errors unhandled. (gosec)
     paths:
-      - third_party$
-      - builtin$
-      - examples$
+      - example/.*\.go$
 formatters:
   enable:
     - gofmt
