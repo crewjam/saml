@@ -130,7 +130,7 @@ The SAML standard is huge and complex with many dark corners and strange, unused
 
 This package supports the **Web SSO** profile. Message flows from the service provider to the IDP are supported using the **HTTP Redirect** binding and the **HTTP POST** binding. Message flows from the IDP to the service provider are supported via the **HTTP POST** binding.
 
-The package can produce signed SAML assertions, and can validate both signed and encrypted SAML assertions. It does not support signed or encrypted requests.
+The package can produce signed SAML assertions, and can validate both signed and encrypted SAML assertions.
 
 ## RelayState
 
