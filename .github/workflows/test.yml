@@ -16,4 +16,5 @@ jobs:
       - uses: actions/setup-go@v4
         with:
           go-version: ${{ matrix.go }}
+      - run: go version
       - run: go test -v ./...

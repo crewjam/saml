@@ -2,8 +2,6 @@ module github.com/crewjam/saml
 
 go 1.22
 
-toolchain go1.24.2
-
 require (
 	github.com/beevik/etree v1.5.0
 	github.com/golang-jwt/jwt/v4 v4.5.2
