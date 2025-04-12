@@ -606,6 +606,17 @@ func TestIDPMakeAssertion(t *testing.T) {
 				},
 			},
 			{
+				FriendlyName: "mail",
+				Name:         "urn:oid:0.9.2342.19200300.100.1.3",
+				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+				Values: []AttributeValue{
+					{
+						Type:  "xs:string",
+						Value: "alice@example.com",
+					},
+				},
+			},
+			{
 				FriendlyName: "eduPersonPrincipalName",
 				Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.6",
 				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
@@ -975,6 +986,17 @@ func TestIDPRequestedAttributes(t *testing.T) {
 					{
 						Type:  "xs:string",
 						Value: "alice",
+					},
+				},
+			},
+			{
+				FriendlyName: "mail",
+				Name:         "urn:oid:0.9.2342.19200300.100.1.3",
+				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+				Values: []AttributeValue{
+					{
+						Type:  "xs:string",
+						Value: "alice@example.com",
 					},
 				},
 			},
