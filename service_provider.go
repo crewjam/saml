@@ -137,6 +137,10 @@ type ServiceProvider struct {
 	// LogoutBindings specify the bindings available for SLO endpoint. If empty,
 	// HTTP-POST binding is used.
 	LogoutBindings []string
+
+	// ValidateAudienceRestriction allows you to override the default audience validation
+	// for an assertion. If nil, the default audience validation is used.
+	ValidateAudienceRestriction func(assertion *Assertion) error
 }
 
 // MaxIssueDelay is the longest allowed time between when a SAML assertion is
@@ -1170,6 +1174,20 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	}
 	if assertion.Conditions.NotOnOrAfter.Add(MaxClockSkew).Before(now) {
 		return fmt.Errorf("assertion Conditions is expired")
+	}
+
+	if err := sp.validateAudienceRestriction(assertion); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (sp *ServiceProvider) validateAudienceRestriction(assertion *Assertion) error {
+	if sp.ValidateAudienceRestriction != nil {
+		if err := sp.ValidateAudienceRestriction(assertion); err != nil {
+			return fmt.Errorf("audience restriction validation failed: %w", err)
+		}
+		return nil
 	}
 
 	audienceRestrictionsValid := len(assertion.Conditions.AudienceRestrictions) == 0
