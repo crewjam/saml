@@ -139,7 +139,7 @@ func TestHTTPCanSSORequest(t *testing.T) {
 	test.Server.ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
 	assert.Check(t,
-		strings.HasPrefix(w.Body.String(), "<html><p></p><form method=\"post\" action=\"https://idp.example.com/sso\">"),
+		strings.HasPrefix(w.Body.String(), "<html><p></p><form method=\"post\" action=\"https://idp.example.com/login\">"),
 		w.Body.String())
 	golden.Assert(t, w.Body.String(), "http_sso_response.html")
 }

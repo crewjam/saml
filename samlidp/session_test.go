@@ -72,7 +72,7 @@ func TestSessionsCrud(t *testing.T) {
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
 	assert.Check(t, is.Equal("text/html; charset=utf-8",
 		w.Header().Get("Content-type")))
-	assert.Check(t, is.Equal(`<html><p>Invalid username or password</p><form method="post" action="https://idp.example.com/sso"><input type="text" name="user" placeholder="user" value="" /><input type="password" name="password" placeholder="password" value="" /><input type="hidden" name="SAMLRequest" value="" /><input type="hidden" name="RelayState" value="" /><input type="submit" value="Log In" /></form></html>`,
+	assert.Check(t, is.Equal(`<html><p>Invalid username or password</p><form method="post" action="https://idp.example.com/login"><input type="text" name="user" placeholder="user" value="" /><input type="password" name="password" placeholder="password" value="" /><input type="hidden" name="SAMLRequest" value="" /><input type="hidden" name="RelayState" value="" /><input type="submit" value="Log In" /></form></html>`,
 		w.Body.String()))
 
 	// invalid username/password exists case
@@ -84,6 +84,6 @@ func TestSessionsCrud(t *testing.T) {
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
 	assert.Check(t, is.Equal("text/html; charset=utf-8",
 		w.Header().Get("Content-type")))
-	assert.Check(t, is.Equal(`<html><p>Invalid username or password</p><form method="post" action="https://idp.example.com/sso"><input type="text" name="user" placeholder="user" value="" /><input type="password" name="password" placeholder="password" value="" /><input type="hidden" name="SAMLRequest" value="" /><input type="hidden" name="RelayState" value="" /><input type="submit" value="Log In" /></form></html>`,
+	assert.Check(t, is.Equal(`<html><p>Invalid username or password</p><form method="post" action="https://idp.example.com/login"><input type="text" name="user" placeholder="user" value="" /><input type="password" name="password" placeholder="password" value="" /><input type="hidden" name="SAMLRequest" value="" /><input type="hidden" name="RelayState" value="" /><input type="submit" value="Log In" /></form></html>`,
 		w.Body.String()))
 }
