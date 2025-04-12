@@ -3,7 +3,6 @@ package samlsp
 import (
 	"testing"
 
-	"github.com/stretchr/testify/require"
 	"gotest.tools/assert"
 )
 
@@ -24,7 +23,7 @@ func TestNewCanAcceptCookieName(t *testing.T) {
 				CookieName: tc.cookieName,
 			}
 			sp, err := New(opts)
-			require.Nil(t, err)
+			assert.Assert(t, err)
 			cookieProvider := sp.Session.(CookieSessionProvider)
 			assert.Equal(t, tc.expected, cookieProvider.Name)
 
