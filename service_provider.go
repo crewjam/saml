@@ -141,6 +141,10 @@ type ServiceProvider struct {
 	// ValidateAudienceRestriction allows you to override the default audience validation
 	// for an assertion. If nil, the default audience validation is used.
 	ValidateAudienceRestriction func(assertion *Assertion) error
+
+	// ValidateRequestID allows you to override the default request ID validation.
+	// If nil, the default request ID validation is used.
+	ValidateRequestID func(response Response, possibleRequestIDs []string) error
 }
 
 // MaxIssueDelay is the longest allowed time between when a SAML assertion is
@@ -972,18 +976,8 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 			}
 		}
 
-		requestIDvalid := false
-		if sp.AllowIDPInitiated {
-			requestIDvalid = true
-		} else {
-			for _, possibleRequestID := range possibleRequestIDs {
-				if response.InResponseTo == possibleRequestID {
-					requestIDvalid = true
-				}
-			}
-		}
-		if !requestIDvalid {
-			return nil, fmt.Errorf("`InResponseTo` does not match any of the possible request IDs (expected %v)", possibleRequestIDs)
+		if err := sp.validateRequestID(response, possibleRequestIDs); err != nil {
+			return nil, err
 		}
 
 		if response.IssueInstant.Add(MaxIssueDelay).Before(now) {
@@ -1057,6 +1051,27 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 	// than one assertion at the time of establishing the public interface of ParseXMLResponse(), so for compatibility
 	// we return the first one.
 	return &assertions[0], nil
+}
+
+func (sp *ServiceProvider) validateRequestID(response Response, possibleRequestIDs []string) error {
+	if sp.ValidateRequestID != nil {
+		return sp.ValidateRequestID(response, possibleRequestIDs)
+	}
+
+	requestIDvalid := false
+	if sp.AllowIDPInitiated {
+		requestIDvalid = true
+	} else {
+		for _, possibleRequestID := range possibleRequestIDs {
+			if response.InResponseTo == possibleRequestID {
+				requestIDvalid = true
+			}
+		}
+	}
+	if !requestIDvalid {
+		return fmt.Errorf("`InResponseTo` does not match any of the possible request IDs (expected %v)", possibleRequestIDs)
+	}
+	return nil
 }
 
 func (sp *ServiceProvider) parseEncryptedAssertion(encryptedAssertionEl *etree.Element, possibleRequestIDs []string, now time.Time, signatureRequirement signatureRequirement) (*Assertion, error) {
