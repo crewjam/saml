@@ -63,4 +63,27 @@ func TestSessionsCrud(t *testing.T) {
 	assert.Check(t, is.Equal("{\"sessions\":[]}\n",
 		w.Body.String()))
 
+	// user doesn't exists case
+	w = httptest.NewRecorder()
+	r, _ = http.NewRequest("POST", "https://idp.example.com/login",
+		strings.NewReader("user=unknown&password=dummypassword"))
+	r.Header.Set("Content-type", "application/x-www-form-urlencoded")
+	test.Server.ServeHTTP(w, r)
+	assert.Check(t, is.Equal(http.StatusOK, w.Code))
+	assert.Check(t, is.Equal("text/html; charset=utf-8",
+		w.Header().Get("Content-type")))
+	assert.Check(t, is.Equal(`<html><p>Invalid username or password</p><form method="post" action="https://idp.example.com/sso"><input type="text" name="user" placeholder="user" value="" /><input type="password" name="password" placeholder="password" value="" /><input type="hidden" name="SAMLRequest" value="" /><input type="hidden" name="RelayState" value="" /><input type="submit" value="Log In" /></form></html>`,
+		w.Body.String()))
+
+	// invalid username/password exists case
+	w = httptest.NewRecorder()
+	r, _ = http.NewRequest("POST", "https://idp.example.com/login",
+		strings.NewReader("user=alice&password=dummypassword"))
+	r.Header.Set("Content-type", "application/x-www-form-urlencoded")
+	test.Server.ServeHTTP(w, r)
+	assert.Check(t, is.Equal(http.StatusOK, w.Code))
+	assert.Check(t, is.Equal("text/html; charset=utf-8",
+		w.Header().Get("Content-type")))
+	assert.Check(t, is.Equal(`<html><p>Invalid username or password</p><form method="post" action="https://idp.example.com/sso"><input type="text" name="user" placeholder="user" value="" /><input type="password" name="password" placeholder="password" value="" /><input type="hidden" name="SAMLRequest" value="" /><input type="hidden" name="RelayState" value="" /><input type="submit" value="Log In" /></form></html>`,
+		w.Body.String()))
 }
