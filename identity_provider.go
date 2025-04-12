@@ -175,7 +175,7 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 	}
 
 	if idp.LogoutURL.String() != "" {
-		ed.IDPSSODescriptors[0].SSODescriptor.SingleLogoutServices = []Endpoint{
+		ed.IDPSSODescriptors[0].SingleLogoutServices = []Endpoint{
 			{
 				Binding:  HTTPRedirectBinding,
 				Location: idp.LogoutURL.String(),

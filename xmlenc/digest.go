@@ -6,7 +6,7 @@ import (
 	"crypto/sha512"
 	"hash"
 
-	//nolint:staticcheck // We should support this for legacy reasons.
+	//nolint:staticcheck,gosec // We should support this for legacy reasons.
 	"golang.org/x/crypto/ripemd160"
 )
 

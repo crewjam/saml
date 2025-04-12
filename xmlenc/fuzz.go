@@ -9,6 +9,7 @@ import (
 )
 
 var testKey = func() *rsa.PrivateKey {
+	//nolint:gosec
 	const keyStr = `-----BEGIN RSA PRIVATE KEY-----
 MIICXQIBAAKBgQDkXTUsWzRVpUHjbDpWCfYDfXmQ/q4LkaioZoTpu4ut1Q3eQC5t
 gD14agJhgT8yzeY5S/YNlwCyuVkjuFyoyTHFX2IOPpz7jnh4KnQ+B1IH9fY/+kmk

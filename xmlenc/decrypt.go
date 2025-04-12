@@ -1,8 +1,6 @@
 package xmlenc
 
 import (
-
-	// nolint: gas
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"

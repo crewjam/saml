@@ -70,6 +70,6 @@ func (s JWTTrackedRequestCodec) Decode(signed string) (*TrackedRequest, error) {
 	if !claims.SAMLAuthnRequest {
 		return nil, fmt.Errorf("expected saml-authn-request")
 	}
-	claims.TrackedRequest.Index = claims.Subject
+	claims.Index = claims.Subject
 	return &claims.TrackedRequest, nil
 }
