@@ -16,7 +16,6 @@ import (
 	"strings"
 
 	"github.com/crewjam/saml/samlsp"
-	"github.com/kr/pretty"
 )
 
 var links = map[string]Link{}
@@ -63,6 +62,27 @@ func ListLinks(w http.ResponseWriter, r *http.Request) {
 	for _, l := range links {
 		if l.Owner == account {
 			fmt.Fprintf(w, "%s\n", l.ShortLink)
+		}
+	}
+}
+
+// ServeWhoami serves the basic whoami endpoint
+func ServeWhoami(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Content-Type", "text/plain")
+
+	session := samlsp.SessionFromContext(r.Context())
+	if session == nil {
+		fmt.Fprintln(w, "not signed in")
+		return
+	}
+	fmt.Fprintln(w, "signed in")
+	sessionWithAttrs, ok := session.(samlsp.SessionWithAttributes)
+	if ok {
+		fmt.Fprintln(w, "attributes:")
+		for name, values := range sessionWithAttrs.GetAttributes() {
+			for _, value := range values {
+				fmt.Fprintf(w, "%s: %v\n", name, value)
+			}
 		}
 	}
 }
@@ -157,12 +177,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("GET /saml/", samlSP)
 	mux.HandleFunc("GET /{link}", ServeLink)
-	mux.Handle("GET /whoami", samlSP.RequireAccount(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			if _, err := pretty.Fprintf(w, "%# v", r); err != nil {
-				panic(err)
-			}
-		})))
+	mux.Handle("GET /whoami", samlSP.RequireAccount(http.HandlerFunc(ServeWhoami)))
 	mux.Handle("POST /", samlSP.RequireAccount(http.HandlerFunc(CreateLink)))
 	mux.Handle("GET /", samlSP.RequireAccount(http.HandlerFunc(ListLinks)))
 
