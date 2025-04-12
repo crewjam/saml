@@ -57,6 +57,8 @@ func New(opts Options) (*Server, error) {
 	metadataURL.Path += "/metadata"
 	ssoURL := opts.URL
 	ssoURL.Path += "/sso"
+	loginURL := opts.URL
+	loginURL.Path += "/login"
 	logr := opts.Logger
 	if logr == nil {
 		logr = logger.DefaultLogger
@@ -71,6 +73,7 @@ func New(opts Options) (*Server, error) {
 			Certificate: opts.Certificate,
 			MetadataURL: metadataURL,
 			SSOURL:      ssoURL,
+			LoginURL:    loginURL,
 		},
 		logger:            logr,
 		Store:             opts.Store,
