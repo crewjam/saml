@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/beevik/etree"
@@ -282,28 +283,32 @@ func (sp *ServiceProvider) MakeRedirectAuthenticationRequest(relayState string) 
 
 // Redirect returns a URL suitable for using the redirect binding with the request
 func (r *AuthnRequest) Redirect(relayState string, sp *ServiceProvider) (*url.URL, error) {
-	w := &bytes.Buffer{}
-	w1 := base64.NewEncoder(base64.StdEncoding, w)
-	w2, _ := flate.NewWriter(w1, 9)
+	var requestStr strings.Builder
+	base64Writer := base64.NewEncoder(base64.StdEncoding, &requestStr)
+	compressedWriter, _ := flate.NewWriter(base64Writer, 9)
 	doc := etree.NewDocument()
 	doc.SetRoot(r.Element())
-	if _, err := doc.WriteTo(w2); err != nil {
-		panic(err)
+	if _, err := doc.WriteTo(compressedWriter); err != nil {
+		return nil, err
 	}
-	if err := w2.Close(); err != nil {
-		panic(err)
+	if err := compressedWriter.Close(); err != nil {
+		return nil, err
 	}
-	if err := w1.Close(); err != nil {
-		panic(err)
+	if err := base64Writer.Close(); err != nil {
+		return nil, err
 	}
 
-	rv, _ := url.Parse(r.Destination)
+	rv, err := url.Parse(r.Destination)
+	if err != nil {
+		return nil, err
+	}
+
 	// We can't depend on Query().set() as order matters for signing
 	query := rv.RawQuery
 	if len(query) > 0 {
-		query += "&SAMLRequest=" + url.QueryEscape(w.String())
+		query += "&SAMLRequest=" + url.QueryEscape(requestStr.String())
 	} else {
-		query += "SAMLRequest=" + url.QueryEscape(w.String())
+		query += "SAMLRequest=" + url.QueryEscape(requestStr.String())
 	}
 
 	if relayState != "" {
