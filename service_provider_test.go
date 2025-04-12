@@ -1012,8 +1012,8 @@ func TestDestinationMatchesCurrentUrlButNotAcsUrlWithSignaturePresent(t *testing
 	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
-	currentUrl := mustParseURL("https://15661444.ngrok.io/saml2/acs?current=true")
-	req := http.Request{PostForm: url.Values{}, URL: &currentUrl}
+	currentURL := mustParseURL("https://15661444.ngrok.io/saml2/acs?current=true")
+	req := http.Request{PostForm: url.Values{}, URL: &currentURL}
 	bytes, _ := overrideDestinationFromDocument(test.responseDom(t), "https://15661444.ngrok.io/saml2/acs?current=true").WriteToBytes()
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(bytes))
 	assertion, err := s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
@@ -1036,8 +1036,8 @@ func TestDestinationMatchesAcsUrlButNotCurrentUrlWithSignaturePresent(t *testing
 	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
 
-	currentUrl := mustParseURL("https://15661444.ngrok.io/saml2/acs?query=param")
-	req := http.Request{PostForm: url.Values{}, URL: &currentUrl}
+	currentURL := mustParseURL("https://15661444.ngrok.io/saml2/acs?query=param")
+	req := http.Request{PostForm: url.Values{}, URL: &currentURL}
 	bytes, _ := test.responseDom(t).WriteToBytes()
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(bytes))
 	assertion, err := s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
