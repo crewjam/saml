@@ -232,11 +232,6 @@ func (m *Middleware) CreateSessionFromAssertion(w http.ResponseWriter, r *http.R
 // SAML attribute `name` be set to `value`. This can be used to require
 // that a remote user be a member of a group. It relies on the Claims assigned
 // to to the context in RequireAccount.
-//
-// For example:
-//
-//	goji.Use(m.RequireAccount)
-//	goji.Use(RequireAttributeMiddleware("eduPersonAffiliation", "Staff"))
 func RequireAttribute(name, value string) func(http.Handler) http.Handler {
 	return func(handler http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

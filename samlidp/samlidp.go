@@ -8,11 +8,8 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"sync"
-
-	"github.com/zenazn/goji/web"
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/logger"
@@ -94,40 +91,39 @@ func New(opts Options) (*Server, error) {
 // is called automatically for you by New, but you may need to call it
 // yourself if you don't create the object using New.)
 func (s *Server) InitializeHTTP() {
-	mux := web.New()
+	mux := http.NewServeMux()
 	s.Handler = mux
 
-	mux.Get("/metadata", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /metadata", func(w http.ResponseWriter, r *http.Request) {
 		s.idpConfigMu.RLock()
 		defer s.idpConfigMu.RUnlock()
 		s.IDP.ServeMetadata(w, r)
 	})
-	mux.Handle("/sso", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/sso", func(w http.ResponseWriter, r *http.Request) {
 		s.IDP.ServeSSO(w, r)
 	})
 
-	mux.Handle("/login", s.HandleLogin)
-	mux.Handle("/login/:shortcut", s.HandleIDPInitiated)
-	mux.Handle("/login/:shortcut/*", s.HandleIDPInitiated)
+	mux.HandleFunc("/login", s.HandleLogin)
+	mux.HandleFunc("/login/{shortcut}", s.HandleIDPInitiated)
+	mux.HandleFunc("/login/{shortcut}/{suffix}", s.HandleIDPInitiated)
 
-	mux.Get("/services/", s.HandleListServices)
-	mux.Get("/services/:id", s.HandleGetService)
-	mux.Put("/services/:id", s.HandlePutService)
-	mux.Post("/services/:id", s.HandlePutService)
-	mux.Delete("/services/:id", s.HandleDeleteService)
+	mux.HandleFunc("GET /services/", s.HandleListServices)
+	mux.HandleFunc("GET /services/{id}", s.HandleGetService)
+	mux.HandleFunc("PUT /services/{id}", s.HandlePutService)
+	mux.HandleFunc("POST /services/{id}", s.HandlePutService)
+	mux.HandleFunc("DELETE /services/{id}", s.HandleDeleteService)
 
-	mux.Get("/users/", s.HandleListUsers)
-	mux.Get("/users/:id", s.HandleGetUser)
-	mux.Put("/users/:id", s.HandlePutUser)
-	mux.Delete("/users/:id", s.HandleDeleteUser)
+	mux.HandleFunc("GET /users/", s.HandleListUsers)
+	mux.HandleFunc("GET /users/{id}", s.HandleGetUser)
+	mux.HandleFunc("PUT /users/{id}", s.HandlePutUser)
+	mux.HandleFunc("DELETE /users/{id}", s.HandleDeleteUser)
 
-	sessionPath := regexp.MustCompile("/sessions/(?P<id>.*)")
-	mux.Get("/sessions/", s.HandleListSessions)
-	mux.Get(sessionPath, s.HandleGetSession)
-	mux.Delete(sessionPath, s.HandleDeleteSession)
+	mux.HandleFunc("GET /sessions/", s.HandleListSessions)
+	mux.HandleFunc("GET /sessions/{id}", s.HandleGetSession)
+	mux.HandleFunc("DELETE /sessions/{id}", s.HandleDeleteSession)
 
-	mux.Get("/shortcuts/", s.HandleListShortcuts)
-	mux.Get("/shortcuts/:id", s.HandleGetShortcut)
-	mux.Put("/shortcuts/:id", s.HandlePutShortcut)
-	mux.Delete("/shortcuts/:id", s.HandleDeleteShortcut)
+	mux.HandleFunc("GET /shortcuts/", s.HandleListShortcuts)
+	mux.HandleFunc("GET /shortcuts/{id}", s.HandleGetShortcut)
+	mux.HandleFunc("PUT /shortcuts/{id}", s.HandlePutShortcut)
+	mux.HandleFunc("DELETE /shortcuts/{id}", s.HandleDeleteShortcut)
 }

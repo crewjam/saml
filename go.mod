@@ -14,7 +14,6 @@ require (
 	github.com/mattermost/xml-roundtrip-validator v0.1.0
 	github.com/russellhaering/goxmldsig v1.4.0
 	github.com/stretchr/testify v1.10.0
-	github.com/zenazn/goji v1.0.1
 	golang.org/x/crypto v0.18.0
 	gotest.tools v2.2.0+incompatible
 )
