@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
 	"sync"
 
 	"github.com/zenazn/goji/web"
@@ -47,6 +48,8 @@ type Server struct {
 
 // New returns a new Server
 func New(opts Options) (*Server, error) {
+	opts.URL.Path = strings.TrimSuffix(opts.URL.Path, "/")
+
 	metadataURL := opts.URL
 	metadataURL.Path += "/metadata"
 	ssoURL := opts.URL
