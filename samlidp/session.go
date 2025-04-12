@@ -5,8 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
-	"text/template"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -39,13 +39,13 @@ func (s *Server) GetSession(w http.ResponseWriter, r *http.Request, req *saml.Id
 		user := User{}
 		if err := s.Store.Get(fmt.Sprintf("/users/%s", r.PostForm.Get("user")), &user); err != nil {
 			s.logger.Printf("ERROR: User '%s' doesn't exists", r.PostForm.Get("user"))
-			s.sendLoginForm(w, r, req, "Invalid username or password")
+			s.sendLoginForm(w, req, "Invalid username or password")
 			return nil
 		}
 
 		if err := bcrypt.CompareHashAndPassword(user.HashedPassword, []byte(r.PostForm.Get("password"))); err != nil {
 			s.logger.Printf("ERROR: Invalid password for user '%s'", r.PostForm.Get("user"))
-			s.sendLoginForm(w, r, req, "Invalid username or password")
+			s.sendLoginForm(w, req, "Invalid username or password")
 			return nil
 		}
 
@@ -86,7 +86,7 @@ func (s *Server) GetSession(w http.ResponseWriter, r *http.Request, req *saml.Id
 		session := &saml.Session{}
 		if err := s.Store.Get(fmt.Sprintf("/sessions/%s", sessionCookie.Value), session); err != nil {
 			if err == ErrNotFound {
-				s.sendLoginForm(w, r, req, "")
+				s.sendLoginForm(w, req, "")
 				return nil
 			}
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -94,31 +94,36 @@ func (s *Server) GetSession(w http.ResponseWriter, r *http.Request, req *saml.Id
 		}
 
 		if saml.TimeNow().After(session.ExpireTime) {
-			s.sendLoginForm(w, r, req, "")
+			s.sendLoginForm(w, req, "")
 			return nil
 		}
 		return session
 	}
 
-	s.sendLoginForm(w, r, req, "")
+	s.sendLoginForm(w, req, "")
 	return nil
 }
+
+var defaultLoginFormTemplate = template.Must(template.New("saml-post-form").Parse(`` +
+	`<html>` +
+	`<p>{{.Toast}}</p>` +
+	`<form method="post" action="{{.URL}}">` +
+	`<input type="text" name="user" placeholder="user" value="" />` +
+	`<input type="password" name="password" placeholder="password" value="" />` +
+	`<input type="hidden" name="SAMLRequest" value="{{.SAMLRequest}}" />` +
+	`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
+	`<input type="submit" value="Log In" />` +
+	`</form>` +
+	`</html>`))
 
 // sendLoginForm produces a form which requests a username and password and directs the user
 // back to the IDP authorize URL to restart the SAML login flow, this time establishing a
 // session based on the credentials that were provided.
-func (s *Server) sendLoginForm(w http.ResponseWriter, _ *http.Request, req *saml.IdpAuthnRequest, toast string) {
-	tmpl := template.Must(template.New("saml-post-form").Parse(`` +
-		`<html>` +
-		`<p>{{.Toast}}</p>` +
-		`<form method="post" action="{{.URL}}">` +
-		`<input type="text" name="user" placeholder="user" value="" />` +
-		`<input type="password" name="password" placeholder="password" value="" />` +
-		`<input type="hidden" name="SAMLRequest" value="{{.SAMLRequest}}" />` +
-		`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
-		`<input type="submit" value="Log In" />` +
-		`</form>` +
-		`</html>`))
+func (s *Server) sendLoginForm(w http.ResponseWriter, req *saml.IdpAuthnRequest, toast string) {
+	tmpl := s.LoginFormTemplate
+	if tmpl == nil {
+		tmpl = defaultLoginFormTemplate
+	}
 	data := struct {
 		Toast       string
 		URL         string
