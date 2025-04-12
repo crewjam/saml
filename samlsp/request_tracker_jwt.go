@@ -1,7 +1,7 @@
 package samlsp
 
 import (
-	"crypto/rsa"
+	"crypto"
 	"fmt"
 	"time"
 
@@ -10,15 +10,13 @@ import (
 	"github.com/crewjam/saml"
 )
 
-var defaultJWTSigningMethod = jwt.SigningMethodRS256
-
 // JWTTrackedRequestCodec encodes TrackedRequests as signed JWTs
 type JWTTrackedRequestCodec struct {
 	SigningMethod jwt.SigningMethod
 	Audience      string
 	Issuer        string
 	MaxAge        time.Duration
-	Key           *rsa.PrivateKey
+	Key           crypto.Signer
 }
 
 var _ TrackedRequestCodec = JWTTrackedRequestCodec{}
