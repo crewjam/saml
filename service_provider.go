@@ -1821,11 +1821,7 @@ func elementToBytes(el *etree.Element) ([]byte, error) {
 	doc := etree.NewDocument()
 	doc.SetRoot(el.Copy())
 	for space, uri := range namespaces {
-		if space == "" {
-			doc.Root().CreateAttr("xmlns", uri)
-		} else {
-			doc.Root().CreateAttr("xmlns:"+space, uri)
-		}
+		doc.Root().CreateAttr("xmlns:"+space, uri)
 	}
 
 	return doc.WriteToBytes()
