@@ -5,7 +5,7 @@ go 1.22
 require (
 	github.com/beevik/etree v1.5.0
 	github.com/golang-jwt/jwt/v4 v4.5.2
-	github.com/google/go-cmp v0.6.0
+	github.com/google/go-cmp v0.7.0
 	github.com/mattermost/xml-roundtrip-validator v0.1.0
 	github.com/russellhaering/goxmldsig v1.4.0
 	golang.org/x/crypto v0.33.0
