@@ -821,7 +821,7 @@ type NameID struct {
 	SPNameQualifier string `xml:",attr"`
 	Format          string `xml:",attr"`
 	SPProvidedID    string `xml:",attr"`
-	Value           string `xml:",chardata"`
+	Value           string `xml:",innerxml"`
 }
 
 // Element returns an etree.Element representing the object in XML form.

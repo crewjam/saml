@@ -760,7 +760,11 @@ func TestSPRejectsInjectedComment(t *testing.T) {
 		assert.Check(t, is.Equal("ross@octolabs.io", assertion.Subject.NameID.Value))
 	}
 
-	// this is a valid response but with a comment injected
+	// This is a valid response with a comment injected per CVE-2018-7340,
+	// it validates because the signature will be the same due to XML canocalization,
+	// but the NameID should be extracted with the comment.
+	//
+	// Reference: https://duo.com/blog/duo-finds-saml-vulnerabilities-affecting-multiple-implementations
 	{
 		x, _ := base64.StdEncoding.DecodeString(string(SamlResponse))
 		y := strings.Replace(string(x), "ross@octolabs.io", "ross@<!-- and a comment -->octolabs.io", 1)
@@ -769,20 +773,14 @@ func TestSPRejectsInjectedComment(t *testing.T) {
 		req := http.Request{PostForm: url.Values{}, URL: &s.AcsURL}
 		req.PostForm.Set("SAMLResponse", string(SamlResponse))
 		assertion, err := s.ParseResponse(&req, []string{"id-fd419a5ab0472645427f8e07d87a3a5dd0b2e9a6"})
-
-		// Note: I would expect the injected comment to be stripped and for the signature
-		// to validate. Less ideal, but not insecure is the case where the comment breaks
-		// the signature, perhaps because xml-c18n isn't being implemented correctly by
-		// dsig.
-		if err == nil {
-			assert.Check(t, is.Equal("ross@octolabs.io",
-				assertion.Subject.NameID.Value))
-		}
+		assert.Check(t, err)
+		assert.Check(t, is.Equal("ross@<!-- and a comment -->octolabs.io", assertion.Subject.NameID.Value))
 	}
 
-	// this is an invalid response with a commend injected per CVE-2018-7340
-	// ref: https://duo.com/blog/duo-finds-saml-vulnerabilities-affecting-multiple-implementations
-	// it *MUST NOT* validate
+	// This is an invalid response with a comment injected per CVE-2018-7340,
+	// It *MUST NOT* validate because we added ".example.com" to the NameID after the comment.
+	//
+	// Reference: https://duo.com/blog/duo-finds-saml-vulnerabilities-affecting-multiple-implementations
 	{
 		x, _ := base64.StdEncoding.DecodeString(string(SamlResponse))
 		y := strings.Replace(string(x), "ross@<!-- and a comment -->octolabs.io", "ross@octolabs.io<!-- and a comment -->.example.com", 1)
