@@ -29,6 +29,97 @@ func (r *RequestedAuthnContext) Element() *etree.Element {
 	return el
 }
 
+// Scoping is an optional element used to specify a set of identity providers that the requester
+// wants to use for authentication and limitations on proxying of the authentication request message.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf Section 3.4.1.2
+type Scoping struct {
+	XMLName      xml.Name      `xml:"urn:oasis:names:tc:SAML:2.0:protocol Scoping"`
+	ProxyCount   *int          `xml:"ProxyCount,attr,omitempty"`
+	IDPList      *IDPList      `xml:"IDPList,omitempty"`
+	RequesterIDs []RequesterID `xml:"RequesterID,omitempty"`
+}
+
+// IDPList represents the IDPList element that contains a list of identity providers that are relevant to the request.
+type IDPList struct {
+	XMLName   xml.Name   `xml:"urn:oasis:names:tc:SAML:2.0:protocol IDPList"`
+	IDPEntrys []IDPEntry `xml:"IDPEntry"`
+}
+
+// IDPEntry represents a single identity provider in the IDPList.
+type IDPEntry struct {
+	XMLName    xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol IDPEntry"`
+	ProviderID string   `xml:"ProviderID,attr"`
+	Name       string   `xml:"Name,attr,omitempty"`
+	Loc        string   `xml:"Loc,attr,omitempty"`
+}
+
+// RequesterID represents a unique identifier of a SAML requester.
+type RequesterID struct {
+	XMLName xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol RequesterID"`
+	Value   string   `xml:",chardata"`
+}
+
+// Element returns an etree.Element representing the Scoping object in XML form.
+func (s *Scoping) Element() *etree.Element {
+	el := etree.NewElement("samlp:Scoping")
+
+	// Add ProxyCount attribute if it exists
+	if s.ProxyCount != nil {
+		el.CreateAttr("ProxyCount", strconv.Itoa(*s.ProxyCount))
+	}
+
+	// Add IDPList if it exists
+	if s.IDPList != nil {
+		el.AddChild(s.IDPList.Element())
+	}
+
+	// Add RequesterIDs if they exist
+	for _, requesterID := range s.RequesterIDs {
+		el.AddChild(requesterID.Element())
+	}
+
+	return el
+}
+
+// Element returns an etree.Element representing the IDPList object in XML form.
+func (i *IDPList) Element() *etree.Element {
+	el := etree.NewElement("samlp:IDPList")
+
+	// Add each IDPEntry
+	for _, idpEntry := range i.IDPEntrys {
+		el.AddChild(idpEntry.Element())
+	}
+
+	return el
+}
+
+// Element returns an etree.Element representing the IDPEntry object in XML form.
+func (i *IDPEntry) Element() *etree.Element {
+	el := etree.NewElement("samlp:IDPEntry")
+
+	// Add required ProviderID attribute
+	el.CreateAttr("ProviderID", i.ProviderID)
+
+	// Add optional attributes if they exist
+	if i.Name != "" {
+		el.CreateAttr("Name", i.Name)
+	}
+
+	if i.Loc != "" {
+		el.CreateAttr("Loc", i.Loc)
+	}
+
+	return el
+}
+
+// Element returns an etree.Element representing the RequesterID object in XML form.
+func (r *RequesterID) Element() *etree.Element {
+	el := etree.NewElement("samlp:RequesterID")
+	el.SetText(r.Value)
+	return el
+}
+
 // AuthnRequest represents the SAML object of the same name, a request from a service provider
 // to authenticate a user.
 //
@@ -48,7 +139,7 @@ type AuthnRequest struct {
 	NameIDPolicy          *NameIDPolicy `xml:"urn:oasis:names:tc:SAML:2.0:protocol NameIDPolicy"`
 	Conditions            *Conditions
 	RequestedAuthnContext *RequestedAuthnContext
-	// Scoping               *Scoping // TODO
+	Scoping               *Scoping
 
 	ForceAuthn                     *bool  `xml:",attr"`
 	IsPassive                      *bool  `xml:",attr"`
@@ -209,9 +300,9 @@ func (r *AuthnRequest) Element() *etree.Element {
 	if r.RequestedAuthnContext != nil {
 		el.AddChild(r.RequestedAuthnContext.Element())
 	}
-	// if r.Scoping != nil {
-	// 	el.AddChild(r.Scoping.Element())
-	// }
+	if r.Scoping != nil {
+		el.AddChild(r.Scoping.Element())
+	}
 	if r.ForceAuthn != nil {
 		el.CreateAttr("ForceAuthn", strconv.FormatBool(*r.ForceAuthn))
 	}
