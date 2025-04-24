@@ -81,7 +81,6 @@ func NewServerTest(t *testing.T) *ServerTest {
 		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Dec 1 01:57:09 UTC 2015")
 		return rv
 	}
-	// jwt.TimeFunc = saml.TimeNow
 	saml.RandReader = &testRandomReader{}
 
 	test.SPKey = mustParsePrivateKey(golden.Get(t, "sp_key.pem")).(*rsa.PrivateKey)
