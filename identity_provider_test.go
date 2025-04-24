@@ -25,7 +25,6 @@ import (
 	"gotest.tools/golden"
 
 	"github.com/beevik/etree"
-	"github.com/golang-jwt/jwt/v4"
 	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml/logger"
@@ -104,7 +103,6 @@ func NewIdentityProviderTest(t *testing.T, opts ...idpTestOpts) *IdentityProvide
 		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Mon Dec 1 01:57:09 UTC 2015")
 		return rv
 	}
-	jwt.TimeFunc = TimeNow
 	RandReader = &testRandomReader{}                // TODO(ross): remove this and use the below generator
 	xmlenc.RandReader = rand.New(rand.NewSource(0)) //nolint:gosec  // deterministic random numbers for tests
 
@@ -485,7 +483,6 @@ func TestIDPCanValidate(t *testing.T) {
 			"</AuthnRequest>"),
 	}
 	assert.Check(t, is.Error(req.Validate(), "cannot find assertion consumer service: file does not exist"))
-
 }
 
 func TestIDPMakeAssertion(t *testing.T) {
@@ -592,94 +589,93 @@ func TestIDPMakeAssertion(t *testing.T) {
 	})
 	assert.Check(t, err)
 
-	expectedAttributes :=
-		[]Attribute{
-			{
-				FriendlyName: "uid",
-				Name:         "urn:oid:0.9.2342.19200300.100.1.1",
-				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-				Values: []AttributeValue{
-					{
-						Type:  "xs:string",
-						Value: "alice",
-					},
+	expectedAttributes := []Attribute{
+		{
+			FriendlyName: "uid",
+			Name:         "urn:oid:0.9.2342.19200300.100.1.1",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []AttributeValue{
+				{
+					Type:  "xs:string",
+					Value: "alice",
 				},
 			},
-			{
-				FriendlyName: "mail",
-				Name:         "urn:oid:0.9.2342.19200300.100.1.3",
-				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-				Values: []AttributeValue{
-					{
-						Type:  "xs:string",
-						Value: "alice@example.com",
-					},
+		},
+		{
+			FriendlyName: "mail",
+			Name:         "urn:oid:0.9.2342.19200300.100.1.3",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []AttributeValue{
+				{
+					Type:  "xs:string",
+					Value: "alice@example.com",
 				},
 			},
-			{
-				FriendlyName: "eduPersonPrincipalName",
-				Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.6",
-				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-				Values: []AttributeValue{
-					{
-						Type:  "xs:string",
-						Value: "alice@example.com",
-					},
+		},
+		{
+			FriendlyName: "eduPersonPrincipalName",
+			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.6",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []AttributeValue{
+				{
+					Type:  "xs:string",
+					Value: "alice@example.com",
 				},
 			},
-			{
-				FriendlyName: "sn",
-				Name:         "urn:oid:2.5.4.4",
-				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-				Values: []AttributeValue{
-					{
-						Type:  "xs:string",
-						Value: "Smith",
-					},
+		},
+		{
+			FriendlyName: "sn",
+			Name:         "urn:oid:2.5.4.4",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []AttributeValue{
+				{
+					Type:  "xs:string",
+					Value: "Smith",
 				},
 			},
-			{
-				FriendlyName: "givenName",
-				Name:         "urn:oid:2.5.4.42",
-				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-				Values: []AttributeValue{
-					{
-						Type:  "xs:string",
-						Value: "Alice",
-					},
+		},
+		{
+			FriendlyName: "givenName",
+			Name:         "urn:oid:2.5.4.42",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []AttributeValue{
+				{
+					Type:  "xs:string",
+					Value: "Alice",
 				},
 			},
-			{
-				FriendlyName: "cn",
-				Name:         "urn:oid:2.5.4.3",
-				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-				Values: []AttributeValue{
-					{
-						Type:  "xs:string",
-						Value: "Alice Smith",
-					},
+		},
+		{
+			FriendlyName: "cn",
+			Name:         "urn:oid:2.5.4.3",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []AttributeValue{
+				{
+					Type:  "xs:string",
+					Value: "Alice Smith",
 				},
 			},
-			{
-				FriendlyName: "eduPersonAffiliation",
-				Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.1",
-				NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
-				Values: []AttributeValue{
-					{
-						Type:  "xs:string",
-						Value: "Users",
-					},
-					{
-						Type:  "xs:string",
-						Value: "Administrators",
-					},
-					{
-						Type:  "xs:string",
-						Value: "♀",
-					},
+		},
+		{
+			FriendlyName: "eduPersonAffiliation",
+			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.1",
+			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Values: []AttributeValue{
+				{
+					Type:  "xs:string",
+					Value: "Users",
+				},
+				{
+					Type:  "xs:string",
+					Value: "Administrators",
+				},
+				{
+					Type:  "xs:string",
+					Value: "♀",
 				},
 			},
-		}
+		},
+	}
 	assert.Check(t, is.DeepEqual(expectedAttributes, req.Assertion.AttributeStatements[0].Attributes))
 }
 
@@ -1044,7 +1040,8 @@ func TestIDPRequestedAttributes(t *testing.T) {
 					},
 				},
 			},
-		}}}
+		},
+	}}
 	assert.Check(t, is.DeepEqual(expectedAttributes, req.Assertion.AttributeStatements))
 }
 
