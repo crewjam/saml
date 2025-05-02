@@ -121,8 +121,8 @@ OwJlNCASPZRH/JmF8tX0hoHuAQ==
 )
 
 func main() {
-	rootURLstr := flag.String("url", "https://962766ce.ngrok.io", "The base URL of this service")
-	idpMetadataURLstr := flag.String("idp", "https://516becc2.ngrok.io/metadata", "The metadata URL for the IDP")
+	rootURLstr := flag.String("url", "http://localhost:8090", "The base URL of this service")
+	idpMetadataURLstr := flag.String("idp", "http://localhost:8080/metadata", "The metadata URL for the IDP")
 	flag.Parse()
 
 	keyPair, err := tls.X509KeyPair(cert, key)
@@ -175,11 +175,11 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /saml/", samlSP)
-	mux.HandleFunc("GET /{link}", ServeLink)
+	mux.Handle("/saml/", samlSP)
+	mux.HandleFunc("GET /links/{link}", ServeLink)
 	mux.Handle("GET /whoami", samlSP.RequireAccount(http.HandlerFunc(ServeWhoami)))
-	mux.Handle("POST /", samlSP.RequireAccount(http.HandlerFunc(CreateLink)))
-	mux.Handle("GET /", samlSP.RequireAccount(http.HandlerFunc(ListLinks)))
+	mux.Handle("POST /links", samlSP.RequireAccount(http.HandlerFunc(CreateLink)))
+	mux.Handle("GET /links", samlSP.RequireAccount(http.HandlerFunc(ListLinks)))
 
-	http.ListenAndServe(":8080", mux)
+	http.ListenAndServe(":8090", mux)
 }

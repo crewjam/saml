@@ -129,7 +129,7 @@ func (s *Server) sendLoginForm(w http.ResponseWriter, req *saml.IdpAuthnRequest,
 		RelayState  string
 	}{
 		Toast:       toast,
-		URL:         req.IDP.LoginURL.String(),
+		URL:         req.IDP.SSOURL.String(),
 		SAMLRequest: base64.StdEncoding.EncodeToString(req.RequestBuffer),
 		RelayState:  req.RelayState,
 	}
