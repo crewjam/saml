@@ -110,6 +110,7 @@ type IdentityProvider struct {
 	SignatureMethod         string
 	ValidDuration           *time.Duration
 	ResponseFormTemplate    *template.Template
+	SLOURL                  url.URL // SAML Single Logout URL
 }
 
 // Metadata returns the metadata structure for this identity provider.
@@ -183,6 +184,23 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 				Binding:  HTTPRedirectBinding,
 				Location: idp.LogoutURL.String(),
 			},
+		}
+	}
+
+	// Add Single Logout Service endpoints to IDPSSODescriptor
+	for i, idpSSODescriptor := range ed.IDPSSODescriptors {
+		if idp.SLOURL.String() != "" {
+			idpSSODescriptor.SingleLogoutServices = []Endpoint{
+				{
+					Binding:  HTTPRedirectBinding,
+					Location: idp.SLOURL.String(),
+				},
+				{
+					Binding:  HTTPPostBinding,
+					Location: idp.SLOURL.String(),
+				},
+			}
+			ed.IDPSSODescriptors[i] = idpSSODescriptor
 		}
 	}
 

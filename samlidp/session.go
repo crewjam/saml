@@ -201,3 +201,40 @@ func (s *Server) HandleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// HandleSLO handles the SAML Single Logout endpoint. It invalidates the user's session
+// and returns a simple confirmation page.
+func (s *Server) HandleSLO(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		s.logger.Printf("ERROR: Failed to parse form: %s", err)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	// Check for session cookie
+	sessionCookie, err := r.Cookie("session")
+	if err == nil {
+		// Delete the session
+		if err := s.Store.Delete(fmt.Sprintf("/sessions/%s", sessionCookie.Value)); err != nil {
+			if err != ErrNotFound {
+				s.logger.Printf("ERROR: Failed to delete session: %s", err)
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				return
+			}
+		}
+
+		// Clear the session cookie
+		http.SetCookie(w, &http.Cookie{
+			Name:     "session",
+			Value:    "",
+			MaxAge:   -1,
+			HttpOnly: true,
+			Secure:   r.URL.Scheme == "https",
+			Path:     "/",
+		})
+	}
+
+	// Return a simple logout confirmation page
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte("<html><body><h1>Logout Successful</h1><p>You have been logged out.</p></body></html>"))
+}
