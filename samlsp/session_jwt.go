@@ -88,7 +88,12 @@ func (c JWTSessionCodec) Encode(s Session) (string, error) {
 // Decode parses the serialized session that may have been returned by Encode
 // and returns a Session.
 func (c JWTSessionCodec) Decode(signed string) (Session, error) {
-	parser := jwt.NewParser(jwt.WithValidMethods([]string{c.SigningMethod.Alg()}), jwt.WithTimeFunc(saml.TimeNow))
+	parser := jwt.NewParser(
+		jwt.WithValidMethods([]string{c.SigningMethod.Alg()}),
+		jwt.WithTimeFunc(saml.TimeNow),
+		jwt.WithAudience(c.Audience),
+		jwt.WithIssuer(c.Issuer),
+	)
 	claims := JWTSessionClaims{}
 	_, err := parser.ParseWithClaims(signed, &claims, func(*jwt.Token) (interface{}, error) {
 		return c.Key.Public(), nil

@@ -49,7 +49,12 @@ func (s JWTTrackedRequestCodec) Encode(value TrackedRequest) (string, error) {
 
 // Decode returns a Tracked request from an encoded string.
 func (s JWTTrackedRequestCodec) Decode(signed string) (*TrackedRequest, error) {
-	parser := jwt.NewParser(jwt.WithValidMethods([]string{s.SigningMethod.Alg()}), jwt.WithTimeFunc(saml.TimeNow))
+	parser := jwt.NewParser(
+		jwt.WithValidMethods([]string{s.SigningMethod.Alg()}),
+		jwt.WithTimeFunc(saml.TimeNow),
+		jwt.WithAudience(s.Audience),
+		jwt.WithIssuer(s.Issuer),
+	)
 	claims := JWTTrackedRequestClaims{}
 	_, err := parser.ParseWithClaims(signed, &claims, func(*jwt.Token) (interface{}, error) {
 		return s.Key.Public(), nil
