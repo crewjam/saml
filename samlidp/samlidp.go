@@ -30,6 +30,7 @@ type Options struct {
 //
 //	/metadata     - the SAML metadata
 //	/sso          - the SAML endpoint to initiate an authentication flow
+//	/slo          - the SAML endpoint for single logout
 //	/login        - prompt for a username and password if no session established
 //	/login/:shortcut - kick off an IDP-initiated authentication flow
 //	/services     - RESTful interface to Service objects
@@ -54,6 +55,8 @@ func New(opts Options) (*Server, error) {
 	metadataURL.Path += "/metadata"
 	ssoURL := opts.URL
 	ssoURL.Path += "/sso"
+	sloURL := opts.URL
+	sloURL.Path += "/slo"
 	loginURL := opts.URL
 	loginURL.Path += "/login"
 	logr := opts.Logger
@@ -70,6 +73,7 @@ func New(opts Options) (*Server, error) {
 			Certificate: opts.Certificate,
 			MetadataURL: metadataURL,
 			SSOURL:      ssoURL,
+			SLOURL:      sloURL,
 			LoginURL:    loginURL,
 		},
 		logger:            logr,
@@ -102,6 +106,7 @@ func (s *Server) InitializeHTTP() {
 	mux.HandleFunc("/sso", func(w http.ResponseWriter, r *http.Request) {
 		s.IDP.ServeSSO(w, r)
 	})
+	mux.HandleFunc("/slo", s.HandleSLO)
 
 	mux.HandleFunc("/login", s.HandleLogin)
 	mux.HandleFunc("/login/{shortcut}", s.HandleIDPInitiated)

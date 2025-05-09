@@ -1,7 +1,13 @@
 coverage.out
 coverage.html
 vendor/
+**/*.cert
+**/*.key
 
 # IDE-specific settings
 .idea
 .vscode
+
+# Fly.io deployment
+fly.toml
+Dockerfile
