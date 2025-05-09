@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/golang-jwt/jwt/v4"
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/crewjam/saml"
 )
@@ -49,21 +49,18 @@ func (s JWTTrackedRequestCodec) Encode(value TrackedRequest) (string, error) {
 
 // Decode returns a Tracked request from an encoded string.
 func (s JWTTrackedRequestCodec) Decode(signed string) (*TrackedRequest, error) {
-	parser := jwt.Parser{
-		ValidMethods: []string{s.SigningMethod.Alg()},
-	}
+	parser := jwt.NewParser(
+		jwt.WithValidMethods([]string{s.SigningMethod.Alg()}),
+		jwt.WithTimeFunc(saml.TimeNow),
+		jwt.WithAudience(s.Audience),
+		jwt.WithIssuer(s.Issuer),
+	)
 	claims := JWTTrackedRequestClaims{}
 	_, err := parser.ParseWithClaims(signed, &claims, func(*jwt.Token) (interface{}, error) {
 		return s.Key.Public(), nil
 	})
 	if err != nil {
 		return nil, err
-	}
-	if !claims.VerifyAudience(s.Audience, true) {
-		return nil, fmt.Errorf("expected audience %q, got %q", s.Audience, claims.Audience)
-	}
-	if !claims.VerifyIssuer(s.Issuer, true) {
-		return nil, fmt.Errorf("expected issuer %q, got %q", s.Issuer, claims.Issuer)
 	}
 	if !claims.SAMLAuthnRequest {
 		return nil, fmt.Errorf("expected saml-authn-request")
