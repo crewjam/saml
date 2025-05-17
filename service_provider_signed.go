@@ -19,11 +19,16 @@ import (
 type queryParam string
 
 const (
-	SAMLRequest  queryParam = "SAMLRequest"
+	// SAMLRequest query param
+	SAMLRequest queryParam = "SAMLRequest"
+	// SAMLResponse query param
 	SAMLResponse queryParam = "SAMLResponse"
-	SigAlg       queryParam = "SigAlg"
-	Signature    queryParam = "Signature"
-	RelayState   queryParam = "RelayState"
+	// SigAlg query param
+	SigAlg queryParam = "SigAlg"
+	// Signature query param
+	Signature queryParam = "Signature"
+	// RelayState query param
+	RelayState queryParam = "RelayState"
 )
 
 var (
