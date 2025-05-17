@@ -1,3 +1,4 @@
+// Package main contains an example identity provider implementation.
 package main
 
 import (
@@ -5,9 +6,9 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"flag"
+	"net/http"
 	"net/url"
 
-	"github.com/zenazn/goji"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/crewjam/saml/logger"
@@ -117,6 +118,5 @@ func main() {
 		logr.Fatalf("%s", err)
 	}
 
-	goji.Handle("/*", idpServer)
-	goji.Serve()
+	http.ListenAndServe(":8080", idpServer)
 }

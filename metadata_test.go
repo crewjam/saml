@@ -88,7 +88,7 @@ func TestCanParseMetadata(t *testing.T) {
 }
 
 func TestCanProduceSPMetadata(t *testing.T) {
-	validUntil, _ := time.Parse("2006-02-01T15:04:05.000000", "2013-10-03T00:32:19.104000")
+	validUntil, _ := time.Parse("2006-01-02T15:04:05.000000", "2013-03-10T00:32:19.104000")
 	AuthnRequestsSigned := true
 	WantAssertionsSigned := true
 	metadata := EntityDescriptor{
@@ -164,4 +164,12 @@ cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvnOwJlNCASPZRH/JmF8tX0hoHuAQ==`,
 	buf, err := xml.MarshalIndent(metadata, "", "  ")
 	assert.Check(t, err)
 	golden.Assert(t, string(buf), "TestCanProduceSPMetadata_expected")
+}
+
+func TestMetadataValidatesUrlSchemeForProtocolBinding(t *testing.T) {
+	buf := golden.Get(t, "TestMetadataValidatesUrlSchemeForProtocolBinding_metadata.xml")
+
+	metadata := EntityDescriptor{}
+	err := xml.Unmarshal(buf, &metadata)
+	assert.Error(t, err, "invalid url scheme \"javascript\" for binding \"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\"")
 }

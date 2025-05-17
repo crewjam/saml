@@ -7,22 +7,14 @@ on:
     branches: [ 'main' ]
 jobs:
   tests:
-    name: Run tests
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go: [ '1.17.x', '1.18.x', '1.19.x']
+        go: [ '1.22.x', '1.23.x', '1.24.x']
     steps:
-      - name: Check out code into the Go module directory
-        uses: actions/checkout@v2
-      - name: Set up Go ${{ matrix.go }}
-        uses: actions/setup-go@v2
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v4
         with:
           go-version: ${{ matrix.go }}
-      - name: Go version
-        run: go version
-      - name: Run Go tests
-        run: |
-          go test -v ./...
-          (cd samlidp && go test -v ./...)
-          (cd example && go test -v ./...)
+      - run: go version
+      - run: go test -v ./...

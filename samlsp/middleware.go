@@ -1,6 +1,7 @@
 package samlsp
 
 import (
+	"bytes"
 	"encoding/xml"
 	"net/http"
 
@@ -39,12 +40,13 @@ import (
 // SAML service provider already has a private key, we borrow that key
 // to sign the JWTs as well.
 type Middleware struct {
-	ServiceProvider saml.ServiceProvider
-	OnError         func(w http.ResponseWriter, r *http.Request, err error)
-	Binding         string // either saml.HTTPPostBinding or saml.HTTPRedirectBinding
-	ResponseBinding string // either saml.HTTPPostBinding or saml.HTTPArtifactBinding
-	RequestTracker  RequestTracker
-	Session         SessionProvider
+	ServiceProvider  saml.ServiceProvider
+	OnError          func(w http.ResponseWriter, r *http.Request, err error)
+	Binding          string // either saml.HTTPPostBinding or saml.HTTPRedirectBinding
+	ResponseBinding  string // either saml.HTTPPostBinding or saml.HTTPArtifactBinding
+	RequestTracker   RequestTracker
+	Session          SessionProvider
+	AssertionHandler AssertionHandler
 }
 
 // ServeHTTP implements http.Handler and serves the SAML-specific HTTP endpoints
@@ -65,16 +67,22 @@ func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // ServeMetadata handles requests for the SAML metadata endpoint.
-func (m *Middleware) ServeMetadata(w http.ResponseWriter, r *http.Request) {
+func (m *Middleware) ServeMetadata(w http.ResponseWriter, _ *http.Request) {
 	buf, _ := xml.MarshalIndent(m.ServiceProvider.Metadata(), "", "  ")
 	w.Header().Set("Content-Type", "application/samlmetadata+xml")
-	w.Write(buf)
-	return
+	if _, err := w.Write(buf); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
 
 // ServeACS handles requests for the SAML ACS endpoint.
 func (m *Middleware) ServeACS(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
+	err := r.ParseForm()
+	if err != nil {
+		m.OnError(w, r, err)
+		return
+	}
 
 	possibleRequestIDs := []string{}
 	if m.ServiceProvider.AllowIDPInitiated {
@@ -92,8 +100,12 @@ func (m *Middleware) ServeACS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if handlerErr := m.AssertionHandler.HandleAssertion(assertion); handlerErr != nil {
+		m.OnError(w, r, handlerErr)
+		return
+	}
+
 	m.CreateSessionFromAssertion(w, r, assertion, m.ServiceProvider.DefaultRedirectURI)
-	return
 }
 
 // RequireAccount is HTTP middleware that requires that each request be
@@ -114,7 +126,6 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 		}
 
 		m.OnError(w, r, err)
-		return
 	})
 }
 
@@ -173,9 +184,14 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 			"script-src 'sha256-AjPdJSbZmeWHnEc5ykvJFay8FTWeTeRbs9dutfZ0HqE='; "+
 			"reflected-xss block; referrer no-referrer;")
 		w.Header().Add("Content-type", "text/html")
-		w.Write([]byte(`<!DOCTYPE html><html><body>`))
-		w.Write(authReq.Post(relayState))
-		w.Write([]byte(`</body></html>`))
+		var buf bytes.Buffer
+		buf.WriteString(`<!DOCTYPE html><html><body>`)
+		buf.Write(authReq.Post(relayState))
+		buf.WriteString(`</body></html>`)
+		if _, err := w.Write(buf.Bytes()); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		return
 	}
 	panic("not reached")
@@ -186,12 +202,22 @@ func (m *Middleware) CreateSessionFromAssertion(w http.ResponseWriter, r *http.R
 	if trackedRequestIndex := r.Form.Get("RelayState"); trackedRequestIndex != "" {
 		trackedRequest, err := m.RequestTracker.GetTrackedRequest(r, trackedRequestIndex)
 		if err != nil {
-			m.OnError(w, r, err)
-			return
-		}
-		m.RequestTracker.StopTrackingRequest(w, r, trackedRequestIndex)
+			if err == http.ErrNoCookie && m.ServiceProvider.AllowIDPInitiated {
+				if uri := r.Form.Get("RelayState"); uri != "" {
+					redirectURI = uri
+				}
+			} else {
+				m.OnError(w, r, err)
+				return
+			}
+		} else {
+			if err := m.RequestTracker.StopTrackingRequest(w, r, trackedRequestIndex); err != nil {
+				m.OnError(w, r, err)
+				return
+			}
 
-		redirectURI = trackedRequest.URI
+			redirectURI = trackedRequest.URI
+		}
 	}
 
 	if err := m.Session.CreateSession(w, r, assertion); err != nil {
@@ -206,11 +232,6 @@ func (m *Middleware) CreateSessionFromAssertion(w http.ResponseWriter, r *http.R
 // SAML attribute `name` be set to `value`. This can be used to require
 // that a remote user be a member of a group. It relies on the Claims assigned
 // to to the context in RequireAccount.
-//
-// For example:
-//
-//	goji.Use(m.RequireAccount)
-//	goji.Use(RequireAttributeMiddleware("eduPersonAffiliation", "Staff"))
 func RequireAttribute(name, value string) func(http.Handler) http.Handler {
 	return func(handler http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

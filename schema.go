@@ -48,7 +48,7 @@ type AuthnRequest struct {
 	NameIDPolicy          *NameIDPolicy `xml:"urn:oasis:names:tc:SAML:2.0:protocol NameIDPolicy"`
 	Conditions            *Conditions
 	RequestedAuthnContext *RequestedAuthnContext
-	//Scoping               *Scoping // TODO
+	// Scoping               *Scoping // TODO
 
 	ForceAuthn                     *bool  `xml:",attr"`
 	IsPassive                      *bool  `xml:",attr"`
@@ -108,7 +108,7 @@ func (r *LogoutRequest) Element() *etree.Element {
 }
 
 // MarshalXML implements xml.Marshaler
-func (r *LogoutRequest) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+func (r *LogoutRequest) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias LogoutRequest
 	aux := &struct {
 		IssueInstant RelaxedTime  `xml:",attr"`
@@ -209,9 +209,9 @@ func (r *AuthnRequest) Element() *etree.Element {
 	if r.RequestedAuthnContext != nil {
 		el.AddChild(r.RequestedAuthnContext.Element())
 	}
-	//if r.Scoping != nil {
-	//	el.AddChild(r.Scoping.Element())
-	//}
+	// if r.Scoping != nil {
+	// 	el.AddChild(r.Scoping.Element())
+	// }
 	if r.ForceAuthn != nil {
 		el.CreateAttr("ForceAuthn", strconv.FormatBool(*r.ForceAuthn))
 	}
@@ -237,7 +237,7 @@ func (r *AuthnRequest) Element() *etree.Element {
 }
 
 // MarshalXML implements xml.Marshaler
-func (r *AuthnRequest) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+func (r *AuthnRequest) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias AuthnRequest
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
@@ -353,12 +353,15 @@ func (r *ArtifactResolve) Element() *etree.Element {
 	if r.Issuer != nil {
 		el.AddChild(r.Issuer.Element())
 	}
+	if r.Signature != nil {
+		// ADFS requires that <Signature> come before <Artifact>.
+		// ref: https://github.com/crewjam/saml/issues/535
+		// ref: https://www.wiktorzychla.com/2017/09/adfs-and-saml2-artifact-binding-woes.html
+		el.AddChild(r.Signature)
+	}
 	artifact := etree.NewElement("samlp:Artifact")
 	artifact.SetText(r.Artifact)
 	el.AddChild(artifact)
-	if r.Signature != nil {
-		el.AddChild(r.Signature)
-	}
 	return el
 }
 
@@ -374,7 +377,7 @@ func (r *ArtifactResolve) SoapRequest() *etree.Element {
 }
 
 // MarshalXML implements xml.Marshaler
-func (r *ArtifactResolve) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+func (r *ArtifactResolve) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias ArtifactResolve
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
@@ -448,7 +451,7 @@ func (r *ArtifactResponse) Element() *etree.Element {
 }
 
 // MarshalXML implements xml.Marshaler
-func (r *ArtifactResponse) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+func (r *ArtifactResponse) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias ArtifactResponse
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
@@ -542,7 +545,7 @@ func (r *Response) Element() *etree.Element {
 }
 
 // MarshalXML implements xml.Marshaler
-func (r *Response) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+func (r *Response) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias Response
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
@@ -667,7 +670,7 @@ const (
 	StatusRequestUnsupported = "urn:oasis:names:tc:SAML:2.0:status:RequestUnsupported"
 
 	// StatusRequestVersionDeprecated means the SAML responder cannot process any requests with the protocol version specified in the request.
-	StatusRequestVersionDeprecated = "urn:oasis:names:tc:SAML:2.0:status:RequestVersionDeprecated"
+	StatusRequestVersionDeprecated = "urn:oasis:names:tc:SAML:2.0:status:RequestVersionDeprecated" //nolint:gosec
 
 	// StatusRequestVersionTooHigh means the SAML responder cannot process the request because the protocol version specified in the request message is a major upgrade from the highest protocol version supported by the responder.
 	StatusRequestVersionTooHigh = "urn:oasis:names:tc:SAML:2.0:status:RequestVersionTooHigh"
@@ -764,7 +767,7 @@ func (a *Assertion) Element() *etree.Element {
 	for _, attributeStatement := range a.AttributeStatements {
 		el.AddChild(attributeStatement.Element())
 	}
-	err := etreeutils.TransformExcC14n(el, canonicalizerPrefixList)
+	err := etreeutils.TransformExcC14n(el, canonicalizerPrefixList, false)
 	if err != nil {
 		panic(err)
 	}
@@ -1153,9 +1156,9 @@ func (a *SubjectLocality) Element() *etree.Element {
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf §2.7.2.2
 type AuthnContext struct {
 	AuthnContextClassRef *AuthnContextClassRef
-	//AuthnContextDecl          *AuthnContextDecl        ... TODO
-	//AuthnContextDeclRef       *AuthnContextDeclRef     ... TODO
-	//AuthenticatingAuthorities []AuthenticatingAuthority... TODO
+	// AuthnContextDecl          *AuthnContextDecl        ... TODO
+	// AuthnContextDeclRef       *AuthnContextDeclRef     ... TODO
+	// AuthenticatingAuthorities []AuthenticatingAuthority... TODO
 }
 
 // Element returns an etree.Element representing the object in XML form.
@@ -1292,7 +1295,7 @@ func (r *LogoutResponse) Element() *etree.Element {
 }
 
 // MarshalXML implements xml.Marshaler
-func (r *LogoutResponse) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+func (r *LogoutResponse) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias LogoutResponse
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`

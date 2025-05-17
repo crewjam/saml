@@ -1,3 +1,4 @@
+// Package main contains an example service provider implementation.
 package main
 
 import (
@@ -6,9 +7,10 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
-	"log"
+	"time"
 
 	"github.com/crewjam/saml/samlsp"
 )
@@ -69,8 +71,14 @@ func main() {
 	})
 	app := http.HandlerFunc(hello)
 	slo := http.HandlerFunc(logout)
+
 	http.Handle("/hello", samlMiddleware.RequireAccount(app))
 	http.Handle("/saml/", samlMiddleware)
 	http.Handle("/logout", slo)
-	log.Fatal(http.ListenAndServe(":8000", nil))
+
+	server := &http.Server{
+		Addr:              ":8080",
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	log.Fatal(server.ListenAndServe())
 }

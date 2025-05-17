@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/zenazn/goji/web"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -25,7 +24,7 @@ type User struct {
 
 // HandleListUsers handles the `GET /users/` request and responds with a JSON formatted list
 // of user names.
-func (s *Server) HandleListUsers(c web.C, w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleListUsers(w http.ResponseWriter, _ *http.Request) {
 	users, err := s.Store.List("/users/")
 	if err != nil {
 		s.logger.Printf("ERROR: %s", err)
@@ -33,37 +32,46 @@ func (s *Server) HandleListUsers(c web.C, w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	json.NewEncoder(w).Encode(struct {
+	err = json.NewEncoder(w).Encode(struct {
 		Users []string `json:"users"`
 	}{Users: users})
+	if err != nil {
+		s.logger.Printf("ERROR: %s", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
 }
 
 // HandleGetUser handles the `GET /users/:id` request and responds with the user object in JSON
 // format. The HashedPassword field is excluded.
-func (s *Server) HandleGetUser(c web.C, w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleGetUser(w http.ResponseWriter, r *http.Request) {
 	user := User{}
-	err := s.Store.Get(fmt.Sprintf("/users/%s", c.URLParams["id"]), &user)
+	err := s.Store.Get(fmt.Sprintf("/users/%s", r.PathValue("id")), &user)
 	if err != nil {
 		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	user.HashedPassword = nil
-	json.NewEncoder(w).Encode(user)
+	if err := json.NewEncoder(w).Encode(user); err != nil {
+		s.logger.Printf("ERROR: %s", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
 }
 
 // HandlePutUser handles the `PUT /users/:id` request. It accepts a JSON formatted user object in
 // the request body and stores it. If the PlaintextPassword field is present then it is hashed
 // and stored in HashedPassword. If the PlaintextPassword field is not present then
 // HashedPassword retains it's stored value.
-func (s *Server) HandlePutUser(c web.C, w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandlePutUser(w http.ResponseWriter, r *http.Request) {
 	user := User{}
 	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
 		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
-	user.Name = c.URLParams["id"]
+	user.Name = r.PathValue("id")
 
 	if user.PlaintextPassword != nil {
 		var err error
@@ -75,11 +83,11 @@ func (s *Server) HandlePutUser(c web.C, w http.ResponseWriter, r *http.Request) 
 		}
 	} else {
 		existingUser := User{}
-		err := s.Store.Get(fmt.Sprintf("/users/%s", c.URLParams["id"]), &existingUser)
-		switch {
-		case err == nil:
+		err := s.Store.Get(fmt.Sprintf("/users/%s", r.PathValue("id")), &existingUser)
+		switch err {
+		case nil:
 			user.HashedPassword = existingUser.HashedPassword
-		case err == ErrNotFound:
+		case ErrNotFound:
 			// nop
 		default:
 			s.logger.Printf("ERROR: %s", err)
@@ -89,7 +97,7 @@ func (s *Server) HandlePutUser(c web.C, w http.ResponseWriter, r *http.Request) 
 	}
 	user.PlaintextPassword = nil
 
-	err := s.Store.Put(fmt.Sprintf("/users/%s", c.URLParams["id"]), &user)
+	err := s.Store.Put(fmt.Sprintf("/users/%s", r.PathValue("id")), &user)
 	if err != nil {
 		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -99,8 +107,8 @@ func (s *Server) HandlePutUser(c web.C, w http.ResponseWriter, r *http.Request) 
 }
 
 // HandleDeleteUser handles the `DELETE /users/:id` request.
-func (s *Server) HandleDeleteUser(c web.C, w http.ResponseWriter, r *http.Request) {
-	err := s.Store.Delete(fmt.Sprintf("/users/%s", c.URLParams["id"]))
+func (s *Server) HandleDeleteUser(w http.ResponseWriter, r *http.Request) {
+	err := s.Store.Delete(fmt.Sprintf("/users/%s", r.PathValue("id")))
 	if err != nil {
 		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)

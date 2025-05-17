@@ -1,3 +1,4 @@
+// Package testsaml contains functions for use in testing SAML requests and responses.
 package testsaml
 
 import (
@@ -5,7 +6,7 @@ import (
 	"compress/flate"
 	"encoding/base64"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/url"
 )
 
@@ -15,7 +16,7 @@ func ParseRedirectRequest(u *url.URL) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot decode request: %s", err)
 	}
-	buf, err := ioutil.ReadAll(flate.NewReader(bytes.NewReader(compressedRequest)))
+	buf, err := io.ReadAll(flate.NewReader(bytes.NewReader(compressedRequest)))
 	if err != nil {
 		return nil, fmt.Errorf("cannot decompress request: %s", err)
 	}
@@ -28,7 +29,7 @@ func ParseRedirectResponse(u *url.URL) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot decode response: %s", err)
 	}
-	buf, err := ioutil.ReadAll(flate.NewReader(bytes.NewReader(compressedResponse)))
+	buf, err := io.ReadAll(flate.NewReader(bytes.NewReader(compressedResponse)))
 	if err != nil {
 		return nil, fmt.Errorf("cannot decompress response: %s", err)
 	}

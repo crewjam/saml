@@ -18,7 +18,7 @@ func TestServicesCrud(t *testing.T) {
 	r, _ := http.NewRequest("GET", "https://idp.example.com/services/", nil)
 	test.Server.ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
-	assert.Check(t, is.Equal("{\"services\":[]}\n", string(w.Body.Bytes())))
+	assert.Check(t, is.Equal("{\"services\":[]}\n", w.Body.String()))
 
 	w = httptest.NewRecorder()
 	r, _ = http.NewRequest("PUT", "https://idp.example.com/services/sp",
@@ -36,7 +36,7 @@ func TestServicesCrud(t *testing.T) {
 	r, _ = http.NewRequest("GET", "https://idp.example.com/services/", nil)
 	test.Server.ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
-	assert.Check(t, is.Equal("{\"services\":[\"sp\"]}\n", string(w.Body.Bytes())))
+	assert.Check(t, is.Equal("{\"services\":[\"sp\"]}\n", w.Body.String()))
 
 	assert.Check(t, is.Len(test.Server.serviceProviders, 2))
 
@@ -49,6 +49,6 @@ func TestServicesCrud(t *testing.T) {
 	r, _ = http.NewRequest("GET", "https://idp.example.com/services/", nil)
 	test.Server.ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
-	assert.Check(t, is.Equal("{\"services\":[]}\n", string(w.Body.Bytes())))
+	assert.Check(t, is.Equal("{\"services\":[]}\n", w.Body.String()))
 	assert.Check(t, is.Len(test.Server.serviceProviders, 1))
 }

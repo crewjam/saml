@@ -2,7 +2,7 @@
 
 [![](https://godoc.org/github.com/crewjam/saml?status.svg)](http://godoc.org/github.com/crewjam/saml)
 
-![Build Status](https://github.com/crewjam/saml/workflows/Presubmit/badge.svg)
+![Build Status](https://github.com/crewjam/saml/actions/workflows/test.yml/badge.svg)
 
 Package saml contains a partial implementation of the SAML standard in golang.
 SAML is a standard for identity federation, i.e. either allowing a third party to authenticate your users or allowing third parties to rely on us to authenticate their users.
@@ -58,7 +58,7 @@ import (
 )
 
 func hello(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hello, %s!", samlsp.AttributeFromContext(r.Context(), "cn"))
+	fmt.Fprintf(w, "Hello, %s!", samlsp.AttributeFromContext(r.Context(), "displayName"))
 }
 
 func main() {
@@ -130,7 +130,7 @@ The SAML standard is huge and complex with many dark corners and strange, unused
 
 This package supports the **Web SSO** profile. Message flows from the service provider to the IDP are supported using the **HTTP Redirect** binding and the **HTTP POST** binding. Message flows from the IDP to the service provider are supported via the **HTTP POST** binding.
 
-The package can produce signed SAML assertions, and can validate both signed and encrypted SAML assertions. It does not support signed or encrypted requests.
+The package can produce signed SAML assertions, and can validate both signed and encrypted SAML assertions.
 
 ## RelayState
 

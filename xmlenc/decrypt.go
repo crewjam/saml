@@ -1,8 +1,6 @@
 package xmlenc
 
 import (
-
-	// nolint: gas
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
@@ -90,6 +88,7 @@ func validateRSAKeyIfPresent(key interface{}, encryptedKey *etree.Element) (*rsa
 	// if the key will work, or let the service provider know which key
 	// to use to decrypt the message. Either way, verification is not
 	// security-critical.
+	//nolint:revive,staticcheck // Keep the later empty branch so that we know to address this at a later date.
 	if el := encryptedKey.FindElement("./KeyInfo/X509Data/X509Certificate"); el != nil {
 		certPEMbuf := el.Text()
 		certPEMbuf = "-----BEGIN CERTIFICATE-----\n" + certPEMbuf + "\n-----END CERTIFICATE-----\n"

@@ -8,7 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -17,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang-jwt/jwt/v4"
 	dsig "github.com/russellhaering/goxmldsig"
 	"gotest.tools/assert"
 	is "gotest.tools/assert/cmp"
@@ -55,7 +54,6 @@ func NewMiddlewareTest(t *testing.T) *MiddlewareTest {
 		rv, _ := time.Parse("Mon Jan 2 15:04:05.999999999 MST 2006", "Mon Dec 1 01:57:09.123456789 UTC 2015")
 		return rv
 	}
-	jwt.TimeFunc = saml.TimeNow
 	saml.Clock = dsig.NewFakeClockAt(saml.TimeNow())
 	saml.RandReader = &testRandomReader{}
 
@@ -141,7 +139,7 @@ func TestMiddlewareFourOhFour(t *testing.T) {
 	resp := httptest.NewRecorder()
 	test.Middleware.ServeHTTP(resp, req)
 	assert.Check(t, is.Equal(http.StatusNotFound, resp.Code))
-	respBuf, _ := ioutil.ReadAll(resp.Body)
+	respBuf, _ := io.ReadAll(resp.Body)
 	assert.Check(t, is.Equal("404 page not found\n", string(respBuf)))
 }
 
@@ -150,7 +148,7 @@ func TestMiddlewareRequireAccountNoCreds(t *testing.T) {
 	test.Middleware.ServiceProvider.AcsURL.Scheme = "http"
 
 	handler := test.Middleware.RequireAccount(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 			panic("not reached")
 		}))
 
@@ -174,7 +172,7 @@ func TestMiddlewareRequireAccountNoCredsSecure(t *testing.T) {
 	test := NewMiddlewareTest(t)
 
 	handler := test.Middleware.RequireAccount(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 			panic("not reached")
 		}))
 
@@ -200,7 +198,7 @@ func TestMiddlewareRequireAccountNoCredsPostBinding(t *testing.T) {
 		test.Middleware.ServiceProvider.GetSSOBindingLocation(saml.HTTPRedirectBinding)))
 
 	handler := test.Middleware.RequireAccount(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 			panic("not reached")
 		}))
 
@@ -256,7 +254,7 @@ func TestMiddlewareRequireAccountCreds(t *testing.T) {
 func TestMiddlewareRequireAccountBadCreds(t *testing.T) {
 	test := NewMiddlewareTest(t)
 	handler := test.Middleware.RequireAccount(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 			panic("not reached")
 		}))
 
@@ -281,13 +279,13 @@ func TestMiddlewareRequireAccountBadCreds(t *testing.T) {
 
 func TestMiddlewareRequireAccountExpiredCreds(t *testing.T) {
 	test := NewMiddlewareTest(t)
-	jwt.TimeFunc = func() time.Time {
+	saml.TimeNow = func() time.Time {
 		rv, _ := time.Parse("Mon Jan 2 15:04:05 UTC 2006", "Mon Dec 1 01:31:21 UTC 2115")
 		return rv
 	}
 
 	handler := test.Middleware.RequireAccount(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 			panic("not reached")
 		}))
 
@@ -306,13 +304,13 @@ func TestMiddlewareRequireAccountExpiredCreds(t *testing.T) {
 	assert.Check(t, err)
 	decodedRequest, err := testsaml.ParseRedirectRequest(redirectURL)
 	assert.Check(t, err)
-	golden.Assert(t, string(decodedRequest), "expected_authn_request_secure.xml")
+	golden.Assert(t, strings.Replace(string(decodedRequest), `IssueInstant="2115-12-01T01:31:21Z"`, `IssueInstant="2015-12-01T01:57:09.123Z"`, 1), "expected_authn_request_secure.xml")
 }
 
 func TestMiddlewareRequireAccountPanicOnRequestToACS(t *testing.T) {
 	test := NewMiddlewareTest(t)
 	handler := test.Middleware.RequireAccount(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 			panic("not reached")
 		}))
 
@@ -326,7 +324,7 @@ func TestMiddlewareRequireAttribute(t *testing.T) {
 	test := NewMiddlewareTest(t)
 	handler := test.Middleware.RequireAccount(
 		RequireAttribute("eduPersonAffiliation", "Staff")(
-			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusTeapot)
 			})))
 
@@ -344,7 +342,7 @@ func TestMiddlewareRequireAttributeWrongValue(t *testing.T) {
 	test := NewMiddlewareTest(t)
 	handler := test.Middleware.RequireAccount(
 		RequireAttribute("eduPersonAffiliation", "DomainAdmins")(
-			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 				panic("not reached")
 			})))
 
@@ -362,7 +360,7 @@ func TestMiddlewareRequireAttributeNotPresent(t *testing.T) {
 	test := NewMiddlewareTest(t)
 	handler := test.Middleware.RequireAccount(
 		RequireAttribute("valueThatDoesntExist", "doesntMatter")(
-			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 				panic("not reached")
 			})))
 
@@ -379,7 +377,7 @@ func TestMiddlewareRequireAttributeNotPresent(t *testing.T) {
 func TestMiddlewareRequireAttributeMissingAccount(t *testing.T) {
 	test := NewMiddlewareTest(t)
 	handler := RequireAttribute("eduPersonAffiliation", "DomainAdmins")(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 			panic("not reached")
 		}))
 
@@ -409,9 +407,10 @@ func TestMiddlewareCanParseResponse(t *testing.T) {
 
 	assert.Check(t, is.Equal("/frob", resp.Header().Get("Location")))
 	assert.Check(t, is.DeepEqual([]string{
-		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6=; Domain=15661444.ngrok.io; Expires=Thu, 01 Jan 1970 00:00:01 GMT",
+		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6=; Path=/saml2/acs; Domain=15661444.ngrok.io; Expires=Thu, 01 Jan 1970 00:00:01 GMT",
 		"ttt=" + test.expectedSessionCookie + "; " +
-			"Path=/; Domain=15661444.ngrok.io; Max-Age=7200; HttpOnly; Secure"},
+			"Path=/; Domain=15661444.ngrok.io; Max-Age=7200; HttpOnly; Secure",
+	},
 		resp.Header()["Set-Cookie"]))
 }
 
@@ -426,7 +425,7 @@ func TestMiddlewareDefaultCookieDomainIPv4(t *testing.T) {
 
 	req, _ := http.NewRequest("GET", "/", nil)
 	resp := httptest.NewRecorder()
-	sp.CreateSession(resp, req, &saml.Assertion{})
+	assert.Check(t, sp.CreateSession(resp, req, &saml.Assertion{}))
 
 	assert.Check(t,
 		strings.Contains(resp.Header().Get("Set-Cookie"), "Domain=127.0.0.1;"),
@@ -445,7 +444,7 @@ func TestMiddlewareDefaultCookieDomainIPv6(t *testing.T) {
 
 	req, _ := http.NewRequest("GET", "/", nil)
 	resp := httptest.NewRecorder()
-	sp.CreateSession(resp, req, &saml.Assertion{})
+	assert.Check(t, sp.CreateSession(resp, req, &saml.Assertion{}))
 
 	assert.Check(t,
 		strings.Contains(resp.Header().Get("Set-Cookie"), "Domain=::1;"),
@@ -455,7 +454,7 @@ func TestMiddlewareDefaultCookieDomainIPv6(t *testing.T) {
 func TestMiddlewareRejectsInvalidRelayState(t *testing.T) {
 	test := NewMiddlewareTest(t)
 
-	test.Middleware.OnError = func(w http.ResponseWriter, r *http.Request, err error) {
+	test.Middleware.OnError = func(w http.ResponseWriter, _ *http.Request, err error) {
 		assert.Check(t, is.Error(err, http.ErrNoCookie.Error()))
 		http.Error(w, "forbidden", http.StatusTeapot)
 	}
@@ -478,7 +477,7 @@ func TestMiddlewareRejectsInvalidRelayState(t *testing.T) {
 func TestMiddlewareRejectsInvalidCookie(t *testing.T) {
 	test := NewMiddlewareTest(t)
 
-	test.Middleware.OnError = func(w http.ResponseWriter, r *http.Request, err error) {
+	test.Middleware.OnError = func(w http.ResponseWriter, _ *http.Request, err error) {
 		assert.Check(t, is.Error(err, "Authentication failed"))
 		http.Error(w, "forbidden", http.StatusTeapot)
 	}
@@ -516,7 +515,7 @@ func TestMiddlewareHandlesInvalidResponse(t *testing.T) {
 	// the ACS handles DOES NOT reveal detailed error information in the
 	// HTTP response.
 	assert.Check(t, is.Equal(http.StatusForbidden, resp.Code))
-	respBody, _ := ioutil.ReadAll(resp.Body)
+	respBody, _ := io.ReadAll(resp.Body)
 	assert.Check(t, is.Equal("Forbidden\n", string(respBody)))
 	assert.Check(t, is.Equal("", resp.Header().Get("Location")))
 	assert.Check(t, is.Equal("", resp.Header().Get("Set-Cookie")))
