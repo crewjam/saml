@@ -2,6 +2,7 @@ package samlsp
 
 import (
 	"net/http"
+	"net/url"
 )
 
 // RequestTracker tracks pending authentication requests.
@@ -31,9 +32,11 @@ type RequestTracker interface {
 
 // TrackedRequest holds the data we store for each pending request.
 type TrackedRequest struct {
-	Index         string `json:"-"`
-	SAMLRequestID string `json:"id"`
-	URI           string `json:"uri"`
+	Index         string     `json:"-"`
+	SAMLRequestID string     `json:"id"`
+	URI           string     `json:"uri"`
+	Method        string     `json:"method"`
+	PostData      url.Values `json:"post_data"`
 }
 
 // TrackedRequestCodec handles encoding and decoding of a TrackedRequest.
