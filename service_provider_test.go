@@ -2037,3 +2037,16 @@ func TestSPInvalidResponses(t *testing.T) {
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
 		"cannot validate signature on Assertion: x509: malformed certificate"))
 }
+
+func TestValidateLogoutResponseRequest(t *testing.T) {
+	t.Run("Should fail invalid base64 SAMLResponse", func(t *testing.T) {
+		sp := ServiceProvider{}
+		err := sp.ValidateLogoutResponseRedirect(&http.Request{
+			URL: &url.URL{
+				RawQuery: "SAMLResponse=invalid",
+			},
+		})
+
+		assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr, "unable to parse base64: illegal base64 data at input byte 4"))
+	})
+}

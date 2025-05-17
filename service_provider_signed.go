@@ -10,16 +10,20 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 
 	dsig "github.com/russellhaering/goxmldsig"
 )
 
-type reqType string
+type queryParam string
 
 const (
-	samlRequest  reqType = "SAMLRequest"
-	samlResponse reqType = "SAMLResponse"
+	SAMLRequest  queryParam = "SAMLRequest"
+	SAMLResponse queryParam = "SAMLResponse"
+	SigAlg       queryParam = "SigAlg"
+	Signature    queryParam = "Signature"
+	RelayState   queryParam = "RelayState"
 )
 
 var (
@@ -31,7 +35,7 @@ var (
 
 // Sign Query with the SP private key.
 // Returns provided query with the SigAlg and Signature parameters added.
-func (sp *ServiceProvider) signQuery(reqT reqType, query, body, relayState string) (string, error) {
+func (sp *ServiceProvider) signQuery(reqT queryParam, query, body, relayState string) (string, error) {
 	signingContext, err := GetSigningContext(sp)
 
 	// Encode Query as standard demands. query.Encode() is not standard compliant
@@ -57,85 +61,87 @@ func (sp *ServiceProvider) signQuery(reqT reqType, query, body, relayState strin
 	return query, nil
 }
 
-// validateSig validation of the signature of the Redirect Binding in query values
+// validateRedirectBindingSignature validation of the signature of the Redirect Binding in query values
 // Query is valid if return is nil
-func (sp *ServiceProvider) validateQuerySig(query url.Values) error {
-	sig := query.Get("Signature")
-	alg := query.Get("SigAlg")
+// URL encoding could be done uppercase or lowercase and in addition, can be done following RFC 3986 or not.
+// Based on that, if an entity sign using a url enconding mechanism that differs the way another entity decode it, will cause Signature validation issues.
+// In order to avoid it the RawQuery is used to retrieve the original query parameters.
+// Re doing encoding/decoding of the query parameter are failing especially in ADFS Single Logouts.
+func (sp *ServiceProvider) validateRedirectBindingSignature(r *http.Request) error {
+	rawQuery := r.URL.RawQuery
+
+	// Extract and validate required query params
+	sig := getRawQueryParam(rawQuery, string(Signature))
+	alg := getRawQueryParam(rawQuery, string(SigAlg))
 	if sig == "" || alg == "" {
 		return ErrNoQuerySignature
 	}
 
+	// Get the IDP public certificates
 	certs, err := sp.getIDPSigningCerts()
 	if err != nil {
 		return err
 	}
 
-	respType := ""
-	if query.Get("SAMLResponse") != "" {
-		respType = "SAMLResponse"
-	} else if query.Get("SAMLRequest") != "" {
-		respType = "SAMLRequest"
+	// Determine whether we're dealing with a response or request
+	var paramType, paramValue string
+	if val := getRawQueryParam(rawQuery, string(SAMLResponse)); val != "" {
+		paramType, paramValue = string(SAMLResponse), val
+	} else if val := getRawQueryParam(rawQuery, string(SAMLRequest)); val != "" {
+		paramType, paramValue = string(SAMLRequest), val
 	} else {
-		return fmt.Errorf("No SAMLResponse or SAMLRequest found in query")
+		return fmt.Errorf("no SAMLResponse or SAMLRequest found in query")
 	}
 
-	// Encode Query as standard demands.
-	// query.Encode() is not standard compliant
-	// as query encoding order matters
-	res := respType + "=" + url.QueryEscape(query.Get(respType))
-
-	relayState := query.Get("RelayState")
-	if relayState != "" {
-		res += "&RelayState=" + url.QueryEscape(relayState)
+	// Reconstruct the signed payload (already URL-encoded in RawQuery, so no need to encode/escape it again)
+	signedData := fmt.Sprintf("%s=%s", paramType, paramValue)
+	if relay := getRawQueryParam(rawQuery, string(RelayState)); relay != "" {
+		signedData += "&RelayState=" + relay
 	}
+	signedData += "&SigAlg=" + alg
 
-	res += "&SigAlg=" + url.QueryEscape(alg)
-
-	// Signature is base64 encoded
-	sigBytes, err := base64.StdEncoding.DecodeString(sig)
+	// Decode signature from base64, here we have to decode query param value before base64 decoding
+	sigBytes, err := base64.StdEncoding.DecodeString(r.URL.Query().Get(string(Signature)))
 	if err != nil {
 		return fmt.Errorf("failed to decode signature: %w", err)
 	}
 
-	var (
-		hashed  []byte
-		hashAlg crypto.Hash
-		sigAlg  x509.SignatureAlgorithm
-	)
-
-	// Hashed Query
-	switch alg {
-	case dsig.RSASHA256SignatureMethod:
-		hashed256 := sha256.Sum256([]byte(res))
-		hashed = hashed256[:]
-		hashAlg = crypto.SHA256
-		sigAlg = x509.SHA256WithRSA
-	case dsig.RSASHA512SignatureMethod:
-		hashed512 := sha512.Sum512([]byte(res))
-		hashed = hashed512[:]
-		hashAlg = crypto.SHA512
-		sigAlg = x509.SHA512WithRSA
-	case dsig.RSASHA1SignatureMethod:
-		hashed1 := sha1.Sum([]byte(res)) // #nosec G401
-		hashed = hashed1[:]
-		hashAlg = crypto.SHA1
-		sigAlg = x509.SHA1WithRSA
-	default:
-		return fmt.Errorf("unsupported signature algorithm: %s", alg)
+	// Determine hashing algorithm
+	hashAlg, sigAlg, hashed, err := computeSignatureHash(r.URL.Query().Get(string(SigAlg)), []byte(signedData))
+	if err != nil {
+		return err
 	}
 
-	// validate signature
+	// Attempt verification with each valid certificate
 	for _, cert := range certs {
-		// verify cert is RSA
 		if cert.SignatureAlgorithm != sigAlg {
 			continue
 		}
-
-		if err := rsa.VerifyPKCS1v15(cert.PublicKey.(*rsa.PublicKey), hashAlg, hashed, sigBytes); err == nil {
-			return nil
+		pubKey, ok := cert.PublicKey.(*rsa.PublicKey)
+		if !ok {
+			continue
+		}
+		if err := rsa.VerifyPKCS1v15(pubKey, hashAlg, hashed, sigBytes); err == nil {
+			return nil // ✅ Signature verified
 		}
 	}
 
 	return ErrInvalidQuerySignature
+}
+
+// computeSignatureHash computes the signature hash for the given algorithm and data.
+func computeSignatureHash(alg string, data []byte) (crypto.Hash, x509.SignatureAlgorithm, []byte, error) {
+	switch alg {
+	case dsig.RSASHA256SignatureMethod:
+		h := sha256.Sum256(data)
+		return crypto.SHA256, x509.SHA256WithRSA, h[:], nil
+	case dsig.RSASHA512SignatureMethod:
+		h := sha512.Sum512(data)
+		return crypto.SHA512, x509.SHA512WithRSA, h[:], nil
+	case dsig.RSASHA1SignatureMethod:
+		h := sha1.Sum(data) // #nosec G401
+		return crypto.SHA1, x509.SHA1WithRSA, h[:], nil
+	default:
+		return 0, 0, nil, fmt.Errorf("unsupported signature algorithm: %s", alg)
+	}
 }

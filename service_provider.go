@@ -306,9 +306,9 @@ func (r *AuthnRequest) Redirect(relayState string, sp *ServiceProvider) (*url.UR
 	// We can't depend on Query().set() as order matters for signing
 	query := rv.RawQuery
 	if len(query) > 0 {
-		query += "&" + string(samlRequest) + "=" + url.QueryEscape(requestStr.String())
+		query += "&" + string(SAMLRequest) + "=" + url.QueryEscape(requestStr.String())
 	} else {
-		query += string(samlRequest) + "=" + url.QueryEscape(requestStr.String())
+		query += string(SAMLRequest) + "=" + url.QueryEscape(requestStr.String())
 	}
 
 	if relayState != "" {
@@ -316,7 +316,7 @@ func (r *AuthnRequest) Redirect(relayState string, sp *ServiceProvider) (*url.UR
 	}
 	if len(sp.SignatureMethod) > 0 {
 		var errSig error
-		query, errSig = sp.signQuery(samlRequest, query, requestStr.String(), relayState)
+		query, errSig = sp.signQuery(SAMLRequest, query, requestStr.String(), relayState)
 		if errSig != nil {
 			return nil, errSig
 		}
@@ -1620,7 +1620,7 @@ func (sp *ServiceProvider) nameIDFormat() string {
 func (sp *ServiceProvider) ValidateLogoutResponseRequest(req *http.Request) error {
 	query := req.URL.Query()
 	if data := query.Get("SAMLResponse"); data != "" {
-		return sp.ValidateLogoutResponseRedirect(query)
+		return sp.ValidateLogoutResponseRedirect(req)
 	}
 
 	err := req.ParseForm()
@@ -1672,7 +1672,8 @@ func (sp *ServiceProvider) ValidateLogoutResponseForm(postFormData string) error
 //
 // URL Binding appears to be gzip / flate encoded
 // See https://www.oasis-open.org/committees/download.php/20645/sstc-saml-tech-overview-2%200-draft-10.pdf  6.6
-func (sp *ServiceProvider) ValidateLogoutResponseRedirect(query url.Values) error {
+func (sp *ServiceProvider) ValidateLogoutResponseRedirect(r *http.Request) error {
+	query := r.URL.Query()
 	queryParameterData := query.Get("SAMLResponse")
 	retErr := &InvalidResponseError{
 		Now: TimeNow(),
@@ -1696,7 +1697,7 @@ func (sp *ServiceProvider) ValidateLogoutResponseRedirect(query url.Values) erro
 	}
 
 	if query.Get("Signature") != "" && query.Get("SigAlg") != "" {
-		if err := sp.validateQuerySig(query); err != nil {
+		if err := sp.validateRedirectBindingSignature(r); err != nil {
 			retErr.PrivateErr = err
 			return retErr
 		}
@@ -1704,11 +1705,6 @@ func (sp *ServiceProvider) ValidateLogoutResponseRedirect(query url.Values) erro
 
 	doc := etree.NewDocument()
 	if err := doc.ReadFromBytes(gr); err != nil {
-		retErr.PrivateErr = err
-		return retErr
-	}
-
-	if err := sp.validateSignature(doc.Root()); err != nil {
 		retErr.PrivateErr = err
 		return retErr
 	}
