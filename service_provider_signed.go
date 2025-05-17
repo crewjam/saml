@@ -64,7 +64,7 @@ func (sp *ServiceProvider) signQuery(reqT queryParam, query, body, relayState st
 // validateRedirectBindingSignature validation of the signature of the Redirect Binding in query values
 // Query is valid if return is nil
 // URL encoding could be done uppercase or lowercase and in addition, can be done following RFC 3986 or not.
-// Based on that, if an entity sign using a url enconding mechanism that differs the way another entity decode it, will cause Signature validation issues.
+// Based on that, if an entity sign using a url encoding mechanism that differs the way another entity decode it, will cause Signature validation issues.
 // In order to avoid it the RawQuery is used to retrieve the original query parameters.
 // Re doing encoding/decoding of the query parameter are failing especially in ADFS Single Logouts.
 func (sp *ServiceProvider) validateRedirectBindingSignature(r *http.Request) error {
