@@ -1738,6 +1738,124 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 	return nil
 }
 
+// ValidateLogoutRequest validates the LogoutRequest content from the request
+func (sp *ServiceProvider) ValidateLogoutRequest(req *http.Request) error {
+	query := req.URL.Query()
+	if data := query.Get(string(SAMLRequest)); data != "" {
+		return sp.ValidateLogoutRequestRedirect(req)
+	}
+
+	err := req.ParseForm()
+	if err != nil {
+		return fmt.Errorf("validateLogoutRequest: unable to parse form: %v", err)
+	}
+
+	return sp.ValidateLogoutRequestForm(req.PostForm.Get(string(SAMLRequest)))
+}
+
+// ValidateLogoutRequestRedirect returns a nil error if the logout request is valid. This is used for the HTTP Redirect binding.
+func (sp *ServiceProvider) ValidateLogoutRequestRedirect(r *http.Request) error {
+	query := r.URL.Query()
+	queryParameterData := query.Get(string(SAMLRequest))
+	retErr := &InvalidResponseError{
+		Now: TimeNow(),
+	}
+
+	rawRequestBuf, err := base64.StdEncoding.DecodeString(queryParameterData)
+	if err != nil {
+		retErr.PrivateErr = fmt.Errorf("validateLogoutRequestRedirect: unable to parse base64: %s", err)
+		return retErr
+	}
+	retErr.Response = string(rawRequestBuf)
+
+	gr, err := io.ReadAll(newSaferFlateReader(bytes.NewBuffer(rawRequestBuf)))
+	if err != nil {
+		retErr.PrivateErr = err
+		return retErr
+	}
+
+	if err := xrv.Validate(bytes.NewReader(gr)); err != nil {
+		return fmt.Errorf("validateLogoutRequestRedirect: response contains invalid XML: %s", err)
+	}
+
+	if query.Get("Signature") != "" && query.Get("SigAlg") != "" {
+		if err := sp.validateRedirectBindingSignature(r); err != nil {
+			retErr.PrivateErr = err
+			return retErr
+		}
+	}
+
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(gr); err != nil {
+		retErr.PrivateErr = err
+		return retErr
+	}
+
+	var req LogoutRequest
+	if err := unmarshalElement(doc.Root(), &req); err != nil {
+		retErr.PrivateErr = err
+		return retErr
+	}
+
+	return sp.validateLogoutRequest(&req)
+}
+
+// ValidateLogoutRequestForm returns a nil error if the logout request is valid. This is used for the HTTP POST binding.
+func (sp *ServiceProvider) ValidateLogoutRequestForm(postFormData string) error {
+	retErr := &InvalidResponseError{
+		Now: TimeNow(),
+	}
+
+	rawRequestBuf, err := base64.StdEncoding.DecodeString(postFormData)
+	if err != nil {
+		retErr.PrivateErr = fmt.Errorf("unable to parse base64: %s", err)
+		return retErr
+	}
+	retErr.Response = string(rawRequestBuf)
+
+	if err := xrv.Validate(bytes.NewReader(rawRequestBuf)); err != nil {
+		return fmt.Errorf("logout request contains invalid XML: %s", err)
+	}
+
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(rawRequestBuf); err != nil {
+		retErr.PrivateErr = err
+		return retErr
+	}
+
+	if err := sp.validateSignature(doc.Root()); err != nil {
+		retErr.PrivateErr = err
+		return retErr
+	}
+
+	var req LogoutRequest
+	if err := unmarshalElement(doc.Root(), &req); err != nil {
+		retErr.PrivateErr = err
+		return retErr
+	}
+
+	return sp.validateLogoutRequest(&req)
+}
+
+// validateLogoutRequest validates the LogoutRequest fields. Returns a nil error if the LogoutRequest is valid.
+// This checks the destination, issue instant, and issuer.
+func (sp *ServiceProvider) validateLogoutRequest(req *LogoutRequest) error {
+	if req.Destination != sp.SloURL.String() {
+		return fmt.Errorf("`Destination` does not match SloURL (expected %q)", sp.SloURL.String())
+	}
+
+	now := time.Now()
+	if req.IssueInstant.Add(MaxIssueDelay).Before(now) {
+		return fmt.Errorf("issueInstant expired at %s", req.IssueInstant.Add(MaxIssueDelay))
+	}
+	if req.Issuer.Value != sp.IDPMetadata.EntityID {
+		return fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
+	}
+
+	return nil
+}
+
+
 func firstSet(a, b string) string {
 	if a == "" {
 		return b
