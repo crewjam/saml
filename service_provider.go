@@ -1873,7 +1873,6 @@ func (sp *ServiceProvider) validateLogoutRequest(req *LogoutRequest) error {
 	return nil
 }
 
-
 func firstSet(a, b string) string {
 	if a == "" {
 		return b
