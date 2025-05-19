@@ -3,6 +3,7 @@ package saml
 import (
 	"crypto/rand"
 	"io"
+	"strings"
 	"time"
 
 	dsig "github.com/russellhaering/goxmldsig"
@@ -29,4 +30,24 @@ func randomBytes(n int) []byte {
 		panic(err)
 	}
 	return rv
+}
+
+// getRawQueryParam extracts the raw (URL-encoded) value of the given query parameter from the raw query string.
+// This avoids parsing via url.Values to preserve parameter order and encoding.
+func getRawQueryParam(rawQuery, name string) string {
+	prefix := name + "="
+	start := strings.Index(rawQuery, prefix)
+	if start == -1 {
+		return ""
+	}
+
+	// Move index to the start of the value
+	start += len(prefix)
+
+	// Find the end of the value (next '&' or end of string)
+	end := strings.Index(rawQuery[start:], "&")
+	if end == -1 {
+		return rawQuery[start:]
+	}
+	return rawQuery[start : start+end]
 }
