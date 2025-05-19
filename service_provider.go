@@ -1358,7 +1358,6 @@ func (sp *ServiceProvider) SignLogoutRequest(req *LogoutRequest) error {
 
 // MakeLogoutRequest produces a new LogoutRequest object for idpURL.
 func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string) (*LogoutRequest, error) {
-
 	req := LogoutRequest{
 		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
 		IssueInstant: TimeNow(),
@@ -1375,11 +1374,7 @@ func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string) (*LogoutRequ
 			SPNameQualifier: sp.Metadata().EntityID,
 		},
 	}
-	if sp.SignatureMethod != "" {
-		if err := sp.SignLogoutRequest(&req); err != nil {
-			return nil, err
-		}
-	}
+
 	return &req, nil
 }
 
@@ -1391,11 +1386,12 @@ func (sp *ServiceProvider) MakeRedirectLogoutRequest(nameID, relayState string) 
 	if err != nil {
 		return nil, err
 	}
-	return req.Redirect(relayState), nil
+
+	return req.Redirect(relayState, sp)
 }
 
 // Redirect returns a URL suitable for using the redirect binding with the request
-func (r *LogoutRequest) Redirect(relayState string) *url.URL {
+func (r *LogoutRequest) Redirect(relayState string, sp *ServiceProvider) (*url.URL, error) {
 	w := &bytes.Buffer{}
 	w1 := base64.NewEncoder(base64.StdEncoding, w)
 	w2, _ := flate.NewWriter(w1, 9)
@@ -1413,14 +1409,29 @@ func (r *LogoutRequest) Redirect(relayState string) *url.URL {
 
 	rv, _ := url.Parse(r.Destination)
 
-	query := rv.Query()
-	query.Set("SAMLRequest", w.String())
-	if relayState != "" {
-		query.Set("RelayState", relayState)
+	// We can't depend on Query().set() as order matters for signing
+	query := rv.RawQuery
+	if len(query) > 0 {
+		query += "&" + string(SAMLRequest) + "=" + url.QueryEscape(w.String())
+	} else {
+		query += string(SAMLRequest) + "=" + url.QueryEscape(w.String())
 	}
-	rv.RawQuery = query.Encode()
 
-	return rv
+	if relayState != "" {
+		query += "&RelayState=" + relayState
+	}
+
+	if sp.SignatureMethod != "" {
+		var err error
+		query, err = sp.signQuery(SAMLRequest, query, w.String(), relayState)
+		if err != nil {
+			return nil, fmt.Errorf("logout request - redirect binding - failed to sign query: %v", err)
+		}
+	}
+
+	rv.RawQuery = query
+
+	return rv, nil
 }
 
 // MakePostLogoutRequest creates a SAML authentication request using
@@ -1431,6 +1442,13 @@ func (sp *ServiceProvider) MakePostLogoutRequest(nameID, relayState string) ([]b
 	if err != nil {
 		return nil, err
 	}
+
+	if sp.SignatureMethod != "" {
+		if err := sp.SignLogoutRequest(req); err != nil {
+			return nil, err
+		}
+	}
+
 	return req.Post(relayState), nil
 }
 
