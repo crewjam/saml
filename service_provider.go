@@ -1760,7 +1760,7 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 func (sp *ServiceProvider) ValidateLogoutRequest(req *http.Request) (*LogoutRequest, error) {
 	query := req.URL.Query()
 	if data := query.Get(string(SAMLRequest)); data != "" {
-		return sp.ValidateLogoutRequestRedirect(req)	
+		return sp.ValidateLogoutRequestRedirect(req)
 	}
 
 	err := req.ParseForm()
