@@ -1757,22 +1757,22 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 }
 
 // ValidateLogoutRequest validates the LogoutRequest content from the request
-func (sp *ServiceProvider) ValidateLogoutRequest(req *http.Request) error {
+func (sp *ServiceProvider) ValidateLogoutRequest(req *http.Request) (*LogoutRequest, error) {
 	query := req.URL.Query()
 	if data := query.Get(string(SAMLRequest)); data != "" {
-		return sp.ValidateLogoutRequestRedirect(req)
+		return sp.ValidateLogoutRequestRedirect(req)	
 	}
 
 	err := req.ParseForm()
 	if err != nil {
-		return fmt.Errorf("validateLogoutRequest: unable to parse form: %v", err)
+		return nil, fmt.Errorf("validateLogoutRequest: unable to parse form: %v", err)
 	}
 
 	return sp.ValidateLogoutRequestForm(req.PostForm.Get(string(SAMLRequest)))
 }
 
 // ValidateLogoutRequestRedirect returns a nil error if the logout request is valid. This is used for the HTTP Redirect binding.
-func (sp *ServiceProvider) ValidateLogoutRequestRedirect(r *http.Request) error {
+func (sp *ServiceProvider) ValidateLogoutRequestRedirect(r *http.Request) (*LogoutRequest, error) {
 	query := r.URL.Query()
 	queryParameterData := query.Get(string(SAMLRequest))
 	retErr := &InvalidResponseError{
@@ -1782,44 +1782,44 @@ func (sp *ServiceProvider) ValidateLogoutRequestRedirect(r *http.Request) error 
 	rawRequestBuf, err := base64.StdEncoding.DecodeString(queryParameterData)
 	if err != nil {
 		retErr.PrivateErr = fmt.Errorf("validateLogoutRequestRedirect: unable to parse base64: %s", err)
-		return retErr
+		return nil, retErr
 	}
 	retErr.Response = string(rawRequestBuf)
 
 	gr, err := io.ReadAll(newSaferFlateReader(bytes.NewBuffer(rawRequestBuf)))
 	if err != nil {
 		retErr.PrivateErr = err
-		return retErr
+		return nil, retErr
 	}
 
 	if err := xrv.Validate(bytes.NewReader(gr)); err != nil {
-		return fmt.Errorf("validateLogoutRequestRedirect: response contains invalid XML: %s", err)
+		return nil, fmt.Errorf("validateLogoutRequestRedirect: response contains invalid XML: %s", err)
 	}
 
 	if query.Get("Signature") != "" && query.Get("SigAlg") != "" {
 		if err := sp.validateRedirectBindingSignature(r); err != nil {
 			retErr.PrivateErr = err
-			return retErr
+			return nil, retErr
 		}
 	}
 
 	doc := etree.NewDocument()
 	if err := doc.ReadFromBytes(gr); err != nil {
 		retErr.PrivateErr = err
-		return retErr
+		return nil, retErr
 	}
 
 	var req LogoutRequest
 	if err := unmarshalElement(doc.Root(), &req); err != nil {
 		retErr.PrivateErr = err
-		return retErr
+		return nil, retErr
 	}
 
-	return sp.validateLogoutRequest(&req)
+	return &req, sp.validateLogoutRequest(&req)
 }
 
 // ValidateLogoutRequestForm returns a nil error if the logout request is valid. This is used for the HTTP POST binding.
-func (sp *ServiceProvider) ValidateLogoutRequestForm(postFormData string) error {
+func (sp *ServiceProvider) ValidateLogoutRequestForm(postFormData string) (*LogoutRequest, error) {
 	retErr := &InvalidResponseError{
 		Now: TimeNow(),
 	}
@@ -1827,32 +1827,32 @@ func (sp *ServiceProvider) ValidateLogoutRequestForm(postFormData string) error 
 	rawRequestBuf, err := base64.StdEncoding.DecodeString(postFormData)
 	if err != nil {
 		retErr.PrivateErr = fmt.Errorf("unable to parse base64: %s", err)
-		return retErr
+		return nil, retErr
 	}
 	retErr.Response = string(rawRequestBuf)
 
 	if err := xrv.Validate(bytes.NewReader(rawRequestBuf)); err != nil {
-		return fmt.Errorf("logout request contains invalid XML: %s", err)
+		return nil, fmt.Errorf("logout request contains invalid XML: %s", err)
 	}
 
 	doc := etree.NewDocument()
 	if err := doc.ReadFromBytes(rawRequestBuf); err != nil {
 		retErr.PrivateErr = err
-		return retErr
+		return nil, retErr
 	}
 
 	if err := sp.validateSignature(doc.Root()); err != nil {
 		retErr.PrivateErr = err
-		return retErr
+		return nil, retErr
 	}
 
 	var req LogoutRequest
 	if err := unmarshalElement(doc.Root(), &req); err != nil {
 		retErr.PrivateErr = err
-		return retErr
+		return nil, retErr
 	}
 
-	return sp.validateLogoutRequest(&req)
+	return &req, sp.validateLogoutRequest(&req)
 }
 
 // validateLogoutRequest validates the LogoutRequest fields. Returns a nil error if the LogoutRequest is valid.
