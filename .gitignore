@@ -3,6 +3,7 @@ coverage.html
 vendor/
 **/*.cert
 **/*.key
+example/*.sh
 
 # IDE-specific settings
 .idea

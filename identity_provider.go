@@ -802,7 +802,11 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 
 	nameIDFormat := "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
 
-	if session.NameIDFormat != "" {
+	// Check if the SP has requested a specific NameID format in the AuthnRequest
+	if req.Request.NameIDPolicy != nil && req.Request.NameIDPolicy.Format != nil {
+		nameIDFormat = *req.Request.NameIDPolicy.Format
+	} else if session.NameIDFormat != "" {
+		// Fall back to session's format if available
 		nameIDFormat = session.NameIDFormat
 	}
 

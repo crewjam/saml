@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"net/url"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/samlidp"
 )
@@ -42,32 +40,6 @@ func main() {
 		Logger:      logr,
 		Certificate: keyPair.Leaf,
 		Store:       &samlidp.MemoryStore{},
-	})
-	if err != nil {
-		logr.Fatalf("%s", err)
-	}
-
-	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("hunter2"), bcrypt.DefaultCost)
-	err = idpServer.Store.Put("/users/alice", samlidp.User{Name: "alice",
-		HashedPassword: hashedPassword,
-		Groups:         []string{"Administrators", "Users"},
-		Email:          "alice@example.com",
-		CommonName:     "Alice Smith",
-		Surname:        "Smith",
-		GivenName:      "Alice",
-	})
-	if err != nil {
-		logr.Fatalf("%s", err)
-	}
-
-	err = idpServer.Store.Put("/users/bob", samlidp.User{
-		Name:           "bob",
-		HashedPassword: hashedPassword,
-		Groups:         []string{"Users"},
-		Email:          "bob@example.com",
-		CommonName:     "Bob Smith",
-		Surname:        "Smith",
-		GivenName:      "Bob",
 	})
 	if err != nil {
 		logr.Fatalf("%s", err)
