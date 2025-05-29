@@ -110,6 +110,7 @@ type IdentityProvider struct {
 	SignatureMethod         string
 	ValidDuration           *time.Duration
 	ResponseFormTemplate    *template.Template
+	SLOURL                  url.URL // SAML Single Logout URL
 }
 
 // Metadata returns the metadata structure for this identity provider.
@@ -183,6 +184,23 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 				Binding:  HTTPRedirectBinding,
 				Location: idp.LogoutURL.String(),
 			},
+		}
+	}
+
+	// Add Single Logout Service endpoints to IDPSSODescriptor
+	for i, idpSSODescriptor := range ed.IDPSSODescriptors {
+		if idp.SLOURL.String() != "" {
+			idpSSODescriptor.SingleLogoutServices = []Endpoint{
+				{
+					Binding:  HTTPRedirectBinding,
+					Location: idp.SLOURL.String(),
+				},
+				{
+					Binding:  HTTPPostBinding,
+					Location: idp.SLOURL.String(),
+				},
+			}
+			ed.IDPSSODescriptors[i] = idpSSODescriptor
 		}
 	}
 
@@ -784,7 +802,11 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 
 	nameIDFormat := "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
 
-	if session.NameIDFormat != "" {
+	// Check if the SP has requested a specific NameID format in the AuthnRequest
+	if req.Request.NameIDPolicy != nil && req.Request.NameIDPolicy.Format != nil {
+		nameIDFormat = *req.Request.NameIDPolicy.Format
+	} else if session.NameIDFormat != "" {
+		// Fall back to session's format if available
 		nameIDFormat = session.NameIDFormat
 	}
 
