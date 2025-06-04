@@ -33,9 +33,11 @@ import (
 )
 
 type IdentityProviderTest struct {
-	SPKey         *rsa.PrivateKey
-	SPCertificate *x509.Certificate
-	SP            ServiceProvider
+	SPSigKey         *rsa.PrivateKey
+	SPSigCertificate *x509.Certificate
+	SPEncKey         *rsa.PrivateKey
+	SPEncCertificate *x509.Certificate
+	SP               ServiceProvider
 
 	Key             crypto.PrivateKey
 	Signer          crypto.Signer
@@ -106,14 +108,18 @@ func NewIdentityProviderTest(t *testing.T, opts ...idpTestOpts) *IdentityProvide
 	RandReader = &testRandomReader{}                // TODO(ross): remove this and use the below generator
 	xmlenc.RandReader = rand.New(rand.NewSource(0)) //nolint:gosec  // deterministic random numbers for tests
 
-	test.SPKey = mustParsePrivateKey(golden.Get(t, "sp_key.pem")).(*rsa.PrivateKey)
-	test.SPCertificate = mustParseCertificate(golden.Get(t, "sp_cert.pem"))
+	test.SPSigKey = mustParsePrivateKey(golden.Get(t, "sp_sig_key.pem")).(*rsa.PrivateKey)
+	test.SPSigCertificate = mustParseCertificate(golden.Get(t, "sp_sig_cert.pem"))
+	test.SPEncKey = mustParsePrivateKey(golden.Get(t, "sp_enc_key.pem")).(*rsa.PrivateKey)
+	test.SPEncCertificate = mustParseCertificate(golden.Get(t, "sp_enc_cert.pem"))
 	test.SP = ServiceProvider{
-		Key:         test.SPKey,
-		Certificate: test.SPCertificate,
-		MetadataURL: mustParseURL("https://sp.example.com/saml2/metadata"),
-		AcsURL:      mustParseURL("https://sp.example.com/saml2/acs"),
-		IDPMetadata: &EntityDescriptor{},
+		SignatureKey:          test.SPSigKey,
+		SignatureCertificate:  test.SPSigCertificate,
+		EncryptionKey:         test.SPEncKey,
+		EncryptionCertificate: test.SPEncCertificate,
+		MetadataURL:           mustParseURL("https://sp.example.com/saml2/metadata"),
+		AcsURL:                mustParseURL("https://sp.example.com/saml2/acs"),
+		IDPMetadata:           &EntityDescriptor{},
 	}
 
 	test.Certificate = mustParseCertificate(golden.Get(t, "idp_cert.pem"))
@@ -715,7 +721,7 @@ func TestIDPMarshalAssertion(t *testing.T) {
 		doc := etree.NewDocument()
 		doc.SetRoot(req.AssertionEl)
 		el := doc.FindElement("//EncryptedAssertion/EncryptedData")
-		actualPlaintextBuf, err := xmlenc.Decrypt(test.SPKey, el)
+		actualPlaintextBuf, err := xmlenc.Decrypt(test.SPSigKey, el)
 		assert.Check(t, err)
 		actualPlaintext = string(actualPlaintextBuf)
 	}

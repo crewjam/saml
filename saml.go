@@ -106,8 +106,8 @@
 //
 //		samlSP, _ := samlsp.New(samlsp.Options{
 //			URL:            *rootURL,
-//			Key:            keyPair.PrivateKey.(*rsa.PrivateKey),
-//			Certificate:    keyPair.Leaf,
+//			SignatureKey:            keyPair.PrivateKey.(*rsa.PrivateKey),
+//			SignatureCertificate:    keyPair.Leaf,
 //			IDPMetadataURL: idpMetadataURL,
 //		})
 //		app := http.HandlerFunc(hello)

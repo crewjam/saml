@@ -63,11 +63,11 @@ func main() {
 	}
 
 	samlMiddleware, _ = samlsp.New(samlsp.Options{
-		URL:         *rootURL,
-		Key:         keyPair.PrivateKey.(*rsa.PrivateKey),
-		Certificate: keyPair.Leaf,
-		IDPMetadata: idpMetadata,
-		SignRequest: true, // some IdP require the SLO request to be signed
+		URL:            *rootURL,
+		SigKey:         keyPair.PrivateKey.(*rsa.PrivateKey),
+		SigCertificate: keyPair.Leaf,
+		IDPMetadata:    idpMetadata,
+		SignRequest:    true, // some IdP require the SLO request to be signed
 	})
 	app := http.HandlerFunc(hello)
 	slo := http.HandlerFunc(logout)

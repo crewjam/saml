@@ -69,10 +69,12 @@ func NewMiddlewareTest(t *testing.T) *MiddlewareTest {
 	}
 
 	opts := Options{
-		URL:         mustParseURL("https://15661444.ngrok.io/"),
-		Key:         test.Key,
-		Certificate: test.Certificate,
-		IDPMetadata: &metadata,
+		URL:            mustParseURL("https://15661444.ngrok.io/"),
+		SigKey:         test.Key,
+		SigCertificate: test.Certificate,
+		EncKey:         test.Key,
+		EncCertificate: test.Certificate,
+		IDPMetadata:    &metadata,
 	}
 
 	var err error
@@ -419,8 +421,8 @@ func TestMiddlewareDefaultCookieDomainIPv4(t *testing.T) {
 	ipv4Loopback := net.IP{127, 0, 0, 1}
 
 	sp := DefaultSessionProvider(Options{
-		URL: mustParseURL("https://" + net.JoinHostPort(ipv4Loopback.String(), "54321")),
-		Key: test.Key,
+		URL:    mustParseURL("https://" + net.JoinHostPort(ipv4Loopback.String(), "54321")),
+		SigKey: test.Key,
 	})
 
 	req, _ := http.NewRequest("GET", "/", nil)
@@ -438,8 +440,8 @@ func TestMiddlewareDefaultCookieDomainIPv6(t *testing.T) {
 	test := NewMiddlewareTest(t)
 
 	sp := DefaultSessionProvider(Options{
-		URL: mustParseURL("https://" + net.JoinHostPort(net.IPv6loopback.String(), "54321")),
-		Key: test.Key,
+		URL:    mustParseURL("https://" + net.JoinHostPort(net.IPv6loopback.String(), "54321")),
+		SigKey: test.Key,
 	})
 
 	req, _ := http.NewRequest("GET", "/", nil)
