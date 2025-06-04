@@ -71,13 +71,22 @@ type ServiceProvider struct {
 	// Entity ID is optional - if not specified then MetadataURL will be used
 	EntityID string
 
-	// Key is private key we use to sign requests. It must be either an
+	// SignatureKey is the private key we use to sign requests. It must be either an
 	// *rsa.PrivateKey or an *ecdsa.PrivateKey.
-	Key crypto.Signer
+	SignatureKey crypto.Signer
 
-	// Certificate is the RSA public part of Key.
-	Certificate   *x509.Certificate
-	Intermediates []*x509.Certificate
+	// SignatureCertificate is the RSA public part of SignatureKey.
+	SignatureCertificate   *x509.Certificate
+	SignatureIntermediates []*x509.Certificate
+
+	// EncryptionKey is the private key we use to decrypt assertions. It must be an
+	// *rsa.PrivateKey. If not specified the decryption will not be supported
+	// by the SP
+	EncryptionKey *rsa.PrivateKey
+
+	// EncryptionCertificate is the RSA public part of EncryptionKey.
+	EncryptionCertificate   *x509.Certificate
+	EncryptionIntermediates []*x509.Certificate
 
 	// HTTPClient to use during SAML artifact resolution
 	HTTPClient *http.Client
@@ -137,13 +146,13 @@ type ServiceProvider struct {
 
 	// SignatureMethod, if non-empty, authentication requests will be signed.
 	//
-	// The method specified here must be consistent with the type of Key.
+	// The method specified here must be consistent with the type of SignatureKey.
 	//
-	// If Key is *rsa.PrivateKey, then this must be one of dsig.RSASHA1SignatureMethod,
+	// If SignatureKey is *rsa.PrivateKey, then this must be one of dsig.RSASHA1SignatureMethod,
 	// dsig.RSASHA256SignatureMethod, dsig.RSASHA384SignatureMethod, or
 	// dsig.RSASHA512SignatureMethod:
 	//
-	// If Key is *ecdsa.PrivateKey, then this must be one of dsig.ECDSASHA1SignatureMethod,
+	// If SignatureKey is *ecdsa.PrivateKey, then this must be one of dsig.ECDSASHA1SignatureMethod,
 	// dsig.ECDSASHA256SignatureMethod, dsig.ECDSASHA384SignatureMethod, or
 	// dsig.ECDSASHA512SignatureMethod.
 	SignatureMethod string
@@ -189,41 +198,52 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 	validUntil := TimeNow().Add(validDuration)
 
 	var keyDescriptors []KeyDescriptor
-	if sp.Certificate != nil {
-		certBytes := sp.Certificate.Raw
-		for _, intermediate := range sp.Intermediates {
+	if sp.SignatureCertificate != nil && sp.SignatureKey != nil && len(sp.SignatureMethod) > 0 {
+		certBytes := sp.SignatureCertificate.Raw
+		for _, intermediate := range sp.SignatureIntermediates {
 			certBytes = append(certBytes, intermediate.Raw...)
 		}
-		keyDescriptors = []KeyDescriptor{
-			{
-				Use: "encryption",
-				KeyInfo: KeyInfo{
-					X509Data: X509Data{
-						X509Certificates: []X509Certificate{
-							{Data: base64.StdEncoding.EncodeToString(certBytes)},
-						},
+
+		keyDescriptors = append(keyDescriptors, KeyDescriptor{
+			Use: "signing",
+			KeyInfo: KeyInfo{
+				X509Data: X509Data{
+					X509Certificates: []X509Certificate{
+						{Data: base64.StdEncoding.EncodeToString(certBytes)},
 					},
-				},
-				EncryptionMethods: []EncryptionMethod{
-					{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
-					{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
-					{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
-					{Algorithm: "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"},
 				},
 			},
+		})
+	}
+
+	if sp.EncryptionCertificate != nil && sp.EncryptionKey != nil {
+		certBytes := sp.EncryptionCertificate.Raw
+		for _, intermediate := range sp.EncryptionIntermediates {
+			certBytes = append(certBytes, intermediate.Raw...)
 		}
-		if len(sp.SignatureMethod) > 0 {
-			keyDescriptors = append(keyDescriptors, KeyDescriptor{
-				Use: "signing",
-				KeyInfo: KeyInfo{
-					X509Data: X509Data{
-						X509Certificates: []X509Certificate{
-							{Data: base64.StdEncoding.EncodeToString(certBytes)},
-						},
+
+		keyDescriptor := KeyDescriptor{
+			Use: "encryption",
+			KeyInfo: KeyInfo{
+				X509Data: X509Data{
+					X509Certificates: []X509Certificate{
+						{Data: base64.StdEncoding.EncodeToString(certBytes)},
 					},
 				},
-			})
+			},
+			EncryptionMethods: []EncryptionMethod{
+				{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
+				{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
+				{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
+				{Algorithm: "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"},
+			},
 		}
+
+		if keyDescriptors == nil {
+			keyDescriptors = make([]KeyDescriptor, 0)
+		}
+
+		keyDescriptors = append(keyDescriptors, keyDescriptor)
 	}
 
 	sloEndpoints := make([]Endpoint, len(sp.LogoutBindings))
@@ -558,12 +578,12 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding stri
 // GetSigningContext returns a dsig.SigningContext initialized based on the Service Provider's configuration
 func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 	keyPair := tls.Certificate{
-		Certificate: [][]byte{sp.Certificate.Raw},
-		PrivateKey:  sp.Key,
-		Leaf:        sp.Certificate,
+		Certificate: [][]byte{sp.SignatureCertificate.Raw},
+		PrivateKey:  sp.SignatureKey,
+		Leaf:        sp.SignatureCertificate,
 	}
 	// TODO: add intermediates for SP
-	// for _, cert := range sp.Intermediates {
+	// for _, cert := range sp.SignatureIntermediates {
 	// 	keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
 	// }
 
@@ -572,16 +592,16 @@ func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 		dsig.RSASHA256SignatureMethod,
 		dsig.RSASHA384SignatureMethod,
 		dsig.RSASHA512SignatureMethod:
-		if _, ok := sp.Key.(*rsa.PrivateKey); !ok {
-			return nil, fmt.Errorf("signature method %s requires a key of type rsa.PrivateKey, not %T", sp.SignatureMethod, sp.Key)
+		if _, ok := sp.SignatureKey.(*rsa.PrivateKey); !ok {
+			return nil, fmt.Errorf("signature method %s requires a key of type rsa.PrivateKey, not %T", sp.SignatureMethod, sp.SignatureKey)
 		}
 
 	case dsig.ECDSASHA1SignatureMethod,
 		dsig.ECDSASHA256SignatureMethod,
 		dsig.ECDSASHA384SignatureMethod,
 		dsig.ECDSASHA512SignatureMethod:
-		if _, ok := sp.Key.(*ecdsa.PrivateKey); !ok {
-			return nil, fmt.Errorf("signature method %s requires a key of type ecdsa.PrivateKey, not %T", sp.SignatureMethod, sp.Key)
+		if _, ok := sp.SignatureKey.(*ecdsa.PrivateKey); !ok {
+			return nil, fmt.Errorf("signature method %s requires a key of type ecdsa.PrivateKey, not %T", sp.SignatureMethod, sp.SignatureKey)
 		}
 	default:
 		return nil, fmt.Errorf("invalid signing method %s", sp.SignatureMethod)
@@ -592,7 +612,7 @@ func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 	if err != nil {
 		return nil, err
 	}
-	signingContext, err := dsig.NewSigningContext(sp.Key, chain)
+	signingContext, err := dsig.NewSigningContext(sp.SignatureKey, chain)
 	if err != nil {
 		return nil, err
 	}
@@ -1127,11 +1147,11 @@ func (sp *ServiceProvider) decryptElement(encryptedEl *etree.Element) (*etree.El
 		return nil, err
 	}
 
-	var key interface{} = sp.Key
+	var key interface{} = sp.EncryptionKey
 	keyEl := encryptedEl.FindElement("./EncryptedKey")
 	if keyEl != nil {
 		var err error
-		key, err = xmlenc.Decrypt(sp.Key, keyEl)
+		key, err = xmlenc.Decrypt(key, keyEl)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decrypt key from response: %s", err)
 		}

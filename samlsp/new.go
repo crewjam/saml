@@ -20,9 +20,12 @@ import (
 type Options struct {
 	EntityID              string
 	URL                   url.URL
-	Key                   crypto.Signer
-	Certificate           *x509.Certificate
-	Intermediates         []*x509.Certificate
+	SigKey                crypto.Signer
+	SigCertificate        *x509.Certificate
+	SigIntermediates      []*x509.Certificate
+	EncKey                *rsa.PrivateKey
+	EncCertificate        *x509.Certificate
+	EncIntermediates      []*x509.Certificate
 	HTTPClient            *http.Client
 	AllowIDPInitiated     bool
 	DefaultRedirectURI    string
@@ -53,11 +56,11 @@ func getDefaultSigningMethod(signer crypto.Signer) jwt.SigningMethod {
 // a JWTSessionCodec configured to issue signed tokens.
 func DefaultSessionCodec(opts Options) JWTSessionCodec {
 	return JWTSessionCodec{
-		SigningMethod: getDefaultSigningMethod(opts.Key),
+		SigningMethod: getDefaultSigningMethod(opts.SigKey),
 		Audience:      opts.URL.String(),
 		Issuer:        opts.URL.String(),
 		MaxAge:        defaultSessionMaxAge,
-		Key:           opts.Key,
+		Key:           opts.SigKey,
 	}
 }
 
@@ -83,11 +86,11 @@ func DefaultSessionProvider(opts Options) CookieSessionProvider {
 // options, a JWTTrackedRequestCodec that uses a JWT to encode TrackedRequests.
 func DefaultTrackedRequestCodec(opts Options) JWTTrackedRequestCodec {
 	return JWTTrackedRequestCodec{
-		SigningMethod: getDefaultSigningMethod(opts.Key),
+		SigningMethod: getDefaultSigningMethod(opts.SigKey),
 		Audience:      opts.URL.String(),
 		Issuer:        opts.URL.String(),
 		MaxAge:        saml.MaxIssueDelay,
-		Key:           opts.Key,
+		Key:           opts.SigKey,
 	}
 }
 
@@ -116,7 +119,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		forceAuthn = &opts.ForceAuthn
 	}
 
-	signatureMethod := defaultSigningMethodForKey(opts.Key)
+	signatureMethod := defaultSigningMethodForKey(opts.SigKey)
 	if !opts.SignRequest {
 		signatureMethod = ""
 	}
@@ -130,21 +133,24 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 	}
 
 	return saml.ServiceProvider{
-		EntityID:              opts.EntityID,
-		Key:                   opts.Key,
-		Certificate:           opts.Certificate,
-		HTTPClient:            opts.HTTPClient,
-		Intermediates:         opts.Intermediates,
-		MetadataURL:           *metadataURL,
-		AcsURL:                *acsURL,
-		SloURL:                *sloURL,
-		IDPMetadata:           opts.IDPMetadata,
-		ForceAuthn:            forceAuthn,
-		RequestedAuthnContext: opts.RequestedAuthnContext,
-		SignatureMethod:       signatureMethod,
-		AllowIDPInitiated:     opts.AllowIDPInitiated,
-		DefaultRedirectURI:    opts.DefaultRedirectURI,
-		LogoutBindings:        opts.LogoutBindings,
+		EntityID:                opts.EntityID,
+		SignatureKey:            opts.SigKey,
+		SignatureCertificate:    opts.SigCertificate,
+		SignatureIntermediates:  opts.SigIntermediates,
+		EncryptionKey:           opts.EncKey,
+		EncryptionCertificate:   opts.EncCertificate,
+		EncryptionIntermediates: opts.EncIntermediates,
+		HTTPClient:              opts.HTTPClient,
+		MetadataURL:             *metadataURL,
+		AcsURL:                  *acsURL,
+		SloURL:                  *sloURL,
+		IDPMetadata:             opts.IDPMetadata,
+		ForceAuthn:              forceAuthn,
+		RequestedAuthnContext:   opts.RequestedAuthnContext,
+		SignatureMethod:         signatureMethod,
+		AllowIDPInitiated:       opts.AllowIDPInitiated,
+		DefaultRedirectURI:      opts.DefaultRedirectURI,
+		LogoutBindings:          opts.LogoutBindings,
 	}
 }
 

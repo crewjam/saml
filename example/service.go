@@ -152,8 +152,8 @@ func main() {
 
 	samlSP, err := samlsp.New(samlsp.Options{
 		URL:               *rootURL,
-		Key:               keyPair.PrivateKey.(*rsa.PrivateKey),
-		Certificate:       keyPair.Leaf,
+		SigKey:            keyPair.PrivateKey.(*rsa.PrivateKey),
+		SigCertificate:    keyPair.Leaf,
 		AllowIDPInitiated: true,
 		IDPMetadata:       idpMetadata,
 	})

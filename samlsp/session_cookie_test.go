@@ -18,7 +18,7 @@ func TestCookieSameSite(t *testing.T) {
 		Name:   "token",
 		Domain: "localhost",
 		Codec: DefaultSessionCodec(Options{
-			Key: NewMiddlewareTest(t).Key,
+			SigKey: NewMiddlewareTest(t).Key,
 		}),
 	}
 
