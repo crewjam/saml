@@ -1812,6 +1812,10 @@ func findChild(parentEl *etree.Element, childNS string, childTag string) (*etree
 func elementToBytes(el *etree.Element) ([]byte, error) {
 	namespaces := map[string]string{}
 	for _, childEl := range el.FindElements("//*") {
+		if el.Tag != childEl.Tag {
+			continue
+		}
+
 		ns := childEl.NamespaceURI()
 		if ns != "" {
 			namespaces[childEl.Space] = ns
@@ -1821,7 +1825,11 @@ func elementToBytes(el *etree.Element) ([]byte, error) {
 	doc := etree.NewDocument()
 	doc.SetRoot(el.Copy())
 	for space, uri := range namespaces {
-		doc.Root().CreateAttr("xmlns:"+space, uri)
+		if space == "" {
+			doc.Root().CreateAttr("xmlns", uri)
+		} else {
+			doc.Root().CreateAttr("xmlns:"+space, uri)
+		}
 	}
 
 	return doc.WriteToBytes()
@@ -1833,6 +1841,7 @@ func unmarshalElement(el *etree.Element, v interface{}) error {
 	if err != nil {
 		return err
 	}
+
 	return xml.Unmarshal(buf, v)
 }
 
