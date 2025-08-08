@@ -50,10 +50,7 @@ func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
 
 	for _, attributeStatement := range assertion.AttributeStatements {
 		for _, attr := range attributeStatement.Attributes {
-			claimName := attr.FriendlyName
-			if claimName == "" {
-				claimName = attr.Name
-			}
+			claimName := attr.Name
 			for _, value := range attr.Values {
 				claims.Attributes[claimName] = append(claims.Attributes[claimName], value.Value)
 			}
