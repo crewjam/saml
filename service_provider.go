@@ -113,6 +113,10 @@ type ServiceProvider struct {
 	// authentication requests
 	AuthnNameIDFormat NameIDFormat
 
+	// IDPList is a list of identity providers that are allowed to authenticate users. Send as part of AuthnRequest.Scoping.
+	// If empty, any delegate IDP can be used.
+	IDPList []string
+
 	// MetadataValidDuration is a duration used to calculate validUntil
 	// attribute in the metadata endpoint
 	MetadataValidDuration time.Duration
@@ -536,6 +540,7 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding stri
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
 			Value:  firstSet(sp.EntityID, sp.MetadataURL.String()),
 		},
+
 		NameIDPolicy: &NameIDPolicy{
 			AllowCreate: &allowCreate,
 			// TODO(ross): figure out exactly policy we need
@@ -545,6 +550,11 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding stri
 		},
 		ForceAuthn:            sp.ForceAuthn,
 		RequestedAuthnContext: sp.RequestedAuthnContext,
+	}
+	if len(sp.IDPList) > 0 {
+		req.Scoping = &Scoping{
+			IDPList: sp.IDPList,
+		}
 	}
 	// We don't need to sign the XML document if the IDP uses HTTP-Redirect binding
 	if len(sp.SignatureMethod) > 0 && binding == HTTPPostBinding {

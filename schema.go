@@ -48,7 +48,7 @@ type AuthnRequest struct {
 	NameIDPolicy          *NameIDPolicy `xml:"urn:oasis:names:tc:SAML:2.0:protocol NameIDPolicy"`
 	Conditions            *Conditions
 	RequestedAuthnContext *RequestedAuthnContext
-	// Scoping               *Scoping // TODO
+	Scoping               *Scoping
 
 	ForceAuthn                     *bool  `xml:",attr"`
 	IsPassive                      *bool  `xml:",attr"`
@@ -209,9 +209,9 @@ func (r *AuthnRequest) Element() *etree.Element {
 	if r.RequestedAuthnContext != nil {
 		el.AddChild(r.RequestedAuthnContext.Element())
 	}
-	// if r.Scoping != nil {
-	// 	el.AddChild(r.Scoping.Element())
-	// }
+	if r.Scoping != nil {
+		el.AddChild(r.Scoping.Element())
+	}
 	if r.ForceAuthn != nil {
 		el.CreateAttr("ForceAuthn", strconv.FormatBool(*r.ForceAuthn))
 	}
@@ -317,6 +317,41 @@ func (a *NameIDPolicy) Element() *etree.Element {
 	}
 	if a.AllowCreate != nil {
 		el.CreateAttr("AllowCreate", strconv.FormatBool(*a.AllowCreate))
+	}
+	return el
+}
+
+// Scoping represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf § 3.4.1.2
+type Scoping struct {
+	XMLName      xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol Scoping"`
+	ProxyCount   *int     `xml:",attr"`
+	IDPList      []string `xml:"urn:oasis:names:tc:SAML:2.0:protocol IDPList"` // Only supports IDEntry, TODO support GetComplete{uri}
+	RequesterIDs []string `xml:"urn:oasis:names:tc:SAML:2.0:protocol RequesterID"`
+}
+
+// Element returns an etree.Element representing the object in XML form.
+func (a *Scoping) Element() *etree.Element {
+	el := etree.NewElement("samlp:Scoping")
+	if a.ProxyCount != nil {
+		el.CreateAttr("ProxyCount", strconv.Itoa(*a.ProxyCount))
+	}
+	if len(a.IDPList) > 0 {
+		idpList := etree.NewElement("samlp:IDPList")
+		for _, idp := range a.IDPList {
+			idpEntry := etree.NewElement("samlp:IDPEntry")
+			idpEntry.CreateAttr("ProviderID", idp)
+			idpList.AddChild(idpEntry)
+		}
+		el.AddChild(idpList)
+	}
+	if len(a.RequesterIDs) > 0 {
+		for _, requesterID := range a.RequesterIDs {
+			requesterIDEntry := etree.NewElement("samlp:RequesterIDEntry")
+			requesterIDEntry.CreateAttr("ProviderID", requesterID)
+			el.AddChild(requesterIDEntry)
+		}
 	}
 	return el
 }

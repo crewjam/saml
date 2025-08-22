@@ -277,3 +277,20 @@ func TestLogoutRequestMarshalWithoutNotOnOrAfter(t *testing.T) {
 	assert.Check(t, err)
 	assert.Check(t, is.DeepEqual(expected, actual))
 }
+
+func TestScopingElement(t *testing.T) {
+	proxyCount := 2
+	expected := AuthnRequest{Scoping: &Scoping{
+		XMLName:      xml.Name{Space: "urn:oasis:names:tc:SAML:2.0:protocol", Local: "Scoping"},
+		IDPList:      []string{"idp1", "idp2"},
+		ProxyCount:   &proxyCount,
+		RequesterIDs: []string{"http://uri"},
+	}}
+
+	doc := etree.NewDocument()
+	doc.SetRoot(expected.Element())
+	x, err := doc.WriteToBytes()
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(`<samlp:AuthnRequest xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="" Version="" IssueInstant="0001-01-01T00:00:00Z"><samlp:Scoping ProxyCount="2"><samlp:IDPList><samlp:IDPEntry ProviderID="idp1"/><samlp:IDPEntry ProviderID="idp2"/></samlp:IDPList><samlp:RequesterIDEntry ProviderID="http://uri"/></samlp:Scoping></samlp:AuthnRequest>`,
+		string(x)))
+}
