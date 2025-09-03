@@ -95,7 +95,7 @@ func TestSPCanSetAuthenticationNameIDFormat(t *testing.T) {
 	s.AuthnNameIDFormat = UnspecifiedNameIDFormat
 	req, err = s.MakeAuthenticationRequest("", HTTPRedirectBinding, HTTPPostBinding)
 	assert.Check(t, err)
-	assert.Check(t, is.Equal("", *req.NameIDPolicy.Format))
+	assert.Check(t, is.Equal(string(UnspecifiedNameIDFormat), *req.NameIDPolicy.Format))
 
 	// explicitly set to "emailAddress"
 	s.AuthnNameIDFormat = EmailAddressNameIDFormat

@@ -1614,8 +1614,6 @@ func (sp *ServiceProvider) nameIDFormat() string {
 	case "":
 		// To maintain library back-compat, use "transient" if unset.
 		nameIDFormat = string(TransientNameIDFormat)
-	case UnspecifiedNameIDFormat:
-		// Spec defines an empty value as "unspecified" so don't set one.
 	default:
 		nameIDFormat = string(sp.AuthnNameIDFormat)
 	}
