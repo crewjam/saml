@@ -108,6 +108,54 @@ func TestRequestedAuthnContext(t *testing.T) {
 		string(x)))
 }
 
+func TestAuthenticatingAuthority(t *testing.T) {
+	expected := AuthenticatingAuthority{
+		Value: "value",
+	}
+
+	doc := etree.NewDocument()
+	doc.SetRoot(expected.Element())
+	x, err := doc.WriteToBytes()
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(`<saml:AuthenticatingAuthority>value</saml:AuthenticatingAuthority>`,
+		string(x)))
+}
+
+func TestAuthnContextNoAuthenticatingAuthority(t *testing.T) {
+	expected := AuthnContext{
+		AuthnContextClassRef: &AuthnContextClassRef{
+			Value: "value",
+		},
+		AuthenticatingAuthorities: nil,
+	}
+
+	doc := etree.NewDocument()
+	doc.SetRoot(expected.Element())
+	x, err := doc.WriteToBytes()
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(`<saml:AuthnContext><saml:AuthnContextClassRef>value</saml:AuthnContextClassRef></saml:AuthnContext>`,
+		string(x)))
+}
+
+func TestAuthnContextMultiAuthenticatingAuthority(t *testing.T) {
+	expected := AuthnContext{
+		AuthnContextClassRef: &AuthnContextClassRef{
+			Value: "value",
+		},
+		AuthenticatingAuthorities: []AuthenticatingAuthority{
+			{Value: "value1"},
+			{Value: "value2"},
+		},
+	}
+
+	doc := etree.NewDocument()
+	doc.SetRoot(expected.Element())
+	x, err := doc.WriteToBytes()
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(`<saml:AuthnContext><saml:AuthnContextClassRef>value</saml:AuthnContextClassRef><saml:AuthenticatingAuthority>value1</saml:AuthenticatingAuthority><saml:AuthenticatingAuthority>value2</saml:AuthenticatingAuthority></saml:AuthnContext>`,
+		string(x)))
+}
+
 func TestArtifactResolveElement(t *testing.T) {
 	issueInstant := time.Date(2020, 7, 21, 12, 30, 45, 0, time.UTC)
 	expected := ArtifactResolve{

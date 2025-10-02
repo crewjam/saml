@@ -1155,10 +1155,10 @@ func (a *SubjectLocality) Element() *etree.Element {
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf §2.7.2.2
 type AuthnContext struct {
-	AuthnContextClassRef *AuthnContextClassRef
+	AuthnContextClassRef      *AuthnContextClassRef
+	AuthenticatingAuthorities []AuthenticatingAuthority `xml:"AuthenticatingAuthority"`
 	// AuthnContextDecl          *AuthnContextDecl        ... TODO
 	// AuthnContextDeclRef       *AuthnContextDeclRef     ... TODO
-	// AuthenticatingAuthorities []AuthenticatingAuthority... TODO
 }
 
 // Element returns an etree.Element representing the object in XML form.
@@ -1166,6 +1166,10 @@ func (a *AuthnContext) Element() *etree.Element {
 	el := etree.NewElement("saml:AuthnContext")
 	if a.AuthnContextClassRef != nil {
 		el.AddChild(a.AuthnContextClassRef.Element())
+	}
+
+	for _, v := range a.AuthenticatingAuthorities {
+		el.AddChild(v.Element())
 	}
 	return el
 }
@@ -1180,6 +1184,20 @@ type AuthnContextClassRef struct {
 // Element returns an etree.Element representing the object in XML form.
 func (a *AuthnContextClassRef) Element() *etree.Element {
 	el := etree.NewElement("saml:AuthnContextClassRef")
+	el.SetText(a.Value)
+	return el
+}
+
+// AuthenticatingAuthority represents the SAML element AuthenticatingAuthority.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf §2.7.2.2
+type AuthenticatingAuthority struct {
+	Value string `xml:",chardata"`
+}
+
+// Element returns an etree.Element representing the object in XML form.
+func (a *AuthenticatingAuthority) Element() *etree.Element {
+	el := etree.NewElement("saml:AuthenticatingAuthority")
 	el.SetText(a.Value)
 	return el
 }
