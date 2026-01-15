@@ -2,6 +2,9 @@ package samlsp
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/rsa"
 	"fmt"
 	"time"
 
@@ -44,7 +47,15 @@ func (s JWTTrackedRequestCodec) Encode(value TrackedRequest) (string, error) {
 		SAMLAuthnRequest: true,
 	}
 	token := jwt.NewWithClaims(s.SigningMethod, claims)
-	return token.SignedString(s.Key)
+
+	// Check if key is a concrete private key type that jwt library can handle directly.
+	// For crypto.Signer implementations (KMS/HSM), use custom signing.
+	switch s.Key.(type) {
+	case *rsa.PrivateKey, *ecdsa.PrivateKey, ed25519.PrivateKey:
+		return token.SignedString(s.Key)
+	default:
+		return signJWTWithCryptoSigner(token, s.Key, s.SigningMethod)
+	}
 }
 
 // Decode returns a Tracked request from an encoded string.

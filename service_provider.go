@@ -567,21 +567,25 @@ func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 	// 	keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
 	// }
 
+	// Validate that the key type matches the signature method.
+	// We check the public key type to support crypto.Signer implementations
+	// (like KMS/HSM signers) that aren't literal *rsa.PrivateKey or *ecdsa.PrivateKey.
+	pubKey := sp.Key.Public()
 	switch sp.SignatureMethod {
 	case dsig.RSASHA1SignatureMethod,
 		dsig.RSASHA256SignatureMethod,
 		dsig.RSASHA384SignatureMethod,
 		dsig.RSASHA512SignatureMethod:
-		if _, ok := sp.Key.(*rsa.PrivateKey); !ok {
-			return nil, fmt.Errorf("signature method %s requires a key of type rsa.PrivateKey, not %T", sp.SignatureMethod, sp.Key)
+		if _, ok := pubKey.(*rsa.PublicKey); !ok {
+			return nil, fmt.Errorf("signature method %s requires an RSA key, got %T", sp.SignatureMethod, pubKey)
 		}
 
 	case dsig.ECDSASHA1SignatureMethod,
 		dsig.ECDSASHA256SignatureMethod,
 		dsig.ECDSASHA384SignatureMethod,
 		dsig.ECDSASHA512SignatureMethod:
-		if _, ok := sp.Key.(*ecdsa.PrivateKey); !ok {
-			return nil, fmt.Errorf("signature method %s requires a key of type ecdsa.PrivateKey, not %T", sp.SignatureMethod, sp.Key)
+		if _, ok := pubKey.(*ecdsa.PublicKey); !ok {
+			return nil, fmt.Errorf("signature method %s requires an ECDSA key, got %T", sp.SignatureMethod, pubKey)
 		}
 	default:
 		return nil, fmt.Errorf("invalid signing method %s", sp.SignatureMethod)
