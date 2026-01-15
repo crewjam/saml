@@ -2,6 +2,7 @@ package samlsp
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
@@ -519,4 +520,123 @@ func TestMiddlewareHandlesInvalidResponse(t *testing.T) {
 	assert.Check(t, is.Equal("Forbidden\n", string(respBody)))
 	assert.Check(t, is.Equal("", resp.Header().Get("Location")))
 	assert.Check(t, is.Equal("", resp.Header().Get("Set-Cookie")))
+}
+
+type mockSigner struct {
+	signer crypto.Signer
+}
+
+func (m *mockSigner) Public() crypto.PublicKey {
+	return m.signer.Public()
+}
+
+func (m *mockSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	return m.signer.Sign(rand, digest, opts)
+}
+
+func newMockRSASigner(t *testing.T) crypto.Signer {
+	key := mustParsePrivateKey(golden.Get(t, "key.pem"))
+	return &mockSigner{signer: key.(crypto.Signer)}
+}
+
+func TestMiddleware_WithCryptoSignerE2E(t *testing.T) {
+	saml.TimeNow = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05.999999999 MST 2006", "Mon Dec 1 01:57:09.123456789 UTC 2015")
+		return rv
+	}
+	saml.Clock = dsig.NewFakeClockAt(saml.TimeNow())
+	saml.RandReader = &testRandomReader{}
+
+	cert := mustParseCertificate(golden.Get(t, "cert.pem"))
+	idpMetadata := golden.Get(t, "idp_metadata.xml")
+
+	var metadata saml.EntityDescriptor
+	if err := xml.Unmarshal(idpMetadata, &metadata); err != nil {
+		panic(err)
+	}
+
+	mockSigner := newMockRSASigner(t)
+
+	opts := Options{
+		URL:         mustParseURL("https://15661444.ngrok.io/"),
+		Key:         mockSigner,
+		Certificate: cert,
+		IDPMetadata: &metadata,
+	}
+
+	middleware, err := New(opts)
+	assert.Check(t, err)
+
+	sessionProvider := DefaultSessionProvider(opts)
+	sessionProvider.Name = "ttt"
+	sessionProvider.MaxAge = 7200 * time.Second
+
+	sessionCodec := sessionProvider.Codec.(JWTSessionCodec)
+	sessionCodec.MaxAge = 7200 * time.Second
+	sessionProvider.Codec = sessionCodec
+
+	middleware.Session = sessionProvider
+	middleware.ServiceProvider.MetadataURL.Path = "/saml2/metadata"
+	middleware.ServiceProvider.AcsURL.Path = "/saml2/acs"
+	middleware.ServiceProvider.SloURL.Path = "/saml2/slo"
+
+	t.Run("SessionEncodeDecode", func(t *testing.T) {
+		var tc JWTSessionClaims
+		if err := json.Unmarshal(golden.Get(t, "token.json"), &tc); err != nil {
+			t.Fatal(err)
+		}
+
+		encoded, err := sessionProvider.Codec.Encode(tc)
+		assert.Check(t, err)
+		assert.Assert(t, encoded != "")
+
+		decoded, err := sessionProvider.Codec.Decode(encoded)
+		assert.Check(t, err)
+		decodedClaims := decoded.(JWTSessionClaims)
+		assert.Equal(t, tc.Subject, decodedClaims.Subject)
+	})
+
+	t.Run("TrackedRequestEncodeDecode", func(t *testing.T) {
+		codec := middleware.RequestTracker.(CookieRequestTracker).Codec
+		trackedReq := TrackedRequest{
+			Index:         "test-index",
+			SAMLRequestID: "test-request-id",
+			URI:           "/test-uri",
+		}
+
+		encoded, err := codec.Encode(trackedReq)
+		assert.Check(t, err)
+		assert.Assert(t, encoded != "")
+
+		decoded, err := codec.Decode(encoded)
+		assert.Check(t, err)
+		assert.Equal(t, trackedReq.Index, decoded.Index)
+		assert.Equal(t, trackedReq.SAMLRequestID, decoded.SAMLRequestID)
+	})
+
+	t.Run("RequireAccountFlow", func(t *testing.T) {
+		handler := middleware.RequireAccount(
+			http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+				panic("not reached")
+			}))
+
+		req, _ := http.NewRequest("GET", "/protected", nil)
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, req)
+
+		assert.Check(t, is.Equal(http.StatusFound, resp.Code))
+		assert.Assert(t, resp.Header().Get("Location") != "")
+		assert.Assert(t, resp.Header().Get("Set-Cookie") != "")
+	})
+
+	t.Run("Metadata", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", "/saml2/metadata", nil)
+		resp := httptest.NewRecorder()
+		middleware.ServeHTTP(resp, req)
+
+		assert.Check(t, is.Equal(http.StatusOK, resp.Code))
+		assert.Check(t, is.Equal("application/samlmetadata+xml",
+			resp.Header().Get("Content-type")))
+		golden.Assert(t, resp.Body.String(), "expected_middleware_metadata.xml")
+	})
 }

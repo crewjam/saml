@@ -2,7 +2,16 @@ package samlsp
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/asn1"
+	"encoding/base64"
 	"errors"
+	"fmt"
+	"math/big"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -77,12 +86,15 @@ func (c JWTSessionCodec) Encode(s Session) (string, error) {
 	claims := s.(JWTSessionClaims) // this will panic if you pass the wrong kind of session
 
 	token := jwt.NewWithClaims(c.SigningMethod, claims)
-	signedString, err := token.SignedString(c.Key)
-	if err != nil {
-		return "", err
-	}
 
-	return signedString, nil
+	// Check if key is a concrete private key type that jwt library can handle directly.
+	// For crypto.Signer implementations (KMS/HSM), use custom signing.
+	switch c.Key.(type) {
+	case *rsa.PrivateKey, *ecdsa.PrivateKey, ed25519.PrivateKey:
+		return token.SignedString(c.Key)
+	default:
+		return signJWTWithCryptoSigner(token, c.Key, c.SigningMethod)
+	}
 }
 
 // Decode parses the serialized session that may have been returned by Encode
@@ -136,4 +148,75 @@ func (a Attributes) Get(key string) string {
 		return ""
 	}
 	return v[0]
+}
+
+// signJWTWithCryptoSigner signs a JWT token using the crypto.Signer interface.
+// This allows KMS/HSM keys that implement crypto.Signer to sign JWTs.
+func signJWTWithCryptoSigner(token *jwt.Token, signer crypto.Signer, method jwt.SigningMethod) (string, error) {
+	// Get the signing string (header.payload)
+	signingString, err := token.SigningString()
+	if err != nil {
+		return "", err
+	}
+
+	// Determine hash algorithm based on signing method
+	var hashFunc crypto.Hash
+	switch method.Alg() {
+	case "RS256", "ES256", "PS256":
+		hashFunc = crypto.SHA256
+	case "RS384", "ES384", "PS384":
+		hashFunc = crypto.SHA384
+	case "RS512", "ES512", "PS512":
+		hashFunc = crypto.SHA512
+	default:
+		hashFunc = crypto.SHA256
+	}
+
+	// Hash the signing string
+	hasher := hashFunc.New()
+	hasher.Write([]byte(signingString))
+	digest := hasher.Sum(nil)
+
+	// Sign using crypto.Signer
+	sig, err := signer.Sign(rand.Reader, digest, hashFunc)
+	if err != nil {
+		return "", fmt.Errorf("signing with crypto.Signer: %w", err)
+	}
+
+	// For ECDSA, the signature from crypto.Signer is ASN.1 DER encoded,
+	// but JWT expects raw R||S format
+	if _, ok := signer.Public().(*ecdsa.PublicKey); ok {
+		sig, err = convertECDSASignatureToJWT(sig, signer.Public().(*ecdsa.PublicKey))
+		if err != nil {
+			return "", err
+		}
+	}
+
+	// Encode signature and return complete JWT
+	return strings.Join([]string{signingString, base64.RawURLEncoding.EncodeToString(sig)}, "."), nil
+}
+
+// convertECDSASignatureToJWT converts ASN.1 DER encoded ECDSA signature to JWT format (R||S)
+func convertECDSASignatureToJWT(derSig []byte, pubKey *ecdsa.PublicKey) ([]byte, error) {
+	// Parse ASN.1 DER signature
+	var sig struct {
+		R, S *big.Int
+	}
+	if _, err := asn1.Unmarshal(derSig, &sig); err != nil {
+		return nil, fmt.Errorf("parsing ECDSA signature: %w", err)
+	}
+
+	// Calculate key size in bytes
+	keyBytes := (pubKey.Curve.Params().BitSize + 7) / 8
+
+	// Create R||S format
+	rBytes := sig.R.Bytes()
+	sBytes := sig.S.Bytes()
+
+	// Pad to key size
+	result := make([]byte, 2*keyBytes)
+	copy(result[keyBytes-len(rBytes):keyBytes], rBytes)
+	copy(result[2*keyBytes-len(sBytes):], sBytes)
+
+	return result, nil
 }
