@@ -1499,6 +1499,102 @@ func TestXswPermutationNineIsRejected(t *testing.T) {
 		"cannot validate signature on Assertion: Missing signature referencing the top-level element"))
 }
 
+func TestSPKeyInfoStrippedEvenWithX509Cert(t *testing.T) {
+	// Regression test for issue #10: The fix always strips KeyInfo from signatures
+	// before validation. Previously, KeyInfo was only stripped when X509Certificate
+	// was NOT present, which meant an attacker could inject their own X509Certificate
+	// to potentially influence signature validation.
+	//
+	// This test injects a bogus X509Certificate into the Signature's KeyInfo element
+	// and verifies that ParseResponse still succeeds — proving that KeyInfo is always
+	// stripped and validation falls back to the metadata-provided certificates.
+	idpMetadata := golden.Get(t, "TestSPRealWorldKeyInfoHasRSAPublicKeyNotX509Cert_idp_metadata")
+	respBytes := golden.Get(t, "TestSPRealWorldKeyInfoHasRSAPublicKeyNotX509Cert_response")
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Fri Apr 21 13:12:51 UTC 2017")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
+	s := ServiceProvider{
+		Key:         mustParsePrivateKey(golden.Get(t, "key_2017.pem")).(*rsa.PrivateKey),
+		Certificate: mustParseCertificate(golden.Get(t, "cert_2017.pem")),
+		MetadataURL: mustParseURL("https://preview.docrocket-ross.test.octolabs.io/saml/metadata"),
+		AcsURL:      mustParseURL("https://preview.docrocket-ross.test.octolabs.io/saml/acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal(idpMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	// Inject a bogus X509Certificate into the Response's Signature KeyInfo.
+	// We use byte-level replacement targeting only the first </ds:KeyInfo>
+	// (which belongs to the Response's Signature). The Response Signature
+	// itself is excluded from the signed content via the enveloped-signature
+	// transform, so modifying its KeyInfo does not break the digest.
+	bogusX509 := `<ds:X509Data><ds:X509Certificate>AAAA</ds:X509Certificate></ds:X509Data>`
+	// Replace only the first occurrence (Response's Signature KeyInfo)
+	modifiedResp := bytes.Replace(respBytes, []byte("</ds:KeyInfo>"), []byte(bogusX509+"</ds:KeyInfo>"), 1)
+	assert.Check(t, bytes.Count(respBytes, []byte("</ds:KeyInfo>")) == 2, "expected 2 KeyInfo closing tags")
+
+	req := http.Request{PostForm: url.Values{}, URL: &s.AcsURL}
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(modifiedResp))
+	_, err = s.ParseResponse(&req, []string{"id-3992f74e652d89c3cf1efd6c7e472abaac9bc917"})
+	if err != nil {
+		t.Fatalf("ParseResponse failed after injecting bogus X509Certificate into KeyInfo: %v",
+			err.(*InvalidResponseError).PrivateErr)
+	}
+}
+
+func TestSPMultiCertIdP(t *testing.T) {
+	// Regression test for issue #10: When an IdP's metadata contains multiple
+	// signing certificates, the fix loops over each cert individually instead
+	// of using a single certificate store. goxmldsig only auto-selects a cert
+	// when there is exactly one root, so multiple certs require individual attempts.
+	idpMetadata := golden.Get(t, "TestSPRealWorldKeyInfoHasRSAPublicKeyNotX509Cert_idp_metadata")
+	respStr := golden.Get(t, "TestSPRealWorldKeyInfoHasRSAPublicKeyNotX509Cert_response")
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05 MST 2006", "Fri Apr 21 13:12:51 UTC 2017")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
+	s := ServiceProvider{
+		Key:         mustParsePrivateKey(golden.Get(t, "key_2017.pem")).(*rsa.PrivateKey),
+		Certificate: mustParseCertificate(golden.Get(t, "cert_2017.pem")),
+		MetadataURL: mustParseURL("https://preview.docrocket-ross.test.octolabs.io/saml/metadata"),
+		AcsURL:      mustParseURL("https://preview.docrocket-ross.test.octolabs.io/saml/acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal(idpMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	// Add a second (unrelated) signing cert to the IdP metadata.
+	// The real signing cert is already in KeyDescriptors[0].
+	// We prepend a bogus cert so the correct cert is NOT the first one tried.
+	spCertPEM := golden.Get(t, "sp_cert.pem")
+	spCert := mustParseCertificate(spCertPEM)
+	bogusCertB64 := base64.StdEncoding.EncodeToString(spCert.Raw)
+	unrelatedKD := KeyDescriptor{
+		Use: "signing",
+		KeyInfo: KeyInfo{
+			X509Data: X509Data{
+				X509Certificates: []X509Certificate{{Data: bogusCertB64}},
+			},
+		},
+	}
+	// Prepend the unrelated cert so it's tried first
+	s.IDPMetadata.IDPSSODescriptors[0].KeyDescriptors = append(
+		[]KeyDescriptor{unrelatedKD},
+		s.IDPMetadata.IDPSSODescriptors[0].KeyDescriptors...,
+	)
+
+	req := http.Request{PostForm: url.Values{}, URL: &s.AcsURL}
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(respStr))
+	_, err = s.ParseResponse(&req, []string{"id-3992f74e652d89c3cf1efd6c7e472abaac9bc917"})
+	if err != nil {
+		t.Fatalf("ParseResponse failed with multi-cert IdP metadata: %v",
+			err.(*InvalidResponseError).PrivateErr)
+	}
+}
+
 func TestSPRealWorldKeyInfoHasRSAPublicKeyNotX509Cert(t *testing.T) {
 	// This is a real world SAML response that we observed. It contains <ds:RSAKeyValue> elements
 	idpMetadata := golden.Get(t, "TestSPRealWorldKeyInfoHasRSAPublicKeyNotX509Cert_idp_metadata")

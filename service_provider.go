@@ -1293,31 +1293,12 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 		return fmt.Errorf("cannot validate signature on %s: saml config not set up properly, specify either idp metadata url, fingerprints or actual certificate", el.Tag)
 	}
 
-	certificateStore := dsig.MemoryX509CertificateStore{
-		Roots: certs,
-	}
-
-	validationContext := dsig.NewDefaultValidationContext(&certificateStore)
-	validationContext.IdAttribute = "ID"
-	if Clock != nil {
-		validationContext.Clock = Clock
-	}
-
-	// Some SAML responses contain a RSAKeyValue element. One of two things is happening here:
-	//
-	// (1) We're getting something signed by a key we already know about -- the public key
-	//     of the signing cert provided in the metadata.
-	// (2) We're getting something signed by a key we *don't* know about, and which we have
-	//     no ability to verify.
-	//
-	// The best course of action is to just remove the KeyInfo so that dsig falls back to
-	// verifying against the public key provided in the metadata.
-	if el.FindElement("./Signature/KeyInfo/X509Data/X509Certificate") == nil {
-		if sigEl := el.FindElement("./Signature"); sigEl != nil {
-			if keyInfo := sigEl.FindElement("KeyInfo"); keyInfo != nil {
-				sigEl.RemoveChild(keyInfo)
-			}
-		}
+	// Always strip KeyInfo from the Signature element. The metadata-provided
+	// certificates are the sole trust anchor for signature validation.
+	// Retaining KeyInfo would allow an attacker to include their own X509Certificate
+	// or RSAKeyValue, potentially bypassing metadata-based trust.
+	if keyInfo := sigEl.FindElement("KeyInfo"); keyInfo != nil {
+		sigEl.RemoveChild(keyInfo)
 	}
 
 	ctx, err := etreeutils.NSBuildParentContext(el)
@@ -1333,15 +1314,36 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 		return fmt.Errorf("cannot validate signature on %s: %v", el.Tag, err)
 	}
 
-	if sp.SignatureVerifier != nil {
-		return sp.SignatureVerifier.VerifySignature(validationContext, el)
+	// Try each trusted certificate individually. goxmldsig only auto-selects
+	// a certificate from the store when there is exactly one root, so when
+	// metadata provides multiple signing certs we must try each one.
+	var lastErr error
+	for _, cert := range certs {
+		certificateStore := dsig.MemoryX509CertificateStore{
+			Roots: []*x509.Certificate{cert},
+		}
+		validationContext := dsig.NewDefaultValidationContext(&certificateStore)
+		validationContext.IdAttribute = "ID"
+		if Clock != nil {
+			validationContext.Clock = Clock
+		}
+
+		if sp.SignatureVerifier != nil {
+			if err := sp.SignatureVerifier.VerifySignature(validationContext, el); err == nil {
+				return nil
+			} else {
+				lastErr = err
+			}
+		} else {
+			if _, err := validationContext.Validate(el); err == nil {
+				return nil
+			} else {
+				lastErr = err
+			}
+		}
 	}
 
-	if _, err := validationContext.Validate(el); err != nil {
-		return fmt.Errorf("cannot validate signature on %s: %v", el.Tag, err)
-	}
-
-	return nil
+	return fmt.Errorf("cannot validate signature on %s: %v", el.Tag, lastErr)
 }
 
 // SignLogoutRequest adds the `Signature` element to the `LogoutRequest`.
