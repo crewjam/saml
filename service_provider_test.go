@@ -946,7 +946,7 @@ func (test *ServiceProviderTest) replaceDestination(newDestination string) {
 		[]byte(`Destination="https://15661444.ngrok.io/saml2/acs"`), []byte(newStr), 1)
 }
 
-func TestSPCanProcessResponseWithoutDestination(t *testing.T) {
+func TestSPRejectsResponseWithoutDestination(t *testing.T) {
 	test := NewServiceProviderTest(t)
 	s := ServiceProvider{
 		Key:         test.Key,
@@ -962,7 +962,41 @@ func TestSPCanProcessResponseWithoutDestination(t *testing.T) {
 	test.replaceDestination("")
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(test.SamlResponse))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
+		"`Destination` is required but missing"))
+}
+
+func TestSPRejectsUnsignedResponseWithoutDestination(t *testing.T) {
+	// Regression test for issue #12: On main, unsigned responses without
+	// Destination were silently accepted. The fix requires Destination always,
+	// because for unsigned responses it is the only binding to this SP.
+	test := NewServiceProviderTest(t)
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
 	assert.Check(t, err)
+
+	// Build a minimal unsigned SAML response with no Destination attribute.
+	// This simulates an IdP sending a response without any audience binding.
+	unsignedResp := `<saml2p:Response xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol"` +
+		` ID="_test123" InResponseTo="id-9e61753d64e928af5a7a341a97f420c9"` +
+		` IssueInstant="2015-12-01T01:56:21.375Z" Version="2.0">` +
+		`<saml2:Issuer xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion"` +
+		` Format="urn:oasis:names:tc:SAML:2.0:nameid-format:entity">` +
+		`https://idp.testshib.org/idp/shibboleth</saml2:Issuer>` +
+		`<saml2p:Status><saml2p:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></saml2p:Status>` +
+		`</saml2p:Response>`
+
+	req := http.Request{PostForm: url.Values{}, URL: &s.AcsURL}
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString([]byte(unsignedResp)))
+	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
+		"`Destination` is required but missing"))
 }
 
 func (test *ServiceProviderTest) responseDom(t *testing.T) (doc *etree.Document) {
@@ -1079,7 +1113,7 @@ func TestServiceProviderMissingDestinationWithSignaturePresent(t *testing.T) {
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(bytes))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
-		"`Destination` does not match requested URL or AcsURL (destination \"\", requested \"https://15661444.ngrok.io/saml2/acs\", acs \"https://15661444.ngrok.io/saml2/acs\")"))
+		"`Destination` is required but missing"))
 }
 
 func TestSPMismatchedDestinationsWithSignaturePresent(t *testing.T) {
@@ -1142,7 +1176,7 @@ func TestSPMissingDestinationWithSignaturePresent(t *testing.T) {
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(bytes))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
-		"`Destination` does not match requested URL or AcsURL (destination \"\", requested \"https://15661444.ngrok.io/saml2/acs\", acs \"https://15661444.ngrok.io/saml2/acs\")"))
+		"`Destination` is required but missing"))
 }
 
 func TestSPInvalidAssertions(t *testing.T) {

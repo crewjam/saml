@@ -986,12 +986,8 @@ const (
 // and properties are met.
 func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequestIDs []string, now time.Time, signatureRequirement signatureRequirement, currentURL url.URL) (*Assertion, error) {
 	var responseSignatureErr error
-	var responseHasSignature bool
 	if signatureRequirement == signatureRequired {
 		responseSignatureErr = sp.validateSignature(responseEl)
-		if responseSignatureErr != errSignatureElementNotPresent {
-			responseHasSignature = true
-		}
 
 		// Note: we're deferring taking action on the signature validation until after we've
 		// processed the request attributes, because certain test cases seem to require this mis-feature.
@@ -1005,14 +1001,18 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 			return nil, fmt.Errorf("cannot unmarshal response: %v", err)
 		}
 
-		// If the response is *not* signed, the Destination may be omitted.
-		if responseHasSignature || response.Destination != "" {
-			// Per section 3.4.5.2 of the SAML spec, Destination must match the location at which the response was received, i.e. currentURL.
-			// Historically, we checked against the SP's ACS URL instead of currentURL, which is usually the same but may differ in query params.
-			// To mitigate the risk of switching to comparing against currentURL, we still allow it if the ACS URL matches, even if the current URL doesn't.
-			if response.Destination != currentURL.String() && response.Destination != sp.AcsURL.String() {
-				return nil, fmt.Errorf("`Destination` does not match requested URL or AcsURL (destination %q, requested %q, acs %q)", response.Destination, currentURL.String(), sp.AcsURL.String())
-			}
+		// Per section 3.4.5.2 of the SAML spec, Destination MUST be present
+		// when a signature is present, and SHOULD be present otherwise. We
+		// require it always: for unsigned responses the Destination is the
+		// only non-cryptographic binding to this SP, and omitting it would
+		// let an attacker replay a response across service providers.
+		if response.Destination == "" {
+			return nil, fmt.Errorf("`Destination` is required but missing")
+		}
+		// Historically, we checked against the SP's ACS URL instead of currentURL, which is usually the same but may differ in query params.
+		// To mitigate the risk of switching to comparing against currentURL, we still allow it if the ACS URL matches, even if the current URL doesn't.
+		if response.Destination != currentURL.String() && response.Destination != sp.AcsURL.String() {
+			return nil, fmt.Errorf("`Destination` does not match requested URL or AcsURL (destination %q, requested %q, acs %q)", response.Destination, currentURL.String(), sp.AcsURL.String())
 		}
 
 		if err := sp.validateRequestID(response, possibleRequestIDs); err != nil {
