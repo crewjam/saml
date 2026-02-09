@@ -1234,6 +1234,47 @@ func TestSPInvalidAssertions(t *testing.T) {
 	assertion.Conditions.AudienceRestrictions = []AudienceRestriction{}
 	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
 	assert.Check(t, err)
+	assertion = Assertion{}
+	assert.Check(t, xml.Unmarshal(assertionBuf, &assertion))
+
+	// InResponseTo validation when AllowIDPInitiated is set:
+	// with AllowIDPInitiated, empty InResponseTo should be accepted
+	s.AllowIDPInitiated = true
+	assertion.Subject.SubjectConfirmations[0].SubjectConfirmationData.InResponseTo = ""
+	err = s.validateAssertion(&assertion, []string{""}, TimeNow())
+	assert.Check(t, err)
+	assertion = Assertion{}
+	assert.Check(t, xml.Unmarshal(assertionBuf, &assertion))
+
+	// with AllowIDPInitiated, non-empty InResponseTo that doesn't match should be rejected
+	s.AllowIDPInitiated = true
+	assertion.Subject.SubjectConfirmations[0].SubjectConfirmationData.InResponseTo = "wrong-request-id"
+	err = s.validateAssertion(&assertion, []string{"", "id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
+	assert.Check(t, is.Error(err, "assertion SubjectConfirmation one of the possible request IDs ([ id-9e61753d64e928af5a7a341a97f420c9])"))
+	assertion = Assertion{}
+	assert.Check(t, xml.Unmarshal(assertionBuf, &assertion))
+
+	// with AllowIDPInitiated, matching InResponseTo should still be accepted
+	s.AllowIDPInitiated = true
+	err = s.validateAssertion(&assertion, []string{"", "id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
+	assert.Check(t, err)
+	s.AllowIDPInitiated = false
+}
+
+func TestSPValidateRequestIDWithAllowIDPInitiated(t *testing.T) {
+	s := ServiceProvider{AllowIDPInitiated: true}
+
+	// Empty InResponseTo should be accepted (true IDP-initiated flow)
+	err := s.validateRequestID(Response{InResponseTo: ""}, []string{""})
+	assert.Check(t, err)
+
+	// Non-empty InResponseTo that doesn't match should be rejected
+	err = s.validateRequestID(Response{InResponseTo: "wrong-id"}, []string{"", "id-expected"})
+	assert.Check(t, is.Error(err, "`InResponseTo` does not match any of the possible request IDs (expected [ id-expected])"))
+
+	// Matching InResponseTo should be accepted
+	err = s.validateRequestID(Response{InResponseTo: "id-expected"}, []string{"", "id-expected"})
+	assert.Check(t, err)
 }
 
 func TestXswPermutationOneIsRejected(t *testing.T) {

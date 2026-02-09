@@ -1098,7 +1098,17 @@ func (sp *ServiceProvider) validateRequestID(response Response, possibleRequestI
 	}
 
 	requestIDvalid := false
-	if sp.AllowIDPInitiated {
+
+	// When AllowIDPInitiated is set and InResponseTo is empty, this is
+	// a true IDP-initiated flow — accept it without matching a request.
+	// When InResponseTo IS present, always validate it against the tracked
+	// request IDs, even if AllowIDPInitiated is set. This prevents replay
+	// of assertions bound to a specific AuthnRequest.
+	//
+	// Note: some IDPs (e.g. Rippling) set InResponseTo to a non-empty value
+	// even in IDP-initiated flows. Users of such IDPs should override
+	// ValidateRequestID to customize this behavior.
+	if sp.AllowIDPInitiated && response.InResponseTo == "" {
 		requestIDvalid = true
 	} else {
 		for _, possibleRequestID := range possibleRequestIDs {
@@ -1186,28 +1196,17 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 		return fmt.Errorf("issuer is not %q", sp.IDPMetadata.EntityID)
 	}
 	for _, subjectConfirmation := range assertion.Subject.SubjectConfirmations {
+		inResponseTo := subjectConfirmation.SubjectConfirmationData.InResponseTo
 		requestIDvalid := false
 
-		// We *DO NOT* validate InResponseTo when AllowIDPInitiated is set. Here's why:
-		//
-		// The SAML specification does not provide clear guidance for handling InResponseTo for IDP-initiated
-		// requests where there is no request to be in response to. The specification says:
-		//
-		//   InResponseTo [Optional]
-		//       The ID of a SAML protocol message in response to which an attesting entity can present the
-		//       assertion. For example, this attribute might be used to correlate the assertion to a SAML
-		//       request that resulted in its presentation.
-		//
-		// The initial thought was that we should specify a single empty string in possibleRequestIDs for IDP-initiated
-		// requests so that we would ensure that an InResponseTo was *not* provided in those cases where it wasn't
-		// expected. Even that turns out to be frustrating for users. And in practice some IDPs (e.g. Rippling)
-		// set a specific non-empty value for InResponseTo in IDP-initiated requests.
-		//
-		// Finally, it is unclear that there is significant security value in checking InResponseTo when we allow
-		// IDP initiated assertions.
-		if !sp.AllowIDPInitiated {
+		// When AllowIDPInitiated is set and InResponseTo is empty, accept
+		// (true IDP-initiated flow). When InResponseTo IS present, validate
+		// it even if AllowIDPInitiated is set to prevent assertion replay.
+		if sp.AllowIDPInitiated && inResponseTo == "" {
+			requestIDvalid = true
+		} else {
 			for _, possibleRequestID := range possibleRequestIDs {
-				if subjectConfirmation.SubjectConfirmationData.InResponseTo == possibleRequestID {
+				if inResponseTo == possibleRequestID {
 					requestIDvalid = true
 					break
 				}
