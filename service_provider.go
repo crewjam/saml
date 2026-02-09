@@ -1331,15 +1331,13 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 		if sp.SignatureVerifier != nil {
 			if err := sp.SignatureVerifier.VerifySignature(validationContext, el); err == nil {
 				return nil
-			} else {
-				lastErr = err
 			}
+			lastErr = err
 		} else {
 			if _, err := validationContext.Validate(el); err == nil {
 				return nil
-			} else {
-				lastErr = err
 			}
+			lastErr = err
 		}
 	}
 
