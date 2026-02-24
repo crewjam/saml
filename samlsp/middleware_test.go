@@ -2,6 +2,11 @@ package samlsp
 
 import (
 	"bytes"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
@@ -17,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	dsig "github.com/russellhaering/goxmldsig"
 	"gotest.tools/assert"
 	is "gotest.tools/assert/cmp"
@@ -519,4 +525,269 @@ func TestMiddlewareHandlesInvalidResponse(t *testing.T) {
 	assert.Check(t, is.Equal("Forbidden\n", string(respBody)))
 	assert.Check(t, is.Equal("", resp.Header().Get("Location")))
 	assert.Check(t, is.Equal("", resp.Header().Get("Set-Cookie")))
+}
+
+type mockSigner struct {
+	signer crypto.Signer
+}
+
+func (m *mockSigner) Public() crypto.PublicKey {
+	return m.signer.Public()
+}
+
+func (m *mockSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	return m.signer.Sign(rand, digest, opts)
+}
+
+func newMockRSASigner(t *testing.T) crypto.Signer {
+	key := mustParsePrivateKey(golden.Get(t, "key.pem"))
+	return &mockSigner{signer: key.(crypto.Signer)}
+}
+
+func TestMiddleware_WithCryptoSignerE2E(t *testing.T) {
+	origTimeNow := saml.TimeNow
+	origClock := saml.Clock
+	origRandReader := saml.RandReader
+	t.Cleanup(func() {
+		saml.TimeNow = origTimeNow
+		saml.Clock = origClock
+		saml.RandReader = origRandReader
+	})
+
+	saml.TimeNow = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05.999999999 MST 2006", "Mon Dec 1 01:57:09.123456789 UTC 2015")
+		return rv
+	}
+	saml.Clock = dsig.NewFakeClockAt(saml.TimeNow())
+	saml.RandReader = &testRandomReader{}
+
+	cert := mustParseCertificate(golden.Get(t, "cert.pem"))
+	idpMetadata := golden.Get(t, "idp_metadata.xml")
+
+	var metadata saml.EntityDescriptor
+	if err := xml.Unmarshal(idpMetadata, &metadata); err != nil {
+		panic(err)
+	}
+
+	mockSigner := newMockRSASigner(t)
+
+	opts := Options{
+		URL:         mustParseURL("https://15661444.ngrok.io/"),
+		Key:         mockSigner,
+		Certificate: cert,
+		IDPMetadata: &metadata,
+	}
+
+	middleware, err := New(opts)
+	assert.Check(t, err)
+
+	sessionProvider := DefaultSessionProvider(opts)
+	sessionProvider.Name = "ttt"
+	sessionProvider.MaxAge = 7200 * time.Second
+
+	sessionCodec := sessionProvider.Codec.(JWTSessionCodec)
+	sessionCodec.MaxAge = 7200 * time.Second
+	sessionProvider.Codec = sessionCodec
+
+	middleware.Session = sessionProvider
+	middleware.ServiceProvider.MetadataURL.Path = "/saml2/metadata"
+	middleware.ServiceProvider.AcsURL.Path = "/saml2/acs"
+	middleware.ServiceProvider.SloURL.Path = "/saml2/slo"
+
+	t.Run("SessionEncodeDecode", func(t *testing.T) {
+		var tc JWTSessionClaims
+		if err := json.Unmarshal(golden.Get(t, "token.json"), &tc); err != nil {
+			t.Fatal(err)
+		}
+
+		encoded, err := sessionProvider.Codec.Encode(tc)
+		assert.Check(t, err)
+		assert.Assert(t, encoded != "")
+
+		decoded, err := sessionProvider.Codec.Decode(encoded)
+		assert.Check(t, err)
+		decodedClaims := decoded.(JWTSessionClaims)
+		assert.Equal(t, tc.Subject, decodedClaims.Subject)
+	})
+
+	t.Run("TrackedRequestEncodeDecode", func(t *testing.T) {
+		codec := middleware.RequestTracker.(CookieRequestTracker).Codec
+		trackedReq := TrackedRequest{
+			Index:         "test-index",
+			SAMLRequestID: "test-request-id",
+			URI:           "/test-uri",
+		}
+
+		encoded, err := codec.Encode(trackedReq)
+		assert.Check(t, err)
+		assert.Assert(t, encoded != "")
+
+		decoded, err := codec.Decode(encoded)
+		assert.Check(t, err)
+		assert.Equal(t, trackedReq.Index, decoded.Index)
+		assert.Equal(t, trackedReq.SAMLRequestID, decoded.SAMLRequestID)
+	})
+
+	t.Run("RequireAccountFlow", func(t *testing.T) {
+		handler := middleware.RequireAccount(
+			http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+				panic("not reached")
+			}))
+
+		req, _ := http.NewRequest("GET", "/protected", nil)
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, req)
+
+		assert.Check(t, is.Equal(http.StatusFound, resp.Code))
+		assert.Assert(t, resp.Header().Get("Location") != "")
+		assert.Assert(t, resp.Header().Get("Set-Cookie") != "")
+	})
+
+	t.Run("Metadata", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", "/saml2/metadata", nil)
+		resp := httptest.NewRecorder()
+		middleware.ServeHTTP(resp, req)
+
+		assert.Check(t, is.Equal(http.StatusOK, resp.Code))
+		assert.Check(t, is.Equal("application/samlmetadata+xml",
+			resp.Header().Get("Content-type")))
+		golden.Assert(t, resp.Body.String(), "expected_middleware_metadata.xml")
+	})
+}
+
+func TestJWTSessionCodec_CryptoSignerEncodeDecode(t *testing.T) {
+	tests := []struct {
+		name    string
+		method  jwt.SigningMethod
+		genKey  func(t *testing.T) crypto.Signer
+		subject string
+	}{
+		{
+			name:   "ECDSA-P256",
+			method: jwt.SigningMethodES256,
+			genKey: func(t *testing.T) crypto.Signer {
+				k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+				assert.Check(t, err)
+				return k
+			},
+			subject: "test-ecdsa-p256",
+		},
+		{
+			name:   "ECDSA-P384",
+			method: jwt.SigningMethodES384,
+			genKey: func(t *testing.T) crypto.Signer {
+				k, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+				assert.Check(t, err)
+				return k
+			},
+			subject: "test-ecdsa-p384",
+		},
+		{
+			name:   "ECDSA-P521",
+			method: jwt.SigningMethodES512,
+			genKey: func(t *testing.T) crypto.Signer {
+				k, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
+				assert.Check(t, err)
+				return k
+			},
+			subject: "test-ecdsa-p521",
+		},
+		{
+			name:   "RSA-PSS",
+			method: jwt.SigningMethodPS256,
+			genKey: func(t *testing.T) crypto.Signer {
+				k, err := rsa.GenerateKey(rand.Reader, 2048)
+				assert.Check(t, err)
+				return k
+			},
+			subject: "test-rsa-pss",
+		},
+		{
+			name:   "EdDSA",
+			method: jwt.SigningMethodEdDSA,
+			genKey: func(t *testing.T) crypto.Signer {
+				_, k, err := ed25519.GenerateKey(rand.Reader)
+				assert.Check(t, err)
+				return k
+			},
+			subject: "test-eddsa",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			now := time.Now()
+			origTimeNow := saml.TimeNow
+			t.Cleanup(func() { saml.TimeNow = origTimeNow })
+			saml.TimeNow = func() time.Time { return now }
+
+			signer := &mockSigner{signer: tt.genKey(t)}
+
+			audience := "https://example.com/"
+			codec := JWTSessionCodec{
+				SigningMethod: tt.method,
+				Audience:      audience,
+				Issuer:        audience,
+				MaxAge:        time.Hour,
+				Key:           signer,
+			}
+
+			tc := JWTSessionClaims{
+				RegisteredClaims: jwt.RegisteredClaims{
+					Audience:  jwt.ClaimStrings{audience},
+					Issuer:    audience,
+					Subject:   tt.subject,
+					IssuedAt:  jwt.NewNumericDate(now),
+					ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
+					NotBefore: jwt.NewNumericDate(now),
+				},
+				SAMLSession: true,
+			}
+
+			encoded, err := codec.Encode(tc)
+			assert.Check(t, err)
+			assert.Assert(t, encoded != "")
+
+			decoded, err := codec.Decode(encoded)
+			assert.Check(t, err)
+			decodedClaims := decoded.(JWTSessionClaims)
+			assert.Equal(t, tt.subject, decodedClaims.Subject)
+		})
+	}
+}
+
+func TestJWTSessionCodec_UnsupportedAlgorithmReturnsError(t *testing.T) {
+	now := time.Now()
+	origTimeNow := saml.TimeNow
+	t.Cleanup(func() { saml.TimeNow = origTimeNow })
+	saml.TimeNow = func() time.Time { return now }
+
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	assert.Check(t, err)
+
+	signer := &mockSigner{signer: rsaKey}
+
+	audience := "https://example.com/"
+	codec := JWTSessionCodec{
+		SigningMethod: jwt.SigningMethodNone,
+		Audience:      audience,
+		Issuer:        audience,
+		MaxAge:        time.Hour,
+		Key:           signer,
+	}
+
+	tc := JWTSessionClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Audience:  jwt.ClaimStrings{audience},
+			Issuer:    audience,
+			Subject:   "test",
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
+			NotBefore: jwt.NewNumericDate(now),
+		},
+		SAMLSession: true,
+	}
+
+	_, err = codec.Encode(tc)
+	assert.Check(t, is.ErrorContains(err, "unsupported algorithm for crypto.Signer"))
 }

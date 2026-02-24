@@ -38,7 +38,7 @@ type Options struct {
 }
 
 func getDefaultSigningMethod(signer crypto.Signer) jwt.SigningMethod {
-	if signer != nil {
+	if !saml.IsSignerNil(signer) {
 		switch signer.Public().(type) {
 		case *ecdsa.PublicKey:
 			return jwt.SigningMethodES256
@@ -149,15 +149,18 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 }
 
 func defaultSigningMethodForKey(key crypto.Signer) string {
-	switch key.(type) {
-	case *rsa.PrivateKey:
-		return dsig.RSASHA1SignatureMethod
-	case *ecdsa.PrivateKey:
-		return dsig.ECDSASHA256SignatureMethod
-	case nil:
+	if saml.IsSignerNil(key) {
 		return ""
+	}
+	// Check public key type to support crypto.Signer implementations (KMS/HSM)
+	// that aren't concrete *rsa.PrivateKey or *ecdsa.PrivateKey types
+	switch key.Public().(type) {
+	case *rsa.PublicKey:
+		return dsig.RSASHA1SignatureMethod
+	case *ecdsa.PublicKey:
+		return dsig.ECDSASHA256SignatureMethod
 	default:
-		panic(fmt.Sprintf("programming error: unsupported key type %T", key))
+		panic(fmt.Sprintf("programming error: unsupported public key type %T", key.Public()))
 	}
 }
 
