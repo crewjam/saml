@@ -44,11 +44,14 @@ func (s JWTTrackedRequestCodec) Encode(value TrackedRequest) (string, error) {
 		SAMLAuthnRequest: true,
 	}
 	token := jwt.NewWithClaims(s.SigningMethod, claims)
-	return token.SignedString(s.Key)
+	return signToken(token, s.Key, s.SigningMethod)
 }
 
 // Decode returns a Tracked request from an encoded string.
 func (s JWTTrackedRequestCodec) Decode(signed string) (*TrackedRequest, error) {
+	if saml.IsSignerNil(s.Key) {
+		return nil, fmt.Errorf("decoding key is nil")
+	}
 	parser := jwt.NewParser(
 		jwt.WithValidMethods([]string{s.SigningMethod.Alg()}),
 		jwt.WithTimeFunc(saml.TimeNow),
