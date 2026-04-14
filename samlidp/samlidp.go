@@ -127,3 +127,12 @@ func (s *Server) InitializeHTTP() {
 	mux.HandleFunc("PUT /shortcuts/{id}", s.HandlePutShortcut)
 	mux.HandleFunc("DELETE /shortcuts/{id}", s.HandleDeleteShortcut)
 }
+
+// ServeHTTP delegates to the initialized handler.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.Handler == nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.Handler.ServeHTTP(w, r)
+}

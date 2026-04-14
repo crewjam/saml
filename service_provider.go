@@ -304,29 +304,24 @@ func (r *AuthnRequest) Redirect(relayState string, sp *ServiceProvider) (*url.UR
 	}
 
 	// We can't depend on Query().set() as order matters for signing
+	reqString := requestStr.String()
 	query := rv.RawQuery
 	if len(query) > 0 {
-		query += "&SAMLRequest=" + url.QueryEscape(requestStr.String())
+		query += "&" + string(samlRequest) + "=" + url.QueryEscape(reqString)
 	} else {
-		query += "SAMLRequest=" + url.QueryEscape(requestStr.String())
+		query += string(samlRequest) + "=" + url.QueryEscape(reqString)
 	}
 
 	if relayState != "" {
-		query += "&RelayState=" + relayState
+		query += "&RelayState=" + url.QueryEscape(relayState)
 	}
 	if len(sp.SignatureMethod) > 0 {
-		query += "&SigAlg=" + url.QueryEscape(sp.SignatureMethod)
-		signingContext, err := GetSigningContext(sp)
-
-		if err != nil {
-			return nil, err
+		var errSig error
+		query, errSig = sp.signQuery(samlRequest, query, reqString, relayState)
+		if errSig != nil {
+			return nil, errSig
 		}
 
-		sig, err := signingContext.SignString(query)
-		if err != nil {
-			return nil, err
-		}
-		query += "&Signature=" + url.QueryEscape(base64.StdEncoding.EncodeToString(sig))
 	}
 
 	rv.RawQuery = query
@@ -1397,36 +1392,51 @@ func (sp *ServiceProvider) MakeRedirectLogoutRequest(nameID, relayState string) 
 	if err != nil {
 		return nil, err
 	}
-	return req.Redirect(relayState), nil
+	return req.Redirect(relayState, sp)
 }
 
 // Redirect returns a URL suitable for using the redirect binding with the request
-func (r *LogoutRequest) Redirect(relayState string) *url.URL {
+func (r *LogoutRequest) Redirect(relayState string, sp *ServiceProvider) (*url.URL, error) {
 	w := &bytes.Buffer{}
 	w1 := base64.NewEncoder(base64.StdEncoding, w)
 	w2, _ := flate.NewWriter(w1, 9)
 	doc := etree.NewDocument()
 	doc.SetRoot(r.Element())
 	if _, err := doc.WriteTo(w2); err != nil {
-		panic(err)
+		return nil, err
 	}
 	if err := w2.Close(); err != nil {
-		panic(err)
+		return nil, err
 	}
 	if err := w1.Close(); err != nil {
-		panic(err)
+		return nil, err
+	}
+	rv, err := url.Parse(r.Destination)
+	if err != nil {
+		return nil, err
 	}
 
-	rv, _ := url.Parse(r.Destination)
-
-	query := rv.Query()
-	query.Set("SAMLRequest", w.String())
+	// We can't depend on Query().Set() as order matters for signing
+	reqString := w.String()
+	query := rv.RawQuery
+	if len(query) > 0 {
+		query += "&" + string(samlRequest) + "=" + url.QueryEscape(reqString)
+	} else {
+		query += string(samlRequest) + "=" + url.QueryEscape(reqString)
+	}
 	if relayState != "" {
-		query.Set("RelayState", relayState)
+		query += "&RelayState=" + url.QueryEscape(relayState)
 	}
-	rv.RawQuery = query.Encode()
+	if len(sp.SignatureMethod) > 0 {
+		var errSig error
+		query, errSig = sp.signQuery(samlRequest, query, reqString, relayState)
+		if errSig != nil {
+			return nil, errSig
+		}
+	}
+	rv.RawQuery = query
 
-	return rv
+	return rv, nil
 }
 
 // MakePostLogoutRequest creates a SAML authentication request using
@@ -1624,8 +1634,9 @@ func (sp *ServiceProvider) nameIDFormat() string {
 
 // ValidateLogoutResponseRequest validates the LogoutResponse content from the request
 func (sp *ServiceProvider) ValidateLogoutResponseRequest(req *http.Request) error {
-	if data := req.URL.Query().Get("SAMLResponse"); data != "" {
-		return sp.ValidateLogoutResponseRedirect(data)
+	query := req.URL.Query()
+	if data := query.Get("SAMLResponse"); data != "" {
+		return sp.ValidateLogoutResponseRedirect(query)
 	}
 
 	err := req.ParseForm()
@@ -1677,7 +1688,8 @@ func (sp *ServiceProvider) ValidateLogoutResponseForm(postFormData string) error
 //
 // URL Binding appears to be gzip / flate encoded
 // See https://www.oasis-open.org/committees/download.php/20645/sstc-saml-tech-overview-2%200-draft-10.pdf  6.6
-func (sp *ServiceProvider) ValidateLogoutResponseRedirect(queryParameterData string) error {
+func (sp *ServiceProvider) ValidateLogoutResponseRedirect(query url.Values) error {
+	queryParameterData := query.Get("SAMLResponse")
 	retErr := &InvalidResponseError{
 		Now: TimeNow(),
 	}
@@ -1698,6 +1710,15 @@ func (sp *ServiceProvider) ValidateLogoutResponseRedirect(queryParameterData str
 	if err := xrv.Validate(bytes.NewReader(gr)); err != nil {
 		return err
 	}
+	querySig := false
+
+	if query.Get("Signature") != "" && query.Get("SigAlg") != "" {
+		if err := sp.validateQuerySig(query); err != nil {
+			retErr.PrivateErr = err
+			return retErr
+		}
+		querySig = true
+	}
 
 	doc := etree.NewDocument()
 	if err := doc.ReadFromBytes(gr); err != nil {
@@ -1706,8 +1727,10 @@ func (sp *ServiceProvider) ValidateLogoutResponseRedirect(queryParameterData str
 	}
 
 	if err := sp.validateSignature(doc.Root()); err != nil {
-		retErr.PrivateErr = err
-		return retErr
+		if err != errSignatureElementNotPresent || !querySig {
+			retErr.PrivateErr = err
+			return retErr
+		}
 	}
 
 	var resp LogoutResponse
