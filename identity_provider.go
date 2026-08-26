@@ -110,6 +110,10 @@ type IdentityProvider struct {
 	SignatureMethod         string
 	ValidDuration           *time.Duration
 	ResponseFormTemplate    *template.Template
+
+	// NameIDFormats are the NameID formats advertised in the IdP metadata.
+	// When empty it defaults to the transient format for backwards compatibility.
+	NameIDFormats []NameIDFormat
 }
 
 // Metadata returns the metadata structure for this identity provider.
@@ -121,6 +125,11 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 		validDuration = *idp.ValidDuration
 	} else {
 		validDuration = DefaultValidDuration
+	}
+
+	nameIDFormats := idp.NameIDFormats
+	if len(nameIDFormats) == 0 {
+		nameIDFormats = []NameIDFormat{NameIDFormat("urn:oasis:names:tc:SAML:2.0:nameid-format:transient")}
 	}
 
 	ed := &EntityDescriptor{
@@ -161,7 +170,7 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 							},
 						},
 					},
-					NameIDFormats: []NameIDFormat{NameIDFormat("urn:oasis:names:tc:SAML:2.0:nameid-format:transient")},
+					NameIDFormats: nameIDFormats,
 				},
 				SingleSignOnServices: []Endpoint{
 					{
