@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -38,6 +39,13 @@ func logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	idpMetadataURLFlag := flag.String("idp-metadata-url", "",
+		"IDP metadata URL, e.g. https://www.samltest.dev/apps/<APP_ID>/metadata")
+	flag.Parse()
+	if *idpMetadataURLFlag == "" {
+		log.Fatal("-idp-metadata-url is required")
+	}
+
 	keyPair, err := tls.LoadX509KeyPair("myservice.cert", "myservice.key")
 	if err != nil {
 		panic(err) // TODO handle error
@@ -47,7 +55,7 @@ func main() {
 		panic(err) // TODO handle error
 	}
 
-	idpMetadataURL, err := url.Parse("https://samltest.dev/saml/idp")
+	idpMetadataURL, err := url.Parse(*idpMetadataURLFlag)
 	if err != nil {
 		panic(err) // TODO handle error
 	}
