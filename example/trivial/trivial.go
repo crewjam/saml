@@ -47,7 +47,7 @@ func main() {
 		panic(err) // TODO handle error
 	}
 
-	idpMetadataURL, err := url.Parse("https://samltest.id/saml/idp")
+	idpMetadataURL, err := url.Parse("https://samltest.dev/saml/idp")
 	if err != nil {
 		panic(err) // TODO handle error
 	}
