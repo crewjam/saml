@@ -3,7 +3,6 @@ package xmlenc
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/rand"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -58,8 +57,6 @@ func (e GCM) Encrypt(key interface{}, plaintext []byte, nonce []byte) (*etree.El
 	em.CreateAttr("Algorithm", e.algorithm)
 	em.CreateAttr("xmlns:xenc", "http://www.w3.org/2001/04/xmlenc#")
 
-	plaintext = appendPadding(plaintext, block.BlockSize())
-
 	aesgcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, err
@@ -67,14 +64,20 @@ func (e GCM) Encrypt(key interface{}, plaintext []byte, nonce []byte) (*etree.El
 
 	if nonce == nil {
 		// generate random nonce when it's nil
-		nonce := make([]byte, aesgcm.NonceSize())
-		if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-			panic(err.Error())
+		nonce = make([]byte, aesgcm.NonceSize())
+		if _, err := io.ReadFull(RandReader, nonce); err != nil {
+			return nil, err
 		}
+	} else if len(nonce) != aesgcm.NonceSize() {
+		return nil, fmt.Errorf("nonce must be %d bytes", aesgcm.NonceSize())
 	}
 
-	ciphertext := make([]byte, len(plaintext))
-	text := aesgcm.Seal(nil, nonce, ciphertext, nil)
+	// The nonce is prefixed to the ciphertext, which is what Decrypt reads back.
+	// GCM does not use CBC padding, and Seal must see the caller's plaintext.
+	sealed := aesgcm.Seal(nil, nonce, plaintext, nil)
+	text := make([]byte, 0, len(nonce)+len(sealed))
+	text = append(text, nonce...)
+	text = append(text, sealed...)
 
 	cd := encryptedDataEl.CreateElement("xenc:CipherData")
 	cd.CreateAttr("xmlns:xenc", "http://www.w3.org/2001/04/xmlenc#")
