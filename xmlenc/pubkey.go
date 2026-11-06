@@ -1,6 +1,8 @@
 package xmlenc
 
 import (
+	"bytes"
+	"crypto"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
@@ -17,6 +19,7 @@ type RSA struct {
 	BlockCipher  BlockCipher
 	DigestMethod DigestMethod // only for OAEP
 
+	mgfHash      crypto.Hash // set by Decrypt for the XML Encryption 1.1 RSA-OAEP algorithm
 	algorithm    string
 	keyEncrypter func(e RSA, pubKey *rsa.PublicKey, plaintext []byte) ([]byte, error)
 	keyDecrypter func(e RSA, privKey *rsa.PrivateKey, ciphertext []byte) ([]byte, error)
@@ -66,6 +69,19 @@ func (e RSA) Encrypt(certificate interface{}, plaintext []byte, nonce []byte) (*
 		dm := encryptionMethodEl.CreateElement("ds:DigestMethod")
 		dm.CreateAttr("Algorithm", e.DigestMethod.Algorithm())
 		dm.CreateAttr("xmlns:ds", "http://www.w3.org/2000/09/xmldsig#")
+	}
+	if e.algorithm == rsaOAEP11Algorithm {
+		hash, ok := cryptoHashOf(e.DigestMethod)
+		if !ok {
+			return nil, ErrAlgorithmNotImplemented(e.DigestMethod.Algorithm())
+		}
+		mgfAlgorithm, ok := mgfAlgorithmFor(hash)
+		if !ok {
+			return nil, ErrAlgorithmNotImplemented(e.DigestMethod.Algorithm())
+		}
+		mgf := encryptionMethodEl.CreateElement("xenc11:MGF")
+		mgf.CreateAttr("Algorithm", mgfAlgorithm)
+		mgf.CreateAttr("xmlns:xenc11", "http://www.w3.org/2009/xmlenc11#")
 	}
 	{
 		innerKeyInfoEl := encryptedKey.CreateElement("ds:KeyInfo")
@@ -118,6 +134,20 @@ func (e RSA) Decrypt(key interface{}, ciphertextEl *etree.Element) ([]byte, erro
 		}
 	}
 
+	if e.algorithm == rsaOAEP11Algorithm {
+		// XML Encryption 1.1 section 5.5.2: without an MGF element, the mask
+		// generation function is MGF1 with SHA-1.
+		e.mgfHash = crypto.SHA1
+		if mgfEl := ciphertextEl.FindElement("./EncryptionMethod/MGF"); mgfEl != nil {
+			mgfAlgorithm := mgfEl.SelectAttrValue("Algorithm", "")
+			mgfHash, ok := mgfAlgorithms[mgfAlgorithm]
+			if !ok {
+				return nil, ErrAlgorithmNotImplemented(mgfAlgorithm)
+			}
+			e.mgfHash = mgfHash
+		}
+	}
+
 	return e.keyDecrypter(e, rsaKey, ciphertext)
 }
 
@@ -142,42 +172,80 @@ func OAEP() RSA {
 	}
 }
 
-// OAEP_SHA256 returns a version of RSA that implements RSA in OAEP mode. By default
-// the block cipher used is AES-256 CBC and the digest method is SHA-256. You can
-// specify other ciphers and digest methods by assigning to BlockCipher or
-// DigestMethod.
-func OAEP_SHA256() RSA { //nolint:revive
+// rsaOAEP11Algorithm is the XML Encryption 1.1 RSA-OAEP key transport
+// algorithm. Unlike rsa-oaep-mgf1p, its mask generation function is named by an
+// optional xenc11:MGF element and defaults to MGF1 with SHA-1.
+const rsaOAEP11Algorithm = "http://www.w3.org/2009/xmlenc11#rsa-oaep"
+
+// mgfAlgorithms maps the XML Encryption 1.1 mask generation function URIs to
+// the hash used by MGF1.
+var mgfAlgorithms = map[string]crypto.Hash{
+	"http://www.w3.org/2009/xmlenc11#mgf1sha1":   crypto.SHA1,
+	"http://www.w3.org/2009/xmlenc11#mgf1sha224": crypto.SHA224,
+	"http://www.w3.org/2009/xmlenc11#mgf1sha256": crypto.SHA256,
+	"http://www.w3.org/2009/xmlenc11#mgf1sha384": crypto.SHA384,
+	"http://www.w3.org/2009/xmlenc11#mgf1sha512": crypto.SHA512,
+}
+
+// cryptoHashOf returns the crypto.Hash that computes the same digest as dm.
+func cryptoHashOf(dm DigestMethod) (crypto.Hash, bool) {
+	want := dm.Hash().Sum(nil)
+	for _, h := range []crypto.Hash{crypto.SHA1, crypto.SHA224, crypto.SHA256, crypto.SHA384, crypto.SHA512, crypto.RIPEMD160} {
+		if h.Available() && bytes.Equal(h.New().Sum(nil), want) {
+			return h, true
+		}
+	}
+	return 0, false
+}
+
+// mgfAlgorithmFor returns the MGF URI for MGF1 with hash h.
+func mgfAlgorithmFor(h crypto.Hash) (string, bool) {
+	for uri, mgfHash := range mgfAlgorithms {
+		if mgfHash == h {
+			return uri, true
+		}
+	}
+	return "", false
+}
+
+func oaep11(digestMethod DigestMethod) RSA {
 	return RSA{
 		BlockCipher:  AES256CBC,
-		DigestMethod: SHA256,
-		algorithm:    "http://www.w3.org/2009/xmlenc11#rsa-oaep",
+		DigestMethod: digestMethod,
+		algorithm:    rsaOAEP11Algorithm,
 
+		// The encrypter uses the digest hash for MGF1 too, and Encrypt names it
+		// in an xenc11:MGF element.
 		keyEncrypter: func(e RSA, pubKey *rsa.PublicKey, plaintext []byte) ([]byte, error) {
 			return rsa.EncryptOAEP(e.DigestMethod.Hash(), RandReader, pubKey, plaintext, nil)
 		},
 		keyDecrypter: func(e RSA, privKey *rsa.PrivateKey, ciphertext []byte) ([]byte, error) {
-			return rsa.DecryptOAEP(e.DigestMethod.Hash(), RandReader, privKey, ciphertext, nil)
+			hash, ok := cryptoHashOf(e.DigestMethod)
+			if !ok {
+				return nil, ErrAlgorithmNotImplemented(e.DigestMethod.Algorithm())
+			}
+			return privKey.Decrypt(RandReader, ciphertext, &rsa.OAEPOptions{Hash: hash, MGFHash: e.mgfHash})
 		},
 	}
 }
 
-// OAEP_SHA512 returns a version of RSA that implements RSA in OAEP mode. By default
-// the block cipher used is AES-256 CBC and the digest method is SHA-512. You can
-// specify other ciphers and digest methods by assigning to BlockCipher or
-// DigestMethod.
-func OAEP_SHA512() RSA { //nolint:revive
-	return RSA{
-		BlockCipher:  AES256CBC,
-		DigestMethod: SHA512,
-		algorithm:    "http://www.w3.org/2009/xmlenc11#rsa-oaep",
+// OAEP_SHA256 returns a version of RSA that implements the XML Encryption 1.1
+// RSA-OAEP algorithm. By default the block cipher used is AES-256 CBC and the
+// digest method (and MGF1 hash) is SHA-256. You can specify other ciphers and
+// digest methods by assigning to BlockCipher or DigestMethod.
+//
+// When decrypting, the digest and MGF1 hash are taken from the document, so
+// OAEP_SHA256 and OAEP_SHA512 decrypt the same documents.
+func OAEP_SHA256() RSA { //nolint:revive
+	return oaep11(SHA256)
+}
 
-		keyEncrypter: func(e RSA, pubKey *rsa.PublicKey, plaintext []byte) ([]byte, error) {
-			return rsa.EncryptOAEP(e.DigestMethod.Hash(), RandReader, pubKey, plaintext, nil)
-		},
-		keyDecrypter: func(e RSA, privKey *rsa.PrivateKey, ciphertext []byte) ([]byte, error) {
-			return rsa.DecryptOAEP(e.DigestMethod.Hash(), RandReader, privKey, ciphertext, nil)
-		},
-	}
+// OAEP_SHA512 returns a version of RSA that implements the XML Encryption 1.1
+// RSA-OAEP algorithm. By default the block cipher used is AES-256 CBC and the
+// digest method (and MGF1 hash) is SHA-512. You can specify other ciphers and
+// digest methods by assigning to BlockCipher or DigestMethod.
+func OAEP_SHA512() RSA { //nolint:revive
+	return oaep11(SHA512)
 }
 
 // PKCS1v15 returns a version of RSA that implements RSA in PKCS1v15 mode. By default
@@ -201,6 +269,10 @@ func PKCS1v15() RSA {
 // open to Bleichenbacher padding-oracle attacks, so a document naming rsa-1_5
 // gets ErrAlgorithmNotImplemented. Service provider metadata advertises
 // rsa-oaep-mgf1p only.
+//
+// OAEP_SHA256 and OAEP_SHA512 share an algorithm URI and take the digest from
+// the document when decrypting, so registering one covers both.
 func init() {
 	RegisterDecrypter(OAEP())
+	RegisterDecrypter(OAEP_SHA256())
 }
