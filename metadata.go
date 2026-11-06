@@ -120,13 +120,21 @@ type EntityDescriptor struct {
 
 // MarshalXML implements xml.Marshaler
 func (m EntityDescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
+	// validUntil is optional (saml-metadata-2.0-os §2.3.2). A zero ValidUntil
+	// means "not set" and must be omitted rather than rendered as
+	// 0001-01-01T00:00:00Z, which consumers would treat as already expired.
+	var validUntil *RelaxedTime
+	if !m.ValidUntil.IsZero() {
+		vu := RelaxedTime(m.ValidUntil)
+		validUntil = &vu
+	}
 	type Alias EntityDescriptor
 	aux := &struct {
-		ValidUntil    RelaxedTime `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration    `xml:"cacheDuration,attr,omitempty"`
+		ValidUntil    *RelaxedTime `xml:"validUntil,attr,omitempty"`
+		CacheDuration Duration     `xml:"cacheDuration,attr,omitempty"`
 		*Alias
 	}{
-		ValidUntil:    RelaxedTime(m.ValidUntil),
+		ValidUntil:    validUntil,
 		CacheDuration: Duration(m.CacheDuration),
 		Alias:         (*Alias)(&m),
 	}

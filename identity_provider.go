@@ -114,6 +114,23 @@ type IdentityProvider struct {
 	// NameIDFormats are the NameID formats advertised in the IdP metadata.
 	// When empty it defaults to the transient format for backwards compatibility.
 	NameIDFormats []NameIDFormat
+
+	// AssertionEncrypter, if set, encrypts assertions for service providers
+	// that publish an encryption certificate. It is passed the SP's
+	// *x509.Certificate as the key. Use it to select the key transport,
+	// digest and block cipher, for example:
+	//
+	//	enc := xmlenc.OAEP_SHA256() // XML Encryption 1.1 RSA-OAEP
+	//	enc.BlockCipher = xmlenc.AES256GCM
+	//	idp.AssertionEncrypter = enc
+	//
+	// The service provider must support the algorithms chosen; those it
+	// supports are usually listed in its metadata.
+	//
+	// When nil, assertions are encrypted with RSA-OAEP-MGF1P using a SHA-1
+	// digest and AES-128-CBC, for compatibility with existing service
+	// providers.
+	AssertionEncrypter xmlenc.Encrypter
 }
 
 // Metadata returns the metadata structure for this identity provider.
@@ -897,9 +914,15 @@ func (req *IdpAuthnRequest) MakeAssertionEl() error {
 		}
 	}
 
-	encryptor := xmlenc.OAEP()
-	encryptor.BlockCipher = xmlenc.AES128CBC
-	encryptor.DigestMethod = &xmlenc.SHA1
+	var encryptor xmlenc.Encrypter
+	if req.IDP != nil && req.IDP.AssertionEncrypter != nil {
+		encryptor = req.IDP.AssertionEncrypter
+	} else {
+		rsaEncryptor := xmlenc.OAEP()
+		rsaEncryptor.BlockCipher = xmlenc.AES128CBC
+		rsaEncryptor.DigestMethod = &xmlenc.SHA1
+		encryptor = rsaEncryptor
+	}
 	encryptedDataEl, err := encryptor.Encrypt(certBuf, signedAssertionBuf, nil)
 	if err != nil {
 		return err
