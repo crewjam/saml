@@ -1860,22 +1860,48 @@ func findChild(parentEl *etree.Element, childNS string, childTag string) (*etree
 	}
 }
 
+// elementToBytes serializes el as a standalone document. Namespace
+// declarations that el inherits from its ancestors are copied onto the
+// serialized root, so prefixes (and the default namespace) used anywhere in
+// el resolve to the same URIs they had in the original document.
 func elementToBytes(el *etree.Element) ([]byte, error) {
-	namespaces := map[string]string{}
-	for _, childEl := range el.FindElements("//*") {
-		ns := childEl.NamespaceURI()
-		if ns != "" {
-			namespaces[childEl.Space] = ns
+	root := el.Copy()
+
+	declared := map[string]bool{}
+	for _, attr := range root.Attr {
+		if prefix, ok := namespaceDeclPrefix(attr); ok {
+			declared[prefix] = true
+		}
+	}
+
+	// Walk outward so the nearest declaration of each prefix wins.
+	for p := el.Parent(); p != nil; p = p.Parent() {
+		for _, attr := range p.Attr {
+			prefix, ok := namespaceDeclPrefix(attr)
+			if !ok || declared[prefix] {
+				continue
+			}
+			declared[prefix] = true
+			root.CreateAttr(attr.FullKey(), attr.Value)
 		}
 	}
 
 	doc := etree.NewDocument()
-	doc.SetRoot(el.Copy())
-	for space, uri := range namespaces {
-		doc.Root().CreateAttr("xmlns:"+space, uri)
-	}
-
+	doc.SetRoot(root)
 	return doc.WriteToBytes()
+}
+
+// namespaceDeclPrefix reports whether attr is a namespace declaration and,
+// if so, the prefix it declares ("" for the default namespace).
+func namespaceDeclPrefix(attr etree.Attr) (string, bool) {
+	switch {
+	case attr.Space == "" && attr.Key == "xmlns":
+		return "", true
+	case attr.Space == "xmlns":
+		return attr.Key, true
+	default:
+		return "", false
+	}
 }
 
 // unmarshalElement serializes el into v by serializing el and then parsing it with xml.Unmarshal.
