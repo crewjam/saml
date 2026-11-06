@@ -213,6 +213,40 @@ func TestCovDefaultServiceProvider(t *testing.T) {
 	assert.Check(t, is.Equal("", sp.SignatureMethod))
 	assert.Check(t, is.Equal("/home", sp.DefaultRedirectURI))
 	assert.Check(t, is.DeepEqual([]string{saml.HTTPPostBinding}, sp.LogoutBindings))
+	assert.Check(t, is.Nil(sp.AssertionConsumerServiceBindings))
+
+	sp = DefaultServiceProvider(Options{
+		URL:                              mustParseURL("https://sp.example.com/"),
+		Key:                              key,
+		AssertionConsumerServiceBindings: []string{saml.HTTPPostBinding},
+	})
+	assert.Check(t, is.DeepEqual([]string{saml.HTTPPostBinding}, sp.AssertionConsumerServiceBindings))
+	acs := sp.Metadata().SPSSODescriptors[0].AssertionConsumerServices
+	assert.Check(t, is.Len(acs, 1))
+	assert.Check(t, is.Equal(saml.HTTPPostBinding, acs[0].Binding))
+}
+
+func TestCovNewAssertionConsumerServiceBindings(t *testing.T) {
+	url := mustParseURL("https://sp.example.com/")
+	key := covRSAKey(t)
+
+	// artifact response requested but artifact binding not advertised
+	_, err := New(Options{URL: url, Key: key, UseArtifactResponse: true,
+		AssertionConsumerServiceBindings: []string{saml.HTTPPostBinding}})
+	assert.Check(t, is.ErrorContains(err, saml.HTTPArtifactBinding))
+
+	// POST response requested but POST binding not advertised
+	_, err = New(Options{URL: url, Key: key,
+		AssertionConsumerServiceBindings: []string{saml.HTTPArtifactBinding}})
+	assert.Check(t, is.ErrorContains(err, saml.HTTPPostBinding))
+
+	// consistent configurations
+	_, err = New(Options{URL: url, Key: key,
+		AssertionConsumerServiceBindings: []string{saml.HTTPPostBinding}})
+	assert.Check(t, err)
+	_, err = New(Options{URL: url, Key: key, UseArtifactResponse: true,
+		AssertionConsumerServiceBindings: []string{saml.HTTPArtifactBinding}})
+	assert.Check(t, err)
 }
 
 func TestCovNew(t *testing.T) {

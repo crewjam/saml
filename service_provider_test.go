@@ -217,6 +217,43 @@ func TestSPCanProduceMetadataWithBothLougoutBindings(t *testing.T) {
 	golden.Assert(t, string(spMetadata), t.Name()+"_metadata")
 }
 
+func TestSPMetadataAssertionConsumerServiceBindings(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	newSP := func(bindings []string) ServiceProvider {
+		return ServiceProvider{
+			Key:                              test.Key,
+			Certificate:                      test.Certificate,
+			MetadataURL:                      mustParseURL("https://example.com/saml2/metadata"),
+			AcsURL:                           mustParseURL("https://example.com/saml2/acs"),
+			IDPMetadata:                      &EntityDescriptor{},
+			AssertionConsumerServiceBindings: bindings,
+		}
+	}
+
+	// default: HTTP-POST and HTTP-Artifact
+	sp := newSP(nil)
+	acs := sp.Metadata().SPSSODescriptors[0].AssertionConsumerServices
+	assert.Check(t, is.DeepEqual([]IndexedEndpoint{
+		{Binding: HTTPPostBinding, Location: "https://example.com/saml2/acs", Index: 1},
+		{Binding: HTTPArtifactBinding, Location: "https://example.com/saml2/acs", Index: 2},
+	}, acs))
+
+	// HTTP-POST only
+	sp = newSP([]string{HTTPPostBinding})
+	acs = sp.Metadata().SPSSODescriptors[0].AssertionConsumerServices
+	assert.Check(t, is.DeepEqual([]IndexedEndpoint{
+		{Binding: HTTPPostBinding, Location: "https://example.com/saml2/acs", Index: 1},
+	}, acs))
+
+	// custom order
+	sp = newSP([]string{HTTPArtifactBinding, HTTPPostBinding})
+	acs = sp.Metadata().SPSSODescriptors[0].AssertionConsumerServices
+	assert.Check(t, is.DeepEqual([]IndexedEndpoint{
+		{Binding: HTTPArtifactBinding, Location: "https://example.com/saml2/acs", Index: 1},
+		{Binding: HTTPPostBinding, Location: "https://example.com/saml2/acs", Index: 2},
+	}, acs))
+}
+
 func TestSPCanProduceRedirectRequest(t *testing.T) {
 	test := NewServiceProviderTest(t)
 	TimeNow = func() time.Time {

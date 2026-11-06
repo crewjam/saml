@@ -154,6 +154,14 @@ type ServiceProvider struct {
 	// HTTP-POST binding is used.
 	LogoutBindings []string
 
+	// AssertionConsumerServiceBindings specify the bindings advertised for the
+	// AssertionConsumerService endpoint in the SP metadata, in order of
+	// preference. If empty, both HTTP-POST and HTTP-Artifact bindings are
+	// advertised. Set this to []string{HTTPPostBinding} to stop advertising
+	// the HTTP-Artifact binding, for example when the IDP does not publish an
+	// ArtifactResolutionService or the SP cannot reach it.
+	AssertionConsumerServiceBindings []string
+
 	// ValidateAudienceRestriction allows you to override the default audience validation
 	// for an assertion. If nil, the default audience validation is used.
 	ValidateAudienceRestriction func(assertion *Assertion) error
@@ -266,6 +274,19 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 		}
 	}
 
+	acsBindings := sp.AssertionConsumerServiceBindings
+	if len(acsBindings) == 0 {
+		acsBindings = []string{HTTPPostBinding, HTTPArtifactBinding}
+	}
+	acsEndpoints := make([]IndexedEndpoint, len(acsBindings))
+	for i, binding := range acsBindings {
+		acsEndpoints[i] = IndexedEndpoint{
+			Binding:  binding,
+			Location: sp.AcsURL.String(),
+			Index:    i + 1,
+		}
+	}
+
 	return &EntityDescriptor{
 		EntityID:   firstSet(sp.EntityID, sp.MetadataURL.String()),
 		ValidUntil: validUntil,
@@ -284,18 +305,7 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 				AuthnRequestsSigned:  &authnRequestsSigned,
 				WantAssertionsSigned: &wantAssertionsSigned,
 
-				AssertionConsumerServices: []IndexedEndpoint{
-					{
-						Binding:  HTTPPostBinding,
-						Location: sp.AcsURL.String(),
-						Index:    1,
-					},
-					{
-						Binding:  HTTPArtifactBinding,
-						Location: sp.AcsURL.String(),
-						Index:    2,
-					},
-				},
+				AssertionConsumerServices: acsEndpoints,
 			},
 		},
 	}
