@@ -1,19 +1,30 @@
 // This is an example that implements a bitly-esque short link service.
+//
+// To try it locally, start the example identity provider first and then this
+// service:
+//
+//	go run ./example/idp
+//	go run ./example
+//
+// Then browse to http://localhost:8000/ and log in as alice / hunter2.
 package main
 
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/rsa"
-	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/xml"
 	"flag"
 	"fmt"
+	"math/big"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/crewjam/saml/samlsp"
 )
@@ -87,49 +98,39 @@ func ServeWhoami(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-var (
-	key = []byte(`-----BEGIN RSA PRIVATE KEY-----
-MIICXgIBAAKBgQDU8wdiaFmPfTyRYuFlVPi866WrH/2JubkHzp89bBQopDaLXYxi
-3PTu3O6Q/KaKxMOFBqrInwqpv/omOGZ4ycQ51O9I+Yc7ybVlW94lTo2gpGf+Y/8E
-PsVbnZaFutRctJ4dVIp9aQ2TpLiGT0xX1OzBO/JEgq9GzDRf+B+eqSuglwIDAQAB
-AoGBAMuy1eN6cgFiCOgBsB3gVDdTKpww87Qk5ivjqEt28SmXO13A1KNVPS6oQ8SJ
-CT5Azc6X/BIAoJCURVL+LHdqebogKljhH/3yIel1kH19vr4E2kTM/tYH+qj8afUS
-JEmArUzsmmK8ccuNqBcllqdwCZjxL4CHDUmyRudFcHVX9oyhAkEA/OV1OkjM3CLU
-N3sqELdMmHq5QZCUihBmk3/N5OvGdqAFGBlEeewlepEVxkh7JnaNXAXrKHRVu/f/
-fbCQxH+qrwJBANeQERF97b9Sibp9xgolb749UWNlAdqmEpmlvmS202TdcaaT1msU
-4rRLiQN3X9O9mq4LZMSVethrQAdX1whawpkCQQDk1yGf7xZpMJ8F4U5sN+F4rLyM
-Rq8Sy8p2OBTwzCUXXK+fYeXjybsUUMr6VMYTRP2fQr/LKJIX+E5ZxvcIyFmDAkEA
-yfjNVUNVaIbQTzEbRlRvT6MqR+PTCefC072NF9aJWR93JimspGZMR7viY6IM4lrr
-vBkm0F5yXKaYtoiiDMzlOQJADqmEwXl0D72ZG/2KDg8b4QZEmC9i5gidpQwJXUc6
-hU+IVQoLxRq0fBib/36K9tcrrO5Ba4iEvDcNY+D8yGbUtA==
------END RSA PRIVATE KEY-----
-`)
-	cert = []byte(`-----BEGIN CERTIFICATE-----
-MIIB7zCCAVgCCQDFzbKIp7b3MTANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJV
-UzELMAkGA1UECAwCR0ExDDAKBgNVBAoMA2ZvbzESMBAGA1UEAwwJbG9jYWxob3N0
-MB4XDTEzMTAwMjAwMDg1MVoXDTE0MTAwMjAwMDg1MVowPDELMAkGA1UEBhMCVVMx
-CzAJBgNVBAgMAkdBMQwwCgYDVQQKDANmb28xEjAQBgNVBAMMCWxvY2FsaG9zdDCB
-nzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA1PMHYmhZj308kWLhZVT4vOulqx/9
-ibm5B86fPWwUKKQ2i12MYtz07tzukPymisTDhQaqyJ8Kqb/6JjhmeMnEOdTvSPmH
-O8m1ZVveJU6NoKRn/mP/BD7FW52WhbrUXLSeHVSKfWkNk6S4hk9MV9TswTvyRIKv
-Rsw0X/gfnqkroJcCAwEAATANBgkqhkiG9w0BAQUFAAOBgQCMMlIO+GNcGekevKgk
-akpMdAqJfs24maGb90DvTLbRZRD7Xvn1MnVBBS9hzlXiFLYOInXACMW5gcoRFfeT
-QLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvn
-OwJlNCASPZRH/JmF8tX0hoHuAQ==
------END CERTIFICATE-----
-`)
-)
+// newKeyPair returns a freshly generated RSA key and a matching self-signed
+// certificate. The example uses a throwaway key so that it never ships a
+// private key or a certificate that can expire.
+func newKeyPair() (*rsa.PrivateKey, *x509.Certificate, error) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, nil, err
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "example service"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		return nil, nil, err
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		return nil, nil, err
+	}
+	return key, cert, nil
+}
 
 func main() {
-	rootURLstr := flag.String("url", "https://962766ce.ngrok.io", "The base URL of this service")
-	idpMetadataURLstr := flag.String("idp", "https://516becc2.ngrok.io/metadata", "The metadata URL for the IDP")
+	rootURLstr := flag.String("url", "http://localhost:8000", "The base URL of this service")
+	idpMetadataURLstr := flag.String("idp", "http://localhost:8080/metadata", "The metadata URL for the IDP")
+	listenAddr := flag.String("listen", ":8000", "The address to listen on")
 	flag.Parse()
 
-	keyPair, err := tls.X509KeyPair(cert, key)
-	if err != nil {
-		panic(err) // TODO handle error
-	}
-	keyPair.Leaf, err = x509.ParseCertificate(keyPair.Certificate[0])
+	key, cert, err := newKeyPair()
 	if err != nil {
 		panic(err) // TODO handle error
 	}
@@ -152,8 +153,8 @@ func main() {
 
 	samlSP, err := samlsp.New(samlsp.Options{
 		URL:               *rootURL,
-		Key:               keyPair.PrivateKey.(*rsa.PrivateKey),
-		Certificate:       keyPair.Leaf,
+		Key:               key,
+		Certificate:       cert,
 		AllowIDPInitiated: true,
 		IDPMetadata:       idpMetadata,
 	})
@@ -175,11 +176,17 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
+	// The SAML endpoints need both GET (metadata) and POST (the assertion
+	// consumer service). They are registered per method because a bare "/saml/"
+	// pattern would conflict with "GET /" below.
 	mux.Handle("GET /saml/", samlSP)
+	mux.Handle("POST /saml/", samlSP)
 	mux.HandleFunc("GET /{link}", ServeLink)
 	mux.Handle("GET /whoami", samlSP.RequireAccount(http.HandlerFunc(ServeWhoami)))
 	mux.Handle("POST /", samlSP.RequireAccount(http.HandlerFunc(CreateLink)))
 	mux.Handle("GET /", samlSP.RequireAccount(http.HandlerFunc(ListLinks)))
 
-	http.ListenAndServe(":8080", mux)
+	if err := http.ListenAndServe(*listenAddr, mux); err != nil {
+		panic(err)
+	}
 }
