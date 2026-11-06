@@ -8,6 +8,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/internal/signerutil"
 )
 
 // JWTTrackedRequestCodec encodes TrackedRequests as signed JWTs
@@ -44,12 +45,12 @@ func (s JWTTrackedRequestCodec) Encode(value TrackedRequest) (string, error) {
 		SAMLAuthnRequest: true,
 	}
 	token := jwt.NewWithClaims(s.SigningMethod, claims)
-	return signToken(token, s.Key, s.SigningMethod)
+	return signToken(token, s.Key)
 }
 
 // Decode returns a Tracked request from an encoded string.
 func (s JWTTrackedRequestCodec) Decode(signed string) (*TrackedRequest, error) {
-	if saml.IsSignerNil(s.Key) {
+	if signerutil.IsNil(s.Key) {
 		return nil, fmt.Errorf("decoding key is nil")
 	}
 	parser := jwt.NewParser(

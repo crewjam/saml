@@ -14,6 +14,7 @@ import (
 	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/internal/signerutil"
 )
 
 // Options represents the parameters for creating a new middleware
@@ -38,7 +39,7 @@ type Options struct {
 }
 
 func getDefaultSigningMethod(signer crypto.Signer) jwt.SigningMethod {
-	if !saml.IsSignerNil(signer) {
+	if !signerutil.IsNil(signer) {
 		switch signer.Public().(type) {
 		case *ecdsa.PublicKey:
 			return jwt.SigningMethodES256
@@ -149,7 +150,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 }
 
 func defaultSigningMethodForKey(key crypto.Signer) string {
-	if saml.IsSignerNil(key) {
+	if signerutil.IsNil(key) {
 		return ""
 	}
 	// Check public key type to support crypto.Signer implementations (KMS/HSM)

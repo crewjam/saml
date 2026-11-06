@@ -19,7 +19,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -29,6 +28,7 @@ import (
 	dsig "github.com/russellhaering/goxmldsig"
 	"github.com/russellhaering/goxmldsig/etreeutils"
 
+	"github.com/crewjam/saml/internal/signerutil"
 	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/xmlenc"
 )
@@ -72,11 +72,13 @@ type ServiceProvider struct {
 	// Entity ID is optional - if not specified then MetadataURL will be used
 	EntityID string
 
-	// Key is private key we use to sign requests. It must be either an
-	// *rsa.PrivateKey or an *ecdsa.PrivateKey.
+	// Key is the private key we use to sign requests. Its public key must be
+	// an *rsa.PublicKey or an *ecdsa.PublicKey. Any crypto.Signer works for
+	// signing, including keys held in a KMS or HSM. Decrypting encrypted
+	// assertions still needs the private key in memory as an *rsa.PrivateKey.
 	Key crypto.Signer
 
-	// Certificate is the RSA public part of Key.
+	// Certificate is the public part of Key.
 	Certificate   *x509.Certificate
 	Intermediates []*x509.Certificate
 
@@ -556,24 +558,15 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding stri
 	return &req, nil
 }
 
-// IsSignerNil returns true if the signer is nil or a typed-nil (e.g., (*rsa.PrivateKey)(nil))
-// stored in a crypto.Signer interface). A typed-nil makes the interface non-nil, so a simple
-// == nil check won't catch it, but calling methods like Public() will still panic.
-// This also handles nilable non-pointer types like ed25519.PrivateKey (which is a slice).
-func IsSignerNil(key crypto.Signer) bool {
-	if key == nil {
-		return true
-	}
-	v := reflect.ValueOf(key)
-	switch v.Kind() {
-	case reflect.Pointer, reflect.Slice, reflect.Map, reflect.Func, reflect.Chan, reflect.Interface:
-		return v.IsNil()
-	}
-	return false
-}
-
 // GetSigningContext returns a dsig.SigningContext initialized based on the Service Provider's configuration
 func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
+	if signerutil.IsNil(sp.Key) {
+		return nil, fmt.Errorf("signature method %s requires a non-nil private key", sp.SignatureMethod)
+	}
+	if sp.Certificate == nil {
+		return nil, fmt.Errorf("signature method %s requires a certificate", sp.SignatureMethod)
+	}
+
 	keyPair := tls.Certificate{
 		Certificate: [][]byte{sp.Certificate.Raw},
 		PrivateKey:  sp.Key,
@@ -587,9 +580,6 @@ func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 	// Validate that the key type matches the signature method.
 	// We check the public key type to support crypto.Signer implementations
 	// (like KMS/HSM signers) that aren't literal *rsa.PrivateKey or *ecdsa.PrivateKey.
-	if IsSignerNil(sp.Key) {
-		return nil, fmt.Errorf("signature method %s requires a non-nil private key", sp.SignatureMethod)
-	}
 	pubKey := sp.Key.Public()
 	switch sp.SignatureMethod {
 	case dsig.RSASHA1SignatureMethod,
