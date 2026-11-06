@@ -189,10 +189,10 @@ func PKCS1v15() RSA {
 		DigestMethod: nil,
 		algorithm:    "http://www.w3.org/2001/04/xmlenc#rsa-1_5",
 		keyEncrypter: func(_ RSA, pubKey *rsa.PublicKey, plaintext []byte) ([]byte, error) {
-			return rsa.EncryptPKCS1v15(RandReader, pubKey, plaintext)
+			return rsa.EncryptPKCS1v15(RandReader, pubKey, plaintext) //nolint:staticcheck // SA1019: rsa-1_5 is an XML-Enc algorithm; opt-in only, see note below
 		},
 		keyDecrypter: func(_ RSA, privKey *rsa.PrivateKey, ciphertext []byte) ([]byte, error) {
-			return rsa.DecryptPKCS1v15(RandReader, privKey, ciphertext)
+			return rsa.DecryptPKCS1v15(RandReader, privKey, ciphertext) //nolint:staticcheck // SA1019: rsa-1_5 is an XML-Enc algorithm; opt-in only, see note below
 		},
 	}
 }
