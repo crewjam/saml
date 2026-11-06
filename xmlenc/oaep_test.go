@@ -45,8 +45,9 @@ func TestOAEP11RoundTrip(t *testing.T) {
 
 // oaepDocument builds an EncryptedData element whose AES-256-CBC key is wrapped
 // with RSA-OAEP using the given options, the way another implementation would.
-// mgfURI and label are only written to the document when not empty.
-func oaepDocument(t *testing.T, pub *rsa.PublicKey, algorithm string, opts *rsa.OAEPOptions, digestURI, mgfURI string) (*etree.Element, []byte) {
+// digestURI, mgfURI and the label are only written to the document when not
+// empty.
+func oaepDocument(t *testing.T, pub *rsa.PublicKey, algorithm string, opts *rsa.OAEPOptions, digestURI, mgfURI string) *etree.Element {
 	t.Helper()
 	sessionKey := make([]byte, 32)
 	_, err := rand.Read(sessionKey)
@@ -73,7 +74,7 @@ func oaepDocument(t *testing.T, pub *rsa.PublicKey, algorithm string, opts *rsa.
 		SetText(base64.StdEncoding.EncodeToString(wrapped))
 	el.InsertChildAt(el.FindElement("./CipherData").Index(), etree.NewElement("ds:KeyInfo"))
 	el.FindElement("./KeyInfo").AddChild(ek)
-	return el, sessionKey
+	return el
 }
 
 // Documents produced by other implementations decrypt, including the default
@@ -132,7 +133,7 @@ func TestOAEPDecryptsSpecShapedDocuments(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			el, _ := oaepDocument(t, &key.PublicKey, tc.algorithm, &tc.opts, tc.digestURI, tc.mgfURI)
+			el := oaepDocument(t, &key.PublicKey, tc.algorithm, &tc.opts, tc.digestURI, tc.mgfURI)
 			plaintext, err := Decrypt(key, el)
 			assert.NilError(t, err)
 			assert.Check(t, is.DeepEqual([]byte("hello"), plaintext))
@@ -144,7 +145,7 @@ func TestOAEPDecryptsSpecShapedDocuments(t *testing.T) {
 // document names none.
 func TestOAEPExplicitMGFIsNotRetried(t *testing.T) {
 	key, _ := newKeyAndCert(t)
-	el, _ := oaepDocument(t, &key.PublicKey, algorithmRSAOAEP11,
+	el := oaepDocument(t, &key.PublicKey, algorithmRSAOAEP11,
 		&rsa.OAEPOptions{Hash: crypto.SHA256, MGFHash: crypto.SHA256},
 		SHA256.Algorithm(), "http://www.w3.org/2009/xmlenc11#mgf1sha1")
 	_, err := Decrypt(key, el)
@@ -154,19 +155,19 @@ func TestOAEPExplicitMGFIsNotRetried(t *testing.T) {
 func TestOAEPRejectsBadMGF(t *testing.T) {
 	key, _ := newKeyAndCert(t)
 	t.Run("unknown MGF", func(t *testing.T) {
-		el, _ := oaepDocument(t, &key.PublicKey, algorithmRSAOAEP11,
+		el := oaepDocument(t, &key.PublicKey, algorithmRSAOAEP11,
 			&rsa.OAEPOptions{Hash: crypto.SHA256}, SHA256.Algorithm(), "urn:example:mgf")
 		_, err := Decrypt(key, el)
 		assert.Check(t, is.Error(err, ErrAlgorithmNotImplemented("urn:example:mgf").Error()))
 	})
 	t.Run("MGF with rsa-oaep-mgf1p", func(t *testing.T) {
-		el, _ := oaepDocument(t, &key.PublicKey, algorithmRSAOAEPMGF1P,
+		el := oaepDocument(t, &key.PublicKey, algorithmRSAOAEPMGF1P,
 			&rsa.OAEPOptions{Hash: crypto.SHA256}, SHA256.Algorithm(), "http://www.w3.org/2009/xmlenc11#mgf1sha256")
 		_, err := Decrypt(key, el)
 		assert.Check(t, is.ErrorContains(err, "algorithm is not implemented"))
 	})
 	t.Run("bad OAEPparams", func(t *testing.T) {
-		el, _ := oaepDocument(t, &key.PublicKey, algorithmRSAOAEP11,
+		el := oaepDocument(t, &key.PublicKey, algorithmRSAOAEP11,
 			&rsa.OAEPOptions{Hash: crypto.SHA256, Label: []byte("x")}, SHA256.Algorithm(), "")
 		el.FindElement("./KeyInfo/EncryptedKey/EncryptionMethod/OAEPparams").SetText("!!")
 		_, err := Decrypt(key, el)
