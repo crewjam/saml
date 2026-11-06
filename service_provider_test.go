@@ -1747,7 +1747,8 @@ func TestParseXMLArtifactResponse(t *testing.T) {
 	}
 	Clock = dsig.NewFakeClockAt(TimeNow())
 
-	// an actual response from samltest.id
+	// an actual (signed) response captured from the former samltest.id IdP;
+	// it cannot be edited without invalidating the signature
 	samlResponse := golden.Get(t, "TestParseXMLArtifactResponse_response")
 	test.IDPMetadata = golden.Get(t, "TestGetArtifactBindingLocation_IDPMetadata")
 
@@ -1782,7 +1783,8 @@ func TestParseBadXMLArtifactResponse(t *testing.T) {
 	}
 	Clock = dsig.NewFakeClockAt(TimeNow())
 
-	// an actual response from samltest.id
+	// an actual (signed) response captured from the former samltest.id IdP;
+	// it cannot be edited without invalidating the signature
 	samlResponse := golden.Get(t, "TestParseXMLArtifactResponse_response")
 	test.IDPMetadata = golden.Get(t, "TestGetArtifactBindingLocation_IDPMetadata")
 
