@@ -242,6 +242,21 @@ func TestRedirectBindingLogoutResponseSignature(t *testing.T) {
 		assert.Error(t, spcovPrivateErr(t, err), "cannot validate signature: certificate is not valid at this time")
 	})
 
+	t.Run("expired certificate is accepted with IgnoreCertificateExpiry", func(t *testing.T) {
+		Clock = dsig.NewFakeClockAt(spcovNow.AddDate(2, 0, 0))
+		defer func() { Clock = dsig.NewFakeClockAt(spcovNow) }()
+		sp := *e.sp
+		sp.IgnoreCertificateExpiry = true
+		assert.NilError(t, sp.ValidateLogoutResponseRequest(redirectRequest(&sp, valid.build(t))))
+
+		q := valid
+		otherKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		assert.NilError(t, err)
+		q.key = otherKey
+		err = sp.ValidateLogoutResponseRequest(redirectRequest(&sp, q.build(t)))
+		assert.Check(t, is.ErrorContains(spcovPrivateErr(t, err), "verification error"))
+	})
+
 	t.Run("explicit IDP certificate", func(t *testing.T) {
 		sp := *e.sp
 		certStr := base64.StdEncoding.EncodeToString(e.idpCert.Raw)

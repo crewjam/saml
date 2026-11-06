@@ -1886,6 +1886,13 @@ func TestParseBadXMLArtifactResponse(t *testing.T) {
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
 		"cannot validate signature on ArtifactResponse: Cert is not valid at this time"))
 	assert.Check(t, is.Nil(assertion))
+
+	// IgnoreCertificateExpiry accepts the signature despite the expired certificate
+	sp.IgnoreCertificateExpiry = true
+	assertion, err = sp.ParseXMLArtifactResponse(samlResponse, possibleReqIDs, reqID, sp.AcsURL)
+	assert.Check(t, err)
+	assert.Check(t, assertion != nil)
+	sp.IgnoreCertificateExpiry = false
 	Clock = dsig.NewFakeClockAt(TimeNow())
 
 	wrongReqID := "id-218eb155248f7db7c85fe4e2709a3f17a70d09c8"

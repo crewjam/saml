@@ -45,6 +45,11 @@ type Options struct {
 	// UseArtifactResponse is true, HTTP-POST otherwise), or New returns an
 	// error.
 	AssertionConsumerServiceBindings []string
+
+	// IgnoreCertificateExpiry, if true, accepts signatures made with an IDP
+	// signing certificate outside its validity period. See
+	// saml.ServiceProvider.IgnoreCertificateExpiry.
+	IgnoreCertificateExpiry bool
 }
 
 func getDefaultSigningMethod(signer crypto.Signer) jwt.SigningMethod {
@@ -166,6 +171,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		LogoutBindings:        opts.LogoutBindings,
 
 		AssertionConsumerServiceBindings: opts.AssertionConsumerServiceBindings,
+		IgnoreCertificateExpiry:          opts.IgnoreCertificateExpiry,
 	}
 }
 
