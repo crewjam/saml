@@ -16,6 +16,23 @@ import (
 
 var sessionMaxAge = time.Hour
 
+// dummyPasswordHash is compared against the submitted password when the user
+// does not exist (or has no usable password hash), so that every login attempt
+// costs the same bcrypt work. It is a hash of a random value at
+// bcrypt.DefaultCost, the cost HandlePutUser uses for real passwords. A
+// successful comparison against it never authenticates anyone.
+var dummyPasswordHash = []byte("$2a$10$Ovb3BvjFgCzUJjLMY9KjI.vCmY12QV6y0QrT6LdUAT6e/C2NMUx7m")
+
+// compareHashAndPassword is a variable so tests can observe which hash is used.
+var compareHashAndPassword = bcrypt.CompareHashAndPassword
+
+// isBcryptHash reports whether hash is a well-formed bcrypt hash that
+// bcrypt.CompareHashAndPassword will actually do the hashing work for.
+func isBcryptHash(hash []byte) bool {
+	_, err := bcrypt.Cost(hash)
+	return err == nil
+}
+
 // GetSession returns the *Session for this request.
 //
 // If the remote user has specified a username and password in the request
@@ -35,13 +52,23 @@ func (s *Server) GetSession(w http.ResponseWriter, r *http.Request, req *saml.Id
 	// if we received login credentials then maybe we can create a session
 	if r.Method == "POST" && r.PostForm.Get("user") != "" {
 		user := User{}
-		if err := s.Store.Get(fmt.Sprintf("/users/%s", r.PostForm.Get("user")), &user); err != nil {
+		lookupErr := s.Store.Get(fmt.Sprintf("/users/%s", r.PostForm.Get("user")), &user)
+
+		// Always perform exactly one bcrypt comparison, whether or not the user
+		// exists or has a usable password, so that response timing does not
+		// reveal which usernames are valid.
+		hash := user.HashedPassword
+		if lookupErr != nil || !isBcryptHash(hash) {
+			hash = dummyPasswordHash
+		}
+		compareErr := compareHashAndPassword(hash, []byte(r.PostForm.Get("password")))
+
+		if lookupErr != nil {
 			s.logger.Printf("ERROR: User '%s' doesn't exists", r.PostForm.Get("user"))
 			s.sendLoginForm(w, req, "Invalid username or password")
 			return nil
 		}
-
-		if err := bcrypt.CompareHashAndPassword(user.HashedPassword, []byte(r.PostForm.Get("password"))); err != nil {
+		if compareErr != nil || !isBcryptHash(user.HashedPassword) {
 			s.logger.Printf("ERROR: Invalid password for user '%s'", r.PostForm.Get("user"))
 			s.sendLoginForm(w, req, "Invalid username or password")
 			return nil
