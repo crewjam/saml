@@ -134,14 +134,14 @@ func TestSpcovGetSigningContext(t *testing.T) {
 		sp.Key = ecKey
 		sp.SignatureMethod = dsig.RSASHA256SignatureMethod
 		_, err := GetSigningContext(&sp)
-		assert.Error(t, err, "signature method "+dsig.RSASHA256SignatureMethod+" requires a key of type rsa.PrivateKey, not *ecdsa.PrivateKey")
+		assert.Error(t, err, "signature method "+dsig.RSASHA256SignatureMethod+" requires an RSA key, got *ecdsa.PublicKey")
 	})
 
 	t.Run("ecdsa method with rsa key", func(t *testing.T) {
 		sp := *e.sp
 		sp.SignatureMethod = dsig.ECDSASHA256SignatureMethod
 		_, err := GetSigningContext(&sp)
-		assert.Error(t, err, "signature method "+dsig.ECDSASHA256SignatureMethod+" requires a key of type ecdsa.PrivateKey, not *rsa.PrivateKey")
+		assert.Error(t, err, "signature method "+dsig.ECDSASHA256SignatureMethod+" requires an ECDSA key, got *rsa.PublicKey")
 	})
 
 	t.Run("ecdsa method with ecdsa key", func(t *testing.T) {

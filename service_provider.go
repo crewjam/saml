@@ -28,6 +28,7 @@ import (
 	dsig "github.com/russellhaering/goxmldsig"
 	"github.com/russellhaering/goxmldsig/etreeutils"
 
+	"github.com/crewjam/saml/internal/signerutil"
 	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/xmlenc"
 )
@@ -71,11 +72,13 @@ type ServiceProvider struct {
 	// Entity ID is optional - if not specified then MetadataURL will be used
 	EntityID string
 
-	// Key is private key we use to sign requests. It must be either an
-	// *rsa.PrivateKey or an *ecdsa.PrivateKey.
+	// Key is the private key we use to sign requests. Its public key must be
+	// an *rsa.PublicKey or an *ecdsa.PublicKey. Any crypto.Signer works for
+	// signing, including keys held in a KMS or HSM. Decrypting encrypted
+	// assertions still needs the private key in memory as an *rsa.PrivateKey.
 	Key crypto.Signer
 
-	// Certificate is the RSA public part of Key.
+	// Certificate is the public part of Key.
 	Certificate   *x509.Certificate
 	Intermediates []*x509.Certificate
 
@@ -557,9 +560,13 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding stri
 
 // GetSigningContext returns a dsig.SigningContext initialized based on the Service Provider's configuration
 func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
+	if signerutil.IsNil(sp.Key) {
+		return nil, fmt.Errorf("signature method %s requires a non-nil private key", sp.SignatureMethod)
+	}
 	if sp.Certificate == nil {
 		return nil, errors.New("cannot sign: ServiceProvider.Certificate is nil")
 	}
+
 	keyPair := tls.Certificate{
 		Certificate: [][]byte{sp.Certificate.Raw},
 		PrivateKey:  sp.Key,
@@ -570,21 +577,25 @@ func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 	// 	keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
 	// }
 
+	// Validate that the key type matches the signature method.
+	// We check the public key type to support crypto.Signer implementations
+	// (like KMS/HSM signers) that aren't literal *rsa.PrivateKey or *ecdsa.PrivateKey.
+	pubKey := sp.Key.Public()
 	switch sp.SignatureMethod {
 	case dsig.RSASHA1SignatureMethod,
 		dsig.RSASHA256SignatureMethod,
 		dsig.RSASHA384SignatureMethod,
 		dsig.RSASHA512SignatureMethod:
-		if _, ok := sp.Key.(*rsa.PrivateKey); !ok {
-			return nil, fmt.Errorf("signature method %s requires a key of type rsa.PrivateKey, not %T", sp.SignatureMethod, sp.Key)
+		if _, ok := pubKey.(*rsa.PublicKey); !ok {
+			return nil, fmt.Errorf("signature method %s requires an RSA key, got %T", sp.SignatureMethod, pubKey)
 		}
 
 	case dsig.ECDSASHA1SignatureMethod,
 		dsig.ECDSASHA256SignatureMethod,
 		dsig.ECDSASHA384SignatureMethod,
 		dsig.ECDSASHA512SignatureMethod:
-		if _, ok := sp.Key.(*ecdsa.PrivateKey); !ok {
-			return nil, fmt.Errorf("signature method %s requires a key of type ecdsa.PrivateKey, not %T", sp.SignatureMethod, sp.Key)
+		if _, ok := pubKey.(*ecdsa.PublicKey); !ok {
+			return nil, fmt.Errorf("signature method %s requires an ECDSA key, got %T", sp.SignatureMethod, pubKey)
 		}
 	default:
 		return nil, fmt.Errorf("invalid signing method %s", sp.SignatureMethod)

@@ -3,11 +3,13 @@ package samlsp
 import (
 	"crypto"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/internal/signerutil"
 )
 
 const (
@@ -77,17 +79,15 @@ func (c JWTSessionCodec) Encode(s Session) (string, error) {
 	claims := s.(JWTSessionClaims) // this will panic if you pass the wrong kind of session
 
 	token := jwt.NewWithClaims(c.SigningMethod, claims)
-	signedString, err := token.SignedString(c.Key)
-	if err != nil {
-		return "", err
-	}
-
-	return signedString, nil
+	return signToken(token, c.Key)
 }
 
 // Decode parses the serialized session that may have been returned by Encode
 // and returns a Session.
 func (c JWTSessionCodec) Decode(signed string) (Session, error) {
+	if signerutil.IsNil(c.Key) {
+		return nil, fmt.Errorf("decoding key is nil")
+	}
 	parser := jwt.NewParser(
 		jwt.WithValidMethods([]string{c.SigningMethod.Alg()}),
 		jwt.WithTimeFunc(saml.TimeNow),
