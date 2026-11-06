@@ -79,9 +79,16 @@ func (c CookieSessionProvider) DeleteSession(w http.ResponseWriter, r *http.Requ
 		return err
 	}
 
+	// The deletion cookie must use the same path as the one set by CreateSession,
+	// otherwise the browser treats it as a different cookie and keeps the session.
+	path := c.Path
+	if path == "" {
+		path = "/"
+	}
+
 	cookie.Value = ""
 	cookie.Expires = time.Unix(1, 0) // past time as close to epoch as possible, but not zero time.Time{}
-	cookie.Path = "/"
+	cookie.Path = path
 	cookie.Domain = c.Domain
 	http.SetCookie(w, cookie)
 	return nil
