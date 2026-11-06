@@ -2050,3 +2050,55 @@ func TestSPInvalidResponses(t *testing.T) {
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
 		"cannot validate signature on Assertion: x509: malformed certificate"))
 }
+
+func TestSPClockIsScopedPerServiceProvider(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	samlResponse := golden.Get(t, "TestSPCanHandleOneloginResponse_response")
+	idpMetadata := golden.Get(t, "TestSPCanHandleOneloginResponse_IDPMetadata")
+
+	// Point the package-level clocks at a time when the response is not
+	// valid, to show that ServiceProvider.Clock takes precedence over them.
+	oldTimeNow, oldClock := TimeNow, Clock
+	t.Cleanup(func() { TimeNow, Clock = oldTimeNow, oldClock })
+	wrong := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	TimeNow = func() time.Time { return wrong }
+	Clock = dsig.NewFakeClockAt(wrong)
+
+	newSP := func(t *testing.T, now time.Time) *ServiceProvider {
+		sp := &ServiceProvider{
+			Key:         test.Key,
+			Certificate: test.Certificate,
+			MetadataURL: mustParseURL("https://29ee6d2e.ngrok.io/saml/metadata"),
+			AcsURL:      mustParseURL("https://29ee6d2e.ngrok.io/saml/acs"),
+			IDPMetadata: &EntityDescriptor{},
+			Clock:       dsig.NewFakeClockAt(now),
+		}
+		assert.Check(t, xml.Unmarshal(idpMetadata, sp.IDPMetadata))
+		return sp
+	}
+	parse := func(sp *ServiceProvider) (*Assertion, error) {
+		req := http.Request{PostForm: url.Values{}, URL: &sp.AcsURL}
+		req.PostForm.Set("SAMLResponse", string(samlResponse))
+		return sp.ParseResponse(&req, []string{"id-d40c15c104b52691eccf0a2a5c8a15595be75423"})
+	}
+
+	validAt := time.Date(2016, 1, 5, 17, 53, 12, 0, time.UTC)
+	expiredAt := validAt.Add(24 * time.Hour)
+
+	t.Run("valid", func(t *testing.T) {
+		t.Parallel()
+		assertion, err := parse(newSP(t, validAt))
+		assert.Check(t, err)
+		if assertion != nil {
+			assert.Check(t, is.Equal("ross@kndr.org", assertion.Subject.NameID.Value))
+		}
+	})
+
+	t.Run("expired", func(t *testing.T) {
+		t.Parallel()
+		_, err := parse(newSP(t, expiredAt))
+		invalidErr, ok := err.(*InvalidResponseError)
+		assert.Assert(t, ok, "expected *InvalidResponseError, got %v", err)
+		assert.Check(t, is.Equal(expiredAt, invalidErr.Now))
+	})
+}
