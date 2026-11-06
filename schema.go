@@ -112,7 +112,7 @@ func (r *LogoutRequest) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias LogoutRequest
 	aux := &struct {
 		IssueInstant RelaxedTime  `xml:",attr"`
-		NotOnOrAfter *RelaxedTime `xml:",attr"`
+		NotOnOrAfter *RelaxedTime `xml:",attr,omitempty"`
 		*Alias
 	}{
 		IssueInstant: RelaxedTime(r.IssueInstant),
@@ -1260,7 +1260,9 @@ func (a *AttributeValue) Element() *etree.Element {
 	el := etree.NewElement("saml:AttributeValue")
 	el.CreateAttr("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance")
 	el.CreateAttr("xmlns:xs", "http://www.w3.org/2001/XMLSchema")
-	el.CreateAttr("xsi:type", a.Type)
+	if a.Type != "" {
+		el.CreateAttr("xsi:type", a.Type)
+	}
 	if a.NameID != nil {
 		el.AddChild(a.NameID.Element())
 	}
