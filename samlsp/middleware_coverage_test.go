@@ -225,7 +225,7 @@ func TestCovCreateSessionFromAssertion(t *testing.T) {
 		test.Middleware.OnError = covCapturingOnError(&got)
 		index := "KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6"
 		req := covFormRequest(url.Values{"RelayState": {index}},
-			&http.Cookie{Name: "saml_" + index, Value: test.makeTrackedRequest("id-1")})
+			&http.Cookie{Name: "saml_" + index, Value: test.makeTrackedRequest("id-1"), Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 		test.Middleware.RequestTracker = covRequestTracker{
 			CookieRequestTracker: test.Middleware.RequestTracker.(CookieRequestTracker),
 			stopErr:              errors.New("cov: stop failed"),

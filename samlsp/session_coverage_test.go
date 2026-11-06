@@ -229,7 +229,7 @@ func TestCovCookieSessionProviderDeleteSession(t *testing.T) {
 			p := covCookieSessionProvider(t)
 			p.Path = tc.path
 			req := httptest.NewRequest(http.MethodGet, "/", nil)
-			req.AddCookie(&http.Cookie{Name: "token", Value: "abc"})
+			req.AddCookie(&http.Cookie{Name: "token", Value: "abc", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 			rec := httptest.NewRecorder()
 			assert.Assert(t, p.DeleteSession(rec, req))
 			cookies := rec.Result().Cookies()
@@ -252,7 +252,7 @@ func TestCovCookieSessionProviderGetSession(t *testing.T) {
 	assert.Check(t, is.Equal(ErrNoSession, err))
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: "token", Value: "garbage"})
+	req.AddCookie(&http.Cookie{Name: "token", Value: "garbage", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	_, err = p.GetSession(req)
 	assert.Check(t, is.Equal(ErrNoSession, err))
 
@@ -352,7 +352,7 @@ func TestCovCookieRequestTrackerStopTracking(t *testing.T) {
 	assert.Check(t, is.Equal(http.ErrNoCookie, err))
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: "saml_abc", Value: "x"})
+	req.AddCookie(&http.Cookie{Name: "saml_abc", Value: "x", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	rec := httptest.NewRecorder()
 	assert.Assert(t, tracker.StopTrackingRequest(rec, req, "abc"))
 	c := rec.Result().Cookies()[0]
@@ -371,10 +371,10 @@ func TestCovCookieRequestTrackerGetTrackedRequests(t *testing.T) {
 	assert.Assert(t, err)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: "unrelated", Value: good})
-	req.AddCookie(&http.Cookie{Name: "saml_bad", Value: "garbage"})
-	req.AddCookie(&http.Cookie{Name: "saml_moved", Value: moved})
-	req.AddCookie(&http.Cookie{Name: "saml_good", Value: good})
+	req.AddCookie(&http.Cookie{Name: "unrelated", Value: good, Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	req.AddCookie(&http.Cookie{Name: "saml_bad", Value: "garbage", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	req.AddCookie(&http.Cookie{Name: "saml_moved", Value: moved, Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	req.AddCookie(&http.Cookie{Name: "saml_good", Value: good, Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 
 	got := tracker.GetTrackedRequests(req)
 	assert.Check(t, is.DeepEqual([]TrackedRequest{{Index: "good", SAMLRequestID: "id-good", URI: "/a"}}, got))
@@ -386,9 +386,9 @@ func TestCovCookieRequestTrackerGetTrackedRequest(t *testing.T) {
 	assert.Assert(t, err)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: "saml_bad", Value: "garbage"})
-	req.AddCookie(&http.Cookie{Name: "saml_moved", Value: good})
-	req.AddCookie(&http.Cookie{Name: "saml_good", Value: good})
+	req.AddCookie(&http.Cookie{Name: "saml_bad", Value: "garbage", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	req.AddCookie(&http.Cookie{Name: "saml_moved", Value: good, Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	req.AddCookie(&http.Cookie{Name: "saml_good", Value: good, Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 
 	_, err = tracker.GetTrackedRequest(req, "missing")
 	assert.Check(t, is.Equal(http.ErrNoCookie, err))

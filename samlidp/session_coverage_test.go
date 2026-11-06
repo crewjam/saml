@@ -106,7 +106,7 @@ func TestCovGetSessionCookieStoreError(t *testing.T) {
 	store := &covStore{getErr: covAlways}
 	s := covNewServer(t, store)
 	r := httptest.NewRequest("GET", "https://idp.example.com/login", nil)
-	r.AddCookie(&http.Cookie{Name: "session", Value: "abc"})
+	r.AddCookie(&http.Cookie{Name: "session", Value: "abc", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusInternalServerError, w.Code))
@@ -115,7 +115,7 @@ func TestCovGetSessionCookieStoreError(t *testing.T) {
 func TestCovGetSessionUnknownCookie(t *testing.T) {
 	s := covNewServer(t, &MemoryStore{})
 	r := httptest.NewRequest("GET", "https://idp.example.com/login", nil)
-	r.AddCookie(&http.Cookie{Name: "session", Value: "abc"})
+	r.AddCookie(&http.Cookie{Name: "session", Value: "abc", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
@@ -130,7 +130,7 @@ func TestCovGetSessionExpired(t *testing.T) {
 		ExpireTime: saml.TimeNow().Add(-time.Second),
 	}))
 	r := httptest.NewRequest("GET", "https://idp.example.com/login", nil)
-	r.AddCookie(&http.Cookie{Name: "session", Value: "old"})
+	r.AddCookie(&http.Cookie{Name: "session", Value: "old", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
@@ -187,7 +187,7 @@ func TestCovIDPInitiatedRelayState(t *testing.T) {
 	relayState := func(target string) string {
 		t.Helper()
 		r := httptest.NewRequest("GET", target, nil)
-		r.AddCookie(&http.Cookie{Name: "session", Value: "sess"})
+		r.AddCookie(&http.Cookie{Name: "session", Value: "sess", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
 		assert.Assert(t, is.Equal(http.StatusOK, w.Code), w.Body.String())

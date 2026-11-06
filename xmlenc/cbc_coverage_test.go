@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -56,20 +57,22 @@ func TestCovCBCEncryptErrors(t *testing.T) {
 	})
 }
 
-// covCBCData returns an EncryptedData element holding iv||ciphertext, where
-// ciphertext is the CBC encryption of plaintext (which must be whole blocks
-// and is not padded here, so the caller controls the padding bytes).
+// covCBCData returns an EncryptedData element holding a random IV followed by
+// the CBC encryption of plaintext (which must be whole blocks and is not
+// padded here, so the caller controls the padding bytes).
 func covCBCData(t *testing.T, key, plaintext []byte) *etree.Element {
 	t.Helper()
 	block, err := aes.NewCipher(key)
 	assert.NilError(t, err)
-	iv := make([]byte, aes.BlockSize)
-	ct := make([]byte, len(plaintext))
-	cipher.NewCBCEncrypter(block, iv).CryptBlocks(ct, plaintext)
+	buf := make([]byte, aes.BlockSize+len(plaintext))
+	iv, ct := buf[:aes.BlockSize], buf[aes.BlockSize:]
+	_, err = rand.Read(iv)
+	assert.NilError(t, err)
+	cipher.NewCBCEncrypter(block, iv).CryptBlocks(ct, plaintext) //nolint:gosec // iv is filled from crypto/rand above
 	el := etree.NewElement("EncryptedData")
 	el.CreateElement("EncryptionMethod").CreateAttr("Algorithm", AES128CBC.Algorithm())
 	el.CreateElement("CipherData").CreateElement("CipherValue").
-		SetText(base64.StdEncoding.EncodeToString(append(iv, ct...)))
+		SetText(base64.StdEncoding.EncodeToString(buf))
 	return el
 }
 
