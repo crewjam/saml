@@ -1162,3 +1162,41 @@ func TestIDPHTTPCanHandleSSORequest(t *testing.T) {
 		assert.Check(t, is.Equal(http.StatusBadRequest, w.Code))
 	}
 }
+
+func TestIDPMakeAssertionElCustomEncrypter(t *testing.T) {
+	test := NewIdentityProviderTest(t, applyKey)
+	encrypter := xmlenc.OAEP()
+	encrypter.DigestMethod = xmlenc.SHA256
+	encrypter.BlockCipher = xmlenc.AES256GCM
+	test.IDP.AssertionEncrypter = encrypter
+
+	req := IdpAuthnRequest{
+		Now:           TimeNow(),
+		IDP:           &test.IDP,
+		RequestBuffer: golden.Get(t, "TestIDPMakeResponse_request_buffer"),
+	}
+	req.HTTPRequest, _ = http.NewRequest("POST", "http://idp.example.com/saml/sso", nil)
+	assert.Assert(t, req.Validate())
+	assert.Assert(t, DefaultAssertionMaker{}.MakeAssertion(&req, &Session{
+		ID:       "f00df00df00d",
+		UserName: "alice",
+	}))
+	assert.Assert(t, req.MakeAssertionEl())
+
+	doc := etree.NewDocument()
+	doc.SetRoot(req.AssertionEl)
+	el := doc.FindElement("//EncryptedAssertion/EncryptedData")
+	assert.Assert(t, el != nil)
+
+	digestEl := el.FindElement("./KeyInfo/EncryptedKey/EncryptionMethod/DigestMethod")
+	assert.Assert(t, digestEl != nil)
+	assert.Check(t, is.Equal(xmlenc.SHA256.Algorithm(), digestEl.SelectAttrValue("Algorithm", "")))
+
+	blockEl := el.FindElement("./EncryptionMethod")
+	assert.Assert(t, blockEl != nil)
+	assert.Check(t, is.Equal(xmlenc.AES256GCM.Algorithm(), blockEl.SelectAttrValue("Algorithm", "")))
+
+	plaintext, err := xmlenc.Decrypt(test.SPKey, el)
+	assert.Assert(t, err)
+	assert.Check(t, strings.Contains(string(plaintext), "<saml:Assertion "))
+}
