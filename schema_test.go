@@ -240,7 +240,7 @@ func TestLogoutRequestXMLRoundTrip(t *testing.T) {
 
 	x, err = xml.Marshal(expected)
 	assert.Check(t, err)
-	assert.Check(t, is.Equal(`<LogoutRequest xmlns="urn:oasis:names:tc:SAML:2.0:protocol" ID="request-id" Version="2.0" IssueInstant="2021-10-08T12:30:00Z" NotOnOrAfter="2021-10-08T12:35:00Z" Destination=""><Issuer xmlns="urn:oasis:names:tc:SAML:2.0:assertion" NameQualifier="" SPNameQualifier="" Format="" SPProvidedID="">uri:issuer</Issuer><NameID NameQualifier="" SPNameQualifier="" Format="" SPProvidedID="">name-id</NameID><SessionIndex>index</SessionIndex></LogoutRequest>`,
+	assert.Check(t, is.Equal(`<LogoutRequest xmlns="urn:oasis:names:tc:SAML:2.0:protocol" ID="request-id" Version="2.0" IssueInstant="2021-10-08T12:30:00Z" NotOnOrAfter="2021-10-08T12:35:00Z" Destination=""><Issuer xmlns="urn:oasis:names:tc:SAML:2.0:assertion" NameQualifier="" SPNameQualifier="" Format="" SPProvidedID="">uri:issuer</Issuer><NameID xmlns="urn:oasis:names:tc:SAML:2.0:assertion" NameQualifier="" SPNameQualifier="" Format="" SPProvidedID="">name-id</NameID><SessionIndex>index</SessionIndex></LogoutRequest>`,
 		string(x)))
 }
 

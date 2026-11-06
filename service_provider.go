@@ -1185,7 +1185,16 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if assertion.Issuer.Value != sp.IDPMetadata.EntityID {
 		return fmt.Errorf("issuer is not %q", sp.IDPMetadata.EntityID)
 	}
+	if assertion.Subject == nil {
+		return fmt.Errorf("assertion has no Subject")
+	}
+	if assertion.Conditions == nil {
+		return fmt.Errorf("assertion has no Conditions")
+	}
 	for _, subjectConfirmation := range assertion.Subject.SubjectConfirmations {
+		if subjectConfirmation.SubjectConfirmationData == nil {
+			return fmt.Errorf("assertion SubjectConfirmation has no SubjectConfirmationData")
+		}
 		requestIDvalid := false
 
 		// We *DO NOT* validate InResponseTo when AllowIDPInitiated is set. Here's why:
@@ -1728,7 +1737,7 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 	if resp.IssueInstant.Add(MaxIssueDelay).Before(now) {
 		return fmt.Errorf("issueInstant expired at %s", resp.IssueInstant.Add(MaxIssueDelay))
 	}
-	if resp.Issuer.Value != sp.IDPMetadata.EntityID {
+	if resp.Issuer == nil || resp.Issuer.Value != sp.IDPMetadata.EntityID {
 		return fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
 	}
 	if resp.Status.StatusCode.Value != StatusSuccess {
