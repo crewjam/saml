@@ -129,7 +129,7 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 
 	nameIDFormats := idp.NameIDFormats
 	if len(nameIDFormats) == 0 {
-		nameIDFormats = []NameIDFormat{NameIDFormat("urn:oasis:names:tc:SAML:2.0:nameid-format:transient")}
+		nameIDFormats = []NameIDFormat{TransientNameIDFormat}
 	}
 
 	ed := &EntityDescriptor{

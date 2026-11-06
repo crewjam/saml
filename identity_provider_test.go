@@ -228,8 +228,8 @@ func TestIDPCanProduceMetadata(t *testing.T) {
 func TestIDPCanAdvertiseCustomNameIDFormats(t *testing.T) {
 	test := NewIdentityProviderTest(t, applyKey)
 	test.IDP.NameIDFormats = []NameIDFormat{
-		NameIDFormat("urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"),
-		NameIDFormat("urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"),
+		EmailAddressNameIDFormat,
+		PersistentNameIDFormat,
 	}
 	got := test.IDP.Metadata().IDPSSODescriptors[0].NameIDFormats
 	assert.Check(t, is.DeepEqual(test.IDP.NameIDFormats, got))
