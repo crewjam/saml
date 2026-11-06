@@ -1232,6 +1232,9 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 			return fmt.Errorf("assertion SubjectConfirmationData is expired")
 		}
 	}
+	if !hasBearerSubjectConfirmation(assertion.Subject) {
+		return fmt.Errorf("assertion has no bearer SubjectConfirmation")
+	}
 	if assertion.Conditions.NotBefore.Add(-MaxClockSkew).After(now) {
 		return fmt.Errorf("assertion Conditions is not yet valid")
 	}
@@ -1245,6 +1248,26 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	return nil
 }
 
+// bearerSubjectConfirmationMethod is the SubjectConfirmation Method of the
+// SAML web browser SSO profile.
+const bearerSubjectConfirmationMethod = "urn:oasis:names:tc:SAML:2.0:cm:bearer"
+
+// hasBearerSubjectConfirmation reports whether subject has the bearer
+// SubjectConfirmation the web browser SSO profile requires (saml-profiles
+// §4.1.4.2). Without one, the Recipient, InResponseTo and expiry checks on
+// SubjectConfirmationData never run.
+func hasBearerSubjectConfirmation(subject *Subject) bool {
+	if subject == nil {
+		return false
+	}
+	for _, subjectConfirmation := range subject.SubjectConfirmations {
+		if subjectConfirmation.Method == bearerSubjectConfirmationMethod {
+			return true
+		}
+	}
+	return false
+}
+
 func (sp *ServiceProvider) validateAudienceRestriction(assertion *Assertion) error {
 	if sp.ValidateAudienceRestriction != nil {
 		if err := sp.ValidateAudienceRestriction(assertion); err != nil {
@@ -1253,8 +1276,13 @@ func (sp *ServiceProvider) validateAudienceRestriction(assertion *Assertion) err
 		return nil
 	}
 
-	audienceRestrictionsValid := len(assertion.Conditions.AudienceRestrictions) == 0
 	audience := firstSet(sp.EntityID, sp.MetadataURL.String())
+	// An assertion with no AudienceRestriction is valid at every service
+	// provider trusting the IdP, so one naming this SP is required.
+	if len(assertion.Conditions.AudienceRestrictions) == 0 {
+		return fmt.Errorf("assertion Conditions has no AudienceRestriction for %q", audience)
+	}
+	audienceRestrictionsValid := false
 	for _, audienceRestriction := range assertion.Conditions.AudienceRestrictions {
 		if audienceRestriction.Audience.Value == audience {
 			audienceRestrictionsValid = true
