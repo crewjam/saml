@@ -991,7 +991,7 @@ func (req *IdpAuthnRequest) WriteResponse(w http.ResponseWriter) error {
 func (req *IdpAuthnRequest) getSPEncryptionCert() (*x509.Certificate, error) {
 	certStr := ""
 	for _, keyDescriptor := range req.SPSSODescriptor.KeyDescriptors {
-		if keyDescriptor.Use == "encryption" {
+		if keyDescriptor.Use == "encryption" && len(keyDescriptor.KeyInfo.X509Data.X509Certificates) != 0 {
 			certStr = keyDescriptor.KeyInfo.X509Data.X509Certificates[0].Data
 			break
 		}
