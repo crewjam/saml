@@ -11,8 +11,8 @@ import (
 	"net/url"
 	"testing"
 
-	"gotest.tools/assert"
-	"gotest.tools/golden"
+	"gotest.tools/v3/assert"
+	"gotest.tools/v3/golden"
 )
 
 type mockTransport func(req *http.Request) (*http.Response, error)

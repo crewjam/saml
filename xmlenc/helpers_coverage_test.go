@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"gotest.tools/assert"
+	"gotest.tools/v3/assert"
 )
 
 var errCovRand = errors.New("cov: rand failed")

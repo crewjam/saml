@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/beevik/etree"
-	"gotest.tools/assert"
+	"gotest.tools/v3/assert"
 )
 
 // TestRegisteredDigestMethodURIs asserts that the digest methods are registered
