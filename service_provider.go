@@ -161,6 +161,35 @@ type ServiceProvider struct {
 	// ValidateRequestID allows you to override the default request ID validation.
 	// If nil, the default request ID validation is used.
 	ValidateRequestID func(response Response, possibleRequestIDs []string) error
+
+	// Clock, if non-nil, is the time source for everything this
+	// ServiceProvider does that depends on the current time: timestamps on
+	// the requests and metadata it issues, assertion and logout message time
+	// checks, and certificate validity during XML and redirect binding
+	// signature validation.
+	//
+	// If nil, the package-level TimeNow and Clock are used. Setting this
+	// field instead of replacing those globals allows ServiceProviders with
+	// different clocks to be used concurrently, for example in parallel
+	// tests.
+	Clock *dsig.Clock
+}
+
+// now returns the current time as seen by this ServiceProvider.
+func (sp *ServiceProvider) now() time.Time {
+	if sp.Clock != nil {
+		return sp.Clock.Now().UTC()
+	}
+	return TimeNow()
+}
+
+// dsigClock returns the clock to use for signature validation. It may be
+// nil, in which case dsig uses the real clock.
+func (sp *ServiceProvider) dsigClock() *dsig.Clock {
+	if sp.Clock != nil {
+		return sp.Clock
+	}
+	return Clock
 }
 
 // MaxIssueDelay is the longest allowed time between when a SAML assertion is
@@ -188,7 +217,7 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 
 	authnRequestsSigned := len(sp.SignatureMethod) > 0
 	wantAssertionsSigned := true
-	validUntil := TimeNow().Add(validDuration)
+	validUntil := sp.now().Add(validDuration)
 
 	var keyDescriptors []KeyDescriptor
 	if sp.Certificate != nil {
@@ -461,7 +490,7 @@ func fingerprintFormat(fp []byte) (string, error) {
 func (sp *ServiceProvider) MakeArtifactResolveRequest(artifactID string) (*ArtifactResolve, error) {
 	req := ArtifactResolve{
 		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
-		IssueInstant: TimeNow(),
+		IssueInstant: sp.now(),
 		Version:      "2.0",
 		Issuer: &Issuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
@@ -490,7 +519,7 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding stri
 		Destination:                 idpURL,
 		ProtocolBinding:             resultBinding, // default binding for the response
 		ID:                          fmt.Sprintf("id-%x", randomBytes(20)),
-		IssueInstant:                TimeNow(),
+		IssueInstant:                sp.now(),
 		Version:                     "2.0",
 		Issuer: &Issuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
@@ -718,7 +747,7 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 }
 
 func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID string, possibleRequestIDs []string) (*Assertion, error) {
-	retErr := &InvalidResponseError{Now: TimeNow()}
+	retErr := &InvalidResponseError{Now: sp.now()}
 
 	artifactResolveRequest, err := sp.MakeArtifactResolveRequest(artifactID)
 	if err != nil {
@@ -772,7 +801,7 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 
 func (sp *ServiceProvider) parseResponseHTTP(req *http.Request, possibleRequestIDs []string) (*Assertion, error) {
 	retErr := &InvalidResponseError{
-		Now: TimeNow(),
+		Now: sp.now(),
 	}
 
 	rawResponseBuf, err := base64.StdEncoding.DecodeString(req.PostForm.Get("SAMLResponse"))
@@ -799,7 +828,7 @@ func (sp *ServiceProvider) parseResponseHTTP(req *http.Request, possibleRequestI
 // failed. However, to discourage inadvertent disclosure the diagnostic
 // information, the Error() method returns a static string.
 func (sp *ServiceProvider) ParseXMLArtifactResponse(soapResponseXML []byte, possibleRequestIDs []string, artifactRequestID string, currentURL url.URL) (*Assertion, error) {
-	now := TimeNow()
+	now := sp.now()
 	retErr := &InvalidResponseError{
 		Response: string(soapResponseXML),
 		Now:      now,
@@ -910,7 +939,7 @@ func (sp *ServiceProvider) parseArtifactResponse(artifactResponseEl *etree.Eleme
 // failed. However, to discourage inadvertent disclosure the diagnostic
 // information, the Error() method returns a static string.
 func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleRequestIDs []string, currentURL url.URL) (*Assertion, error) {
-	now := TimeNow()
+	now := sp.now()
 	var err error
 	retErr := &InvalidResponseError{
 		Now:      now,
@@ -1310,8 +1339,8 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 
 	validationContext := dsig.NewDefaultValidationContext(&certificateStore)
 	validationContext.IdAttribute = "ID"
-	if Clock != nil {
-		validationContext.Clock = Clock
+	if clock := sp.dsigClock(); clock != nil {
+		validationContext.Clock = clock
 	}
 
 	// Some SAML responses contain a RSAKeyValue element. One of two things is happening here:
@@ -1389,7 +1418,7 @@ func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string) (*LogoutRequ
 func (sp *ServiceProvider) makeUnsignedLogoutRequest(idpURL, nameID string) *LogoutRequest {
 	return &LogoutRequest{
 		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
-		IssueInstant: TimeNow(),
+		IssueInstant: sp.now(),
 		Version:      "2.0",
 		Destination:  idpURL,
 		Issuer: &Issuer{
@@ -1518,7 +1547,7 @@ func (sp *ServiceProvider) makeUnsignedLogoutResponse(idpURL, logoutRequestID st
 		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
 		InResponseTo: logoutRequestID,
 		Version:      "2.0",
-		IssueInstant: TimeNow(),
+		IssueInstant: sp.now(),
 		Destination:  idpURL,
 		Issuer: &Issuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
@@ -1681,7 +1710,7 @@ func (sp *ServiceProvider) ValidateLogoutResponseRequest(req *http.Request) erro
 // ValidateLogoutResponseForm returns a nil error if the logout response is valid.
 func (sp *ServiceProvider) ValidateLogoutResponseForm(postFormData string) error {
 	retErr := &InvalidResponseError{
-		Now: TimeNow(),
+		Now: sp.now(),
 	}
 
 	rawResponseBuf, err := base64.StdEncoding.DecodeString(postFormData)
@@ -1739,7 +1768,7 @@ func (sp *ServiceProvider) ValidateLogoutResponseRedirect(queryParameterData str
 // via the HTTP-Redirect binding. rawQuery is the URL's raw query string.
 func (sp *ServiceProvider) validateLogoutResponseRedirectQuery(rawQuery string) error {
 	retErr := &InvalidResponseError{
-		Now: TimeNow(),
+		Now: sp.now(),
 	}
 
 	root, err := sp.readRedirectBindingMessage(rawQuery, redirectParamSAMLResponse, retErr)
@@ -1761,7 +1790,7 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 		return fmt.Errorf("`Destination` does not match SloURL (expected %q)", sp.SloURL.String())
 	}
 
-	now := TimeNow()
+	now := sp.now()
 	if resp.IssueInstant.Add(MaxIssueDelay).Before(now) {
 		return fmt.Errorf("issueInstant expired at %s", resp.IssueInstant.Add(MaxIssueDelay))
 	}
@@ -1804,7 +1833,7 @@ func (sp *ServiceProvider) ValidateLogoutRequest(req *http.Request) (*LogoutRequ
 // It returns the request only if it is valid.
 func (sp *ServiceProvider) ValidateLogoutRequestForm(postFormData string) (*LogoutRequest, error) {
 	retErr := &InvalidResponseError{
-		Now: TimeNow(),
+		Now: sp.now(),
 	}
 
 	rawRequestBuf, err := base64.StdEncoding.DecodeString(postFormData)
@@ -1840,7 +1869,7 @@ func (sp *ServiceProvider) ValidateLogoutRequestForm(postFormData string) (*Logo
 // the HTTP-Redirect binding. rawQuery is the URL's raw query string.
 func (sp *ServiceProvider) validateLogoutRequestRedirectQuery(rawQuery string) (*LogoutRequest, error) {
 	retErr := &InvalidResponseError{
-		Now: TimeNow(),
+		Now: sp.now(),
 	}
 
 	root, err := sp.readRedirectBindingMessage(rawQuery, redirectParamSAMLRequest, retErr)
@@ -1870,7 +1899,7 @@ func (sp *ServiceProvider) validateLogoutRequest(req *LogoutRequest) error {
 		return fmt.Errorf("`Destination` does not match SloURL (expected %q)", sp.SloURL.String())
 	}
 
-	now := TimeNow()
+	now := sp.now()
 	if req.IssueInstant.Add(MaxIssueDelay).Before(now) {
 		return fmt.Errorf("issueInstant expired at %s", req.IssueInstant.Add(MaxIssueDelay))
 	}

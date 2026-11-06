@@ -182,7 +182,7 @@ func (sp *ServiceProvider) verifyRedirectBindingSignature(m *redirectBindingMess
 		return fmt.Errorf("cannot validate signature: %w", err)
 	}
 
-	now := Clock.Now()
+	now := sp.dsigClock().Now()
 	var lastErr error
 	for _, cert := range certs {
 		if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
