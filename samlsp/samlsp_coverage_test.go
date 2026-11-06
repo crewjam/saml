@@ -213,6 +213,17 @@ func TestCovDefaultServiceProvider(t *testing.T) {
 	assert.Check(t, is.Equal("", sp.SignatureMethod))
 	assert.Check(t, is.Equal("/home", sp.DefaultRedirectURI))
 	assert.Check(t, is.DeepEqual([]string{saml.HTTPPostBinding}, sp.LogoutBindings))
+	assert.Check(t, is.Nil(sp.AssertionConsumerServiceBindings))
+
+	sp = DefaultServiceProvider(Options{
+		URL:                              mustParseURL("https://sp.example.com/"),
+		Key:                              key,
+		AssertionConsumerServiceBindings: []string{saml.HTTPPostBinding},
+	})
+	assert.Check(t, is.DeepEqual([]string{saml.HTTPPostBinding}, sp.AssertionConsumerServiceBindings))
+	acs := sp.Metadata().SPSSODescriptors[0].AssertionConsumerServices
+	assert.Check(t, is.Len(acs, 1))
+	assert.Check(t, is.Equal(saml.HTTPPostBinding, acs[0].Binding))
 }
 
 func TestCovNew(t *testing.T) {

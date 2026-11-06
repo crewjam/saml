@@ -36,6 +36,11 @@ type Options struct {
 	CookieName            string
 	RelayStateFunc        func(w http.ResponseWriter, r *http.Request) string
 	LogoutBindings        []string
+
+	// AssertionConsumerServiceBindings specify the bindings advertised for the
+	// AssertionConsumerService endpoint in the SP metadata. If empty, both
+	// HTTP-POST and HTTP-Artifact bindings are advertised.
+	AssertionConsumerServiceBindings []string
 }
 
 func getDefaultSigningMethod(signer crypto.Signer) jwt.SigningMethod {
@@ -155,6 +160,8 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		AllowIDPInitiated:     opts.AllowIDPInitiated,
 		DefaultRedirectURI:    opts.DefaultRedirectURI,
 		LogoutBindings:        opts.LogoutBindings,
+
+		AssertionConsumerServiceBindings: opts.AssertionConsumerServiceBindings,
 	}
 }
 
