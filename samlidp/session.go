@@ -114,14 +114,26 @@ var defaultLoginFormTemplate = template.Must(template.New("saml-post-form").Pars
 	`</form>` +
 	`</html>`))
 
-// sendLoginForm produces a form which requests a username and password and directs the user
-// back to the IDP authorize URL to restart the SAML login flow, this time establishing a
-// session based on the credentials that were provided.
+// sendLoginForm produces a form which requests a username and password. If the form is
+// shown during an SP-initiated flow, it directs the user back to the IDP SSO URL to restart
+// the SAML login flow, this time establishing a session based on the credentials that were
+// provided. Otherwise it posts to the IDP login URL.
 func (s *Server) sendLoginForm(w http.ResponseWriter, req *saml.IdpAuthnRequest, toast string) {
 	tmpl := s.LoginFormTemplate
 	if tmpl == nil {
 		tmpl = defaultLoginFormTemplate
 	}
+
+	// When the form is shown in the middle of an SP-initiated flow, it must post
+	// back to the SSO endpoint together with the original SAMLRequest so that
+	// ServeSSO can authenticate the user and finish the flow. Posting it to the
+	// login endpoint instead would only establish a session and reply with JSON,
+	// leaving the user stranded at the IdP.
+	formURL := req.IDP.LoginURL
+	if len(req.RequestBuffer) > 0 {
+		formURL = req.IDP.SSOURL
+	}
+
 	data := struct {
 		Toast       string
 		URL         string
@@ -129,7 +141,7 @@ func (s *Server) sendLoginForm(w http.ResponseWriter, req *saml.IdpAuthnRequest,
 		RelayState  string
 	}{
 		Toast:       toast,
-		URL:         req.IDP.LoginURL.String(),
+		URL:         formURL.String(),
 		SAMLRequest: base64.StdEncoding.EncodeToString(req.RequestBuffer),
 		RelayState:  req.RelayState,
 	}
