@@ -805,7 +805,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 			},
 			SubjectConfirmations: []SubjectConfirmation{
 				{
-					Method: "urn:oasis:names:tc:SAML:2.0:cm:bearer",
+					Method: bearerSubjectConfirmationMethod,
 					SubjectConfirmationData: &SubjectConfirmationData{
 						Address:      req.HTTPRequest.RemoteAddr,
 						InResponseTo: req.Request.ID,
