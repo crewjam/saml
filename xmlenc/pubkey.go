@@ -197,7 +197,10 @@ func PKCS1v15() RSA {
 	}
 }
 
+// PKCS1v15 is not registered as a decrypter. RSA PKCS#1 v1.5 key transport is
+// open to Bleichenbacher padding-oracle attacks, so a document naming rsa-1_5
+// gets ErrAlgorithmNotImplemented. Service provider metadata advertises
+// rsa-oaep-mgf1p only.
 func init() {
 	RegisterDecrypter(OAEP())
-	RegisterDecrypter(PKCS1v15())
 }
