@@ -20,7 +20,6 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/beevik/etree"
@@ -284,57 +283,15 @@ func (sp *ServiceProvider) MakeRedirectAuthenticationRequest(relayState string) 
 	return req.Redirect(relayState, sp)
 }
 
-// Redirect returns a URL suitable for using the redirect binding with the request
+// Redirect returns a URL suitable for using the redirect binding with the request.
+// If sp.SignatureMethod is set, the query string is signed as described in
+// saml-bindings-2.0-os section 3.4.4.1.
 func (r *AuthnRequest) Redirect(relayState string, sp *ServiceProvider) (*url.URL, error) {
-	var requestStr strings.Builder
-	base64Writer := base64.NewEncoder(base64.StdEncoding, &requestStr)
-	compressedWriter, _ := flate.NewWriter(base64Writer, 9)
-	doc := etree.NewDocument()
-	doc.SetRoot(r.Element())
-	if _, err := doc.WriteTo(compressedWriter); err != nil {
-		return nil, err
-	}
-	if err := compressedWriter.Close(); err != nil {
-		return nil, err
-	}
-	if err := base64Writer.Close(); err != nil {
-		return nil, err
-	}
-
-	rv, err := url.Parse(r.Destination)
+	encoded, err := deflateAndEncode(r.Element())
 	if err != nil {
 		return nil, err
 	}
-
-	// We can't depend on Query().set() as order matters for signing
-	query := rv.RawQuery
-	if len(query) > 0 {
-		query += "&SAMLRequest=" + url.QueryEscape(requestStr.String())
-	} else {
-		query += "SAMLRequest=" + url.QueryEscape(requestStr.String())
-	}
-
-	if relayState != "" {
-		query += "&RelayState=" + relayState
-	}
-	if len(sp.SignatureMethod) > 0 {
-		query += "&SigAlg=" + url.QueryEscape(sp.SignatureMethod)
-		signingContext, err := GetSigningContext(sp)
-
-		if err != nil {
-			return nil, err
-		}
-
-		sig, err := signingContext.SignString(query)
-		if err != nil {
-			return nil, err
-		}
-		query += "&Signature=" + url.QueryEscape(base64.StdEncoding.EncodeToString(sig))
-	}
-
-	rv.RawQuery = query
-
-	return rv, nil
+	return sp.redirectBindingURL(r.Destination, redirectParamSAMLRequest, encoded, relayState)
 }
 
 // GetSSOBindingLocation returns URL for the IDP's Single Sign On Service binding
@@ -1416,10 +1373,21 @@ func (sp *ServiceProvider) SignLogoutRequest(req *LogoutRequest) error {
 	return nil
 }
 
-// MakeLogoutRequest produces a new LogoutRequest object for idpURL.
+// MakeLogoutRequest produces a new LogoutRequest object for idpURL. If
+// sp.SignatureMethod is set, the request carries an enveloped XML signature,
+// which is what the HTTP-POST binding uses.
 func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string) (*LogoutRequest, error) {
+	req := sp.makeUnsignedLogoutRequest(idpURL, nameID)
+	if sp.SignatureMethod != "" {
+		if err := sp.SignLogoutRequest(req); err != nil {
+			return nil, err
+		}
+	}
+	return req, nil
+}
 
-	req := LogoutRequest{
+func (sp *ServiceProvider) makeUnsignedLogoutRequest(idpURL, nameID string) *LogoutRequest {
+	return &LogoutRequest{
 		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
 		IssueInstant: TimeNow(),
 		Version:      "2.0",
@@ -1435,26 +1403,28 @@ func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string) (*LogoutRequ
 			SPNameQualifier: sp.Metadata().EntityID,
 		},
 	}
-	if sp.SignatureMethod != "" {
-		if err := sp.SignLogoutRequest(&req); err != nil {
-			return nil, err
-		}
-	}
-	return &req, nil
 }
 
-// MakeRedirectLogoutRequest creates a SAML authentication request using
-// the HTTP-Redirect binding. It returns a URL that we will redirect the user to
-// in order to start the auth process.
+// MakeRedirectLogoutRequest creates a SAML LogoutRequest using the
+// HTTP-Redirect binding. It returns a URL that we will redirect the user to
+// in order to start the logout process.
+//
+// If sp.SignatureMethod is set, the request is signed with a query string
+// signature (SigAlg and Signature parameters) as the binding requires
+// (saml-bindings-2.0-os section 3.4.4.1), rather than with an enveloped XML
+// signature.
 func (sp *ServiceProvider) MakeRedirectLogoutRequest(nameID, relayState string) (*url.URL, error) {
-	req, err := sp.MakeLogoutRequest(sp.GetSLOBindingLocation(HTTPRedirectBinding), nameID)
+	req := sp.makeUnsignedLogoutRequest(sp.GetSLOBindingLocation(HTTPRedirectBinding), nameID)
+	encoded, err := deflateAndEncode(req.Element())
 	if err != nil {
 		return nil, err
 	}
-	return req.Redirect(relayState), nil
+	return sp.redirectBindingURL(req.Destination, redirectParamSAMLRequest, encoded, relayState)
 }
 
-// Redirect returns a URL suitable for using the redirect binding with the request
+// Redirect returns a URL suitable for using the redirect binding with the
+// request. The URL carries no query string signature; use
+// ServiceProvider.MakeRedirectLogoutRequest to produce a signed one.
 func (r *LogoutRequest) Redirect(relayState string) *url.URL {
 	w := &bytes.Buffer{}
 	w1 := base64.NewEncoder(base64.StdEncoding, w)
@@ -1530,9 +1500,21 @@ func (r *LogoutRequest) Post(relayState string) []byte {
 	return rv.Bytes()
 }
 
-// MakeLogoutResponse produces a new LogoutResponse object for idpURL and logoutRequestID.
+// MakeLogoutResponse produces a new LogoutResponse object for idpURL and
+// logoutRequestID. If sp.SignatureMethod is set, the response carries an
+// enveloped XML signature, which is what the HTTP-POST binding uses.
 func (sp *ServiceProvider) MakeLogoutResponse(idpURL, logoutRequestID string) (*LogoutResponse, error) {
-	response := LogoutResponse{
+	response := sp.makeUnsignedLogoutResponse(idpURL, logoutRequestID)
+	if sp.SignatureMethod != "" {
+		if err := sp.SignLogoutResponse(response); err != nil {
+			return nil, err
+		}
+	}
+	return response, nil
+}
+
+func (sp *ServiceProvider) makeUnsignedLogoutResponse(idpURL, logoutRequestID string) *LogoutResponse {
+	return &LogoutResponse{
 		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
 		InResponseTo: logoutRequestID,
 		Version:      "2.0",
@@ -1548,27 +1530,28 @@ func (sp *ServiceProvider) MakeLogoutResponse(idpURL, logoutRequestID string) (*
 			},
 		},
 	}
-
-	if sp.SignatureMethod != "" {
-		if err := sp.SignLogoutResponse(&response); err != nil {
-			return nil, err
-		}
-	}
-	return &response, nil
 }
 
 // MakeRedirectLogoutResponse creates a SAML LogoutResponse using
 // the HTTP-Redirect binding. It returns a URL that we will redirect the user to
 // for LogoutResponse.
+//
+// If sp.SignatureMethod is set, the response is signed with a query string
+// signature (SigAlg and Signature parameters) as the binding requires
+// (saml-bindings-2.0-os section 3.4.4.1), rather than with an enveloped XML
+// signature.
 func (sp *ServiceProvider) MakeRedirectLogoutResponse(logoutRequestID, relayState string) (*url.URL, error) {
-	resp, err := sp.MakeLogoutResponse(sp.GetSLOBindingLocation(HTTPRedirectBinding), logoutRequestID)
+	resp := sp.makeUnsignedLogoutResponse(sp.GetSLOBindingLocation(HTTPRedirectBinding), logoutRequestID)
+	encoded, err := deflateAndEncode(resp.Element())
 	if err != nil {
 		return nil, err
 	}
-	return resp.Redirect(relayState), nil
+	return sp.redirectBindingURL(resp.Destination, redirectParamSAMLResponse, encoded, relayState)
 }
 
-// Redirect returns a URL suitable for using the redirect binding with the LogoutResponse.
+// Redirect returns a URL suitable for using the redirect binding with the
+// LogoutResponse. The URL carries no query string signature; use
+// ServiceProvider.MakeRedirectLogoutResponse to produce a signed one.
 func (r *LogoutResponse) Redirect(relayState string) *url.URL {
 	w := &bytes.Buffer{}
 	w1 := base64.NewEncoder(base64.StdEncoding, w)
@@ -1676,10 +1659,15 @@ func (sp *ServiceProvider) nameIDFormat() string {
 	return nameIDFormat
 }
 
-// ValidateLogoutResponseRequest validates the LogoutResponse content from the request
+// ValidateLogoutResponseRequest validates the LogoutResponse content from the
+// request, which may use either the HTTP-Redirect or the HTTP-POST binding.
+//
+// With the HTTP-Redirect binding the response must be signed, either with a
+// query string signature (SigAlg and Signature parameters) or with an
+// enveloped XML signature.
 func (sp *ServiceProvider) ValidateLogoutResponseRequest(req *http.Request) error {
 	if data := req.URL.Query().Get("SAMLResponse"); data != "" {
-		return sp.ValidateLogoutResponseRedirect(data)
+		return sp.validateLogoutResponseRedirectQuery(req.URL.RawQuery)
 	}
 
 	err := req.ParseForm()
@@ -1732,48 +1720,35 @@ func (sp *ServiceProvider) ValidateLogoutResponseForm(postFormData string) error
 }
 
 // ValidateLogoutResponseRedirect returns a nil error if the logout response is valid.
+// queryParameterData is the URL-decoded value of the SAMLResponse query
+// parameter.
+//
+// Because it only receives the SAMLResponse value, this method cannot check a
+// query string signature and therefore requires the response to carry an
+// enveloped XML signature. Most IDPs sign HTTP-Redirect binding messages with
+// a query string signature instead (as saml-bindings-2.0-os section 3.4.4.1
+// requires); use ValidateLogoutResponseRequest to accept those.
 //
 // URL Binding appears to be gzip / flate encoded
 // See https://www.oasis-open.org/committees/download.php/20645/sstc-saml-tech-overview-2%200-draft-10.pdf  6.6
 func (sp *ServiceProvider) ValidateLogoutResponseRedirect(queryParameterData string) error {
+	return sp.validateLogoutResponseRedirectQuery(redirectParamSAMLResponse + "=" + url.QueryEscape(queryParameterData))
+}
+
+// validateLogoutResponseRedirectQuery validates a LogoutResponse received
+// via the HTTP-Redirect binding. rawQuery is the URL's raw query string.
+func (sp *ServiceProvider) validateLogoutResponseRedirectQuery(rawQuery string) error {
 	retErr := &InvalidResponseError{
 		Now: TimeNow(),
 	}
 
-	rawResponseBuf, err := base64.StdEncoding.DecodeString(queryParameterData)
+	root, err := sp.readRedirectBindingMessage(rawQuery, redirectParamSAMLResponse, retErr)
 	if err != nil {
-		retErr.PrivateErr = fmt.Errorf("unable to parse base64: %s", err)
-		return retErr
-	}
-	retErr.Response = string(rawResponseBuf)
-
-	gr, err := io.ReadAll(newSaferFlateReader(bytes.NewBuffer(rawResponseBuf)))
-	if err != nil {
-		retErr.PrivateErr = err
-		return retErr
-	}
-
-	if err := xrv.Validate(bytes.NewReader(gr)); err != nil {
 		return err
 	}
 
-	doc := etree.NewDocument()
-	if err := doc.ReadFromBytes(gr); err != nil {
-		retErr.PrivateErr = err
-		return retErr
-	}
-	if doc.Root() == nil {
-		retErr.PrivateErr = errors.New("invalid xml: no root")
-		return retErr
-	}
-
-	if err := sp.validateSignature(doc.Root()); err != nil {
-		retErr.PrivateErr = err
-		return retErr
-	}
-
 	var resp LogoutResponse
-	if err := unmarshalElement(doc.Root(), &resp); err != nil {
+	if err := unmarshalElement(root, &resp); err != nil {
 		retErr.PrivateErr = err
 		return retErr
 	}
@@ -1795,6 +1770,121 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 	}
 	if resp.Status.StatusCode.Value != StatusSuccess {
 		return fmt.Errorf("status code was not %s", StatusSuccess)
+	}
+
+	return nil
+}
+
+// ValidateLogoutRequest validates a LogoutRequest sent by the IDP (IDP
+// initiated single logout), using either the HTTP-Redirect or the HTTP-POST
+// binding. It returns the request only if it is valid.
+//
+// The request must be signed by the IDP. With the HTTP-Redirect binding that
+// is either a query string signature (SigAlg and Signature parameters) or an
+// enveloped XML signature; with the HTTP-POST binding it is an enveloped XML
+// signature.
+//
+// The caller should end the session identified by the returned request's
+// NameID (and SessionIndex, if present) and then answer the IDP, for example
+// with MakeRedirectLogoutResponse(req.ID, relayState).
+func (sp *ServiceProvider) ValidateLogoutRequest(req *http.Request) (*LogoutRequest, error) {
+	if data := req.URL.Query().Get(redirectParamSAMLRequest); data != "" {
+		return sp.validateLogoutRequestRedirectQuery(req.URL.RawQuery)
+	}
+
+	if err := req.ParseForm(); err != nil {
+		return nil, fmt.Errorf("unable to parse form: %v", err)
+	}
+
+	return sp.ValidateLogoutRequestForm(req.PostForm.Get(redirectParamSAMLRequest))
+}
+
+// ValidateLogoutRequestForm validates a LogoutRequest received via the
+// HTTP-POST binding. postFormData is the value of the SAMLRequest form field.
+// It returns the request only if it is valid.
+func (sp *ServiceProvider) ValidateLogoutRequestForm(postFormData string) (*LogoutRequest, error) {
+	retErr := &InvalidResponseError{
+		Now: TimeNow(),
+	}
+
+	rawRequestBuf, err := base64.StdEncoding.DecodeString(postFormData)
+	if err != nil {
+		retErr.PrivateErr = fmt.Errorf("unable to parse base64: %s", err)
+		return nil, retErr
+	}
+	retErr.Response = string(rawRequestBuf)
+
+	if err := xrv.Validate(bytes.NewReader(rawRequestBuf)); err != nil {
+		return nil, fmt.Errorf("request contains invalid XML: %s", err)
+	}
+
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(rawRequestBuf); err != nil {
+		retErr.PrivateErr = err
+		return nil, retErr
+	}
+	if doc.Root() == nil {
+		retErr.PrivateErr = errors.New("invalid xml: no root")
+		return nil, retErr
+	}
+
+	if err := sp.validateSignature(doc.Root()); err != nil {
+		retErr.PrivateErr = err
+		return nil, retErr
+	}
+
+	return sp.unmarshalAndValidateLogoutRequest(doc.Root(), retErr)
+}
+
+// validateLogoutRequestRedirectQuery validates a LogoutRequest received via
+// the HTTP-Redirect binding. rawQuery is the URL's raw query string.
+func (sp *ServiceProvider) validateLogoutRequestRedirectQuery(rawQuery string) (*LogoutRequest, error) {
+	retErr := &InvalidResponseError{
+		Now: TimeNow(),
+	}
+
+	root, err := sp.readRedirectBindingMessage(rawQuery, redirectParamSAMLRequest, retErr)
+	if err != nil {
+		return nil, err
+	}
+
+	return sp.unmarshalAndValidateLogoutRequest(root, retErr)
+}
+
+func (sp *ServiceProvider) unmarshalAndValidateLogoutRequest(root *etree.Element, retErr *InvalidResponseError) (*LogoutRequest, error) {
+	var req LogoutRequest
+	if err := unmarshalElement(root, &req); err != nil {
+		retErr.PrivateErr = err
+		return nil, retErr
+	}
+	if err := sp.validateLogoutRequest(&req); err != nil {
+		retErr.PrivateErr = err
+		return nil, retErr
+	}
+	return &req, nil
+}
+
+// validateLogoutRequest validates the LogoutRequest fields. Returns a nil error if the LogoutRequest is valid.
+func (sp *ServiceProvider) validateLogoutRequest(req *LogoutRequest) error {
+	if req.Destination != sp.SloURL.String() {
+		return fmt.Errorf("`Destination` does not match SloURL (expected %q)", sp.SloURL.String())
+	}
+
+	now := TimeNow()
+	if req.IssueInstant.Add(MaxIssueDelay).Before(now) {
+		return fmt.Errorf("issueInstant expired at %s", req.IssueInstant.Add(MaxIssueDelay))
+	}
+	if req.IssueInstant.Add(-MaxClockSkew).After(now) {
+		return fmt.Errorf("issueInstant %s is in the future", req.IssueInstant)
+	}
+	if req.NotOnOrAfter != nil && !now.Before(req.NotOnOrAfter.Add(MaxClockSkew)) {
+		return fmt.Errorf("request expired at %s", req.NotOnOrAfter)
+	}
+	if req.Issuer == nil || req.Issuer.Value != sp.IDPMetadata.EntityID {
+		return fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
+	}
+	if req.NameID == nil || req.NameID.Value == "" {
+		return errors.New("request does not contain a NameID")
 	}
 
 	return nil
