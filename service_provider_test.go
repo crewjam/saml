@@ -1230,10 +1230,11 @@ func TestSPInvalidAssertions(t *testing.T) {
 	assertion = Assertion{}
 	assert.Check(t, xml.Unmarshal(assertionBuf, &assertion))
 
-	// Not having an audience is not an error
+	// Not having an audience is an error: the assertion would be valid at
+	// every service provider trusting the IdP.
 	assertion.Conditions.AudienceRestrictions = []AudienceRestriction{}
 	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
-	assert.Check(t, err)
+	assert.Check(t, is.Error(err, "assertion Conditions has no AudienceRestriction for \"https://15661444.ngrok.io/saml2/metadata\""))
 }
 
 func TestXswPermutationOneIsRejected(t *testing.T) {
