@@ -185,7 +185,7 @@ func (sp *ServiceProvider) verifyRedirectBindingSignature(m *redirectBindingMess
 	now := sp.dsigClock().Now()
 	var lastErr error
 	for _, cert := range certs {
-		if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
+		if !sp.IgnoreCertificateExpiry && (now.Before(cert.NotBefore) || now.After(cert.NotAfter)) {
 			lastErr = errors.New("certificate is not valid at this time")
 			continue
 		}

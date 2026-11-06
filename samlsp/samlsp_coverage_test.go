@@ -214,6 +214,10 @@ func TestCovDefaultServiceProvider(t *testing.T) {
 	assert.Check(t, is.Equal("/home", sp.DefaultRedirectURI))
 	assert.Check(t, is.DeepEqual([]string{saml.HTTPPostBinding}, sp.LogoutBindings))
 	assert.Check(t, is.Nil(sp.AssertionConsumerServiceBindings))
+	assert.Check(t, !sp.IgnoreCertificateExpiry)
+
+	sp = DefaultServiceProvider(Options{URL: mustParseURL("https://sp.example.com/"), Key: key, IgnoreCertificateExpiry: true})
+	assert.Check(t, sp.IgnoreCertificateExpiry)
 
 	sp = DefaultServiceProvider(Options{
 		URL:                              mustParseURL("https://sp.example.com/"),

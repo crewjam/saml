@@ -181,6 +181,19 @@ type ServiceProvider struct {
 	// different clocks to be used concurrently, for example in parallel
 	// tests.
 	Clock *dsig.Clock
+
+	// IgnoreCertificateExpiry, if true, disables the check that the IDP's
+	// signing certificate is within its validity period (NotBefore and
+	// NotAfter) when validating XML and HTTP-Redirect binding signatures.
+	// The signature must still be made by a key in one of the trusted IDP
+	// certificates.
+	//
+	// The SAML V2.0 Metadata Interoperability Profile treats certificates in
+	// metadata only as a container for a public key, and permits them to be
+	// expired or not yet valid. Some IDPs publish expired signing
+	// certificates as a result. Enabling this allows interoperating with
+	// them.
+	IgnoreCertificateExpiry bool
 }
 
 // now returns the current time as seen by this ServiceProvider.
@@ -1307,6 +1320,21 @@ func (sp *ServiceProvider) validateAudienceRestriction(assertion *Assertion) err
 	return nil
 }
 
+// withoutValidityPeriod returns copies of certs whose validity period covers
+// all time, so that dsig accepts them regardless of the current time. Only
+// the parsed NotBefore and NotAfter fields change; Raw and the public key are
+// unchanged, so the copies still match the certificates they came from.
+func withoutValidityPeriod(certs []*x509.Certificate) []*x509.Certificate {
+	rv := make([]*x509.Certificate, len(certs))
+	for i, cert := range certs {
+		c := *cert
+		c.NotBefore = time.Time{}
+		c.NotAfter = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
+		rv[i] = &c
+	}
+	return rv
+}
+
 var errSignatureElementNotPresent = errors.New("signature element not present")
 
 // validateSignature returns nil iff the Signature embedded in the element is valid
@@ -1341,6 +1369,10 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	}
 	if len(certs) == 0 {
 		return fmt.Errorf("cannot validate signature on %s: saml config not set up properly, specify either idp metadata url, fingerprints or actual certificate", el.Tag)
+	}
+
+	if sp.IgnoreCertificateExpiry {
+		certs = withoutValidityPeriod(certs)
 	}
 
 	certificateStore := dsig.MemoryX509CertificateStore{
