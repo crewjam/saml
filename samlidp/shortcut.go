@@ -110,7 +110,5 @@ func (s *Server) HandleIDPInitiated(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.idpConfigMu.RLock()
-	defer s.idpConfigMu.RUnlock()
 	s.IDP.ServeIDPInitiated(w, r, shortcut.ServiceProviderID, relayState)
 }
