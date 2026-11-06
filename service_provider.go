@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -555,6 +556,22 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding stri
 	return &req, nil
 }
 
+// IsSignerNil returns true if the signer is nil or a typed-nil (e.g., (*rsa.PrivateKey)(nil))
+// stored in a crypto.Signer interface). A typed-nil makes the interface non-nil, so a simple
+// == nil check won't catch it, but calling methods like Public() will still panic.
+// This also handles nilable non-pointer types like ed25519.PrivateKey (which is a slice).
+func IsSignerNil(key crypto.Signer) bool {
+	if key == nil {
+		return true
+	}
+	v := reflect.ValueOf(key)
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Map, reflect.Func, reflect.Chan, reflect.Interface:
+		return v.IsNil()
+	}
+	return false
+}
+
 // GetSigningContext returns a dsig.SigningContext initialized based on the Service Provider's configuration
 func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 	keyPair := tls.Certificate{
@@ -567,21 +584,28 @@ func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 	// 	keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
 	// }
 
+	// Validate that the key type matches the signature method.
+	// We check the public key type to support crypto.Signer implementations
+	// (like KMS/HSM signers) that aren't literal *rsa.PrivateKey or *ecdsa.PrivateKey.
+	if IsSignerNil(sp.Key) {
+		return nil, fmt.Errorf("signature method %s requires a non-nil private key", sp.SignatureMethod)
+	}
+	pubKey := sp.Key.Public()
 	switch sp.SignatureMethod {
 	case dsig.RSASHA1SignatureMethod,
 		dsig.RSASHA256SignatureMethod,
 		dsig.RSASHA384SignatureMethod,
 		dsig.RSASHA512SignatureMethod:
-		if _, ok := sp.Key.(*rsa.PrivateKey); !ok {
-			return nil, fmt.Errorf("signature method %s requires a key of type rsa.PrivateKey, not %T", sp.SignatureMethod, sp.Key)
+		if _, ok := pubKey.(*rsa.PublicKey); !ok {
+			return nil, fmt.Errorf("signature method %s requires an RSA key, got %T", sp.SignatureMethod, pubKey)
 		}
 
 	case dsig.ECDSASHA1SignatureMethod,
 		dsig.ECDSASHA256SignatureMethod,
 		dsig.ECDSASHA384SignatureMethod,
 		dsig.ECDSASHA512SignatureMethod:
-		if _, ok := sp.Key.(*ecdsa.PrivateKey); !ok {
-			return nil, fmt.Errorf("signature method %s requires a key of type ecdsa.PrivateKey, not %T", sp.SignatureMethod, sp.Key)
+		if _, ok := pubKey.(*ecdsa.PublicKey); !ok {
+			return nil, fmt.Errorf("signature method %s requires an ECDSA key, got %T", sp.SignatureMethod, pubKey)
 		}
 	default:
 		return nil, fmt.Errorf("invalid signing method %s", sp.SignatureMethod)
