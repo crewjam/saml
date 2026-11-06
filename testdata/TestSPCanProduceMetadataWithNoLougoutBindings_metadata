@@ -10,6 +10,7 @@
       <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes192-cbc"></EncryptionMethod>
       <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes256-cbc"></EncryptionMethod>
       <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"></EncryptionMethod>
+      <EncryptionMethod Algorithm="http://www.w3.org/2009/xmlenc11#rsa-oaep"></EncryptionMethod>
     </KeyDescriptor>
     <NameIDFormat></NameIDFormat>
     <AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://example.com/saml2/acs" index="1"></AssertionConsumerService>

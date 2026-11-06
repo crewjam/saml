@@ -120,10 +120,12 @@ type IdentityProvider struct {
 	// *x509.Certificate as the key. Use it to select the key transport,
 	// digest and block cipher, for example:
 	//
-	//	enc := xmlenc.OAEP()
-	//	enc.DigestMethod = xmlenc.SHA256
+	//	enc := xmlenc.OAEP_SHA256() // XML Encryption 1.1 RSA-OAEP
 	//	enc.BlockCipher = xmlenc.AES256GCM
 	//	idp.AssertionEncrypter = enc
+	//
+	// The service provider must support the algorithms chosen; those it
+	// supports are usually listed in its metadata.
 	//
 	// When nil, assertions are encrypted with RSA-OAEP-MGF1P using a SHA-1
 	// digest and AES-128-CBC, for compatibility with existing service
