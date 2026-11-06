@@ -226,6 +226,29 @@ func TestCovDefaultServiceProvider(t *testing.T) {
 	assert.Check(t, is.Equal(saml.HTTPPostBinding, acs[0].Binding))
 }
 
+func TestCovNewAssertionConsumerServiceBindings(t *testing.T) {
+	url := mustParseURL("https://sp.example.com/")
+	key := covRSAKey(t)
+
+	// artifact response requested but artifact binding not advertised
+	_, err := New(Options{URL: url, Key: key, UseArtifactResponse: true,
+		AssertionConsumerServiceBindings: []string{saml.HTTPPostBinding}})
+	assert.Check(t, is.ErrorContains(err, saml.HTTPArtifactBinding))
+
+	// POST response requested but POST binding not advertised
+	_, err = New(Options{URL: url, Key: key,
+		AssertionConsumerServiceBindings: []string{saml.HTTPArtifactBinding}})
+	assert.Check(t, is.ErrorContains(err, saml.HTTPPostBinding))
+
+	// consistent configurations
+	_, err = New(Options{URL: url, Key: key,
+		AssertionConsumerServiceBindings: []string{saml.HTTPPostBinding}})
+	assert.Check(t, err)
+	_, err = New(Options{URL: url, Key: key, UseArtifactResponse: true,
+		AssertionConsumerServiceBindings: []string{saml.HTTPArtifactBinding}})
+	assert.Check(t, err)
+}
+
 func TestCovNew(t *testing.T) {
 	m, err := New(Options{URL: mustParseURL("https://sp.example.com/"), Key: covRSAKey(t), UseArtifactResponse: true})
 	assert.Assert(t, err)

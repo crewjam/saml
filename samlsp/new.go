@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 
 	"github.com/golang-jwt/jwt/v5"
 	dsig "github.com/russellhaering/goxmldsig"
@@ -39,7 +40,10 @@ type Options struct {
 
 	// AssertionConsumerServiceBindings specify the bindings advertised for the
 	// AssertionConsumerService endpoint in the SP metadata. If empty, both
-	// HTTP-POST and HTTP-Artifact bindings are advertised.
+	// HTTP-POST and HTTP-Artifact bindings are advertised. If set, it must
+	// include the binding requested for responses (HTTP-Artifact when
+	// UseArtifactResponse is true, HTTP-POST otherwise), or New returns an
+	// error.
 	AssertionConsumerServiceBindings []string
 }
 
@@ -205,6 +209,11 @@ func New(opts Options) (*Middleware, error) {
 	m.RequestTracker = DefaultRequestTracker(opts, &m.ServiceProvider)
 	if opts.UseArtifactResponse {
 		m.ResponseBinding = saml.HTTPArtifactBinding
+	}
+
+	if len(opts.AssertionConsumerServiceBindings) > 0 &&
+		!slices.Contains(opts.AssertionConsumerServiceBindings, m.ResponseBinding) {
+		return nil, fmt.Errorf("samlsp: AssertionConsumerServiceBindings must include the response binding %q (set UseArtifactResponse to match)", m.ResponseBinding)
 	}
 
 	return m, nil
