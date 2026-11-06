@@ -173,3 +173,26 @@ func TestMetadataValidatesUrlSchemeForProtocolBinding(t *testing.T) {
 	err := xml.Unmarshal(buf, &metadata)
 	assert.Error(t, err, "invalid url scheme \"javascript\" for binding \"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\"")
 }
+
+func TestEntityDescriptorOmitsUnsetValidUntil(t *testing.T) {
+	// validUntil is optional; an unset value must not be rendered as the zero
+	// time (which consumers would treat as already-expired metadata).
+	buf, err := xml.Marshal(EntityDescriptor{EntityID: "https://sp.example.com/saml2/metadata"})
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(string(buf),
+		`<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://sp.example.com/saml2/metadata"></EntityDescriptor>`))
+
+	// Round-tripping metadata without validUntil must not introduce one.
+	var ed EntityDescriptor
+	assert.Check(t, xml.Unmarshal(buf, &ed))
+	assert.Check(t, ed.ValidUntil.IsZero())
+	buf2, err := xml.Marshal(ed)
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(string(buf), string(buf2)))
+
+	// A set validUntil is still emitted.
+	ed.ValidUntil = time.Date(2015, 12, 3, 1, 57, 9, 0, time.UTC)
+	buf, err = xml.Marshal(ed)
+	assert.Check(t, err)
+	assert.Check(t, is.Contains(string(buf), `validUntil="2015-12-03T01:57:09Z"`))
+}
