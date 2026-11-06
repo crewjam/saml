@@ -328,3 +328,21 @@ func TestLogoutRequestMarshalWithoutNotOnOrAfter(t *testing.T) {
 	assert.Check(t, err)
 	assert.Check(t, is.DeepEqual(expected, actual))
 }
+
+func TestAuthnContextUnmarshalAuthenticatingAuthority(t *testing.T) {
+	input := `<saml:AuthnContext xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">` +
+		`<saml:AuthnContextClassRef>value</saml:AuthnContextClassRef>` +
+		`<saml:AuthenticatingAuthority>value1</saml:AuthenticatingAuthority>` +
+		`<saml:AuthenticatingAuthority>value2</saml:AuthenticatingAuthority>` +
+		`</saml:AuthnContext>`
+
+	var actual AuthnContext
+	assert.Check(t, xml.Unmarshal([]byte(input), &actual))
+	assert.Check(t, is.DeepEqual(AuthnContext{
+		AuthnContextClassRef: &AuthnContextClassRef{Value: "value"},
+		AuthenticatingAuthorities: []AuthenticatingAuthority{
+			{Value: "value1"},
+			{Value: "value2"},
+		},
+	}, actual))
+}
