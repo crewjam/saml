@@ -15,8 +15,8 @@ import (
 
 	"github.com/beevik/etree"
 	dsig "github.com/russellhaering/goxmldsig"
-	"gotest.tools/assert"
-	"gotest.tools/golden"
+	"gotest.tools/v3/assert"
+	"gotest.tools/v3/golden"
 
 	"github.com/crewjam/saml/xmlenc"
 )
