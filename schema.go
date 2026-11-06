@@ -739,9 +739,9 @@ type Assertion struct {
 	Conditions   *Conditions
 	// Advice *Advice
 	// Statements []Statement
-	AuthnStatements []AuthnStatement `xml:"AuthnStatement"`
+	AuthnStatements []AuthnStatement `xml:"urn:oasis:names:tc:SAML:2.0:assertion AuthnStatement"`
 	// AuthzDecisionStatements []AuthzDecisionStatement
-	AttributeStatements []AttributeStatement `xml:"AttributeStatement"`
+	AttributeStatements []AttributeStatement `xml:"urn:oasis:names:tc:SAML:2.0:assertion AttributeStatement"`
 }
 
 // Element returns an etree.Element representing the object in XML form.
@@ -954,8 +954,8 @@ type Conditions struct {
 	NotBefore            time.Time             `xml:",attr"`
 	NotOnOrAfter         time.Time             `xml:",attr"`
 	AudienceRestrictions []AudienceRestriction `xml:"AudienceRestriction"`
-	OneTimeUse           *OneTimeUse
-	ProxyRestriction     *ProxyRestriction
+	OneTimeUse           *OneTimeUse           `xml:"urn:oasis:names:tc:SAML:2.0:assertion OneTimeUse"`
+	ProxyRestriction     *ProxyRestriction     `xml:"urn:oasis:names:tc:SAML:2.0:assertion ProxyRestriction"`
 }
 
 // Element returns an etree.Element representing the object in XML form.
@@ -1054,8 +1054,8 @@ func (a *OneTimeUse) Element() *etree.Element {
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf §2.5.1.6
 type ProxyRestriction struct {
-	Count     *int
-	Audiences []Audience
+	Count     *int       `xml:",attr,omitempty"`
+	Audiences []Audience `xml:"urn:oasis:names:tc:SAML:2.0:assertion Audience"`
 }
 
 // Element returns an etree.Element representing the object in XML form.
@@ -1074,11 +1074,11 @@ func (a *ProxyRestriction) Element() *etree.Element {
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf §2.7.2
 type AuthnStatement struct {
-	AuthnInstant        time.Time  `xml:",attr"`
-	SessionIndex        string     `xml:",attr"`
-	SessionNotOnOrAfter *time.Time `xml:",attr,omitempty"`
-	SubjectLocality     *SubjectLocality
-	AuthnContext        AuthnContext
+	AuthnInstant        time.Time        `xml:",attr"`
+	SessionIndex        string           `xml:",attr"`
+	SessionNotOnOrAfter *time.Time       `xml:",attr,omitempty"`
+	SubjectLocality     *SubjectLocality `xml:"urn:oasis:names:tc:SAML:2.0:assertion SubjectLocality"`
+	AuthnContext        AuthnContext     `xml:"urn:oasis:names:tc:SAML:2.0:assertion AuthnContext"`
 }
 
 // Element returns an etree.Element representing the object in XML form.
@@ -1155,7 +1155,7 @@ func (a *SubjectLocality) Element() *etree.Element {
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf §2.7.2.2
 type AuthnContext struct {
-	AuthnContextClassRef *AuthnContextClassRef
+	AuthnContextClassRef *AuthnContextClassRef `xml:"urn:oasis:names:tc:SAML:2.0:assertion AuthnContextClassRef"`
 	// AuthnContextDecl          *AuthnContextDecl        ... TODO
 	// AuthnContextDeclRef       *AuthnContextDeclRef     ... TODO
 	// AuthenticatingAuthorities []AuthenticatingAuthority... TODO
@@ -1188,7 +1188,7 @@ func (a *AuthnContextClassRef) Element() *etree.Element {
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf §2.7.3
 type AttributeStatement struct {
-	Attributes []Attribute `xml:"Attribute"`
+	Attributes []Attribute `xml:"urn:oasis:names:tc:SAML:2.0:assertion Attribute"`
 }
 
 // Element returns an etree.Element representing the object in XML form.
@@ -1207,7 +1207,7 @@ type Attribute struct {
 	FriendlyName string           `xml:",attr"`
 	Name         string           `xml:",attr"`
 	NameFormat   string           `xml:",attr"`
-	Values       []AttributeValue `xml:"AttributeValue"`
+	Values       []AttributeValue `xml:"urn:oasis:names:tc:SAML:2.0:assertion AttributeValue"`
 }
 
 // Element returns an etree.Element representing the object in XML form.
