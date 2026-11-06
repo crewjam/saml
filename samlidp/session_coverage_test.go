@@ -147,7 +147,7 @@ func TestCovSendLoginFormCustomTemplate(t *testing.T) {
 		RequestBuffer: []byte("hi"),
 		RelayState:    "state",
 	}, "oops")
-	assert.Check(t, is.Equal("toast=oops url=https://idp.example.com/login req=aGk= rs=state", w.Body.String()))
+	assert.Check(t, is.Equal("toast=oops url=https://idp.example.com/sso req=aGk= rs=state", w.Body.String()))
 }
 
 func TestCovSendLoginFormTemplateErrorPanics(t *testing.T) {
