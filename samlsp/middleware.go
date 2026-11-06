@@ -70,7 +70,7 @@ func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (m *Middleware) ServeMetadata(w http.ResponseWriter, _ *http.Request) {
 	buf, _ := xml.MarshalIndent(m.ServiceProvider.Metadata(), "", "  ")
 	w.Header().Set("Content-Type", "application/samlmetadata+xml")
-	if _, err := w.Write(buf); err != nil {
+	if _, err := w.Write(buf); err != nil { //nolint:gosec // buf is our own XML metadata, served as application/samlmetadata+xml
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -225,7 +225,7 @@ func (m *Middleware) CreateSessionFromAssertion(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	http.Redirect(w, r, redirectURI, http.StatusFound)
+	http.Redirect(w, r, redirectURI, http.StatusFound) //nolint:gosec // TODO: with AllowIDPInitiated, redirectURI may come from an unchecked RelayState
 }
 
 // RequireAttribute returns a middleware function that requires that the

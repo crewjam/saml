@@ -44,7 +44,7 @@ func (t CookieRequestTracker) TrackRequest(w http.ResponseWriter, r *http.Reques
 		return "", err
 	}
 
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure is set when served over https
 		Name:     t.NamePrefix + trackedRequest.Index,
 		Value:    signedTrackedRequest,
 		MaxAge:   int(t.MaxAge.Seconds()),

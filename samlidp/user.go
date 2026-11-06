@@ -53,7 +53,7 @@ func (s *Server) HandleGetUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user.HashedPassword = nil
-	if err := json.NewEncoder(w).Encode(user); err != nil {
+	if err := json.NewEncoder(w).Encode(user); err != nil { //nolint:gosec // PlaintextPassword is never stored, so it is always empty here
 		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return

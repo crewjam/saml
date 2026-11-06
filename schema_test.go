@@ -22,10 +22,13 @@ func TestAttributeXMLRoundTrip(t *testing.T) {
 	}
 
 	doc := etree.NewDocument()
-	doc.SetRoot(expected.Element())
+	// The saml prefix must be declared for the namespace-bound fields to unmarshal.
+	el := expected.Element()
+	el.CreateAttr("xmlns:saml", "urn:oasis:names:tc:SAML:2.0:assertion")
+	doc.SetRoot(el)
 	x, err := doc.WriteToBytes()
 	assert.Check(t, err)
-	assert.Check(t, is.Equal("<saml:Attribute FriendlyName=\"TestFriendlyName\" Name=\"TestName\" NameFormat=\"urn:oasis:names:tc:SAML:2.0:attrname-format:basic\"><saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xs=\"http://www.w3.org/2001/XMLSchema\" xsi:type=\"xs:string\">test</saml:AttributeValue></saml:Attribute>",
+	assert.Check(t, is.Equal("<saml:Attribute FriendlyName=\"TestFriendlyName\" Name=\"TestName\" NameFormat=\"urn:oasis:names:tc:SAML:2.0:attrname-format:basic\" xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\"><saml:AttributeValue xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xs=\"http://www.w3.org/2001/XMLSchema\" xsi:type=\"xs:string\">test</saml:AttributeValue></saml:Attribute>",
 		string(x)))
 
 	var actual Attribute
@@ -70,7 +73,7 @@ func TestAuthnStatementXMLRoundTrip(t *testing.T) {
 
 	x, err = xml.Marshal(expected)
 	assert.Check(t, err)
-	assert.Check(t, is.Equal(`<AuthnStatement AuthnInstant="2020-07-21T12:30:45Z" SessionIndex="index" SessionNotOnOrAfter="2020-07-22T15:00:00Z"><AuthnContext></AuthnContext></AuthnStatement>`,
+	assert.Check(t, is.Equal(`<AuthnStatement AuthnInstant="2020-07-21T12:30:45Z" SessionIndex="index" SessionNotOnOrAfter="2020-07-22T15:00:00Z"><AuthnContext xmlns="urn:oasis:names:tc:SAML:2.0:assertion"></AuthnContext></AuthnStatement>`,
 		string(x)))
 }
 
@@ -240,7 +243,7 @@ func TestLogoutRequestXMLRoundTrip(t *testing.T) {
 
 	x, err = xml.Marshal(expected)
 	assert.Check(t, err)
-	assert.Check(t, is.Equal(`<LogoutRequest xmlns="urn:oasis:names:tc:SAML:2.0:protocol" ID="request-id" Version="2.0" IssueInstant="2021-10-08T12:30:00Z" NotOnOrAfter="2021-10-08T12:35:00Z" Destination=""><Issuer xmlns="urn:oasis:names:tc:SAML:2.0:assertion" NameQualifier="" SPNameQualifier="" Format="" SPProvidedID="">uri:issuer</Issuer><NameID NameQualifier="" SPNameQualifier="" Format="" SPProvidedID="">name-id</NameID><SessionIndex>index</SessionIndex></LogoutRequest>`,
+	assert.Check(t, is.Equal(`<LogoutRequest xmlns="urn:oasis:names:tc:SAML:2.0:protocol" ID="request-id" Version="2.0" IssueInstant="2021-10-08T12:30:00Z" NotOnOrAfter="2021-10-08T12:35:00Z" Destination=""><Issuer xmlns="urn:oasis:names:tc:SAML:2.0:assertion" NameQualifier="" SPNameQualifier="" Format="" SPProvidedID="">uri:issuer</Issuer><NameID xmlns="urn:oasis:names:tc:SAML:2.0:assertion" NameQualifier="" SPNameQualifier="" Format="" SPProvidedID="">name-id</NameID><SessionIndex>index</SessionIndex></LogoutRequest>`,
 		string(x)))
 }
 

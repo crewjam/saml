@@ -67,7 +67,7 @@ func (s *Server) GetSession(w http.ResponseWriter, r *http.Request, req *saml.Id
 			return nil
 		}
 
-		http.SetCookie(w, &http.Cookie{
+		http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure is set when served over https
 			Name:     "session",
 			Value:    session.ID,
 			MaxAge:   int(sessionMaxAge.Seconds()),

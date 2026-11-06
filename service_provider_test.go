@@ -2,6 +2,7 @@ package saml
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
@@ -298,11 +299,20 @@ func TestSPCanProduceSignedRequestRedirectBinding(t *testing.T) {
 
 			redirectURL, err := s.MakeRedirectAuthenticationRequest("relayState")
 			assert.Assert(t, err)
-			// Signature we check against in the query string was validated with
-			// https://www.samltool.com/validate_authn_req.php . Once we add
-			// support for validating signed AuthN requests in the IDP implementation
-			// we can switch to testing using that.
-			golden.Assert(t, redirectURL.RawQuery, t.Name()+"_queryString")
+			// The compressed SAMLRequest bytes depend on the compress/flate
+			// implementation, which varies between Go releases, so rather than
+			// comparing the raw query string against a golden file we check the
+			// query parameters and verify the signature over the signed portion.
+			query := redirectURL.Query()
+			assert.Check(t, is.Equal("relayState", query.Get("RelayState")))
+			assert.Check(t, is.Equal(dsig.RSASHA1SignatureMethod, query.Get("SigAlg")))
+			signedPart, _, found := strings.Cut(redirectURL.RawQuery, "&Signature=")
+			assert.Assert(t, found)
+			sig, err := base64.StdEncoding.DecodeString(query.Get("Signature"))
+			assert.Assert(t, err)
+			h := crypto.SHA1.New()
+			h.Write([]byte(signedPart))
+			assert.Check(t, rsa.VerifyPKCS1v15(test.Certificate.PublicKey.(*rsa.PublicKey), crypto.SHA1, h.Sum(nil), sig))
 
 			decodedRequest, err := testsaml.ParseRedirectRequest(redirectURL)
 			assert.Check(t, err)
@@ -1230,10 +1240,11 @@ func TestSPInvalidAssertions(t *testing.T) {
 	assertion = Assertion{}
 	assert.Check(t, xml.Unmarshal(assertionBuf, &assertion))
 
-	// Not having an audience is not an error
+	// Not having an audience is an error: the assertion would be valid at
+	// every service provider trusting the IdP.
 	assertion.Conditions.AudienceRestrictions = []AudienceRestriction{}
 	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
-	assert.Check(t, err)
+	assert.Check(t, is.Error(err, "assertion Conditions has no AudienceRestriction for \"https://15661444.ngrok.io/saml2/metadata\""))
 }
 
 func TestXswPermutationOneIsRejected(t *testing.T) {
@@ -1432,9 +1443,9 @@ func TestXswPermutationSevenIsRejected(t *testing.T) {
 	req := http.Request{PostForm: url.Values{}, URL: &s.AcsURL}
 	req.PostForm.Set("SAMLResponse", string(respStr))
 	_, err = s.ParseResponse(&req, []string{"ONELOGIN_4fee3b046395c4e751011e97f8900b5273d56685"})
-	// It's the assertion signature that can't be verified. The error message is generic and always mentions Response
+	// The assertion signature over SignedInfo fails to verify (goxmldsig >= v1.6.0 checks it before the digest)
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
-		"cannot validate signature on Assertion: Signature could not be verified"))
+		"cannot validate signature on Assertion: crypto/rsa: verification error"))
 }
 
 func TestXswPermutationEightIsRejected(t *testing.T) {
@@ -1463,9 +1474,9 @@ func TestXswPermutationEightIsRejected(t *testing.T) {
 	req := http.Request{PostForm: url.Values{}, URL: &s.AcsURL}
 	req.PostForm.Set("SAMLResponse", string(respStr))
 	_, err = s.ParseResponse(&req, []string{"ONELOGIN_4fee3b046395c4e751011e97f8900b5273d56685"})
-	// It's the assertion signature that can't be verified. The error message is generic and always mentions Response
+	// The assertion signature over SignedInfo fails to verify (goxmldsig >= v1.6.0 checks it before the digest)
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
-		"cannot validate signature on Assertion: Signature could not be verified"))
+		"cannot validate signature on Assertion: crypto/rsa: verification error"))
 }
 
 func TestXswPermutationNineIsRejected(t *testing.T) {
@@ -1746,7 +1757,8 @@ func TestParseXMLArtifactResponse(t *testing.T) {
 	}
 	Clock = dsig.NewFakeClockAt(TimeNow())
 
-	// an actual response from samltest.id
+	// an actual (signed) response captured from the former samltest.id IdP;
+	// it cannot be edited without invalidating the signature
 	samlResponse := golden.Get(t, "TestParseXMLArtifactResponse_response")
 	test.IDPMetadata = golden.Get(t, "TestGetArtifactBindingLocation_IDPMetadata")
 
@@ -1781,7 +1793,8 @@ func TestParseBadXMLArtifactResponse(t *testing.T) {
 	}
 	Clock = dsig.NewFakeClockAt(TimeNow())
 
-	// an actual response from samltest.id
+	// an actual (signed) response captured from the former samltest.id IdP;
+	// it cannot be edited without invalidating the signature
 	samlResponse := golden.Get(t, "TestParseXMLArtifactResponse_response")
 	test.IDPMetadata = golden.Get(t, "TestGetArtifactBindingLocation_IDPMetadata")
 

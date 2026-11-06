@@ -398,7 +398,7 @@ func (req *IdpAuthnRequest) Validate() error {
 		return err
 	}
 
-	if err := xml.Unmarshal(req.RequestBuffer, &req.Request); err != nil {
+	if err := xml.Unmarshal(req.RequestBuffer, &req.Request); err != nil { //nolint:gosec // parsing the untrusted request is the point; it was validated by xrv above
 		return err
 	}
 
@@ -745,7 +745,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 	attributes = append(attributes, session.CustomAttributes...)
 
 	if len(session.Groups) != 0 {
-		groupMemberAttributeValues := []AttributeValue{}
+		groupMemberAttributeValues := make([]AttributeValue, 0, len(session.Groups))
 		for _, group := range session.Groups {
 			groupMemberAttributeValues = append(groupMemberAttributeValues, AttributeValue{
 				Type:  "xs:string",
@@ -805,7 +805,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 			},
 			SubjectConfirmations: []SubjectConfirmation{
 				{
-					Method: "urn:oasis:names:tc:SAML:2.0:cm:bearer",
+					Method: bearerSubjectConfirmationMethod,
 					SubjectConfirmationData: &SubjectConfirmationData{
 						Address:      req.HTTPRequest.RemoteAddr,
 						InResponseTo: req.Request.ID,
@@ -1084,7 +1084,8 @@ func (req *IdpAuthnRequest) MakeResponse() error {
 // signingContext will create a signing context for the request.
 func (req *IdpAuthnRequest) signingContext() (*dsig.SigningContext, error) {
 	// Create a cert chain based off of the IDP cert and its intermediates.
-	certificates := [][]byte{req.IDP.Certificate.Raw}
+	certificates := make([][]byte, 0, 1+len(req.IDP.Intermediates))
+	certificates = append(certificates, req.IDP.Certificate.Raw)
 	for _, cert := range req.IDP.Intermediates {
 		certificates = append(certificates, cert.Raw)
 	}
