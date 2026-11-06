@@ -52,6 +52,12 @@ func TestCanEncryptOAEP(t *testing.T) {
 		el, err := e.Encrypt(certificate, plaintext, []byte("1234567890AZ"))
 		assert.Check(t, err)
 
+		doc := etree.NewDocument()
+		doc.SetRoot(el)
+		doc.Indent(4)
+		ciphertext, _ := doc.WriteToString()
+		golden.Assert(t, ciphertext, "ciphertext_gcm.xml")
+
 		keyPEM := golden.Get(t, "cert.key")
 		kb, _ := pem.Decode(keyPEM)
 		key, err := x509.ParsePKCS8PrivateKey(kb.Bytes)
