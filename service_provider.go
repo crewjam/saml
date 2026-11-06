@@ -261,6 +261,7 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 					{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
 					{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
 					{Algorithm: "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"},
+					{Algorithm: "http://www.w3.org/2009/xmlenc11#rsa-oaep"},
 				},
 			},
 		}

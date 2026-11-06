@@ -1162,3 +1162,66 @@ func TestIDPHTTPCanHandleSSORequest(t *testing.T) {
 		assert.Check(t, is.Equal(http.StatusBadRequest, w.Code))
 	}
 }
+
+func TestIDPMakeAssertionElCustomEncrypter(t *testing.T) {
+	for name, tc := range map[string]struct {
+		encrypter func() xmlenc.RSA
+		keyAlg    string
+	}{
+		"rsa-oaep-mgf1p sha256": {
+			encrypter: func() xmlenc.RSA {
+				e := xmlenc.OAEP()
+				e.DigestMethod = xmlenc.SHA256
+				e.BlockCipher = xmlenc.AES256GCM
+				return e
+			},
+			keyAlg: "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p",
+		},
+		"rsa-oaep sha256": {
+			encrypter: func() xmlenc.RSA {
+				e := xmlenc.OAEP_SHA256()
+				e.BlockCipher = xmlenc.AES256GCM
+				return e
+			},
+			keyAlg: "http://www.w3.org/2009/xmlenc11#rsa-oaep",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			test := NewIdentityProviderTest(t, applyKey)
+			test.IDP.AssertionEncrypter = tc.encrypter()
+
+			req := IdpAuthnRequest{
+				Now:           TimeNow(),
+				IDP:           &test.IDP,
+				RequestBuffer: golden.Get(t, "TestIDPMakeResponse_request_buffer"),
+			}
+			req.HTTPRequest, _ = http.NewRequest("POST", "http://idp.example.com/saml/sso", nil)
+			assert.Assert(t, req.Validate())
+			assert.Assert(t, DefaultAssertionMaker{}.MakeAssertion(&req, &Session{
+				ID:       "f00df00df00d",
+				UserName: "alice",
+			}))
+			assert.Assert(t, req.MakeAssertionEl())
+
+			doc := etree.NewDocument()
+			doc.SetRoot(req.AssertionEl)
+			el := doc.FindElement("//EncryptedAssertion/EncryptedData")
+			assert.Assert(t, el != nil)
+
+			keyEM := el.FindElement("./KeyInfo/EncryptedKey/EncryptionMethod")
+			assert.Assert(t, keyEM != nil)
+			assert.Check(t, is.Equal(tc.keyAlg, keyEM.SelectAttrValue("Algorithm", "")))
+			digestEl := keyEM.FindElement("./DigestMethod")
+			assert.Assert(t, digestEl != nil)
+			assert.Check(t, is.Equal(xmlenc.SHA256.Algorithm(), digestEl.SelectAttrValue("Algorithm", "")))
+
+			blockEl := el.FindElement("./EncryptionMethod")
+			assert.Assert(t, blockEl != nil)
+			assert.Check(t, is.Equal(xmlenc.AES256GCM.Algorithm(), blockEl.SelectAttrValue("Algorithm", "")))
+
+			plaintext, err := xmlenc.Decrypt(test.SPKey, el)
+			assert.Assert(t, err)
+			assert.Check(t, strings.Contains(string(plaintext), "<saml:Assertion "))
+		})
+	}
+}
