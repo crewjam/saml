@@ -46,7 +46,7 @@ type AuthnRequest struct {
 
 	Subject               *Subject
 	NameIDPolicy          *NameIDPolicy `xml:"urn:oasis:names:tc:SAML:2.0:protocol NameIDPolicy"`
-	Conditions            *Conditions
+	Conditions            *Conditions   `xml:"urn:oasis:names:tc:SAML:2.0:assertion Conditions"`
 	RequestedAuthnContext *RequestedAuthnContext
 	// Scoping               *Scoping // TODO
 
@@ -72,7 +72,7 @@ type LogoutRequest struct {
 	NotOnOrAfter *time.Time `xml:",attr"`
 	Destination  string     `xml:",attr"`
 	Issuer       *Issuer    `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
-	NameID       *NameID
+	NameID       *NameID    `xml:"urn:oasis:names:tc:SAML:2.0:assertion NameID"`
 	Signature    *etree.Element
 
 	SessionIndex *SessionIndex `xml:"SessionIndex"`
@@ -736,7 +736,7 @@ type Assertion struct {
 	Issuer       Issuer    `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
 	Signature    *etree.Element
 	Subject      *Subject
-	Conditions   *Conditions
+	Conditions   *Conditions `xml:"urn:oasis:names:tc:SAML:2.0:assertion Conditions"`
 	// Advice *Advice
 	// Statements []Statement
 	AuthnStatements []AuthnStatement `xml:"urn:oasis:names:tc:SAML:2.0:assertion AuthnStatement"`
@@ -796,9 +796,9 @@ func (a *Assertion) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 type Subject struct {
 	XMLName xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:assertion Subject"`
 	// BaseID               *BaseID  ... TODO
-	NameID *NameID
+	NameID *NameID `xml:"urn:oasis:names:tc:SAML:2.0:assertion NameID"`
 	// EncryptedID          *EncryptedID  ... TODO
-	SubjectConfirmations []SubjectConfirmation `xml:"SubjectConfirmation"`
+	SubjectConfirmations []SubjectConfirmation `xml:"urn:oasis:names:tc:SAML:2.0:assertion SubjectConfirmation"`
 }
 
 // Element returns an etree.Element representing the object in XML form.
@@ -868,9 +868,9 @@ func (s *SessionIndex) Element() *etree.Element {
 type SubjectConfirmation struct {
 	Method string `xml:",attr"`
 	// BaseID               *BaseID  ... TODO
-	NameID *NameID
+	NameID *NameID `xml:"urn:oasis:names:tc:SAML:2.0:assertion NameID"`
 	// EncryptedID          *EncryptedID  ... TODO
-	SubjectConfirmationData *SubjectConfirmationData
+	SubjectConfirmationData *SubjectConfirmationData `xml:"urn:oasis:names:tc:SAML:2.0:assertion SubjectConfirmationData"`
 }
 
 // Element returns an etree.Element representing the object in XML form.
@@ -953,7 +953,7 @@ func (s *SubjectConfirmationData) UnmarshalXML(d *xml.Decoder, start xml.StartEl
 type Conditions struct {
 	NotBefore            time.Time             `xml:",attr"`
 	NotOnOrAfter         time.Time             `xml:",attr"`
-	AudienceRestrictions []AudienceRestriction `xml:"AudienceRestriction"`
+	AudienceRestrictions []AudienceRestriction `xml:"urn:oasis:names:tc:SAML:2.0:assertion AudienceRestriction"`
 	OneTimeUse           *OneTimeUse           `xml:"urn:oasis:names:tc:SAML:2.0:assertion OneTimeUse"`
 	ProxyRestriction     *ProxyRestriction     `xml:"urn:oasis:names:tc:SAML:2.0:assertion ProxyRestriction"`
 }
@@ -1016,7 +1016,7 @@ func (c *Conditions) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error 
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf §2.5.1.4
 type AudienceRestriction struct {
-	Audience Audience
+	Audience Audience `xml:"urn:oasis:names:tc:SAML:2.0:assertion Audience"`
 }
 
 // Element returns an etree.Element representing the object in XML form.
@@ -1232,9 +1232,9 @@ func (a *Attribute) Element() *etree.Element {
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf §2.7.3.1.1
 type AttributeValue struct {
-	Type   string `xml:"http://www.w3.org/2001/XMLSchema-instance type,attr"`
-	Value  string `xml:",chardata"`
-	NameID *NameID
+	Type   string  `xml:"http://www.w3.org/2001/XMLSchema-instance type,attr"`
+	Value  string  `xml:",chardata"`
+	NameID *NameID `xml:"urn:oasis:names:tc:SAML:2.0:assertion NameID"`
 }
 
 // Element returns an etree.Element representing the object in XML form.
