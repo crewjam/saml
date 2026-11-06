@@ -1250,7 +1250,7 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 
 // bearerSubjectConfirmationMethod is the SubjectConfirmation Method of the
 // SAML web browser SSO profile.
-const bearerSubjectConfirmationMethod = "urn:oasis:names:tc:SAML:2.0:cm:bearer"
+const bearerSubjectConfirmationMethod = "urn:oasis:names:tc:SAML:2.0:cm:bearer" //nolint:gosec // not a credential
 
 // hasBearerSubjectConfirmation reports whether subject has the bearer
 // SubjectConfirmation the web browser SSO profile requires (saml-profiles

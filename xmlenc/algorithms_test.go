@@ -65,7 +65,7 @@ func TestDecryptAES256GCMWithOAEPSHA256(t *testing.T) {
 	nonce := make([]byte, aesgcm.NonceSize())
 	_, err = rand.Read(nonce)
 	assert.NilError(t, err)
-	cipherValue := append(nonce, aesgcm.Seal(nil, nonce, plaintext, nil)...) //nolint:gocritic
+	cipherValue := aesgcm.Seal(nonce, nonce, plaintext, nil)
 
 	wrappedKey, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, &privKey.PublicKey, sessionKey, nil)
 	assert.NilError(t, err)
