@@ -3,6 +3,7 @@ package samlsp
 import (
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"net/http"
 
 	"github.com/crewjam/saml"
@@ -108,24 +109,37 @@ func (m *Middleware) ServeACS(w http.ResponseWriter, r *http.Request) {
 	m.CreateSessionFromAssertion(w, r, assertion, m.ServiceProvider.DefaultRedirectURI)
 }
 
+// errSessionProviderReturnedNil is passed to OnError when a SessionProvider
+// returns neither a session nor an error.
+var errSessionProviderReturnedNil = errors.New("saml: session provider returned nil session without an error")
+
 // RequireAccount is HTTP middleware that requires that each request be
 // associated with a valid session. If the request is not associated with a valid
 // session, then rather than serve the request, the middleware redirects the user
 // to start the SAML auth flow.
+//
+// If the SessionProvider returns an error that matches ErrNoSession (as
+// determined by errors.Is), the auth flow is started. Any other error, or a nil
+// session, is passed to OnError and the wrapped handler is not called, even if
+// the SessionProvider also returned a non-nil session.
 func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		session, err := m.Session.GetSession(r)
-		if session != nil {
-			r = r.WithContext(ContextWithSession(r.Context(), session))
-			handler.ServeHTTP(w, r)
-			return
-		}
-		if err == ErrNoSession {
+		if errors.Is(err, ErrNoSession) {
 			m.HandleStartAuthFlow(w, r)
 			return
 		}
+		if err != nil {
+			m.OnError(w, r, err)
+			return
+		}
+		if session == nil {
+			m.OnError(w, r, errSessionProviderReturnedNil)
+			return
+		}
 
-		m.OnError(w, r, err)
+		r = r.WithContext(ContextWithSession(r.Context(), session))
+		handler.ServeHTTP(w, r)
 	})
 }
 

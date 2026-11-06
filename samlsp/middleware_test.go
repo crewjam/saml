@@ -8,6 +8,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -519,4 +521,85 @@ func TestMiddlewareHandlesInvalidResponse(t *testing.T) {
 	assert.Check(t, is.Equal("Forbidden\n", string(respBody)))
 	assert.Check(t, is.Equal("", resp.Header().Get("Location")))
 	assert.Check(t, is.Equal("", resp.Header().Get("Set-Cookie")))
+}
+
+// stubSessionProvider is a SessionProvider whose GetSession returns fixed values.
+type stubSessionProvider struct {
+	CookieSessionProvider
+	session Session
+	err     error
+}
+
+func (s stubSessionProvider) GetSession(_ *http.Request) (Session, error) {
+	return s.session, s.err
+}
+
+func TestMiddlewareRequireAccountSessionAndError(t *testing.T) {
+	test := NewMiddlewareTest(t)
+	providerErr := errors.New("session signature invalid")
+	test.Middleware.Session = stubSessionProvider{
+		session: JWTSessionClaims{},
+		err:     providerErr,
+	}
+	var onErrorErr error
+	test.Middleware.OnError = func(w http.ResponseWriter, _ *http.Request, err error) {
+		onErrorErr = err
+		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+	}
+	handler := test.Middleware.RequireAccount(
+		http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+			panic("not reached")
+		}))
+
+	req, _ := http.NewRequest("GET", "/frob", nil)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	assert.Check(t, is.Equal(http.StatusForbidden, resp.Code))
+	assert.Check(t, is.Equal(providerErr, onErrorErr))
+}
+
+func TestMiddlewareRequireAccountWrappedErrNoSession(t *testing.T) {
+	test := NewMiddlewareTest(t)
+	test.Middleware.Session = stubSessionProvider{
+		err: fmt.Errorf("custom provider: %w", ErrNoSession),
+	}
+	test.Middleware.OnError = func(_ http.ResponseWriter, _ *http.Request, err error) {
+		t.Fatalf("OnError called unexpectedly: %v", err)
+	}
+	handler := test.Middleware.RequireAccount(
+		http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+			panic("not reached")
+		}))
+
+	req, _ := http.NewRequest("GET", "/frob", nil)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	assert.Check(t, is.Equal(http.StatusFound, resp.Code))
+	redirectURL, err := url.Parse(resp.Header().Get("Location"))
+	assert.Check(t, err)
+	_, err = testsaml.ParseRedirectRequest(redirectURL)
+	assert.Check(t, err)
+}
+
+func TestMiddlewareRequireAccountNilSessionNilError(t *testing.T) {
+	test := NewMiddlewareTest(t)
+	test.Middleware.Session = stubSessionProvider{}
+	var onErrorErr error
+	test.Middleware.OnError = func(w http.ResponseWriter, _ *http.Request, err error) {
+		onErrorErr = err
+		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+	}
+	handler := test.Middleware.RequireAccount(
+		http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+			panic("not reached")
+		}))
+
+	req, _ := http.NewRequest("GET", "/frob", nil)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	assert.Check(t, is.Equal(http.StatusForbidden, resp.Code))
+	assert.Check(t, onErrorErr != nil)
 }
