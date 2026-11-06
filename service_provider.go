@@ -557,6 +557,9 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding stri
 
 // GetSigningContext returns a dsig.SigningContext initialized based on the Service Provider's configuration
 func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
+	if sp.Certificate == nil {
+		return nil, errors.New("cannot sign: ServiceProvider.Certificate is nil")
+	}
 	keyPair := tls.Certificate{
 		Certificate: [][]byte{sp.Certificate.Raw},
 		PrivateKey:  sp.Key,
@@ -1150,6 +1153,9 @@ func (sp *ServiceProvider) decryptElement(encryptedEl *etree.Element) (*etree.El
 	if err := doc.ReadFromBytes(plaintextEl); err != nil {
 		return nil, fmt.Errorf("cannot parse plaintext response %v", err)
 	}
+	if doc.Root() == nil {
+		return nil, errors.New("plaintext response contains no root element")
+	}
 	return doc.Root(), nil
 }
 
@@ -1696,6 +1702,10 @@ func (sp *ServiceProvider) ValidateLogoutResponseForm(postFormData string) error
 		retErr.PrivateErr = err
 		return retErr
 	}
+	if doc.Root() == nil {
+		retErr.PrivateErr = errors.New("invalid xml: no root")
+		return retErr
+	}
 
 	if err := sp.validateSignature(doc.Root()); err != nil {
 		retErr.PrivateErr = err
@@ -1741,6 +1751,10 @@ func (sp *ServiceProvider) ValidateLogoutResponseRedirect(queryParameterData str
 		retErr.PrivateErr = err
 		return retErr
 	}
+	if doc.Root() == nil {
+		retErr.PrivateErr = errors.New("invalid xml: no root")
+		return retErr
+	}
 
 	if err := sp.validateSignature(doc.Root()); err != nil {
 		retErr.PrivateErr = err
@@ -1761,7 +1775,7 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 		return fmt.Errorf("`Destination` does not match SloURL (expected %q)", sp.SloURL.String())
 	}
 
-	now := time.Now()
+	now := TimeNow()
 	if resp.IssueInstant.Add(MaxIssueDelay).Before(now) {
 		return fmt.Errorf("issueInstant expired at %s", resp.IssueInstant.Add(MaxIssueDelay))
 	}
