@@ -113,6 +113,6 @@ func TestGetSigningContextRejectsBadKeys(t *testing.T) {
 			Key:             rsaKey,
 			SignatureMethod: dsig.RSASHA256SignatureMethod,
 		})
-		assert.Check(t, is.ErrorContains(err, "requires a certificate"))
+		assert.Check(t, is.ErrorContains(err, "ServiceProvider.Certificate is nil"))
 	})
 }

@@ -40,9 +40,18 @@ type Options struct {
 
 func getDefaultSigningMethod(signer crypto.Signer) jwt.SigningMethod {
 	if !signerutil.IsNil(signer) {
-		switch signer.Public().(type) {
+		switch pub := signer.Public().(type) {
 		case *ecdsa.PublicKey:
-			return jwt.SigningMethodES256
+			// The JWT ECDSA signing methods are bound to a specific curve, so
+			// pick the one matching the key, otherwise signing fails.
+			switch pub.Curve.Params().BitSize {
+			case 384:
+				return jwt.SigningMethodES384
+			case 521:
+				return jwt.SigningMethodES512
+			default:
+				return jwt.SigningMethodES256
+			}
 		case *rsa.PublicKey:
 			return jwt.SigningMethodRS256
 		}

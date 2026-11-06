@@ -53,6 +53,8 @@ func (s *MemoryStore) Delete(key string) error {
 // stripped from each returned value. So if keys are ["aa", "ab", "cd"]
 // then List("a") would produce []string{"a", "b"}
 func (s *MemoryStore) List(prefix string) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	rv := []string{}
 	for k := range s.data {
 		if strings.HasPrefix(k, prefix) {

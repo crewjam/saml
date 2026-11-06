@@ -564,7 +564,7 @@ func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 		return nil, fmt.Errorf("signature method %s requires a non-nil private key", sp.SignatureMethod)
 	}
 	if sp.Certificate == nil {
-		return nil, fmt.Errorf("signature method %s requires a certificate", sp.SignatureMethod)
+		return nil, errors.New("cannot sign: ServiceProvider.Certificate is nil")
 	}
 
 	keyPair := tls.Certificate{
@@ -1164,6 +1164,9 @@ func (sp *ServiceProvider) decryptElement(encryptedEl *etree.Element) (*etree.El
 	if err := doc.ReadFromBytes(plaintextEl); err != nil {
 		return nil, fmt.Errorf("cannot parse plaintext response %v", err)
 	}
+	if doc.Root() == nil {
+		return nil, errors.New("plaintext response contains no root element")
+	}
 	return doc.Root(), nil
 }
 
@@ -1710,6 +1713,10 @@ func (sp *ServiceProvider) ValidateLogoutResponseForm(postFormData string) error
 		retErr.PrivateErr = err
 		return retErr
 	}
+	if doc.Root() == nil {
+		retErr.PrivateErr = errors.New("invalid xml: no root")
+		return retErr
+	}
 
 	if err := sp.validateSignature(doc.Root()); err != nil {
 		retErr.PrivateErr = err
@@ -1755,6 +1762,10 @@ func (sp *ServiceProvider) ValidateLogoutResponseRedirect(queryParameterData str
 		retErr.PrivateErr = err
 		return retErr
 	}
+	if doc.Root() == nil {
+		retErr.PrivateErr = errors.New("invalid xml: no root")
+		return retErr
+	}
 
 	if err := sp.validateSignature(doc.Root()); err != nil {
 		retErr.PrivateErr = err
@@ -1775,7 +1786,7 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 		return fmt.Errorf("`Destination` does not match SloURL (expected %q)", sp.SloURL.String())
 	}
 
-	now := time.Now()
+	now := TimeNow()
 	if resp.IssueInstant.Add(MaxIssueDelay).Before(now) {
 		return fmt.Errorf("issueInstant expired at %s", resp.IssueInstant.Add(MaxIssueDelay))
 	}
@@ -1860,22 +1871,48 @@ func findChild(parentEl *etree.Element, childNS string, childTag string) (*etree
 	}
 }
 
+// elementToBytes serializes el as a standalone document. Namespace
+// declarations that el inherits from its ancestors are copied onto the
+// serialized root, so prefixes (and the default namespace) used anywhere in
+// el resolve to the same URIs they had in the original document.
 func elementToBytes(el *etree.Element) ([]byte, error) {
-	namespaces := map[string]string{}
-	for _, childEl := range el.FindElements("//*") {
-		ns := childEl.NamespaceURI()
-		if ns != "" {
-			namespaces[childEl.Space] = ns
+	root := el.Copy()
+
+	declared := map[string]bool{}
+	for _, attr := range root.Attr {
+		if prefix, ok := namespaceDeclPrefix(attr); ok {
+			declared[prefix] = true
+		}
+	}
+
+	// Walk outward so the nearest declaration of each prefix wins.
+	for p := el.Parent(); p != nil; p = p.Parent() {
+		for _, attr := range p.Attr {
+			prefix, ok := namespaceDeclPrefix(attr)
+			if !ok || declared[prefix] {
+				continue
+			}
+			declared[prefix] = true
+			root.CreateAttr(attr.FullKey(), attr.Value)
 		}
 	}
 
 	doc := etree.NewDocument()
-	doc.SetRoot(el.Copy())
-	for space, uri := range namespaces {
-		doc.Root().CreateAttr("xmlns:"+space, uri)
-	}
-
+	doc.SetRoot(root)
 	return doc.WriteToBytes()
+}
+
+// namespaceDeclPrefix reports whether attr is a namespace declaration and,
+// if so, the prefix it declares ("" for the default namespace).
+func namespaceDeclPrefix(attr etree.Attr) (string, bool) {
+	switch {
+	case attr.Space == "" && attr.Key == "xmlns":
+		return "", true
+	case attr.Space == "xmlns":
+		return attr.Key, true
+	default:
+		return "", false
+	}
 }
 
 // unmarshalElement serializes el into v by serializing el and then parsing it with xml.Unmarshal.
