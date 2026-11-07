@@ -231,7 +231,11 @@ type ServiceProvider struct {
 	AssertionConsumerServiceBindings []string
 
 	// ValidateAudienceRestriction allows you to override the default audience validation
-	// for an assertion. If nil, the default audience validation is used.
+	// for an assertion. If nil, the default audience validation is used: the
+	// assertion must have at least one AudienceRestriction, and every
+	// AudienceRestriction must list this SP's audience (EntityID, or
+	// MetadataURL when EntityID is empty) among its audiences (saml-core
+	// §2.5.1.4).
 	ValidateAudienceRestriction func(assertion *Assertion) error
 
 	// ValidateRequestID allows you to override the default request ID validation.
@@ -1670,18 +1674,24 @@ func (sp *ServiceProvider) validateAudienceRestriction(assertion *Assertion) err
 	if len(assertion.Conditions.AudienceRestrictions) == 0 {
 		return classify(fmt.Errorf("assertion Conditions has no AudienceRestriction for %q", audience), ErrAudienceMismatch)
 	}
-	audienceRestrictionsValid := false
-	for _, audienceRestriction := range assertion.Conditions.AudienceRestrictions {
-		for _, v := range audienceRestriction.AllAudiences() {
-			if v.Value == audience {
-				audienceRestrictionsValid = true
-			}
+	// Every AudienceRestriction must be satisfied, and one is satisfied when
+	// any of its audiences is this SP (saml-core §2.5.1.4).
+	for i := range assertion.Conditions.AudienceRestrictions {
+		if !audienceRestrictionContains(&assertion.Conditions.AudienceRestrictions[i], audience) {
+			return classify(fmt.Errorf("assertion Conditions AudienceRestriction does not contain %q", audience), ErrAudienceMismatch)
 		}
 	}
-	if !audienceRestrictionsValid {
-		return classify(fmt.Errorf("assertion Conditions AudienceRestriction does not contain %q", audience), ErrAudienceMismatch)
-	}
 	return nil
+}
+
+// audienceRestrictionContains reports whether any audience of r is audience.
+func audienceRestrictionContains(r *AudienceRestriction, audience string) bool {
+	for _, v := range r.AllAudiences() {
+		if v.Value == audience {
+			return true
+		}
+	}
+	return false
 }
 
 // withoutValidityPeriod returns copies of certs whose validity period covers
