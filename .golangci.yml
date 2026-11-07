@@ -57,7 +57,7 @@ linters:
       - path: _test\.go$
         linters:
           - staticcheck
-        text: "SA1019: saml\\.(TimeNow|Clock) is deprecated"
+        text: "SA1019: (github\\.com/crewjam/)?saml\\.(TimeNow|Clock) is deprecated"
     paths:
       - example/.*\.go$
 formatters:
