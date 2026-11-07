@@ -1015,15 +1015,55 @@ func (c *Conditions) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error 
 // AudienceRestriction represents the SAML element AudienceRestriction.
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf §2.5.1.4
+//
+// An AudienceRestriction lists one or more audiences, and is satisfied when
+// the relying party is any one of them. Audience holds the first one, and
+// AdditionalAudiences holds the rest, in document order.
 type AudienceRestriction struct {
-	Audience Audience `xml:"urn:oasis:names:tc:SAML:2.0:assertion Audience"`
+	Audience            Audience   `xml:"urn:oasis:names:tc:SAML:2.0:assertion Audience"`
+	AdditionalAudiences []Audience `xml:"-"`
+}
+
+// AllAudiences returns every audience in the restriction: Audience followed
+// by AdditionalAudiences.
+func (a *AudienceRestriction) AllAudiences() []Audience {
+	return append([]Audience{a.Audience}, a.AdditionalAudiences...)
 }
 
 // Element returns an etree.Element representing the object in XML form.
 func (a *AudienceRestriction) Element() *etree.Element {
 	el := etree.NewElement("saml:AudienceRestriction")
-	el.AddChild(a.Audience.Element())
+	for _, v := range a.AllAudiences() {
+		el.AddChild(v.Element())
+	}
 	return el
+}
+
+// audienceRestrictionXML is the encoding/xml form of AudienceRestriction,
+// with all its Audience elements in one list.
+type audienceRestrictionXML struct {
+	Audiences []Audience `xml:"urn:oasis:names:tc:SAML:2.0:assertion Audience"`
+}
+
+// MarshalXML implements xml.Marshaler
+func (a *AudienceRestriction) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	return e.EncodeElement(audienceRestrictionXML{Audiences: a.AllAudiences()}, start)
+}
+
+// UnmarshalXML implements xml.Unmarshaler
+func (a *AudienceRestriction) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	var aux audienceRestrictionXML
+	if err := d.DecodeElement(&aux, &start); err != nil {
+		return err
+	}
+	*a = AudienceRestriction{}
+	if len(aux.Audiences) > 0 {
+		a.Audience = aux.Audiences[0]
+	}
+	if len(aux.Audiences) > 1 {
+		a.AdditionalAudiences = aux.Audiences[1:]
+	}
+	return nil
 }
 
 // Audience represents the SAML element Audience.
