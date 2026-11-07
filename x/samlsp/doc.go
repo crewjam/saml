@@ -17,11 +17,18 @@
 //	config, err := samlsp.New(
 //		samlsp.RemoteMetadata("https://idp.example.com/metadata"),
 //		"https://sp.example.com/saml/metadata", // the SP's entity ID
-//		"https://sp.example.com/saml/acs",      // the SP's ACS URL
 //		samlsp.WithKey(key, cert),
-//		samlsp.WithSLOURL("https://sp.example.com/saml/slo"),
+//		samlsp.WithSLOURL("slo"),
 //	)
 //	http.HandleFunc("/saml/metadata", config.ServeMetadata)
+//	http.HandleFunc("/saml/acs", acs)       // config.ACSURL()
+//	http.HandleFunc("/saml/slo", slo)       // config.SLOURL()
+//
+// The entity ID is conventionally the URL of the SP metadata. The SP's
+// other URLs are resolved against it: the ACS is at "acs" unless
+// WithACSURL says otherwise, so here it is https://sp.example.com/saml/acs,
+// and WithSLOURL("slo") puts single logout at
+// https://sp.example.com/saml/slo.
 //
 // The first argument is a MetadataFunc that supplies the identity
 // provider's metadata. Every method calls it with its context.
@@ -36,7 +43,7 @@
 // method builds. Pass it to New for every call, or to a single call
 // alongside its other options:
 //
-//	config, err := samlsp.New(idp, entityID, acsURL, samlsp.SignMetadata)
+//	config, err := samlsp.New(idp, entityID, samlsp.SignMetadata)
 //	config.ParseResponse(ctx, r, samlsp.WithRequestID(id), samlsp.RejectUnknownConditions)
 //
 // # Web Browser SSO
