@@ -40,7 +40,7 @@ func newSOAPStartLogoutTest(t *testing.T, errs *[]error, frontChannelBindings ..
 	t.Helper()
 	lt := newLogoutTest(t, frontChannelBindings...)
 	idp := &soapStartLogoutIDP{lt: lt, status: saml.StatusSuccess}
-	idp.Server = httptest.NewServer(http.HandlerFunc(idp.serveHTTP))
+	idp.Server = httptest.NewTLSServer(http.HandlerFunc(idp.serveHTTP))
 	t.Cleanup(idp.Close)
 
 	descriptor := &lt.m.ServiceProvider.IDPMetadata.IDPSSODescriptors[0]
