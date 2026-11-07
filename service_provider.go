@@ -545,7 +545,7 @@ func (sp *ServiceProvider) getCertBasedOnFingerprint(el *etree.Element) ([]*x509
 	}
 
 	if *sp.IDPCertificateFingerprint != finP {
-		return nil, fmt.Errorf("cannot validate signature on %s: fingerprint mismatch", el.Tag)
+		return nil, classify(fmt.Errorf("cannot validate signature on %s: fingerprint mismatch", el.Tag), ErrUntrustedCertificate)
 	}
 
 	return []*x509.Certificate{cert}, nil
@@ -1575,7 +1575,19 @@ func unboundedParentContext(el *etree.Element) (etreeutils.NSContext, error) {
 }
 
 // validateSignature returns nil iff the Signature embedded in the element is valid
+//
+// Every error other than errSignatureElementNotPresent matches
+// ErrInvalidSignature with errors.Is, and also ErrUntrustedCertificate or
+// ErrCertificateNotValidNow when that is why validation failed.
 func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
+	err := sp.validateSignatureUnclassified(el)
+	if err == nil || err == errSignatureElementNotPresent {
+		return err
+	}
+	return classify(err, ErrInvalidSignature)
+}
+
+func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element) error {
 	sigEl, err := findChild(el, "http://www.w3.org/2000/09/xmldsig#", "Signature")
 	if err != nil {
 		return err
@@ -1588,13 +1600,13 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate == nil {
 		certs, err = sp.getIDPSigningCerts()
 		if err != nil {
-			return fmt.Errorf("cannot validate signature on %s: %v", el.Tag, err)
+			return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
 		}
 	}
 	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint != nil && sp.IDPCertificateFingerprintAlgorithm != nil && sp.IDPCertificate == nil {
 		certs, err = sp.getCertBasedOnFingerprint(el)
 		if err != nil {
-			return fmt.Errorf("cannot validate signature on %s: %v", el.Tag, err)
+			return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
 		}
 	}
 	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate != nil {
@@ -1642,16 +1654,16 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	tag := el.Tag
 	ctx, err := unboundedParentContext(el)
 	if err != nil {
-		return fmt.Errorf("cannot validate signature on %s: %v", tag, err)
+		return fmt.Errorf("cannot validate signature on %s: %w", tag, err)
 	}
 	ctx, err = ctx.SubContext(el)
 	if err != nil {
-		return fmt.Errorf("cannot validate signature on %s: %v", tag, err)
+		return fmt.Errorf("cannot validate signature on %s: %w", tag, err)
 	}
 	// NSDetatch returns a nil element with its error, so the tag is kept above.
 	el, err = etreeutils.NSDetatch(ctx, el)
 	if err != nil {
-		return fmt.Errorf("cannot validate signature on %s: %v", tag, err)
+		return fmt.Errorf("cannot validate signature on %s: %w", tag, err)
 	}
 
 	if sp.SignatureVerifier != nil {
@@ -1659,7 +1671,11 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	}
 
 	if _, err := validationContext.Validate(el); err != nil {
-		return fmt.Errorf("cannot validate signature on %s: %v", tag, err)
+		err = fmt.Errorf("cannot validate signature on %s: %w", tag, err)
+		if kind := classifyCertificate(el, certs, validationContext.Clock.Now()); kind != nil {
+			return classify(err, kind)
+		}
+		return err
 	}
 
 	return nil

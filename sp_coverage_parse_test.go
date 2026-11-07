@@ -64,6 +64,10 @@ func TestSpcovParseXMLResponseErrors(t *testing.T) {
 		_, err := e.sp.ParseXMLResponse(buf, []string{spcovRequestID}, e.sp.AcsURL)
 		assert.Error(t, spcovPrivateErr(t, err),
 			"cannot validate signature on Response: Could not verify certificate against trusted certs")
+		// matched through the *InvalidResponseError, not just PrivateErr
+		assert.Check(t, errors.Is(err, ErrInvalidSignature))
+		assert.Check(t, errors.Is(err, ErrUntrustedCertificate))
+		assert.Check(t, !errors.Is(err, ErrCertificateNotValidNow))
 	})
 
 	t.Run("response tampered after signing", func(t *testing.T) {
@@ -71,6 +75,9 @@ func TestSpcovParseXMLResponseErrors(t *testing.T) {
 		buf = bytes.Replace(buf, []byte("alice@example.com"), []byte("admin@example.com"), 1)
 		_, err := e.sp.ParseXMLResponse(buf, []string{spcovRequestID}, e.sp.AcsURL)
 		assert.Error(t, spcovPrivateErr(t, err), "cannot validate signature on Response: Signature could not be verified")
+		assert.Check(t, errors.Is(err, ErrInvalidSignature))
+		assert.Check(t, !errors.Is(err, ErrUntrustedCertificate))
+		assert.Check(t, !errors.Is(err, ErrCertificateNotValidNow))
 	})
 
 	t.Run("unsigned response with unsigned assertion", func(t *testing.T) {
@@ -465,8 +472,11 @@ func TestSpcovValidateSignatureCertificateSources(t *testing.T) {
 
 	t.Run("fingerprint mismatch", func(t *testing.T) {
 		badFP := strings.Repeat("00:", 31) + "00"
-		assert.Error(t, withFingerprint(badFP, alg256).validateSignature(signed(t)),
+		err := withFingerprint(badFP, alg256).validateSignature(signed(t))
+		assert.Error(t, err,
 			"cannot validate signature on Response: cannot validate signature on Response: fingerprint mismatch")
+		assert.Check(t, errors.Is(err, ErrInvalidSignature))
+		assert.Check(t, errors.Is(err, ErrUntrustedCertificate))
 	})
 
 	t.Run("fingerprint unknown algorithm", func(t *testing.T) {
@@ -534,8 +544,11 @@ func TestSpcovValidateSignatureCertificateSources(t *testing.T) {
 	t.Run("explicit certificate that is not the signer", func(t *testing.T) {
 		sp := *e.sp
 		sp.IDPCertificate = strp(base64.StdEncoding.EncodeToString(mustParseCertificate(golden.Get(t, "cert_2017.pem")).Raw))
-		assert.Error(t, sp.validateSignature(signed(t)),
+		err := sp.validateSignature(signed(t))
+		assert.Error(t, err,
 			"cannot validate signature on Response: Could not verify certificate against trusted certs")
+		assert.Check(t, errors.Is(err, ErrInvalidSignature))
+		assert.Check(t, errors.Is(err, ErrUntrustedCertificate))
 	})
 
 	misconfigured := "cannot validate signature on Response: saml config not set up properly, specify either idp metadata url, fingerprints or actual certificate"
