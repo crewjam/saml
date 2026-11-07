@@ -99,7 +99,7 @@ func NewIdpLogoutRequest(idp *IdentityProvider, r *http.Request) (*IdpLogoutRequ
 	}
 
 	switch {
-	case isSOAPMessage(r):
+	case IsSOAPRequest(r):
 		if !idp.acceptsSOAPLogout() {
 			return nil, errors.New("the SOAP binding is not enabled for single logout")
 		}
@@ -543,7 +543,7 @@ func (req *IdpLogoutRequest) writePostLogoutResponse(w http.ResponseWriter, resp
 //     answered with a SOAP Client fault and HTTP 500 (SOAP 1.1 §6.2), with no
 //     LogoutResponse.
 func (idp *IdentityProvider) ServeSLO(w http.ResponseWriter, r *http.Request) {
-	if isSOAPMessage(r) && idp.acceptsSOAPLogout() {
+	if IsSOAPRequest(r) && idp.acceptsSOAPLogout() {
 		idp.serveSOAPLogoutRequest(w, r)
 		return
 	}

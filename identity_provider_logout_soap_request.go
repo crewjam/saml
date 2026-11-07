@@ -3,7 +3,6 @@ package saml
 import (
 	"errors"
 	"fmt"
-	"mime"
 	"net/http"
 	"slices"
 
@@ -23,17 +22,6 @@ const (
 	soapFaultClient = "Client"
 	soapFaultServer = "Server"
 )
-
-// isSOAPMessage reports whether r is a POST whose Content-Type is that of a
-// SOAP 1.1 message, text/xml (SOAP 1.1 §6.1.1). The HTTP-POST binding
-// sends application/x-www-form-urlencoded instead.
-func isSOAPMessage(r *http.Request) bool {
-	if r.Method != http.MethodPost {
-		return false
-	}
-	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	return err == nil && mediaType == "text/xml"
-}
 
 // acceptsSOAPLogout reports whether ServeSLO accepts LogoutRequests with the
 // SOAP binding: whether LogoutBindings, which the IdP metadata advertises,
