@@ -60,6 +60,13 @@
 //		sp.RequireSignedResponseForCBC = false // this IdP signs only assertions
 //	})
 //
+// IdPs that need it: Microsoft Entra ID with token encryption, and Okta
+// configured to sign only the assertion, sign the assertion and encrypt it
+// with AES-CBC, without signing the Response; relax
+// RequireSignedResponseForCBC for them, or have the IdP sign the Response.
+// Older IdPs that sign with SHA-1 need RejectSHA1Signatures relaxed.
+// Responses from Entra ID and Okta otherwise pass with every check on.
+//
 // # Replay protection
 //
 // ParseResponse accepts each assertion only once, and ParseLogoutRequest
