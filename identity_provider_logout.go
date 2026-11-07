@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -177,8 +176,11 @@ func (req *IdpLogoutRequest) parseRequest() (*etree.Element, error) {
 		return nil, errors.New("cannot parse logout request: no root element")
 	}
 	// LogoutRequest binds its element names to their namespaces, so this
-	// fails unless the root is a samlp:LogoutRequest.
-	if err := xml.Unmarshal(req.RequestBuffer, &req.Request); err != nil { //nolint:gosec // parsing the untrusted request is the point; it was checked by xmlroundtrip.Validate above
+	// fails unless the root is a samlp:LogoutRequest. unmarshalElement
+	// reads attribute fields only from unqualified attributes, so a
+	// namespace declaration that the signature does not cover cannot
+	// replace one.
+	if err := unmarshalElement(root, &req.Request); err != nil {
 		return nil, fmt.Errorf("cannot parse logout request: %w", err)
 	}
 	return root, nil

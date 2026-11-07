@@ -1017,7 +1017,7 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	response, err := httpClient.Do(req)
+	response, err := httpClient.Do(req) //nolint:gosec // G704: the URL is the IdP's ArtifactResolutionService from its metadata, not from the request
 	if err != nil {
 		retErr.PrivateErr = classify(fmt.Errorf("cannot resolve artifact: %w", err), ErrArtifactResolution)
 		return nil, retErr
@@ -2793,6 +2793,12 @@ func findChild(parentEl *etree.Element, childNS string, childTag string) (*etree
 // serialized root, so prefixes (and the default namespace) used anywhere in
 // el resolve to the same URIs they had in the original document.
 func elementToBytes(el *etree.Element) ([]byte, error) {
+	return elementCopyToBytes(elementWithNamespaces(el))
+}
+
+// elementWithNamespaces returns a copy of el that declares every namespace
+// prefix it inherits from its ancestors.
+func elementWithNamespaces(el *etree.Element) *etree.Element {
 	root := el.Copy()
 
 	declared := map[string]bool{}
@@ -2813,7 +2819,10 @@ func elementToBytes(el *etree.Element) ([]byte, error) {
 			root.CreateAttr(attr.FullKey(), attr.Value)
 		}
 	}
+	return root
+}
 
+func elementCopyToBytes(root *etree.Element) ([]byte, error) {
 	doc := etree.NewDocument()
 	doc.SetRoot(root)
 	return doc.WriteToBytes()
@@ -2833,8 +2842,14 @@ func namespaceDeclPrefix(attr etree.Attr) (string, bool) {
 }
 
 // unmarshalElement serializes el into v by serializing el and then parsing it with xml.Unmarshal.
+//
+// el is untrusted: attribute fields are read only from unqualified
+// attributes, never from namespace declarations or attributes in another
+// namespace (see sanitizeAttributesForUnmarshal).
 func unmarshalElement(el *etree.Element, v interface{}) error {
-	buf, err := elementToBytes(el)
+	root := elementWithNamespaces(el)
+	sanitizeAttributesForUnmarshal(root)
+	buf, err := elementCopyToBytes(root)
 	if err != nil {
 		return classify(err, ErrMalformedMessage)
 	}
