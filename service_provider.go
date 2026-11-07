@@ -1036,12 +1036,27 @@ type AssertionAttributes []AssertionAttribute
 
 // Get returns the assertion attribute whose Name or FriendlyName
 // matches name, or nil if no matching attribute is found.
+//
+// FriendlyName "MUST NOT be used as a basis for formally identifying SAML
+// attributes" (saml-core §2.7.3.1): an attribute's FriendlyName can equal
+// another attribute's Name. Use GetByName to match the Name only.
 func (aa AssertionAttributes) Get(name string) *AssertionAttribute {
 	for _, attr := range aa {
 		if attr.Name == name {
 			return &attr
 		}
 		if attr.FriendlyName == name {
+			return &attr
+		}
+	}
+	return nil
+}
+
+// GetByName returns the assertion attribute whose Name is name, or nil if
+// there is none. Unlike Get, it never matches a FriendlyName.
+func (aa AssertionAttributes) GetByName(name string) *AssertionAttribute {
+	for _, attr := range aa {
+		if attr.Name == name {
 			return &attr
 		}
 	}

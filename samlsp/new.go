@@ -116,6 +116,11 @@ type Options struct {
 	// LogoutBindings.)
 	LogoutBinding string
 
+	// KeyAttributesByName keys the session's attributes by their SAML Name
+	// rather than their FriendlyName (JWTSessionCodec.KeyAttributesByName).
+	// It is off by default.
+	KeyAttributesByName bool
+
 	// AcsIndex, if set, makes authentication requests name the
 	// AssertionConsumerService endpoint by its index in the SP metadata
 	// instead of by URL and binding. See saml.ServiceProvider.AcsIndex.
@@ -211,6 +216,8 @@ func DefaultSessionCodec(opts Options) JWTSessionCodec {
 		Issuer:        opts.URL.String(),
 		MaxAge:        defaultSessionMaxAge,
 		Key:           key,
+
+		KeyAttributesByName: opts.KeyAttributesByName,
 	}
 }
 
