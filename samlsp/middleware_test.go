@@ -167,7 +167,7 @@ func TestMiddlewareRequireAccountNoCreds(t *testing.T) {
 
 	assert.Check(t, is.Equal(http.StatusFound, resp.Code))
 	assert.Check(t, is.Equal("saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
-		test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly",
+		test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=600; HttpOnly",
 		resp.Header().Get("Set-Cookie")))
 
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
@@ -190,7 +190,7 @@ func TestMiddlewareRequireAccountNoCredsSecure(t *testing.T) {
 	handler.ServeHTTP(resp, req)
 
 	assert.Check(t, is.Equal(http.StatusFound, resp.Code))
-	assert.Check(t, is.Equal("saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure; SameSite=None",
+	assert.Check(t, is.Equal("saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=600; HttpOnly; Secure; SameSite=None",
 		resp.Header().Get("Set-Cookie")))
 
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
@@ -216,7 +216,7 @@ func TestMiddlewareRequireAccountNoCredsPostBinding(t *testing.T) {
 	handler.ServeHTTP(resp, req)
 
 	assert.Check(t, is.Equal(http.StatusOK, resp.Code))
-	assert.Check(t, is.Equal("saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure; SameSite=None",
+	assert.Check(t, is.Equal("saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=600; HttpOnly; Secure; SameSite=None",
 		resp.Header().Get("Set-Cookie")))
 
 	golden.Assert(t, resp.Body.String(), "expected_post_binding_response.html")
@@ -310,7 +310,7 @@ func TestMiddlewareRequireAccountBadCreds(t *testing.T) {
 
 	assert.Check(t, is.Equal(http.StatusFound, resp.Code))
 
-	assert.Check(t, is.Equal("saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure; SameSite=None",
+	assert.Check(t, is.Equal("saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=600; HttpOnly; Secure; SameSite=None",
 		resp.Header().Get("Set-Cookie")))
 
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
@@ -340,7 +340,7 @@ func TestMiddlewareRequireAccountExpiredCreds(t *testing.T) {
 	handler.ServeHTTP(resp, req)
 
 	assert.Check(t, is.Equal(http.StatusFound, resp.Code))
-	assert.Check(t, is.Equal("saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure; SameSite=None",
+	assert.Check(t, is.Equal("saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=600; HttpOnly; Secure; SameSite=None",
 		resp.Header().Get("Set-Cookie")))
 
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))

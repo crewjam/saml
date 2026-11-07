@@ -42,6 +42,39 @@ func (t CookieRequestTracker) cookiePath() string {
 	return t.ServiceProvider.AcsURL.Path
 }
 
+// encodedIndexMarker starts the cookie-name form of an index that is not
+// itself usable in a cookie name. It is a valid cookie-name character that
+// base64url never produces, and an index used as-is never starts with it, so
+// the two forms cannot collide.
+const encodedIndexMarker = "~"
+
+// cookieName returns the name of the cookie that tracks the request with the
+// given index. An index is the RelayState sent to the IdP; the default one is
+// base64url and is used as-is. One from RelayStateFunc may hold characters a
+// cookie name cannot (a path or URL has '/', '?' and '='); browsers and
+// http.SetCookie drop such a cookie, so that index is base64url-encoded.
+func (t CookieRequestTracker) cookieName(index string) string {
+	if isCookieNameToken(index) && !strings.HasPrefix(index, encodedIndexMarker) {
+		return t.NamePrefix + index
+	}
+	return t.NamePrefix + encodedIndexMarker + base64.RawURLEncoding.EncodeToString([]byte(index))
+}
+
+// isCookieNameToken reports whether s is non-empty and made only of the
+// characters RFC 6265 allows in a cookie name (an RFC 2616 token).
+func isCookieNameToken(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c <= ' ' || c >= 0x7f || strings.IndexByte("()<>@,;:\\\"/[]?={}", c) >= 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // TrackRequest starts tracking the SAML request with the given ID. It returns an
 // `index` that should be used as the RelayState in the SAMl request flow.
 func (t CookieRequestTracker) TrackRequest(w http.ResponseWriter, r *http.Request, samlRequestID string) (string, error) {
@@ -68,7 +101,7 @@ func (t CookieRequestTracker) TrackRequest(w http.ResponseWriter, r *http.Reques
 
 	secure := t.ServiceProvider.AcsURL.Scheme == "https"
 	http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure is set when served over https
-		Name:     t.NamePrefix + trackedRequest.Index,
+		Name:     t.cookieName(trackedRequest.Index),
 		Value:    signedTrackedRequest,
 		MaxAge:   int(t.MaxAge.Seconds()),
 		HttpOnly: true,
@@ -94,7 +127,7 @@ func (t CookieRequestTracker) sameSite(secure bool) http.SameSite {
 // StopTrackingRequest stops tracking the SAML request given by index, which is a string
 // previously returned from TrackRequest
 func (t CookieRequestTracker) StopTrackingRequest(w http.ResponseWriter, r *http.Request, index string) error {
-	cookie, err := r.Cookie(t.NamePrefix + index)
+	cookie, err := r.Cookie(t.cookieName(index))
 	if err != nil {
 		return err
 	}
@@ -123,8 +156,7 @@ func (t CookieRequestTracker) GetTrackedRequests(r *http.Request) []TrackedReque
 		if err != nil {
 			continue
 		}
-		index := strings.TrimPrefix(cookie.Name, t.NamePrefix)
-		if index != trackedRequest.Index {
+		if cookie.Name != t.cookieName(trackedRequest.Index) {
 			continue
 		}
 
@@ -135,7 +167,7 @@ func (t CookieRequestTracker) GetTrackedRequests(r *http.Request) []TrackedReque
 
 // GetTrackedRequest returns a pending tracked request.
 func (t CookieRequestTracker) GetTrackedRequest(r *http.Request, index string) (*TrackedRequest, error) {
-	cookie, err := r.Cookie(t.NamePrefix + index)
+	cookie, err := r.Cookie(t.cookieName(index))
 	if err != nil {
 		return nil, err
 	}
