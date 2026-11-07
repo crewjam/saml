@@ -17,9 +17,11 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/beevik/etree"
@@ -113,6 +115,16 @@ type ServiceProvider struct {
 	// on this host, i.e. https://example.com/saml/acs
 	AcsURL url.URL
 
+	// AcsIndex, if set, makes authentication requests carry
+	// AssertionConsumerServiceIndex with this value, instead of
+	// AssertionConsumerServiceURL and ProtocolBinding (SAML core §3.4.1
+	// does not allow both). The IdP then sends the response to the
+	// AssertionConsumerService endpoint with this index in the SP metadata it
+	// has on file, using that endpoint's binding. That endpoint's Location
+	// must still be AcsURL, because responses are only accepted there. If nil,
+	// requests carry AssertionConsumerServiceURL and ProtocolBinding.
+	AcsIndex *int
+
 	// SloURL is the full URL to the SAML Single Logout endpoint on this host.
 	// i.e. https://example.com/saml/slo
 	SloURL url.URL
@@ -154,6 +166,18 @@ type ServiceProvider struct {
 	// RequestedAuthnContext allow you to specify the requested authentication
 	// context in authentication requests
 	RequestedAuthnContext *RequestedAuthnContext
+
+	// ValidateAuthnContextClassRef, if true, requires an assertion to carry
+	// an AuthnStatement whose AuthnContextClassRef is one of the classes in
+	// RequestedAuthnContext. It has no effect if RequestedAuthnContext is
+	// nil or names no class.
+	//
+	// Only the "exact" Comparison (or an empty one, which means "exact") is
+	// supported. The ordering that "minimum", "better" and "maximum" refer
+	// to is defined by each deployment, not by the SAML specification
+	// (saml-core §3.3.2.2.1), so with any other Comparison every assertion
+	// is rejected rather than accepted unchecked.
+	ValidateAuthnContextClassRef bool
 
 	// AllowIDPInitiated accepts unsolicited (IdP-initiated) responses, which
 	// have no InResponseTo. A response or assertion that does carry an
@@ -648,6 +672,15 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding stri
 		ForceAuthn:            sp.ForceAuthn,
 		RequestedAuthnContext: sp.RequestedAuthnContext,
 	}
+	if sp.AcsIndex != nil {
+		// AssertionConsumerServiceIndex is an xs:unsignedShort.
+		if *sp.AcsIndex < 0 || *sp.AcsIndex > math.MaxUint16 {
+			return nil, fmt.Errorf("AcsIndex %d is not between 0 and %d", *sp.AcsIndex, math.MaxUint16)
+		}
+		req.AssertionConsumerServiceIndex = strconv.Itoa(*sp.AcsIndex)
+		req.AssertionConsumerServiceURL = ""
+		req.ProtocolBinding = ""
+	}
 	// We don't need to sign the XML document if the IDP uses HTTP-Redirect binding
 	if len(sp.SignatureMethod) > 0 && binding == HTTPPostBinding {
 		if err := sp.SignAuthnRequest(&req); err != nil {
@@ -1139,13 +1172,16 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 	var responseHasSignature bool
 	if signatureRequirement == signatureRequired {
 		responseSignatureErr = sp.validateSignature(responseEl)
-		if responseSignatureErr != errSignatureElementNotPresent {
+		switch responseSignatureErr {
+		case nil:
 			responseHasSignature = true
+		case errSignatureElementNotPresent:
+			// the Response is not signed, so each Assertion must be (checked below)
+		default:
+			// A Signature is present but invalid: reject the Response before
+			// looking at any of its other contents.
+			return nil, responseSignatureErr
 		}
-
-		// Note: we're deferring taking action on the signature validation until after we've
-		// processed the request attributes, because certain test cases seem to require this mis-feature.
-		// TODO(ross): adjust the test cases so that we can abort here if the Response signature is invalid.
 	}
 
 	// validate request attributes
@@ -1180,17 +1216,9 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 		}
 	}
 
-	if signatureRequirement == signatureRequired {
-		switch responseSignatureErr {
-		case nil:
-			// since the request has a signature, none of the Assertions need one
-			signatureRequirement = signatureNotRequired
-		case errSignatureElementNotPresent:
-			// the request has no signature, so assertions must be signed
-			signatureRequirement = signatureRequired // nop
-		default:
-			return nil, responseSignatureErr
-		}
+	if responseHasSignature {
+		// since the Response has a valid signature, none of the Assertions need one
+		signatureRequirement = signatureNotRequired
 	}
 
 	var errs []error
@@ -1393,6 +1421,13 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 		if subjectConfirmation.SubjectConfirmationData.Recipient != sp.AcsURL.String() {
 			return classify(fmt.Errorf("assertion SubjectConfirmation Recipient is not %s", sp.AcsURL.String()), ErrDestinationMismatch)
 		}
+		// saml-profiles §4.1.4.2 says a bearer SubjectConfirmationData MUST
+		// NOT carry NotBefore, but some IdPs send one anyway; accept it as
+		// long as it is not in the future (saml-core §2.4.1.2). An omitted
+		// NotBefore is the zero time, which always passes.
+		if subjectConfirmation.SubjectConfirmationData.NotBefore.Add(-MaxClockSkew).After(now) {
+			return classify(fmt.Errorf("assertion SubjectConfirmationData is not yet valid"), ErrNotYetValid)
+		}
 		if skewedDeadline(subjectConfirmation.SubjectConfirmationData.NotOnOrAfter).Before(now) {
 			return classify(fmt.Errorf("assertion SubjectConfirmationData is expired"), ErrExpired)
 		}
@@ -1410,7 +1445,40 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if err := sp.validateAudienceRestriction(assertion); err != nil {
 		return err
 	}
+	if err := sp.validateAuthnContextClassRef(assertion); err != nil {
+		return err
+	}
 	return nil
+}
+
+// validateAuthnContextClassRef checks, if ValidateAuthnContextClassRef is
+// set, that one of the assertion's AuthnStatements has an
+// AuthnContextClassRef listed in RequestedAuthnContext.
+func (sp *ServiceProvider) validateAuthnContextClassRef(assertion *Assertion) error {
+	if !sp.ValidateAuthnContextClassRef || sp.RequestedAuthnContext == nil {
+		return nil
+	}
+	requested := sp.RequestedAuthnContext.ClassRefs()
+	if len(requested) == 0 {
+		return nil
+	}
+	if comparison := sp.RequestedAuthnContext.Comparison; comparison != "" && comparison != "exact" {
+		return classify(fmt.Errorf("cannot validate AuthnContextClassRef for RequestedAuthnContext Comparison %q: only \"exact\" is supported", comparison), ErrUnsupported)
+	}
+	var got []string
+	for _, authnStatement := range assertion.AuthnStatements {
+		classRef := authnStatement.AuthnContext.AuthnContextClassRef
+		if classRef == nil {
+			continue
+		}
+		for _, want := range requested {
+			if classRef.Value == want {
+				return nil
+			}
+		}
+		got = append(got, classRef.Value)
+	}
+	return classify(fmt.Errorf("assertion AuthnContextClassRef %q is not one of the requested %q", got, requested), ErrAuthnContextMismatch)
 }
 
 // validateAssertionInResponseTo checks the InResponseTo of an assertion's
@@ -1574,6 +1642,40 @@ func unboundedParentContext(el *etree.Element) (etreeutils.NSContext, error) {
 	return ctx.SubContext(parent)
 }
 
+// stripKeyInfoWithoutCertificate removes the KeyInfo from el's Signature
+// when it carries no X509Certificate, so that dsig verifies against the
+// trusted certificates instead, and reports whether it had none.
+func stripKeyInfoWithoutCertificate(el *etree.Element) bool {
+	if el.FindElement("./Signature/KeyInfo/X509Data/X509Certificate") != nil {
+		return false
+	}
+	if sigEl := el.FindElement("./Signature"); sigEl != nil {
+		if keyInfo := sigEl.FindElement("KeyInfo"); keyInfo != nil {
+			sigEl.RemoveChild(keyInfo)
+		}
+	}
+	return true
+}
+
+// validateWithEachCert validates the signature on el against each of certs
+// in turn, with a copy of base that trusts only that certificate, and
+// returns nil as soon as one of them verifies it. Otherwise it returns the
+// error from the last certificate tried.
+func validateWithEachCert(base *dsig.ValidationContext, certs []*x509.Certificate, el *etree.Element) error {
+	var err error
+	for _, cert := range certs {
+		ctx := dsig.NewDefaultValidationContext(&dsig.MemoryX509CertificateStore{
+			Roots: []*x509.Certificate{cert},
+		})
+		ctx.IdAttribute = base.IdAttribute
+		ctx.Clock = base.Clock
+		if _, err = ctx.Validate(el); err == nil {
+			return nil
+		}
+	}
+	return err
+}
+
 // validateSignature returns nil iff the Signature embedded in the element is valid
 //
 // Every error other than errSignatureElementNotPresent matches
@@ -1643,13 +1745,7 @@ func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element) erro
 	//
 	// The best course of action is to just remove the KeyInfo so that dsig falls back to
 	// verifying against the public key provided in the metadata.
-	if el.FindElement("./Signature/KeyInfo/X509Data/X509Certificate") == nil {
-		if sigEl := el.FindElement("./Signature"); sigEl != nil {
-			if keyInfo := sigEl.FindElement("KeyInfo"); keyInfo != nil {
-				sigEl.RemoveChild(keyInfo)
-			}
-		}
-	}
+	noCertInKeyInfo := stripKeyInfoWithoutCertificate(el)
 
 	tag := el.Tag
 	ctx, err := unboundedParentContext(el)
@@ -1668,6 +1764,22 @@ func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element) erro
 
 	if sp.SignatureVerifier != nil {
 		return sp.SignatureVerifier.VerifySignature(validationContext, el)
+	}
+
+	// Without a certificate in KeyInfo, dsig can only pick the signing
+	// certificate itself when it trusts exactly one ("Missing x509 Element"
+	// otherwise), so an IdP that lists several signing certificates in its
+	// metadata, for example during key rollover, and signs without
+	// X509Certificate would always be rejected. In that case validate
+	// against each trusted certificate on its own. Each attempt is a full
+	// dsig validation of the same element that trusts only that
+	// certificate, so this accepts exactly what one of them would accept
+	// had the IdP named it in KeyInfo.
+	if noCertInKeyInfo && len(certs) > 1 {
+		if err := validateWithEachCert(validationContext, certs, el); err != nil {
+			return fmt.Errorf("cannot validate signature on %s: %w", tag, err)
+		}
+		return nil
 	}
 
 	if _, err := validationContext.Validate(el); err != nil {
@@ -1765,11 +1877,26 @@ func (sp *ServiceProvider) makeUnsignedLogoutRequest(idpURL, nameID string, opts
 // signature.
 func (sp *ServiceProvider) MakeRedirectLogoutRequest(nameID, relayState string, opts ...LogoutRequestOption) (*url.URL, error) {
 	req := sp.makeUnsignedLogoutRequest(sp.GetSLOBindingLocation(HTTPRedirectBinding), nameID, opts...)
-	encoded, err := deflateAndEncode(req.Element())
+	return sp.RedirectLogoutRequestURL(req, relayState)
+}
+
+// RedirectLogoutRequestURL returns the URL that sends req to its Destination
+// with the HTTP-Redirect binding. Use it instead of MakeRedirectLogoutRequest
+// when the request's ID is needed, for example to track the request and
+// match it with the IDP's LogoutResponse; req is typically made by
+// MakeLogoutRequest with the IDP's HTTP-Redirect SingleLogoutService location.
+//
+// Any enveloped XML signature on req is left out of the message. If
+// sp.SignatureMethod is set, the URL carries a query string signature
+// instead, as the binding requires (saml-bindings-2.0-os section 3.4.4.1).
+func (sp *ServiceProvider) RedirectLogoutRequestURL(req *LogoutRequest, relayState string) (*url.URL, error) {
+	unsigned := *req
+	unsigned.Signature = nil
+	encoded, err := deflateAndEncode(unsigned.Element())
 	if err != nil {
 		return nil, err
 	}
-	return sp.redirectBindingURL(req.Destination, redirectParamSAMLRequest, encoded, relayState)
+	return sp.redirectBindingURL(unsigned.Destination, redirectParamSAMLRequest, encoded, relayState)
 }
 
 // Redirect returns a URL suitable for using the redirect binding with the
@@ -2047,21 +2174,55 @@ func (sp *ServiceProvider) metadataNameIDFormat() NameIDFormat {
 // With the HTTP-Redirect binding the response must be signed, either with a
 // query string signature (SigAlg and Signature parameters) or with an
 // enveloped XML signature.
+//
+// It does not check the response's InResponseTo against the LogoutRequest
+// this service provider sent; use ParseLogoutResponse for that.
 func (sp *ServiceProvider) ValidateLogoutResponseRequest(req *http.Request) error {
+	_, err := sp.parseLogoutResponseRequest(req)
+	return err
+}
+
+// ParseLogoutResponse validates the LogoutResponse content from the request,
+// which may use either the HTTP-Redirect or the HTTP-POST binding, as
+// ValidateLogoutResponseRequest does, and returns it. In addition, the
+// response's InResponseTo must be one of possibleRequestIDs, the IDs of the
+// LogoutRequests this service provider sent and still expects an answer to,
+// so that a LogoutResponse cannot be replayed or delivered unsolicited.
+func (sp *ServiceProvider) ParseLogoutResponse(req *http.Request, possibleRequestIDs []string) (*LogoutResponse, error) {
+	resp, err := sp.parseLogoutResponseRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	for _, possibleRequestID := range possibleRequestIDs {
+		if possibleRequestID != "" && resp.InResponseTo == possibleRequestID {
+			return resp, nil
+		}
+	}
+	return nil, classify(fmt.Errorf("`InResponseTo` does not match any of the possible request IDs (expected %v)", possibleRequestIDs), ErrRequestIDMismatch)
+}
+
+func (sp *ServiceProvider) parseLogoutResponseRequest(req *http.Request) (*LogoutResponse, error) {
 	if data := req.URL.Query().Get("SAMLResponse"); data != "" {
 		return sp.validateLogoutResponseRedirectQuery(req.URL.RawQuery)
 	}
 
 	err := req.ParseForm()
 	if err != nil {
-		return classify(fmt.Errorf("unable to parse form: %w", err), ErrMalformedMessage)
+		return nil, classify(fmt.Errorf("unable to parse form: %w", err), ErrMalformedMessage)
 	}
 
-	return sp.ValidateLogoutResponseForm(req.PostForm.Get("SAMLResponse"))
+	return sp.parseLogoutResponseForm(req.PostForm.Get("SAMLResponse"))
 }
 
 // ValidateLogoutResponseForm returns a nil error if the logout response is valid.
+//
+// It does not check the response's InResponseTo; see ParseLogoutResponse.
 func (sp *ServiceProvider) ValidateLogoutResponseForm(postFormData string) error {
+	_, err := sp.parseLogoutResponseForm(postFormData)
+	return err
+}
+
+func (sp *ServiceProvider) parseLogoutResponseForm(postFormData string) (*LogoutResponse, error) {
 	retErr := &InvalidResponseError{
 		Now: sp.now(),
 	}
@@ -2069,36 +2230,39 @@ func (sp *ServiceProvider) ValidateLogoutResponseForm(postFormData string) error
 	rawResponseBuf, err := base64.StdEncoding.DecodeString(postFormData)
 	if err != nil {
 		retErr.PrivateErr = classify(fmt.Errorf("unable to parse base64: %w", err), ErrMalformedMessage)
-		return retErr
+		return nil, retErr
 	}
 	retErr.Response = string(rawResponseBuf)
 
 	// TODO(ross): add test case for this (SLO does not have tests right now)
 	if err := xrv.Validate(bytes.NewReader(rawResponseBuf)); err != nil {
-		return classify(fmt.Errorf("response contains invalid XML: %w", err), ErrMalformedMessage)
+		return nil, classify(fmt.Errorf("response contains invalid XML: %w", err), ErrMalformedMessage)
 	}
 
 	doc := etree.NewDocument()
 	if err := doc.ReadFromBytes(rawResponseBuf); err != nil {
 		retErr.PrivateErr = classify(err, ErrMalformedMessage)
-		return retErr
+		return nil, retErr
 	}
 	if doc.Root() == nil {
 		retErr.PrivateErr = classify(errors.New("invalid xml: no root"), ErrMalformedMessage)
-		return retErr
+		return nil, retErr
 	}
 
 	if err := sp.validateSignature(doc.Root()); err != nil {
 		retErr.PrivateErr = err
-		return retErr
+		return nil, retErr
 	}
 
 	var resp LogoutResponse
 	if err := unmarshalElement(doc.Root(), &resp); err != nil {
 		retErr.PrivateErr = err
-		return retErr
+		return nil, retErr
 	}
-	return sp.validateLogoutResponse(&resp)
+	if err := sp.validateLogoutResponse(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // ValidateLogoutResponseRedirect returns a nil error if the logout response is valid.
@@ -2111,30 +2275,36 @@ func (sp *ServiceProvider) ValidateLogoutResponseForm(postFormData string) error
 // a query string signature instead (as saml-bindings-2.0-os section 3.4.4.1
 // requires); use ValidateLogoutResponseRequest to accept those.
 //
+// It does not check the response's InResponseTo; see ParseLogoutResponse.
+//
 // URL Binding appears to be gzip / flate encoded
 // See https://www.oasis-open.org/committees/download.php/20645/sstc-saml-tech-overview-2%200-draft-10.pdf  6.6
 func (sp *ServiceProvider) ValidateLogoutResponseRedirect(queryParameterData string) error {
-	return sp.validateLogoutResponseRedirectQuery(redirectParamSAMLResponse + "=" + url.QueryEscape(queryParameterData))
+	_, err := sp.validateLogoutResponseRedirectQuery(redirectParamSAMLResponse + "=" + url.QueryEscape(queryParameterData))
+	return err
 }
 
 // validateLogoutResponseRedirectQuery validates a LogoutResponse received
 // via the HTTP-Redirect binding. rawQuery is the URL's raw query string.
-func (sp *ServiceProvider) validateLogoutResponseRedirectQuery(rawQuery string) error {
+func (sp *ServiceProvider) validateLogoutResponseRedirectQuery(rawQuery string) (*LogoutResponse, error) {
 	retErr := &InvalidResponseError{
 		Now: sp.now(),
 	}
 
 	root, err := sp.readRedirectBindingMessage(rawQuery, redirectParamSAMLResponse, retErr)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	var resp LogoutResponse
 	if err := unmarshalElement(root, &resp); err != nil {
 		retErr.PrivateErr = err
-		return retErr
+		return nil, retErr
 	}
-	return sp.validateLogoutResponse(&resp)
+	if err := sp.validateLogoutResponse(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // validateLogoutResponse validates the LogoutResponse fields. Returns a nil error if the LogoutResponse is valid.

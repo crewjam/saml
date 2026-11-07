@@ -69,8 +69,8 @@ var (
 	ErrExpired = errors.New("saml: expired")
 
 	// ErrNotYetValid is attached when a message or assertion is not valid
-	// yet: a Conditions NotBefore (allowing MaxClockSkew) or a LogoutRequest
-	// IssueInstant in the future. This usually means the IdP and SP clocks
+	// yet: a Conditions or SubjectConfirmationData NotBefore (allowing
+	// MaxClockSkew) or a LogoutRequest IssueInstant in the future. This usually means the IdP and SP clocks
 	// disagree.
 	ErrNotYetValid = errors.New("saml: not yet valid")
 
@@ -95,6 +95,13 @@ var (
 	// rejects it.
 	ErrAudienceMismatch = errors.New("saml: audience restriction does not match this service provider")
 
+	// ErrAuthnContextMismatch is attached when
+	// ServiceProvider.ValidateAuthnContextClassRef is set and none of the
+	// assertion's AuthnContextClassRefs is one of those in
+	// ServiceProvider.RequestedAuthnContext: the user did not authenticate
+	// the way the SP asked.
+	ErrAuthnContextMismatch = errors.New("saml: authentication context does not match the requested one")
+
 	// ErrDecryptionFailed is attached when an EncryptedAssertion cannot be
 	// decrypted with the SP's keys.
 	ErrDecryptionFailed = errors.New("saml: cannot decrypt")
@@ -116,11 +123,12 @@ var (
 	// IdP holds may be out of date.
 	ErrUnknownAssertionConsumerService = errors.New("saml: unknown assertion consumer service")
 
-	// ErrUnsupported is attached when a request uses something the
-	// IdentityProvider does not implement: an HTTP method other than GET or
-	// POST, a SAML version other than 2.0, signed AuthnRequests
-	// (WantAuthnRequestsSigned), or an assertion consumer service binding
-	// other than HTTP-POST.
+	// ErrUnsupported is attached when something is used that is not
+	// implemented. At the IdP: an HTTP method other than GET or POST, a SAML
+	// version other than 2.0, signed AuthnRequests (WantAuthnRequestsSigned),
+	// or an assertion consumer service binding other than HTTP-POST. At the
+	// SP: a RequestedAuthnContext Comparison other than "exact" when
+	// ValidateAuthnContextClassRef is set.
 	ErrUnsupported = errors.New("saml: not supported")
 
 	// ErrInvalidCertificate is attached when a certificate cannot be base64

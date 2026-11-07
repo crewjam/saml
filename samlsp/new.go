@@ -4,6 +4,7 @@ package samlsp
 import (
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/x509"
 	"fmt"
@@ -73,6 +74,11 @@ type Options struct {
 	// error.
 	AssertionConsumerServiceBindings []string
 
+	// AcsIndex, if set, makes authentication requests name the
+	// AssertionConsumerService endpoint by its index in the SP metadata
+	// instead of by URL and binding. See saml.ServiceProvider.AcsIndex.
+	AcsIndex *int
+
 	// IgnoreCertificateExpiry, if true, accepts signatures made with an IDP
 	// signing certificate outside its validity period. See
 	// saml.ServiceProvider.IgnoreCertificateExpiry.
@@ -92,11 +98,35 @@ type Options struct {
 	MetadataPath string
 	AcsPath      string
 	SloPath      string
+
+	// SessionKey, if set, signs and verifies the session JWTs and the
+	// tracked-request JWTs issued by the default SessionCodec and
+	// TrackedRequestCodec, instead of Key. Use it to keep the key that
+	// protects this SP's own cookies separate from the SAML key, for example
+	// so that the SAML key can live in an HSM or be rotated with the IdP
+	// without invalidating sessions, or so that a leaked session key does not
+	// let anyone sign SAML requests. The JWT signing method follows the type
+	// of the key: RS256 for RSA, ES256/ES384/ES512 for ECDSA (by curve) and
+	// EdDSA for Ed25519. If nil, Key is used, as before.
+	//
+	// Changing the session key invalidates existing sessions and pending
+	// requests.
+	SessionKey crypto.Signer
+}
+
+// sessionKey returns the key that signs session and tracked-request JWTs.
+func sessionKey(opts Options) crypto.Signer {
+	if !signerutil.IsNil(opts.SessionKey) {
+		return opts.SessionKey
+	}
+	return opts.Key
 }
 
 func getDefaultSigningMethod(signer crypto.Signer) jwt.SigningMethod {
 	if !signerutil.IsNil(signer) {
 		switch pub := signer.Public().(type) {
+		case ed25519.PublicKey:
+			return jwt.SigningMethodEdDSA
 		case *ecdsa.PublicKey:
 			// The JWT ECDSA signing methods are bound to a specific curve, so
 			// pick the one matching the key, otherwise signing fails.
@@ -118,12 +148,13 @@ func getDefaultSigningMethod(signer crypto.Signer) jwt.SigningMethod {
 // DefaultSessionCodec returns the default SessionCodec for the provided options,
 // a JWTSessionCodec configured to issue signed tokens.
 func DefaultSessionCodec(opts Options) JWTSessionCodec {
+	key := sessionKey(opts)
 	return JWTSessionCodec{
-		SigningMethod: getDefaultSigningMethod(opts.Key),
+		SigningMethod: getDefaultSigningMethod(key),
 		Audience:      opts.URL.String(),
 		Issuer:        opts.URL.String(),
 		MaxAge:        defaultSessionMaxAge,
-		Key:           opts.Key,
+		Key:           key,
 	}
 }
 
@@ -165,12 +196,13 @@ func legacySessionCookieDomain(opts Options) string {
 // DefaultTrackedRequestCodec returns a new TrackedRequestCodec for the provided
 // options, a JWTTrackedRequestCodec that uses a JWT to encode TrackedRequests.
 func DefaultTrackedRequestCodec(opts Options) JWTTrackedRequestCodec {
+	key := sessionKey(opts)
 	return JWTTrackedRequestCodec{
-		SigningMethod: getDefaultSigningMethod(opts.Key),
+		SigningMethod: getDefaultSigningMethod(key),
 		Audience:      opts.URL.String(),
 		Issuer:        opts.URL.String(),
 		MaxAge:        saml.MaxIssueDelay,
-		Key:           opts.Key,
+		Key:           key,
 	}
 }
 
@@ -184,6 +216,22 @@ func DefaultRequestTracker(opts Options, serviceProvider *saml.ServiceProvider) 
 		MaxAge:          saml.MaxIssueDelay,
 		RelayStateFunc:  opts.RelayStateFunc,
 		SameSite:        opts.CookieSameSite,
+	}
+}
+
+// DefaultLogoutRequestTracker returns a new RequestTracker for the
+// LogoutRequests of SP initiated single logout: a CookieRequestTracker whose
+// cookies are sent to the SLO URL. Its cookie names do not share the prefix
+// of DefaultRequestTracker, so a logout request ID is never accepted as the
+// ID of an authentication request, nor the other way around.
+func DefaultLogoutRequestTracker(opts Options, serviceProvider *saml.ServiceProvider) CookieRequestTracker {
+	return CookieRequestTracker{
+		ServiceProvider: serviceProvider,
+		NamePrefix:      "samlslo_",
+		Codec:           DefaultTrackedRequestCodec(opts),
+		MaxAge:          saml.MaxIssueDelay,
+		SameSite:        opts.CookieSameSite,
+		Path:            serviceProvider.SloURL.Path,
 	}
 }
 
@@ -223,6 +271,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		DecryptionKeys:        opts.DecryptionKeys,
 		MetadataURL:           *metadataURL,
 		AcsURL:                *acsURL,
+		AcsIndex:              opts.AcsIndex,
 		SloURL:                *sloURL,
 		IDPMetadata:           opts.IDPMetadata,
 		ForceAuthn:            forceAuthn,
@@ -276,8 +325,8 @@ func DefaultAssertionHandler(_ Options) NopAssertionHandler {
 // given options.
 //
 // You can customize the behavior of the middleware in more detail by
-// replacing and/or changing Session, RequestTracker, and ServiceProvider
-// in the returned Middleware.
+// replacing and/or changing Session, RequestTracker, LogoutRequestTracker
+// and ServiceProvider in the returned Middleware.
 func New(opts Options) (*Middleware, error) {
 	m := &Middleware{
 		ServiceProvider:  DefaultServiceProvider(opts),
@@ -288,6 +337,7 @@ func New(opts Options) (*Middleware, error) {
 		AssertionHandler: DefaultAssertionHandler(opts),
 	}
 	m.RequestTracker = DefaultRequestTracker(opts, &m.ServiceProvider)
+	m.LogoutRequestTracker = DefaultLogoutRequestTracker(opts, &m.ServiceProvider)
 	if opts.UseArtifactResponse {
 		m.ResponseBinding = saml.HTTPArtifactBinding
 	}

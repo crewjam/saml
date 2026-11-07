@@ -83,6 +83,36 @@ type AssertionMaker interface {
 	MakeAssertion(req *IdpAuthnRequest, session *Session) error
 }
 
+// ResponseWriter is an interface used by IdentityProvider to send the SAML
+// response for a request to the browser, once the assertion has been made.
+// The default implementation is DefaultResponseWriter, which is used if
+// IdentityProvider.ResponseWriter is not set.
+//
+// Implement it to control the whole HTTP response, for example to set
+// headers, to render the response inside the embedding application's own
+// pages, or to support a binding other than HTTP-POST. To only change the
+// markup of the default auto-submitting HTML form, set
+// IdentityProvider.ResponseFormTemplate instead.
+type ResponseWriter interface {
+	// WriteResponse writes the HTTP response carrying the SAML response for
+	// req. req.ResponseEl is nil until req.MakeResponse (or req.PostBinding,
+	// which calls it) has been called. If it returns an error, the caller
+	// logs it and replies with an HTTP 500 error, so an implementation
+	// should return errors before it starts writing to w.
+	WriteResponse(w http.ResponseWriter, req *IdpAuthnRequest) error
+}
+
+// DefaultResponseWriter is the default ResponseWriter. It calls
+// req.WriteResponse, which writes an auto-submitting HTML form (see
+// IdentityProvider.ResponseFormTemplate) that posts the response to the
+// service provider using the HTTP-POST binding.
+type DefaultResponseWriter struct{}
+
+// WriteResponse implements ResponseWriter.
+func (DefaultResponseWriter) WriteResponse(w http.ResponseWriter, req *IdpAuthnRequest) error {
+	return req.WriteResponse(w)
+}
+
 // IdentityProvider implements the SAML Identity Provider role (IDP).
 //
 // An identity provider receives SAML assertion requests and responds
@@ -114,6 +144,12 @@ type IdentityProvider struct {
 	ValidDuration           *time.Duration
 	ResponseFormTemplate    *template.Template
 
+	// ResponseWriter, if set, writes the HTTP response carrying the SAML
+	// response in ServeSSO and ServeIDPInitiated. If nil,
+	// DefaultResponseWriter is used, which posts the response with the
+	// HTML form from ResponseFormTemplate.
+	ResponseWriter ResponseWriter
+
 	// OnError, if non-nil, is called when ServeSSO, ServeIDPInitiated or
 	// ServeMetadata cannot complete a request, in place of DefaultOnError,
 	// which logs err to Logger and responds with status. status is the HTTP
@@ -141,6 +177,13 @@ type IdentityProvider struct {
 	// NameIDFormats are the NameID formats advertised in the IdP metadata.
 	// When empty it defaults to the transient format for backwards compatibility.
 	NameIDFormats []NameIDFormat
+
+	// MetadataScopes are published in the IdP metadata as Shibboleth
+	// shibmd:Scope extension elements, which tell service providers the
+	// scopes the IdP is authoritative for, i.e. the parts after the "@" in
+	// scoped attribute values such as eduPersonScopedAffiliation. When
+	// empty, no scopes are published.
+	MetadataScopes []ShibbolethScope
 
 	// AssertionEncrypter, if set, encrypts assertions for service providers
 	// that publish an encryption certificate. It is passed the SP's
@@ -249,6 +292,12 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 				},
 			},
 		})
+	}
+
+	if len(idp.MetadataScopes) > 0 {
+		ed.IDPSSODescriptors[0].Extensions = &Extensions{
+			ShibbolethScopes: append([]ShibbolethScope(nil), idp.MetadataScopes...),
+		}
 	}
 
 	if idp.LogoutURL.String() != "" {
@@ -378,7 +427,7 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to make assertion: %w", err))
 		return
 	}
-	if err := req.WriteResponse(w); err != nil {
+	if err := idp.responseWriter().WriteResponse(w, req); err != nil {
 		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to write response: %w", err))
 		return
 	}
@@ -420,7 +469,7 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if err := req.WriteResponse(w); err != nil {
+	if err := idp.responseWriter().WriteResponse(w, req); err != nil {
 		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to write response: %w", err))
 		return
 	}
@@ -484,6 +533,15 @@ func (idp *IdentityProvider) NewIdpInitiatedRequest(r *http.Request, serviceProv
 	}
 
 	return req, nil
+}
+
+// responseWriter returns idp.ResponseWriter, or DefaultResponseWriter if it
+// is not set.
+func (idp *IdentityProvider) responseWriter() ResponseWriter {
+	if idp.ResponseWriter != nil {
+		return idp.ResponseWriter
+	}
+	return DefaultResponseWriter{}
 }
 
 // IdpAuthnRequest is used by IdentityProvider to handle a single authentication request.

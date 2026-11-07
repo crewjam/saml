@@ -641,6 +641,59 @@ func TestSpcovValidateLogoutResponseRequest(t *testing.T) {
 	})
 }
 
+func TestParseLogoutResponse(t *testing.T) {
+	e := spcovSetup(t)
+	postRequest := func(buf []byte) *http.Request {
+		form := url.Values{"SAMLResponse": {base64.StdEncoding.EncodeToString(buf)}}
+		req := httptest.NewRequest(http.MethodPost, e.sp.SloURL.String(), strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		return req
+	}
+	valid := e.signedLogoutResponse(t, nil)
+
+	t.Run("post binding", func(t *testing.T) {
+		resp, err := e.sp.ParseLogoutResponse(postRequest(valid), []string{"id-other", "id-logout-request"})
+		assert.NilError(t, err)
+		assert.Check(t, is.Equal("id-logout-response", resp.ID))
+		assert.Check(t, is.Equal("id-logout-request", resp.InResponseTo))
+	})
+
+	t.Run("redirect binding", func(t *testing.T) {
+		q := redirectQuery{param: "SAMLResponse", xml: e.unsignedLogoutResponse(t), sigAlg: dsig.RSASHA256SignatureMethod, key: e.idpKey}
+		resp, err := e.sp.ParseLogoutResponse(redirectRequest(e.sp, q.build(t)), []string{"id-logout-request"})
+		assert.NilError(t, err)
+		assert.Check(t, is.Equal("id-logout-request", resp.InResponseTo))
+	})
+
+	t.Run("InResponseTo not pending", func(t *testing.T) {
+		resp, err := e.sp.ParseLogoutResponse(postRequest(valid), []string{"id-other"})
+		assert.Check(t, is.Nil(resp))
+		assert.Error(t, err, "`InResponseTo` does not match any of the possible request IDs (expected [id-other])")
+		assert.Check(t, errors.Is(err, ErrRequestIDMismatch))
+	})
+
+	t.Run("no pending requests", func(t *testing.T) {
+		resp, err := e.sp.ParseLogoutResponse(postRequest(valid), nil)
+		assert.Check(t, is.Nil(resp))
+		assert.Error(t, err, "`InResponseTo` does not match any of the possible request IDs (expected [])")
+	})
+
+	t.Run("empty InResponseTo", func(t *testing.T) {
+		buf := e.signedLogoutResponse(t, func(lr *LogoutResponse) { lr.InResponseTo = "" })
+		resp, err := e.sp.ParseLogoutResponse(postRequest(buf), []string{""})
+		assert.Check(t, is.Nil(resp))
+		assert.Error(t, err, "`InResponseTo` does not match any of the possible request IDs (expected [])")
+	})
+
+	t.Run("invalid response", func(t *testing.T) {
+		buf := e.signedLogoutResponse(t, func(lr *LogoutResponse) { lr.Destination = "https://evil.example.com/slo" })
+		resp, err := e.sp.ParseLogoutResponse(postRequest(buf), []string{"id-logout-request"})
+		assert.Check(t, is.Nil(resp))
+		assert.Error(t, err, "`Destination` does not match SloURL (expected \"https://sp.example.com/saml/slo\")")
+		assert.Check(t, errors.Is(err, ErrDestinationMismatch))
+	})
+}
+
 // spcovLogoutValidators runs a check against both the POST and the Redirect variant.
 func spcovLogoutValidators(e *spcovEnv) map[string]func(t *testing.T, buf []byte) error {
 	return map[string]func(t *testing.T, buf []byte) error{

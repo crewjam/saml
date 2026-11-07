@@ -1147,8 +1147,11 @@ func TestServiceProviderMissingDestinationWithSignaturePresent(t *testing.T) {
 	bytes, _ := removeDestinationFromDocument(addSignatureToDocument(test.responseDom(t))).WriteToBytes()
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(bytes))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
+	// addSignatureToDocument adds an empty (and so invalid) Signature. A
+	// present but invalid Response signature is rejected before any other
+	// part of the Response, including Destination, is looked at.
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
-		"`Destination` does not match requested URL or AcsURL (destination \"\", requested \"https://15661444.ngrok.io/saml2/acs\", acs \"https://15661444.ngrok.io/saml2/acs\")"))
+		"cannot validate signature on Response: Invalid Signature"))
 }
 
 func TestSPMismatchedDestinationsWithSignaturePresent(t *testing.T) {
@@ -1168,8 +1171,11 @@ func TestSPMismatchedDestinationsWithSignaturePresent(t *testing.T) {
 	bytes, _ := addSignatureToDocument(test.responseDom(t)).WriteToBytes()
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(bytes))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
+	// addSignatureToDocument adds an empty (and so invalid) Signature. A
+	// present but invalid Response signature is rejected before any other
+	// part of the Response, including Destination, is looked at.
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
-		"`Destination` does not match requested URL or AcsURL (destination \"https://wrong/saml2/acs\", requested \"https://15661444.ngrok.io/saml2/acs\", acs \"https://15661444.ngrok.io/saml2/acs\")"))
+		"cannot validate signature on Response: Invalid Signature"))
 }
 
 func TestSPMismatchedDestinationsWithNoSignaturePresent(t *testing.T) {
@@ -1210,8 +1216,39 @@ func TestSPMissingDestinationWithSignaturePresent(t *testing.T) {
 	bytes, _ := addSignatureToDocument(test.responseDom(t)).WriteToBytes()
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(bytes))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
+	// addSignatureToDocument adds an empty (and so invalid) Signature. A
+	// present but invalid Response signature is rejected before any other
+	// part of the Response, including Destination, is looked at.
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
-		"`Destination` does not match requested URL or AcsURL (destination \"\", requested \"https://15661444.ngrok.io/saml2/acs\", acs \"https://15661444.ngrok.io/saml2/acs\")"))
+		"cannot validate signature on Response: Invalid Signature"))
+}
+
+func TestSPRejectsInvalidResponseSignatureBeforeOtherChecks(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	// A Response with an invalid signature, a wrong InResponseTo, a wrong
+	// Issuer and a non-success Status must be rejected for its signature, not
+	// for anything an unauthenticated sender controls.
+	doc := addSignatureToDocument(test.responseDom(t))
+	responseEl := doc.FindElement("//Response")
+	responseEl.FindElement("./Issuer").SetText("https://evil.example.com/")
+	responseEl.FindElement("./Status/StatusCode").CreateAttr("Value", "urn:oasis:names:tc:SAML:2.0:status:Requester")
+	bytes, _ := doc.WriteToBytes()
+
+	req := http.Request{PostForm: url.Values{}, URL: &s.AcsURL}
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(bytes))
+	_, err = s.ParseResponse(&req, []string{"id-not-the-request-id"})
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
+		"cannot validate signature on Response: Invalid Signature"))
 }
 
 func TestSPInvalidAssertions(t *testing.T) {
@@ -1280,6 +1317,29 @@ func TestSPInvalidAssertions(t *testing.T) {
 	assert.Check(t, is.Error(err, "assertion SubjectConfirmationData is expired"))
 	assertion = Assertion{}
 	assert.Check(t, xml.Unmarshal(assertionBuf, &assertion))
+
+	// SubjectConfirmationData NotBefore: omitted, past or within MaxClockSkew
+	// is accepted; further in the future is rejected.
+	for _, tc := range []struct {
+		notBefore time.Time
+		wantErr   string
+	}{
+		{notBefore: time.Time{}},
+		{notBefore: TimeNow().Add(-time.Hour)},
+		{notBefore: TimeNow().Add(MaxClockSkew - time.Second)},
+		{notBefore: TimeNow().Add(MaxClockSkew + time.Second), wantErr: "assertion SubjectConfirmationData is not yet valid"},
+		{notBefore: TimeNow().Add(time.Hour), wantErr: "assertion SubjectConfirmationData is not yet valid"},
+	} {
+		assertion.Subject.SubjectConfirmations[0].SubjectConfirmationData.NotBefore = tc.notBefore
+		err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
+		if tc.wantErr == "" {
+			assert.Check(t, err, "NotBefore %s", tc.notBefore)
+		} else {
+			assert.Check(t, is.Error(err, tc.wantErr), "NotBefore %s", tc.notBefore)
+		}
+		assertion = Assertion{}
+		assert.Check(t, xml.Unmarshal(assertionBuf, &assertion))
+	}
 
 	assertion.Conditions.NotBefore = TimeNow().Add(time.Hour)
 	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
@@ -2221,4 +2281,155 @@ func TestSPValidateRequestIDWithAllowIDPInitiated(t *testing.T) {
 
 	// A matching InResponseTo is accepted.
 	assert.Check(t, s.validateRequestID(Response{InResponseTo: "id-expected"}, []string{"", "id-expected"}))
+}
+
+func TestSPValidateAuthnContextClassRef(t *testing.T) {
+	const (
+		password    = "urn:oasis:names:tc:SAML:2.0:ac:classes:Password" //nolint:gosec // an AuthnContextClassRef URI, not a credential
+		x509        = "urn:oasis:names:tc:SAML:2.0:ac:classes:X509"
+		unspecified = "urn:oasis:names:tc:SAML:2.0:ac:classes:unspecified"
+	)
+	assertionWith := func(classRefs ...string) *Assertion {
+		a := &Assertion{}
+		for _, ref := range classRefs {
+			a.AuthnStatements = append(a.AuthnStatements, AuthnStatement{
+				AuthnContext: AuthnContext{AuthnContextClassRef: &AuthnContextClassRef{Value: ref}},
+			})
+		}
+		return a
+	}
+
+	for _, tc := range []struct {
+		name      string
+		validate  bool
+		requested *RequestedAuthnContext
+		assertion *Assertion
+		wantErr   string
+	}{
+		{
+			name:      "disabled by default",
+			requested: &RequestedAuthnContext{Comparison: "exact", AuthnContextClassRefs: []string{x509}},
+			assertion: assertionWith(password),
+		},
+		{
+			name:      "nothing requested",
+			validate:  true,
+			assertion: assertionWith(password),
+		},
+		{
+			name:      "no class requested",
+			validate:  true,
+			requested: &RequestedAuthnContext{Comparison: "exact"},
+			assertion: assertionWith(password),
+		},
+		{
+			name:      "exact match",
+			validate:  true,
+			requested: &RequestedAuthnContext{Comparison: "exact", AuthnContextClassRefs: []string{password}},
+			assertion: assertionWith(password),
+		},
+		{
+			name:      "empty comparison means exact",
+			validate:  true,
+			requested: &RequestedAuthnContext{AuthnContextClassRefs: []string{password}},
+			assertion: assertionWith(password),
+		},
+		{
+			name:      "deprecated single class ref",
+			validate:  true,
+			requested: &RequestedAuthnContext{Comparison: "exact", AuthnContextClassRef: password},
+			assertion: assertionWith(password),
+		},
+		{
+			name:      "any of several requested",
+			validate:  true,
+			requested: &RequestedAuthnContext{Comparison: "exact", AuthnContextClassRefs: []string{x509, password}},
+			assertion: assertionWith(password),
+		},
+		{
+			name:      "any of several statements",
+			validate:  true,
+			requested: &RequestedAuthnContext{Comparison: "exact", AuthnContextClassRefs: []string{x509}},
+			assertion: assertionWith(password, x509),
+		},
+		{
+			name:      "mismatch",
+			validate:  true,
+			requested: &RequestedAuthnContext{Comparison: "exact", AuthnContextClassRefs: []string{x509}},
+			assertion: assertionWith(password),
+			wantErr:   `assertion AuthnContextClassRef ["urn:oasis:names:tc:SAML:2.0:ac:classes:Password"] is not one of the requested ["urn:oasis:names:tc:SAML:2.0:ac:classes:X509"]`,
+		},
+		{
+			name:      "no AuthnStatement",
+			validate:  true,
+			requested: &RequestedAuthnContext{Comparison: "exact", AuthnContextClassRefs: []string{x509}},
+			assertion: assertionWith(),
+			wantErr:   `assertion AuthnContextClassRef [] is not one of the requested ["urn:oasis:names:tc:SAML:2.0:ac:classes:X509"]`,
+		},
+		{
+			name:      "minimum is not supported",
+			validate:  true,
+			requested: &RequestedAuthnContext{Comparison: "minimum", AuthnContextClassRefs: []string{password}},
+			assertion: assertionWith(password),
+			wantErr:   `cannot validate AuthnContextClassRef for RequestedAuthnContext Comparison "minimum": only "exact" is supported`,
+		},
+		{
+			name:      "minimum without validation",
+			requested: &RequestedAuthnContext{Comparison: "minimum", AuthnContextClassRefs: []string{password}},
+			assertion: assertionWith(unspecified),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sp := ServiceProvider{
+				RequestedAuthnContext:        tc.requested,
+				ValidateAuthnContextClassRef: tc.validate,
+			}
+			err := sp.validateAuthnContextClassRef(tc.assertion)
+			if tc.wantErr == "" {
+				assert.Check(t, err)
+			} else {
+				assert.Check(t, is.Error(err, tc.wantErr))
+			}
+		})
+	}
+}
+
+func TestSPValidateAuthnContextClassRefParseResponse(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	// An actual response from google, whose AuthnStatement has the
+	// "unspecified" AuthnContextClassRef.
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05 UTC 2006", "Tue Jan 5 16:55:39 UTC 2016")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
+	samlResponse := golden.Get(t, "TestSPCanHandlePlaintextResponse_response")
+	test.IDPMetadata = golden.Get(t, "TestSPCanHandlePlaintextResponse_IDPMetadata")
+
+	parse := func(classRef string) error {
+		s := ServiceProvider{
+			Key:         test.Key,
+			Certificate: test.Certificate,
+			MetadataURL: mustParseURL("https://29ee6d2e.ngrok.io/saml/metadata"),
+			AcsURL:      mustParseURL("https://29ee6d2e.ngrok.io/saml/acs"),
+			IDPMetadata: &EntityDescriptor{},
+			RequestedAuthnContext: &RequestedAuthnContext{
+				Comparison:            "exact",
+				AuthnContextClassRefs: []string{classRef},
+			},
+			ValidateAuthnContextClassRef: true,
+		}
+		assert.Check(t, xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata))
+		req := http.Request{PostForm: url.Values{}, URL: &s.AcsURL}
+		req.PostForm.Set("SAMLResponse", string(samlResponse))
+		_, err := s.ParseResponse(&req, []string{"id-fd419a5ab0472645427f8e07d87a3a5dd0b2e9a6"})
+		return err
+	}
+
+	assert.Check(t, parse("urn:oasis:names:tc:SAML:2.0:ac:classes:unspecified"))
+
+	err := parse("urn:oasis:names:tc:SAML:2.0:ac:classes:X509")
+	assert.Assert(t, err != nil)
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
+		`assertion AuthnContextClassRef ["urn:oasis:names:tc:SAML:2.0:ac:classes:unspecified"] is not one of the requested ["urn:oasis:names:tc:SAML:2.0:ac:classes:X509"]`))
 }

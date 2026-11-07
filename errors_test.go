@@ -89,7 +89,7 @@ var allErrorKinds = []error{
 	ErrIssuerMismatch, ErrDestinationMismatch, ErrRequestIDMismatch,
 	ErrAudienceMismatch, ErrDecryptionFailed, ErrArtifactResolution,
 	ErrUnknownServiceProvider, ErrUnknownAssertionConsumerService, ErrUnsupported,
-	ErrInvalidCertificate,
+	ErrInvalidCertificate, ErrAuthnContextMismatch,
 }
 
 func checkOnlyKind(t *testing.T, err error, want error) {
@@ -124,6 +124,9 @@ func TestParseXMLResponseErrorKinds(t *testing.T) {
 		}, ErrExpired},
 		{"assertion Conditions NotOnOrAfter", func(r *Response, a *Assertion) { a.Conditions.NotOnOrAfter = old }, ErrExpired},
 		{"assertion Conditions NotBefore", func(r *Response, a *Assertion) { a.Conditions.NotBefore = future }, ErrNotYetValid},
+		{"assertion SubjectConfirmationData NotBefore", func(r *Response, a *Assertion) {
+			a.Subject.SubjectConfirmations[0].SubjectConfirmationData.NotBefore = future
+		}, ErrNotYetValid},
 		{"assertion Issuer", func(r *Response, a *Assertion) { a.Issuer.Value = "https://other-idp.example.com" }, ErrIssuerMismatch},
 		{"assertion Recipient", func(r *Response, a *Assertion) {
 			a.Subject.SubjectConfirmations[0].SubjectConfirmationData.Recipient = "https://elsewhere.example.com/acs"
@@ -148,6 +151,28 @@ func TestParseXMLResponseErrorKinds(t *testing.T) {
 			checkOnlyKind(t, err, tc.want)
 		})
 	}
+
+	t.Run("AuthnContextClassRef", func(t *testing.T) {
+		password := "urn:oasis:names:tc:SAML:2.0:ac:classes:Password"
+		mfa := "https://refeds.org/profile/mfa"
+		r := e.response()
+		r.Assertion = e.assertion()
+		r.Assertion.AuthnStatements = []AuthnStatement{{
+			AuthnInstant: spcovNow,
+			AuthnContext: AuthnContext{AuthnContextClassRef: &AuthnContextClassRef{Value: password}},
+		}}
+		buf := spcovSerialize(t, e.idpSign(t, r.Element()))
+
+		sp := *e.sp
+		sp.ValidateAuthnContextClassRef = true
+		sp.RequestedAuthnContext = &RequestedAuthnContext{AuthnContextClassRefs: []string{mfa}}
+		_, err := sp.ParseXMLResponse(buf, []string{spcovRequestID}, sp.AcsURL)
+		checkOnlyKind(t, err, ErrAuthnContextMismatch)
+
+		sp.RequestedAuthnContext = &RequestedAuthnContext{Comparison: "minimum", AuthnContextClassRefs: []string{password}}
+		_, err = sp.ParseXMLResponse(buf, []string{spcovRequestID}, sp.AcsURL)
+		checkOnlyKind(t, err, ErrUnsupported)
+	})
 
 	t.Run("invalid XML", func(t *testing.T) {
 		_, err := e.sp.ParseXMLResponse([]byte("<a>"), []string{spcovRequestID}, e.sp.AcsURL)
