@@ -119,8 +119,8 @@ func TestXHTMLIdPForms(t *testing.T) {
 	})
 
 	t.Run("logout complete", func(t *testing.T) {
-		assertXHTMLDocument(t, render(t, defaultLogoutCompleteTemplate, []string(nil)))
-		assertXHTMLDocument(t, render(t, defaultLogoutCompleteTemplate, []string{"https://sp.example.com/<metadata>&x"}))
+		assertXHTMLDocument(t, render(t, defaultLogoutCompleteTemplate, IdpLogoutComplete{}))
+		assertXHTMLDocument(t, render(t, defaultLogoutCompleteTemplate, IdpLogoutComplete{Failed: []string{"https://sp.example.com/<metadata>&x"}}))
 	})
 
 	t.Run("ServeSSO", func(t *testing.T) {

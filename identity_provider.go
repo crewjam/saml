@@ -197,6 +197,19 @@ type IdentityProvider struct {
 	// RelayState field would be included in the signed content).
 	SimpleSignResponseFormTemplate *template.Template
 
+	// LogoutRequestFormTemplate, if set, replaces the default
+	// auto-submitting HTML form that sends a LogoutRequest to a service
+	// provider's HTTP-POST SingleLogoutService while the IdP propagates a
+	// logout (see StartLogout and ServeSLO). It is executed with an
+	// IdpLogoutRequestForm and must post its SAMLRequest field to its URL.
+	// LogoutResponses to service providers use ResponseFormTemplate.
+	LogoutRequestFormTemplate *template.Template
+
+	// LogoutCompleteTemplate, if set, replaces the default page shown at
+	// the end of an IdP-initiated logout that has no return URL (see
+	// StartLogout). It is executed with an IdpLogoutComplete.
+	LogoutCompleteTemplate *template.Template
+
 	// AdvertiseSimpleSignSSO, if true, adds an HTTP-POST-SimpleSign
 	// SingleSignOnService endpoint at SSOURL to the metadata. ServeSSO
 	// accepts SimpleSign authentication requests whether or not this is set.

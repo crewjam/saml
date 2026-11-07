@@ -434,6 +434,21 @@ func logoutRequestEndpoint(metadata *EntityDescriptor) (*Endpoint, error) {
 	return nil, errors.New("the service provider metadata has no HTTP-Redirect or HTTP-POST SingleLogoutService endpoint")
 }
 
+// IdpLogoutRequestForm is what IdentityProvider.LogoutRequestFormTemplate is
+// executed with: a signed LogoutRequest, base64 encoded, to be posted as
+// the SAMLRequest field to URL with the HTTP-POST binding.
+type IdpLogoutRequestForm struct {
+	URL         string
+	SAMLRequest string
+}
+
+// IdpLogoutComplete is what IdentityProvider.LogoutCompleteTemplate is
+// executed with at the end of an IdP-initiated logout. Failed names the
+// service providers that could not be logged out, if any.
+type IdpLogoutComplete struct {
+	Failed []string
+}
+
 var defaultLogoutRequestFormTemplate = template.Must(template.New("saml-logout-request-form").Parse(`` +
 	`<html xmlns="http://www.w3.org/1999/xhtml">` +
 	`<head><title>Continue</title></head>` +
@@ -479,8 +494,12 @@ func (idp *IdentityProvider) logoutRequestWriter(logoutRequest *LogoutRequest, b
 		if err != nil {
 			return nil, err
 		}
+		tmpl := idp.LogoutRequestFormTemplate
+		if tmpl == nil {
+			tmpl = defaultLogoutRequestFormTemplate
+		}
 		out := bytes.NewBuffer(nil)
-		if err := defaultLogoutRequestFormTemplate.Execute(out, struct{ URL, SAMLRequest string }{
+		if err := tmpl.Execute(out, IdpLogoutRequestForm{
 			URL:         logoutRequest.Destination,
 			SAMLRequest: base64.StdEncoding.EncodeToString(buf),
 		}); err != nil {
@@ -499,7 +518,7 @@ var defaultLogoutCompleteTemplate = template.Must(template.New("saml-logout-comp
 	`<head><title>Logged out</title></head>` +
 	`<body>` +
 	`<p>You have been logged out.</p>` +
-	`{{if .}}<p>The logout could not be confirmed by:</p><ul>{{range .}}<li>{{.}}</li>{{end}}</ul>{{end}}` +
+	`{{if .Failed}}<p>The logout could not be confirmed by:</p><ul>{{range .Failed}}<li>{{.}}</li>{{end}}</ul>{{end}}` +
 	`</body>` +
 	`</html>`))
 
@@ -534,8 +553,18 @@ func (idp *IdentityProvider) finishLogout(w http.ResponseWriter, r *http.Request
 		http.Redirect(w, r, state.ReturnURL, http.StatusFound) //nolint:gosec // ReturnURL is set by the application in StartLogout and carried in the signed state, never taken from the request
 		return
 	}
+	tmpl := idp.LogoutCompleteTemplate
+	if tmpl == nil {
+		tmpl = defaultLogoutCompleteTemplate
+	}
+	out := bytes.NewBuffer(nil)
+	if err := tmpl.Execute(out, IdpLogoutComplete{Failed: state.Failed}); err != nil {
+		idp.Logger.Printf("failed to write logout page: %s", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := defaultLogoutCompleteTemplate.Execute(w, state.Failed); err != nil {
+	if _, err := io.Copy(w, out); err != nil {
 		idp.Logger.Printf("failed to write logout page: %s", err)
 	}
 }
