@@ -51,6 +51,10 @@ func TestProtocolMessageSignatureRoundTrips(t *testing.T) {
 	add("ArtifactResolve", `<samlp:ArtifactResolve `+samlp+header+
 		`<samlp:Artifact>AAQAAA==</samlp:Artifact></samlp:ArtifactResolve>`,
 		artifactResolve, func() *etree.Element { return artifactResolve.Signature })
+	attributeQuery := &AttributeQuery{}
+	add("AttributeQuery", `<samlp:AttributeQuery `+samlp+header+
+		`<saml:Subject xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"><saml:NameID>alice</saml:NameID></saml:Subject></samlp:AttributeQuery>`,
+		attributeQuery, func() *etree.Element { return attributeQuery.Signature })
 	artifactResponse := &ArtifactResponse{}
 	add("ArtifactResponse", `<samlp:ArtifactResponse `+samlp+header+status+`</samlp:ArtifactResponse>`,
 		artifactResponse, func() *etree.Element { return artifactResponse.Signature })

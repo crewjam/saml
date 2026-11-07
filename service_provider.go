@@ -105,7 +105,8 @@ type ServiceProvider struct {
 	// the metadata.
 	DecryptionKeys []*rsa.PrivateKey
 
-	// HTTPClient to use during SAML artifact resolution
+	// HTTPClient to use during SAML artifact resolution and attribute
+	// queries (QueryAttributes). If nil, http.DefaultClient is used.
 	HTTPClient *http.Client
 
 	// MetadataURL is the full URL to the metadata endpoint on this host,
@@ -538,25 +539,35 @@ func (sp *ServiceProvider) GetSLOBindingLocation(binding string) string {
 // getIDPSigningCerts returns the certificates which we can use to verify things
 // signed by the IDP in PEM format, or nil if no such certificate is found.
 func (sp *ServiceProvider) getIDPSigningCerts() ([]*x509.Certificate, error) {
-	var certStrs []string
-
-	// We need to include non-empty certs where the "use" attribute is
-	// either set to "signing" or is missing
+	var keyDescriptors []KeyDescriptor
 	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
-		for _, keyDescriptor := range idpSSODescriptor.KeyDescriptors {
-			if len(keyDescriptor.KeyInfo.X509Data.X509Certificates) != 0 {
-				switch keyDescriptor.Use {
-				case "", "signing":
-					for _, certificate := range keyDescriptor.KeyInfo.X509Data.X509Certificates {
-						certStrs = append(certStrs, certificate.Data)
-					}
-				}
+		keyDescriptors = append(keyDescriptors, idpSSODescriptor.KeyDescriptors...)
+	}
+	certs, err := signingCerts(keyDescriptors)
+	if err != nil {
+		return nil, err
+	}
+	if len(certs) == 0 {
+		return nil, errors.New("cannot find any signing certificate in the IDP SSO descriptor")
+	}
+	return certs, nil
+}
+
+// signingCerts parses the certificates in keyDescriptors that may be used for
+// signing, those whose "use" attribute is "signing" or missing. It returns
+// nil if there are none.
+func signingCerts(keyDescriptors []KeyDescriptor) ([]*x509.Certificate, error) {
+	var certStrs []string
+	for _, keyDescriptor := range keyDescriptors {
+		switch keyDescriptor.Use {
+		case "", "signing":
+			for _, certificate := range keyDescriptor.KeyInfo.X509Data.X509Certificates {
+				certStrs = append(certStrs, certificate.Data)
 			}
 		}
 	}
-
 	if len(certStrs) == 0 {
-		return nil, errors.New("cannot find any signing certificate in the IDP SSO descriptor")
+		return nil, nil
 	}
 
 	certs := make([]*x509.Certificate, len(certStrs))
@@ -1798,14 +1809,22 @@ func validateWithEachCert(base *dsig.ValidationContext, certs []*x509.Certificat
 // ErrInvalidSignature with errors.Is, and also ErrUntrustedCertificate or
 // ErrCertificateNotValidNow when that is why validation failed.
 func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
-	err := sp.validateSignatureUnclassified(el)
+	return sp.validateSignatureWith(el, sp.getIDPSigningCerts)
+}
+
+// validateSignatureWith is validateSignature, trusting the certificates
+// metadataCerts returns when the IdP's certificates come from its metadata
+// (that is, when neither IDPCertificate nor IDPCertificateFingerprint is set).
+// Its errors are classified as validateSignature's are.
+func (sp *ServiceProvider) validateSignatureWith(el *etree.Element, metadataCerts func() ([]*x509.Certificate, error)) error {
+	err := sp.validateSignatureUnclassified(el, metadataCerts)
 	if err == nil || err == errSignatureElementNotPresent {
 		return err
 	}
 	return classify(err, ErrInvalidSignature)
 }
 
-func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element) error {
+func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element, metadataCerts func() ([]*x509.Certificate, error)) error {
 	sigEl, err := findChild(el, "http://www.w3.org/2000/09/xmldsig#", "Signature")
 	if err != nil {
 		return err
@@ -1816,7 +1835,7 @@ func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element) erro
 
 	var certs []*x509.Certificate
 	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate == nil {
-		certs, err = sp.getIDPSigningCerts()
+		certs, err = metadataCerts()
 		if err != nil {
 			return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
 		}
