@@ -79,7 +79,7 @@ func multiKeyEncrypt(t *testing.T, tag string, plaintext []byte, recipients ...m
 		keyKeyInfo.CreateAttr("xmlns:ds", "http://www.w3.org/2000/09/xmldsig#")
 		keyKeyInfo.CreateElement("ds:X509Data").CreateElement("ds:X509Certificate").
 			SetText(base64.StdEncoding.EncodeToString(r.cert.Raw))
-		wrapped, err := rsa.EncryptOAEP(sha1.New(), rand.Reader, r.cert.PublicKey.(*rsa.PublicKey), contentKey, nil)
+		wrapped, err := rsa.EncryptOAEP(sha1.New(), rand.Reader, r.cert.PublicKey.(*rsa.PublicKey), contentKey, nil) //nolint:gosec // rsa-oaep-mgf1p uses SHA-1, as the package's own default does
 		assert.NilError(t, err)
 		keyEl.CreateElement("xenc:CipherData").CreateElement("xenc:CipherValue").
 			SetText(base64.StdEncoding.EncodeToString(wrapped))
@@ -152,8 +152,9 @@ func TestEncryptedKeyRecipients_CandidateOrder(t *testing.T) {
 		`<xenc:EncryptedKey Id="c"/>`+
 		`</saml:EncryptedAssertion>`)
 	ids := func(recipient string) []string {
-		var got []string
-		for _, k := range encryptedKeyCandidates(el, el.FindElement("./EncryptedData"), recipient) {
+		candidates := encryptedKeyCandidates(el, el.FindElement("./EncryptedData"), recipient)
+		got := make([]string, 0, len(candidates))
+		for _, k := range candidates {
 			got = append(got, k.SelectAttrValue("Id", ""))
 		}
 		return got
