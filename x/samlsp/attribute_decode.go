@@ -60,6 +60,13 @@ import (
 // if a value cannot be parsed or a field has a type it cannot fill.
 // Fields set before the error keep their new values.
 func (a *Assertion) DecodeAttributes(v any) error {
+	return a.Attributes.Decode(v)
+}
+
+// Decode stores the attributes in the struct that v points to, as
+// Assertion.DecodeAttributes does. Use it for the attributes that
+// QueryAttributes returns.
+func (as Attributes) Decode(v any) error {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() || rv.Elem().Kind() != reflect.Struct {
 		return fmt.Errorf("samlsp: DecodeAttributes needs a non-nil pointer to a struct, not %T", v)
@@ -72,7 +79,7 @@ func (a *Assertion) DecodeAttributes(v any) error {
 		if !ok || name == "" || name == "-" || !f.IsExported() {
 			continue
 		}
-		attr, ok := a.Attributes.lookup(name)
+		attr, ok := as.lookup(name)
 		if !ok {
 			continue
 		}
