@@ -29,7 +29,14 @@ func (e GCM) Algorithm() string {
 	return e.algorithm
 }
 
-// Encrypt encrypts plaintext with key and nonce
+// Encrypt encrypts plaintext with key, which should be a []byte of length
+// KeySize(), and returns an xenc:EncryptedData element.
+//
+// Pass a nil nonce, and Encrypt generates a random one from RandReader,
+// which is what callers should do. A non-nil nonce must be NonceSize (12)
+// bytes and must never be used again with the same key: reusing a GCM nonce
+// reveals the XOR of the two plaintexts and lets anyone forge messages
+// under that key. It is accepted only for reproducible test vectors.
 func (e GCM) Encrypt(key interface{}, plaintext []byte, nonce []byte) (*etree.Element, error) {
 	keyBuf, ok := key.([]byte)
 	if !ok {
