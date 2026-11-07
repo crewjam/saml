@@ -16,6 +16,18 @@ func formatTime(t time.Time) string {
 	return t.UTC().Format(timeFormat)
 }
 
+// optionalRelaxedTime returns t as a *RelaxedTime, or nil if t is the zero
+// time. It is used for optional time attributes, so that MarshalXML leaves
+// out an unset time as Element does, instead of writing
+// "0001-01-01T00:00:00Z" (which reads as long expired).
+func optionalRelaxedTime(t time.Time) *RelaxedTime {
+	if t.IsZero() {
+		return nil
+	}
+	rt := RelaxedTime(t)
+	return &rt
+}
+
 // MarshalText implements encoding.TextMarshaler
 func (m RelaxedTime) MarshalText() ([]byte, error) {
 	// According to section 1.2.2 of the OASIS SAML 1.1 spec, we can't trust

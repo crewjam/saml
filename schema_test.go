@@ -73,7 +73,7 @@ func TestAuthnStatementXMLRoundTrip(t *testing.T) {
 
 	x, err = xml.Marshal(expected)
 	assert.Check(t, err)
-	assert.Check(t, is.Equal(`<AuthnStatement AuthnInstant="2020-07-21T12:30:45Z" SessionIndex="index" SessionNotOnOrAfter="2020-07-22T15:00:00Z"><AuthnContext xmlns="urn:oasis:names:tc:SAML:2.0:assertion"></AuthnContext></AuthnStatement>`,
+	assert.Check(t, is.Equal(`<AuthnStatement AuthnInstant="2020-07-21T12:30:45Z" SessionNotOnOrAfter="2020-07-22T15:00:00Z" SessionIndex="index"><AuthnContext xmlns="urn:oasis:names:tc:SAML:2.0:assertion"></AuthnContext></AuthnStatement>`,
 		string(x)))
 }
 
@@ -182,7 +182,7 @@ func TestArtifactResolveElement(t *testing.T) {
 
 	x, err = xml.Marshal(expected)
 	assert.Check(t, err)
-	assert.Check(t, is.Equal(`<ArtifactResolve xmlns="urn:oasis:names:tc:SAML:2.0:protocol" ID="index" Version="version" IssueInstant="2020-07-21T12:30:45Z"><Artifact xmlns="urn:oasis:names:tc:SAML:2.0:protocol"></Artifact></ArtifactResolve>`,
+	assert.Check(t, is.Equal(`<ArtifactResolve xmlns="urn:oasis:names:tc:SAML:2.0:protocol" IssueInstant="2020-07-21T12:30:45Z" ID="index" Version="version"><Artifact xmlns="urn:oasis:names:tc:SAML:2.0:protocol"></Artifact></ArtifactResolve>`,
 		string(x)))
 }
 
@@ -250,7 +250,7 @@ func TestArtifactResponseElement(t *testing.T) {
 
 	x, err = xml.Marshal(expected)
 	assert.Check(t, err)
-	assert.Check(t, is.Equal(`<ArtifactResponse xmlns="urn:oasis:names:tc:SAML:2.0:protocol" ID="index" InResponseTo="ID" Version="version" IssueInstant="2020-07-21T12:30:45Z"><Status xmlns="urn:oasis:names:tc:SAML:2.0:protocol"><StatusCode xmlns="urn:oasis:names:tc:SAML:2.0:protocol" Value="value"></StatusCode></Status><Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol" ID="index" InResponseTo="ID" Version="version" IssueInstant="2020-07-21T12:30:45Z" Destination="destination" Consent="consent"><Status xmlns="urn:oasis:names:tc:SAML:2.0:protocol"><StatusCode xmlns="urn:oasis:names:tc:SAML:2.0:protocol" Value="value"></StatusCode></Status></Response></ArtifactResponse>`,
+	assert.Check(t, is.Equal(`<ArtifactResponse xmlns="urn:oasis:names:tc:SAML:2.0:protocol" IssueInstant="2020-07-21T12:30:45Z" ID="index" InResponseTo="ID" Version="version"><Status xmlns="urn:oasis:names:tc:SAML:2.0:protocol"><StatusCode xmlns="urn:oasis:names:tc:SAML:2.0:protocol" Value="value"></StatusCode></Status><Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol" IssueInstant="2020-07-21T12:30:45Z" ID="index" InResponseTo="ID" Version="version" Destination="destination" Consent="consent"><Status xmlns="urn:oasis:names:tc:SAML:2.0:protocol"><StatusCode xmlns="urn:oasis:names:tc:SAML:2.0:protocol" Value="value"></StatusCode></Status></Response></ArtifactResponse>`,
 		string(x)))
 }
 
@@ -291,7 +291,7 @@ func TestLogoutRequestXMLRoundTrip(t *testing.T) {
 
 	x, err = xml.Marshal(expected)
 	assert.Check(t, err)
-	assert.Check(t, is.Equal(`<LogoutRequest xmlns="urn:oasis:names:tc:SAML:2.0:protocol" ID="request-id" Version="2.0" IssueInstant="2021-10-08T12:30:00Z" NotOnOrAfter="2021-10-08T12:35:00Z" Destination=""><Issuer xmlns="urn:oasis:names:tc:SAML:2.0:assertion" NameQualifier="" SPNameQualifier="" Format="" SPProvidedID="">uri:issuer</Issuer><NameID xmlns="urn:oasis:names:tc:SAML:2.0:assertion" NameQualifier="" SPNameQualifier="" Format="" SPProvidedID="">name-id</NameID><SessionIndex>index</SessionIndex></LogoutRequest>`,
+	assert.Check(t, is.Equal(`<LogoutRequest xmlns="urn:oasis:names:tc:SAML:2.0:protocol" IssueInstant="2021-10-08T12:30:00Z" NotOnOrAfter="2021-10-08T12:35:00Z" ID="request-id" Version="2.0"><Issuer xmlns="urn:oasis:names:tc:SAML:2.0:assertion">uri:issuer</Issuer><NameID xmlns="urn:oasis:names:tc:SAML:2.0:assertion">name-id</NameID><SessionIndex>index</SessionIndex></LogoutRequest>`,
 		string(x)))
 }
 

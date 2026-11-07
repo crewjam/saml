@@ -134,7 +134,7 @@ func TestSchemacovLogoutRequest(t *testing.T) {
 	minimal := &LogoutRequest{ID: "id-2", Version: "2.0", IssueInstant: schemacovTime.Add(456 * time.Microsecond)}
 	x, err := xml.Marshal(minimal)
 	assert.NilError(t, err)
-	assert.Check(t, is.Equal(`<LogoutRequest xmlns="urn:oasis:names:tc:SAML:2.0:protocol" IssueInstant="2015-12-01T01:57:09.123Z" ID="id-2" Version="2.0" Destination=""></LogoutRequest>`, string(x)))
+	assert.Check(t, is.Equal(`<LogoutRequest xmlns="urn:oasis:names:tc:SAML:2.0:protocol" IssueInstant="2015-12-01T01:57:09.123Z" ID="id-2" Version="2.0"></LogoutRequest>`, string(x)))
 
 	x, err = xml.Marshal(r)
 	assert.NilError(t, err)
@@ -394,7 +394,7 @@ func TestSchemacovResponse(t *testing.T) {
 	x, err := xml.Marshal(r)
 	assert.NilError(t, err)
 	assert.Check(t, is.Equal(`<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol" IssueInstant="2015-12-01T01:57:09.123Z" ID="id-1" InResponseTo="req-1" Version="2.0" Destination="https://sp.example.com/acs" Consent="urn:oasis:names:tc:SAML:2.0:consent:unspecified">`+
-		`<Issuer xmlns="urn:oasis:names:tc:SAML:2.0:assertion" NameQualifier="" SPNameQualifier="" Format="" SPProvidedID="">https://idp.example.com/</Issuer>`+
+		`<Issuer xmlns="urn:oasis:names:tc:SAML:2.0:assertion">https://idp.example.com/</Issuer>`+
 		`<Status xmlns="urn:oasis:names:tc:SAML:2.0:protocol"><StatusCode xmlns="urn:oasis:names:tc:SAML:2.0:protocol" Value="urn:oasis:names:tc:SAML:2.0:status:Success"></StatusCode></Status>`+
 		`</Response>`, string(x)))
 	var got2 Response
