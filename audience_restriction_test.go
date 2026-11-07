@@ -2,6 +2,7 @@ package saml
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -128,4 +129,75 @@ func elementString(t *testing.T, el *etree.Element) string {
 	s, err := doc.WriteToString()
 	assert.NilError(t, err)
 	return s
+}
+
+// When an assertion has several AudienceRestrictions, every one of them must
+// be satisfied (saml-core §2.5.1.4): each must name this service provider,
+// while within one restriction any audience suffices.
+func TestAudienceRestrictionsAllMustBeSatisfied(t *testing.T) {
+	const ours = "https://sp.example.com/metadata"
+	const other1 = "https://other1.example.com/"
+	const other2 = "https://other2.example.com/"
+	const notOurs = `assertion Conditions AudienceRestriction does not contain "https://sp.example.com/metadata"`
+
+	restriction := func(audiences ...string) AudienceRestriction {
+		r := AudienceRestriction{Audience: Audience{Value: audiences[0]}}
+		for _, a := range audiences[1:] {
+			r.AdditionalAudiences = append(r.AdditionalAudiences, Audience{Value: a})
+		}
+		return r
+	}
+
+	cases := []struct {
+		name         string
+		restrictions []AudienceRestriction
+		err          string
+	}{
+		{name: "both name us", restrictions: []AudienceRestriction{restriction(ours), restriction(ours)}},
+		{
+			name:         "both name us among others",
+			restrictions: []AudienceRestriction{restriction(other1, ours), restriction(ours, other2)},
+		},
+		{
+			name:         "second does not name us",
+			restrictions: []AudienceRestriction{restriction(ours), restriction(other1)},
+			err:          notOurs,
+		},
+		{
+			name:         "first does not name us",
+			restrictions: []AudienceRestriction{restriction(other1, other2), restriction(ours, other1)},
+			err:          notOurs,
+		},
+		{
+			name:         "neither names us",
+			restrictions: []AudienceRestriction{restriction(other1), restriction(other2)},
+			err:          notOurs,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			now := TimeNow()
+			sp := requiredConditionsSP()
+			a := validAssertion(now)
+			a.Conditions.AudienceRestrictions = c.restrictions
+
+			err := sp.validateAssertion(a, []string{"id-1"}, now)
+			if c.err == "" {
+				assert.Check(t, err)
+			} else {
+				assert.Check(t, is.Error(err, c.err))
+				assert.Check(t, errors.Is(err, ErrAudienceMismatch))
+			}
+		})
+	}
+
+	// A ValidateAudienceRestriction hook still decides on its own.
+	t.Run("hook", func(t *testing.T) {
+		now := TimeNow()
+		sp := requiredConditionsSP()
+		sp.ValidateAudienceRestriction = func(*Assertion) error { return nil }
+		a := validAssertion(now)
+		a.Conditions.AudienceRestrictions = []AudienceRestriction{restriction(ours), restriction(other1)}
+		assert.Check(t, sp.validateAssertion(a, []string{"id-1"}, now))
+	})
 }
