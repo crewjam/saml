@@ -1782,8 +1782,10 @@ func (sp *ServiceProvider) validateRequestID(response Response, possibleRequestI
 	if sp.AllowIDPInitiated && response.InResponseTo == "" {
 		requestIDvalid = true
 	} else {
+		// An empty entry of possibleRequestIDs never matches: it would
+		// accept an unsolicited response without AllowIDPInitiated.
 		for _, possibleRequestID := range possibleRequestIDs {
-			if response.InResponseTo == possibleRequestID {
+			if possibleRequestID != "" && response.InResponseTo == possibleRequestID {
 				requestIDvalid = true
 			}
 		}
@@ -2247,7 +2249,8 @@ func (sp *ServiceProvider) validateAssertionInResponseTo(inResponseTo string, po
 		}
 	}
 	for _, possibleRequestID := range possibleRequestIDs {
-		if inResponseTo == possibleRequestID {
+		// As in validateRequestID, an empty entry never matches.
+		if possibleRequestID != "" && inResponseTo == possibleRequestID {
 			return nil
 		}
 	}
