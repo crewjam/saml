@@ -2,6 +2,7 @@ package samlsp
 
 import (
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/crewjam/saml"
@@ -82,19 +83,53 @@ func (m *Middleware) HandleStartLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	nameID := sessionWithNameID.GetNameID()
 	var opts []saml.LogoutRequestOption
+	var sessionIndexes []string
 	if sa, ok := session.(SessionWithAttributes); ok {
 		// The session keeps the SessionIndex of every AuthnStatement of the
 		// assertion; the request lists them all (saml-core-2.0-os §3.7.1).
-		if sessionIndexes := sa.GetAttributes()[claimNameSessionIndex]; len(sessionIndexes) > 0 {
+		if sessionIndexes = sa.GetAttributes()[claimNameSessionIndex]; len(sessionIndexes) > 0 {
 			opts = append(opts, saml.WithSessionIndexes(sessionIndexes...))
 		}
 	}
+	m.revokeLoggedOutSession(r, nameID, sessionIndexes)
 
 	if soapNameID, ok := m.soapLogoutNameID(session); ok {
 		m.startSOAPLogout(w, r, soapNameID, opts)
 		return
 	}
 	m.startFrontChannelLogout(w, r, nameID, opts, true)
+}
+
+// revokeLoggedOutSession ends, on the server, the session the user is
+// logging out of, when Session can do so (see SessionTerminator): deleting
+// the cookie only removes it from this browser, and a copy of the token
+// would otherwise stay valid until it expires.
+//
+// The session is revoked by NameID and SessionIndex, which names the IdP
+// session it was made from, so the user's sessions on other devices are
+// kept (TerminateSessions also ends the user's sessions without any
+// SessionIndex, which cannot be told apart from it). A session without a
+// SessionIndex is not revoked: it cannot be told apart from the user's other
+// sessions, and revoking it would log the user out everywhere. A failure to
+// revoke is logged and logout goes on: the cookie is still deleted and the
+// IdP still asked to end its session.
+func (m *Middleware) revokeLoggedOutSession(r *http.Request, nameID string, sessionIndexes []string) {
+	terminator, ok := m.Session.(SessionTerminator)
+	if !ok || nameID == "" || len(sessionIndexes) == 0 {
+		return
+	}
+	req := &saml.LogoutRequest{NameID: &saml.NameID{Value: nameID}}
+	indexes := make([]saml.SessionIndex, len(sessionIndexes))
+	for i, value := range sessionIndexes {
+		indexes[i] = saml.SessionIndex{Value: value}
+	}
+	req.SessionIndex = &indexes[0]
+	req.AdditionalSessionIndexes = indexes[1:]
+
+	err := terminator.TerminateSessions(r.Context(), req)
+	if err != nil && !errors.Is(err, ErrSessionTerminationUnsupported) {
+		log.Printf("WARNING: samlsp: cannot revoke the session on logout: %v", err)
+	}
 }
 
 // startFrontChannelLogout sends the browser to the IDP with a LogoutRequest
