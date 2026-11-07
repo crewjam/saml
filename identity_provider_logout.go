@@ -128,6 +128,10 @@ func NewIdpLogoutRequest(idp *IdentityProvider, r *http.Request) (*IdpLogoutRequ
 // is checked against the signing certificates in the service provider's
 // metadata (saml-profiles-2.0-os §4.4.4.1). As is usual for keys distributed
 // in metadata, the certificates' validity periods are not checked.
+//
+// If IdentityProvider.ReplayCache is set, the request's ID is recorded in it
+// once the request is otherwise valid, and a request whose ID is already
+// recorded is refused, so Validate accepts a given request only once.
 func (req *IdpLogoutRequest) Validate() error {
 	root, err := req.parseRequest()
 	if err != nil {
@@ -162,6 +166,12 @@ func (req *IdpLogoutRequest) Validate() error {
 	req.SLOEndpoint, err = req.sloEndpoint()
 	if err != nil {
 		return fmt.Errorf("cannot respond to logout request from %s: %w", serviceProviderID, err)
+	}
+
+	// Record the request last, so that only a request that is otherwise
+	// valid uses up its ID.
+	if err := consumeLogoutRequest(req.IDP.ReplayCache, &req.Request); err != nil {
+		return fmt.Errorf("cannot accept logout request from %s: %w", serviceProviderID, err)
 	}
 	return nil
 }
@@ -413,8 +423,8 @@ func (req *IdpLogoutRequest) writePostLogoutResponse(w http.ResponseWriter, resp
 // HTTP-Redirect or the HTTP-POST binding. Serve it at LogoutURL.
 //
 // The request must be signed by the service provider and is validated as
-// described in IdpLogoutRequest.Validate. An invalid request is answered with
-// HTTP 400 and no LogoutResponse.
+// described in IdpLogoutRequest.Validate. An invalid request, or one already
+// recorded in ReplayCache, is answered with HTTP 400 and no LogoutResponse.
 //
 // For a valid request, the IdP session is terminated by calling
 // InvalidateSession if the SessionProvider implements SessionInvalidator.
