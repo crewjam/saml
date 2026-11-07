@@ -1146,8 +1146,11 @@ func TestServiceProviderMissingDestinationWithSignaturePresent(t *testing.T) {
 	bytes, _ := removeDestinationFromDocument(addSignatureToDocument(test.responseDom(t))).WriteToBytes()
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(bytes))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
+	// addSignatureToDocument adds an empty (and so invalid) Signature. A
+	// present but invalid Response signature is rejected before any other
+	// part of the Response, including Destination, is looked at.
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
-		"`Destination` does not match requested URL or AcsURL (destination \"\", requested \"https://15661444.ngrok.io/saml2/acs\", acs \"https://15661444.ngrok.io/saml2/acs\")"))
+		"cannot validate signature on Response: Invalid Signature"))
 }
 
 func TestSPMismatchedDestinationsWithSignaturePresent(t *testing.T) {
@@ -1167,8 +1170,11 @@ func TestSPMismatchedDestinationsWithSignaturePresent(t *testing.T) {
 	bytes, _ := addSignatureToDocument(test.responseDom(t)).WriteToBytes()
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(bytes))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
+	// addSignatureToDocument adds an empty (and so invalid) Signature. A
+	// present but invalid Response signature is rejected before any other
+	// part of the Response, including Destination, is looked at.
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
-		"`Destination` does not match requested URL or AcsURL (destination \"https://wrong/saml2/acs\", requested \"https://15661444.ngrok.io/saml2/acs\", acs \"https://15661444.ngrok.io/saml2/acs\")"))
+		"cannot validate signature on Response: Invalid Signature"))
 }
 
 func TestSPMismatchedDestinationsWithNoSignaturePresent(t *testing.T) {
@@ -1209,8 +1215,39 @@ func TestSPMissingDestinationWithSignaturePresent(t *testing.T) {
 	bytes, _ := addSignatureToDocument(test.responseDom(t)).WriteToBytes()
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(bytes))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
+	// addSignatureToDocument adds an empty (and so invalid) Signature. A
+	// present but invalid Response signature is rejected before any other
+	// part of the Response, including Destination, is looked at.
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
-		"`Destination` does not match requested URL or AcsURL (destination \"\", requested \"https://15661444.ngrok.io/saml2/acs\", acs \"https://15661444.ngrok.io/saml2/acs\")"))
+		"cannot validate signature on Response: Invalid Signature"))
+}
+
+func TestSPRejectsInvalidResponseSignatureBeforeOtherChecks(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	// A Response with an invalid signature, a wrong InResponseTo, a wrong
+	// Issuer and a non-success Status must be rejected for its signature, not
+	// for anything an unauthenticated sender controls.
+	doc := addSignatureToDocument(test.responseDom(t))
+	responseEl := doc.FindElement("//Response")
+	responseEl.FindElement("./Issuer").SetText("https://evil.example.com/")
+	responseEl.FindElement("./Status/StatusCode").CreateAttr("Value", "urn:oasis:names:tc:SAML:2.0:status:Requester")
+	bytes, _ := doc.WriteToBytes()
+
+	req := http.Request{PostForm: url.Values{}, URL: &s.AcsURL}
+	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(bytes))
+	_, err = s.ParseResponse(&req, []string{"id-not-the-request-id"})
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
+		"cannot validate signature on Response: Invalid Signature"))
 }
 
 func TestSPInvalidAssertions(t *testing.T) {
