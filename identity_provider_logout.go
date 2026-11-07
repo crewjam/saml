@@ -13,9 +13,10 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
-	xrv "github.com/mattermost/xml-roundtrip-validator"
 	dsig "github.com/russellhaering/goxmldsig"
 	"github.com/russellhaering/goxmldsig/etreeutils"
+
+	"github.com/crewjam/saml/internal/xmlroundtrip"
 )
 
 // SessionInvalidator is an optional interface that a SessionProvider may
@@ -164,7 +165,7 @@ func (req *IdpLogoutRequest) Validate() error {
 // parseRequest parses RequestBuffer into Request and returns the root
 // element of the request.
 func (req *IdpLogoutRequest) parseRequest() (*etree.Element, error) {
-	if err := xrv.Validate(bytes.NewReader(req.RequestBuffer)); err != nil {
+	if err := xmlroundtrip.Validate(req.RequestBuffer); err != nil {
 		return nil, fmt.Errorf("logout request contains invalid XML: %w", err)
 	}
 	doc := etree.NewDocument()
@@ -177,7 +178,7 @@ func (req *IdpLogoutRequest) parseRequest() (*etree.Element, error) {
 	}
 	// LogoutRequest binds its element names to their namespaces, so this
 	// fails unless the root is a samlp:LogoutRequest.
-	if err := xml.Unmarshal(req.RequestBuffer, &req.Request); err != nil { //nolint:gosec // parsing the untrusted request is the point; it was validated by xrv above
+	if err := xml.Unmarshal(req.RequestBuffer, &req.Request); err != nil { //nolint:gosec // parsing the untrusted request is the point; it was checked by xmlroundtrip.Validate above
 		return nil, fmt.Errorf("cannot parse logout request: %w", err)
 	}
 	return root, nil

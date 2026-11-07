@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"net/url"
 
-	xrv "github.com/mattermost/xml-roundtrip-validator"
+	"github.com/crewjam/saml/internal/xmlroundtrip"
 
 	"github.com/crewjam/saml/logger"
 
@@ -25,7 +25,7 @@ import (
 func ParseMetadata(data []byte) (*saml.EntityDescriptor, error) {
 	entity := &saml.EntityDescriptor{}
 
-	if err := xrv.Validate(bytes.NewBuffer(data)); err != nil {
+	if err := xmlroundtrip.Validate(data); err != nil {
 		return nil, err
 	}
 
@@ -62,7 +62,7 @@ func ParseMetadata(data []byte) (*saml.EntityDescriptor, error) {
 //
 // It returns an error if no entity with that entityID is found.
 func ParseMetadataByEntityID(data []byte, entityID string) (*saml.EntityDescriptor, error) {
-	if err := xrv.Validate(bytes.NewBuffer(data)); err != nil {
+	if err := xmlroundtrip.Validate(data); err != nil {
 		return nil, err
 	}
 

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	xrv "github.com/mattermost/xml-roundtrip-validator"
+	"github.com/crewjam/saml/internal/xmlroundtrip"
 
 	"github.com/beevik/etree"
 	dsig "github.com/russellhaering/goxmldsig"
@@ -270,7 +270,7 @@ func (sp *ServiceProvider) readRedirectBindingMessage(rawQuery, messageParam str
 		return nil, retErr
 	}
 
-	if err := xrv.Validate(bytes.NewReader(inflated)); err != nil {
+	if err := xmlroundtrip.Validate(inflated); err != nil {
 		return nil, err
 	}
 
