@@ -832,3 +832,44 @@ func TestAuthnContextChecked(t *testing.T) {
 		t.Errorf("minimum with comparator: %v", err)
 	}
 }
+
+func TestReplayRefusedByDefault(t *testing.T) {
+	ti := newTestIDP(t)
+	cfg := newTestConfig(t, ti)
+	msg, err := cfg.AuthnRequest(t.Context(), "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	acs := login(t, ti, msg)
+	if _, err := cfg.ParseResponse(t.Context(), acs, samlsp.WithRequestID(msg.ID)); err != nil {
+		t.Fatal(err)
+	}
+	again := postForm(spACSURL, acs.PostForm)
+	if _, err := cfg.ParseResponse(t.Context(), again, samlsp.WithRequestID(msg.ID)); !errors.Is(err, saml.ErrAssertionReplayed) {
+		t.Fatalf("replayed Response: err = %v, want ErrAssertionReplayed", err)
+	}
+}
+
+type recordingReplayState struct{ ids []string }
+
+func (s *recordingReplayState) Consume(id string, _ time.Time) error {
+	s.ids = append(s.ids, id)
+	return nil
+}
+
+func TestWithReplayState(t *testing.T) {
+	ti := newTestIDP(t)
+	state := &recordingReplayState{}
+	cfg := newTestConfig(t, ti, samlsp.WithReplayState(state))
+	msg, err := cfg.AuthnRequest(t.Context(), "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID(msg.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.ids) != 1 || state.ids[0] != a.ID {
+		t.Errorf("recorded %v, want [%s]", state.ids, a.ID)
+	}
+}

@@ -60,6 +60,20 @@
 //		sp.RequireSignedResponseForCBC = false // this IdP signs only assertions
 //	})
 //
+// # Replay protection
+//
+// ParseResponse accepts each assertion only once, and ParseLogoutRequest
+// each LogoutRequest, so that a message copied from a browser's history
+// or a log cannot be used again. By default the IDs are kept in memory.
+// They need no size limit: an ID is recorded only once the message is fully
+// verified as one the IdP issued for this SP, and only until the message
+// expires, a few minutes after it was issued (saml.MaxIssueDelay). So the
+// memory used follows the rate of real logins, and an attacker cannot add
+// to it.
+//
+// The default protects a single process. Applications served by several
+// processes share the state with WithReplayState.
+//
 // # Web Browser SSO
 //
 // Login has two steps. First, send the browser to the IdP with an

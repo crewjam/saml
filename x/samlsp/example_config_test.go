@@ -2,14 +2,15 @@ package samlsp_test
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"time"
 
 	"github.com/crewjam/saml"
-	oldsamlsp "github.com/crewjam/saml/samlsp"
 	"github.com/crewjam/saml/x/samlsp"
 )
 
@@ -152,14 +153,42 @@ func currentSession(_ *http.Request) (nameID saml.NameID, sessionIndexes []strin
 	return saml.NameID{}, nil, false
 }
 
-// WithReplayState makes ParseResponse accept each assertion only once, so
-// that a Response copied from a browser's history cannot be used again.
-// The state must be shared by every process that serves the ACS.
+// sqlReplayState records accepted message IDs in a database table that
+// every process shares:
+//
+//	CREATE TABLE saml_replay (id text PRIMARY KEY, expires_at timestamptz NOT NULL);
+type sqlReplayState struct{ db *sql.DB }
+
+func (s sqlReplayState) Consume(id string, expiresAt time.Time) error {
+	// Insert the ID, or take over an expired record of it. Nothing changes
+	// if an unexpired record exists: that is a replay.
+	res, err := s.db.Exec(`
+		INSERT INTO saml_replay (id, expires_at) VALUES ($1, $2)
+		ON CONFLICT (id) DO UPDATE SET expires_at = EXCLUDED.expires_at
+		WHERE saml_replay.expires_at < now()`, id, expiresAt)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return saml.ErrAssertionReplayed
+	}
+	return nil
+}
+
+// By default a Config remembers accepted messages in memory, which protects
+// one process. WithReplayState shares the record between processes.
 func ExampleWithReplayState() {
+	var db *sql.DB // opened by the application
+
 	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
-		samlsp.WithReplayState(oldsamlsp.NewMemoryReplayCache(10000))) // one process only
+		samlsp.WithReplayState(sqlReplayState{db}))
 	if err != nil {
 		log.Fatal(err)
 	}
 	_ = config
+
+	// Expired records can go at any time, for example from a periodic job:
+	//	DELETE FROM saml_replay WHERE expires_at < now()
 }
