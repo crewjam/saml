@@ -1156,6 +1156,12 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 		notBefore = req.Request.IssueInstant
 		notOnOrAfterAfter = notBefore.Add(MaxIssueDelay)
 	}
+	// The subject confirmation window SHOULD fall within the assertion's
+	// (saml-core §2.4.1.2), so it ends no later than the Conditions.
+	confirmationNotOnOrAfter := req.Now.Add(MaxIssueDelay)
+	if notOnOrAfterAfter.Before(confirmationNotOnOrAfter) {
+		confirmationNotOnOrAfter = notOnOrAfterAfter
+	}
 
 	nameIDFormat := "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
 
@@ -1186,7 +1192,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 					SubjectConfirmationData: &SubjectConfirmationData{
 						Address:      remoteAddress,
 						InResponseTo: req.Request.ID,
-						NotOnOrAfter: req.Now.Add(MaxIssueDelay),
+						NotOnOrAfter: confirmationNotOnOrAfter,
 						Recipient:    req.ACSEndpoint.Location,
 					},
 				},
