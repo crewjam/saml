@@ -288,6 +288,8 @@ Some protections the SAML profiles call for are opt-in, because turning them on 
 
 - **Artifact format.** With the HTTP-Artifact binding, a `SAMLart` that is not a standard type 0x0004 artifact, or whose SourceID is not the SHA-1 hash of the IDP's entityID, is sent to the IDP as is, since the ArtifactResponse it resolves to is fully checked anyway. Set `Options.RequireStandardArtifacts` (`ServiceProvider.RequireStandardArtifacts`) to refuse such an artifact without contacting the IDP. With a replay cache (above), each artifact is also resolved only once.
 
+- **Integrity protection for CBC encryption.** An unsigned Response can carry an `EncryptedAssertion` whose signature is inside the encryption, so the service provider decrypts it before anything has authenticated it. With AES-CBC that is what padding and format oracle attacks on XML Encryption need, and the SAML Core errata (E93) say relying parties SHOULD require integrity protection before processing CBC-encrypted assertions. The SP metadata advertises AES-GCM first, but an IDP may still choose CBC. Set `Options.RequireSignedResponseForCBC` (`ServiceProvider.RequireSignedResponseForCBC`) to refuse, before decrypting, a CBC-encrypted assertion in a Response (or ArtifactResponse) that is not signed; the error matches `ErrInvalidSignature`. AES-GCM assertions are unaffected. Many IDPs sign only the assertion, so check that yours signs the Response, or encrypts with AES-GCM, before turning it on.
+
 - **RelayState length.** The bindings limit RelayState to 80 bytes. Set `Options.LimitRelayStateLength` (`ServiceProvider.LimitRelayStateLength`, `IdentityProvider.LimitRelayStateLength`) to refuse to send a longer one. See [RelayState](#relaystate).
 
 ## Customizing the session lifetime

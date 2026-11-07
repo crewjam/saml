@@ -23,7 +23,10 @@ import (
 var (
 	// ErrInvalidSignature is attached to every failure to validate the XML
 	// signature on a Response, Assertion or ArtifactResponse. The more
-	// specific errors below are attached in addition to it.
+	// specific errors below are attached in addition to it. It is also
+	// attached when ServiceProvider.RequireSignedResponseForCBC refuses a
+	// CBC-encrypted assertion because the Response carrying it is not
+	// signed.
 	ErrInvalidSignature = errors.New("saml: invalid signature")
 
 	// ErrUntrustedCertificate is attached when the element is signed with a
