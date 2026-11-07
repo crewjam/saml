@@ -24,6 +24,13 @@ const artifactType4Length = 2 + 2 + 20 + 20
 // keeps artifacts apart from assertion IDs, which contain no colon.
 const artifactReplayKeyPrefix = "Artifact:"
 
+// maxArtifactLength is the longest SAMLart value, in bytes, that checkArtifact
+// accepts. A type 0x0004 artifact is 60 characters of base64; the bound
+// leaves room for other formats while keeping an attacker from filling the
+// ReplayCache with large keys, or sending large ArtifactResolve requests to
+// the IdP, before anything about the request is authenticated.
+const maxArtifactLength = 256
+
 // samlArtifact is a decoded type 0x0004 SAML artifact
 // (saml-bindings-2.0-os §3.6.4).
 type samlArtifact struct {
@@ -95,8 +102,17 @@ func (sp *ServiceProvider) artifactResolutionLocation(artifact *samlArtifact) st
 // checkArtifact decodes the SAMLart value artifactID and checks it against
 // the IdP metadata. It returns the decoded artifact, or nil when
 // artifactID is not a type 0x0004 artifact and RequireStandardArtifacts is
-// false.
+// false. Whatever RequireStandardArtifacts says, an artifact longer than
+// maxArtifactLength or with bytes outside printable ASCII is refused.
 func (sp *ServiceProvider) checkArtifact(artifactID string) (*samlArtifact, error) {
+	if len(artifactID) > maxArtifactLength {
+		return nil, classify(fmt.Errorf("artifact is %d bytes long, longer than %d", len(artifactID), maxArtifactLength), ErrMalformedMessage)
+	}
+	for i := 0; i < len(artifactID); i++ {
+		if c := artifactID[i]; c <= ' ' || c > '~' {
+			return nil, classify(fmt.Errorf("artifact contains the byte 0x%02x, which is not printable ASCII", c), ErrMalformedMessage)
+		}
+	}
 	artifact, err := decodeArtifact(artifactID)
 	if err != nil {
 		if sp.RequireStandardArtifacts {
