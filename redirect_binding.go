@@ -274,7 +274,8 @@ func (sp *ServiceProvider) readRedirectBindingMessage(rawQuery, messageParam str
 	}
 
 	if err := xmlroundtrip.Validate(inflated); err != nil {
-		return nil, err
+		retErr.PrivateErr = classify(fmt.Errorf("invalid xml: %w", err), ErrMalformedMessage)
+		return nil, retErr
 	}
 
 	doc := etree.NewDocument()
