@@ -98,8 +98,9 @@ var (
 	// ErrAuthnContextMismatch is attached when
 	// ServiceProvider.ValidateAuthnContextClassRef is set and none of the
 	// assertion's AuthnContextClassRefs is one of those in
-	// ServiceProvider.RequestedAuthnContext: the user did not authenticate
-	// the way the SP asked.
+	// ServiceProvider.RequestedAuthnContext (or, for a Comparison other than
+	// "exact", none is accepted by AuthnContextClassRefComparator): the user
+	// did not authenticate the way the SP asked.
 	ErrAuthnContextMismatch = errors.New("saml: authentication context does not match the requested one")
 
 	// ErrDecryptionFailed is attached when an EncryptedAssertion cannot be
@@ -128,7 +129,8 @@ var (
 	// version other than 2.0, signed AuthnRequests (WantAuthnRequestsSigned),
 	// or an assertion consumer service binding other than HTTP-POST. At the
 	// SP: a RequestedAuthnContext Comparison other than "exact" when
-	// ValidateAuthnContextClassRef is set.
+	// ValidateAuthnContextClassRef is set and AuthnContextClassRefComparator
+	// is not.
 	ErrUnsupported = errors.New("saml: not supported")
 
 	// ErrInvalidCertificate is attached when a certificate cannot be base64

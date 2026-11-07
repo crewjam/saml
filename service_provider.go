@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"time"
 
@@ -177,12 +178,28 @@ type ServiceProvider struct {
 	// RequestedAuthnContext. It has no effect if RequestedAuthnContext is
 	// nil or names no class.
 	//
-	// Only the "exact" Comparison (or an empty one, which means "exact") is
-	// supported. The ordering that "minimum", "better" and "maximum" refer
-	// to is defined by each deployment, not by the SAML specification
-	// (saml-core §3.3.2.2.1), so with any other Comparison every assertion
+	// The "exact" Comparison (or an empty one, which means "exact") is
+	// supported directly. The ordering that "minimum", "better" and
+	// "maximum" refer to is defined by each deployment, not by the SAML
+	// specification (saml-core §3.3.2.2.1), so for any other Comparison
+	// AuthnContextClassRefComparator decides; without it, every assertion
 	// is rejected rather than accepted unchecked.
 	ValidateAuthnContextClassRef bool
+
+	// AuthnContextClassRefComparator, if set, lets ValidateAuthnContextClassRef
+	// check a RequestedAuthnContext whose Comparison is not "exact" (for
+	// example "minimum", "better" or "maximum"), using the deployment's own
+	// ordering of authentication context classes.
+	//
+	// It is called with the Comparison, the requested classes (in order of
+	// preference) and the AuthnContextClassRef of one AuthnStatement of the
+	// assertion, and reports whether that class satisfies the request. The
+	// assertion is accepted if it returns true for any AuthnStatement. It
+	// should return false for a Comparison it does not know.
+	//
+	// It is not called for the "exact" Comparison, which is always checked
+	// by string equality.
+	AuthnContextClassRefComparator func(comparison string, requested []string, got string) bool
 
 	// AllowIDPInitiated accepts unsolicited (IdP-initiated) responses, which
 	// have no InResponseTo. A response or assertion that does carry an
@@ -1535,7 +1552,9 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 
 // validateAuthnContextClassRef checks, if ValidateAuthnContextClassRef is
 // set, that one of the assertion's AuthnStatements has an
-// AuthnContextClassRef listed in RequestedAuthnContext.
+// AuthnContextClassRef that satisfies RequestedAuthnContext: one listed in it
+// for the "exact" Comparison, or one AuthnContextClassRefComparator accepts
+// for any other.
 func (sp *ServiceProvider) validateAuthnContextClassRef(assertion *Assertion) error {
 	if !sp.ValidateAuthnContextClassRef || sp.RequestedAuthnContext == nil {
 		return nil
@@ -1544,8 +1563,16 @@ func (sp *ServiceProvider) validateAuthnContextClassRef(assertion *Assertion) er
 	if len(requested) == 0 {
 		return nil
 	}
-	if comparison := sp.RequestedAuthnContext.Comparison; comparison != "" && comparison != "exact" {
+	comparison := sp.RequestedAuthnContext.Comparison
+	exact := comparison == "" || comparison == "exact"
+	if !exact && sp.AuthnContextClassRefComparator == nil {
 		return classify(fmt.Errorf("cannot validate AuthnContextClassRef for RequestedAuthnContext Comparison %q: only \"exact\" is supported", comparison), ErrUnsupported)
+	}
+	satisfies := func(got string) bool {
+		if exact {
+			return slices.Contains(requested, got)
+		}
+		return sp.AuthnContextClassRefComparator(comparison, requested, got)
 	}
 	var got []string
 	for _, authnStatement := range assertion.AuthnStatements {
@@ -1553,12 +1580,13 @@ func (sp *ServiceProvider) validateAuthnContextClassRef(assertion *Assertion) er
 		if classRef == nil {
 			continue
 		}
-		for _, want := range requested {
-			if classRef.Value == want {
-				return nil
-			}
+		if satisfies(classRef.Value) {
+			return nil
 		}
 		got = append(got, classRef.Value)
+	}
+	if !exact {
+		return classify(fmt.Errorf("assertion AuthnContextClassRef %q does not satisfy the requested %q with Comparison %q", got, requested, comparison), ErrAuthnContextMismatch)
 	}
 	return classify(fmt.Errorf("assertion AuthnContextClassRef %q is not one of the requested %q", got, requested), ErrAuthnContextMismatch)
 }
