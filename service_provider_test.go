@@ -1303,6 +1303,43 @@ func TestSPInvalidAssertions(t *testing.T) {
 	assertion.Conditions.AudienceRestrictions = []AudienceRestriction{}
 	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
 	assert.Check(t, is.Error(err, "assertion Conditions has no AudienceRestriction for \"https://15661444.ngrok.io/saml2/metadata\""))
+	assertion = Assertion{}
+	assert.Check(t, xml.Unmarshal(assertionBuf, &assertion))
+
+	// With AllowIDPInitiated, an assertion without InResponseTo is unsolicited
+	// and accepted.
+	s.AllowIDPInitiated = true
+	assertion.Subject.SubjectConfirmations[0].SubjectConfirmationData.InResponseTo = ""
+	err = s.validateAssertion(&assertion, []string{""}, TimeNow())
+	assert.Check(t, err)
+	assertion = Assertion{}
+	assert.Check(t, xml.Unmarshal(assertionBuf, &assertion))
+
+	// With AllowIDPInitiated, an InResponseTo naming a request this SP is not
+	// waiting for is refused, so the assertion cannot be replayed.
+	assertion.Subject.SubjectConfirmations[0].SubjectConfirmationData.InResponseTo = "wrong-request-id"
+	err = s.validateAssertion(&assertion, []string{"", "id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
+	assert.Check(t, is.Error(err, "assertion SubjectConfirmation one of the possible request IDs ([ id-9e61753d64e928af5a7a341a97f420c9])"))
+	assertion = Assertion{}
+	assert.Check(t, xml.Unmarshal(assertionBuf, &assertion))
+
+	// With AllowIDPInitiated, a matching InResponseTo is accepted.
+	err = s.validateAssertion(&assertion, []string{"", "id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
+	assert.Check(t, err)
+
+	// A ValidateRequestID hook decides a non-empty InResponseTo, for IdPs
+	// that send one on IdP-initiated assertions.
+	var hookGot string
+	s.ValidateRequestID = func(response Response, _ []string) error {
+		hookGot = response.InResponseTo
+		return nil
+	}
+	assertion.Subject.SubjectConfirmations[0].SubjectConfirmationData.InResponseTo = "idp-chosen-id"
+	err = s.validateAssertion(&assertion, []string{""}, TimeNow())
+	assert.Check(t, err)
+	assert.Check(t, is.Equal("idp-chosen-id", hookGot))
+	s.ValidateRequestID = nil
+	s.AllowIDPInitiated = false
 }
 
 func TestXswPermutationOneIsRejected(t *testing.T) {
@@ -2166,4 +2203,18 @@ func TestSPClockIsScopedPerServiceProvider(t *testing.T) {
 		assert.Assert(t, ok, "expected *InvalidResponseError, got %v", err)
 		assert.Check(t, is.Equal(expiredAt, invalidErr.Now))
 	})
+}
+
+func TestSPValidateRequestIDWithAllowIDPInitiated(t *testing.T) {
+	s := ServiceProvider{AllowIDPInitiated: true}
+
+	// An empty InResponseTo is an unsolicited response and is accepted.
+	assert.Check(t, s.validateRequestID(Response{InResponseTo: ""}, []string{""}))
+
+	// A non-empty InResponseTo that matches no request is refused.
+	err := s.validateRequestID(Response{InResponseTo: "wrong-id"}, []string{"", "id-expected"})
+	assert.Check(t, is.Error(err, "`InResponseTo` does not match any of the possible request IDs (expected [ id-expected])"))
+
+	// A matching InResponseTo is accepted.
+	assert.Check(t, s.validateRequestID(Response{InResponseTo: "id-expected"}, []string{"", "id-expected"}))
 }

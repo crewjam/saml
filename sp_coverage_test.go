@@ -344,8 +344,12 @@ func TestSpcovValidateRequestID(t *testing.T) {
 		"`InResponseTo` does not match any of the possible request IDs (expected [id-y])")
 	assert.NilError(t, e.sp.validateRequestID(resp, []string{"id-y", "id-x"}))
 
+	// AllowIDPInitiated accepts a response without InResponseTo, but one
+	// naming a request must still match.
 	e.sp.AllowIDPInitiated = true
-	assert.NilError(t, e.sp.validateRequestID(resp, nil))
+	assert.NilError(t, e.sp.validateRequestID(Response{}, nil))
+	assert.Error(t, e.sp.validateRequestID(resp, nil),
+		"`InResponseTo` does not match any of the possible request IDs (expected [])")
 	e.sp.AllowIDPInitiated = false
 
 	sentinel := errors.New("custom request id check")
