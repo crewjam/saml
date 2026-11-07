@@ -296,6 +296,16 @@ type ServiceProvider struct {
 	// them.
 	IgnoreCertificateExpiry bool
 
+	// RejectSHA1Signatures, if true, refuses messages from the IDP that are
+	// signed with a SHA-1 based algorithm: an XML signature whose
+	// SignatureMethod or any DigestMethod is SHA-1 based (rsa-sha1,
+	// ecdsa-sha1, dsa-sha1, hmac-sha1 or sha1), and an HTTP-Redirect or
+	// HTTP-POST-SimpleSign signature whose SigAlg is. The check applies to
+	// every signature the ServiceProvider verifies, including those checked
+	// by SignatureVerifier, and the error matches ErrUnsupported (and, for
+	// XML signatures, ErrInvalidSignature). If false, SHA-1 is accepted.
+	RejectSHA1Signatures bool
+
 	// ReplayCache, if set, records the ID of the assertion each accepted
 	// response is accepted for, and refuses a response whose assertion it
 	// has already recorded. Without it, a captured assertion is accepted
@@ -1873,29 +1883,13 @@ func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element, meta
 	if sigEl == nil {
 		return errSignatureElementNotPresent
 	}
+	if err := checkXMLSignatureNotSHA1(sp.RejectSHA1Signatures, sigEl); err != nil {
+		return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
+	}
 
-	var certs []*x509.Certificate
-	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate == nil {
-		certs, err = metadataCerts()
-		if err != nil {
-			return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
-		}
-	}
-	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint != nil && sp.IDPCertificateFingerprintAlgorithm != nil && sp.IDPCertificate == nil {
-		certs, err = sp.getCertBasedOnFingerprint(el)
-		if err != nil {
-			return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
-		}
-	}
-	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate != nil {
-		cert, err := parseCert(*sp.IDPCertificate)
-		if err != nil {
-			return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
-		}
-		certs = append(certs, cert)
-	}
-	if len(certs) == 0 {
-		return fmt.Errorf("cannot validate signature on %s: saml config not set up properly, specify either idp metadata url, fingerprints or actual certificate", el.Tag)
+	certs, err := sp.signatureVerificationCerts(el, metadataCerts)
+	if err != nil {
+		return err
 	}
 
 	if sp.IgnoreCertificateExpiry {
@@ -1967,6 +1961,37 @@ func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element, meta
 	}
 
 	return nil
+}
+
+// signatureVerificationCerts returns the IdP certificates that a signature on
+// el may be made with: from the IdP metadata, the configured fingerprint or
+// the configured certificate.
+func (sp *ServiceProvider) signatureVerificationCerts(el *etree.Element, metadataCerts func() ([]*x509.Certificate, error)) ([]*x509.Certificate, error) {
+	var certs []*x509.Certificate
+	var err error
+	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate == nil {
+		certs, err = metadataCerts()
+		if err != nil {
+			return nil, fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
+		}
+	}
+	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint != nil && sp.IDPCertificateFingerprintAlgorithm != nil && sp.IDPCertificate == nil {
+		certs, err = sp.getCertBasedOnFingerprint(el)
+		if err != nil {
+			return nil, fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
+		}
+	}
+	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate != nil {
+		cert, err := parseCert(*sp.IDPCertificate)
+		if err != nil {
+			return nil, fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
+		}
+		certs = append(certs, cert)
+	}
+	if len(certs) == 0 {
+		return nil, fmt.Errorf("cannot validate signature on %s: saml config not set up properly, specify either idp metadata url, fingerprints or actual certificate", el.Tag)
+	}
+	return certs, nil
 }
 
 // SignLogoutRequest adds the `Signature` element to the `LogoutRequest`.

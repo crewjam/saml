@@ -223,6 +223,17 @@ type IdentityProvider struct {
 	// SignedMetadata.
 	SignMetadata bool
 
+	// RejectSHA1Signatures, if true, refuses messages from service
+	// providers that are signed with a SHA-1 based algorithm: an XML
+	// signature whose SignatureMethod or any DigestMethod is SHA-1 based
+	// (rsa-sha1, ecdsa-sha1, dsa-sha1, hmac-sha1 or sha1), and an
+	// HTTP-Redirect or HTTP-POST-SimpleSign signature whose SigAlg is. It
+	// applies to the signatures the IdP verifies: those of LogoutRequests
+	// (ServeSLO) and of AuthnRequests sent with the HTTP-POST-SimpleSign
+	// binding. The error matches ErrUnsupported. If false, SHA-1 is
+	// accepted.
+	RejectSHA1Signatures bool
+
 	// LogoutBindings are the bindings advertised in the IdP metadata for the
 	// SingleLogoutService at LogoutURL. When empty, only HTTP-Redirect is
 	// advertised, as before. ServeSLO accepts LogoutRequests with both the
