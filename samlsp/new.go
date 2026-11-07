@@ -4,6 +4,7 @@ package samlsp
 import (
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/x509"
 	"fmt"
@@ -88,11 +89,35 @@ type Options struct {
 	MetadataPath string
 	AcsPath      string
 	SloPath      string
+
+	// SessionKey, if set, signs and verifies the session JWTs and the
+	// tracked-request JWTs issued by the default SessionCodec and
+	// TrackedRequestCodec, instead of Key. Use it to keep the key that
+	// protects this SP's own cookies separate from the SAML key, for example
+	// so that the SAML key can live in an HSM or be rotated with the IdP
+	// without invalidating sessions, or so that a leaked session key does not
+	// let anyone sign SAML requests. The JWT signing method follows the type
+	// of the key: RS256 for RSA, ES256/ES384/ES512 for ECDSA (by curve) and
+	// EdDSA for Ed25519. If nil, Key is used, as before.
+	//
+	// Changing the session key invalidates existing sessions and pending
+	// requests.
+	SessionKey crypto.Signer
+}
+
+// sessionKey returns the key that signs session and tracked-request JWTs.
+func sessionKey(opts Options) crypto.Signer {
+	if !signerutil.IsNil(opts.SessionKey) {
+		return opts.SessionKey
+	}
+	return opts.Key
 }
 
 func getDefaultSigningMethod(signer crypto.Signer) jwt.SigningMethod {
 	if !signerutil.IsNil(signer) {
 		switch pub := signer.Public().(type) {
+		case ed25519.PublicKey:
+			return jwt.SigningMethodEdDSA
 		case *ecdsa.PublicKey:
 			// The JWT ECDSA signing methods are bound to a specific curve, so
 			// pick the one matching the key, otherwise signing fails.
@@ -114,12 +139,13 @@ func getDefaultSigningMethod(signer crypto.Signer) jwt.SigningMethod {
 // DefaultSessionCodec returns the default SessionCodec for the provided options,
 // a JWTSessionCodec configured to issue signed tokens.
 func DefaultSessionCodec(opts Options) JWTSessionCodec {
+	key := sessionKey(opts)
 	return JWTSessionCodec{
-		SigningMethod: getDefaultSigningMethod(opts.Key),
+		SigningMethod: getDefaultSigningMethod(key),
 		Audience:      opts.URL.String(),
 		Issuer:        opts.URL.String(),
 		MaxAge:        defaultSessionMaxAge,
-		Key:           opts.Key,
+		Key:           key,
 	}
 }
 
@@ -161,12 +187,13 @@ func legacySessionCookieDomain(opts Options) string {
 // DefaultTrackedRequestCodec returns a new TrackedRequestCodec for the provided
 // options, a JWTTrackedRequestCodec that uses a JWT to encode TrackedRequests.
 func DefaultTrackedRequestCodec(opts Options) JWTTrackedRequestCodec {
+	key := sessionKey(opts)
 	return JWTTrackedRequestCodec{
-		SigningMethod: getDefaultSigningMethod(opts.Key),
+		SigningMethod: getDefaultSigningMethod(key),
 		Audience:      opts.URL.String(),
 		Issuer:        opts.URL.String(),
 		MaxAge:        saml.MaxIssueDelay,
-		Key:           opts.Key,
+		Key:           key,
 	}
 }
 
