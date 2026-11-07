@@ -79,7 +79,7 @@ func TestEncryptLogoutNameID(t *testing.T) {
 	}
 
 	// An IdP without an encryption certificate.
-	noEnc := newTestConfigWithIDP(t, ti, func(ctx context.Context) (*saml.EntityDescriptor, error) {
+	noEnc := newTestConfigWithIDP(t, ti, func(context.Context) (*saml.EntityDescriptor, error) {
 		md := ti.idp.Metadata()
 		for i := range md.IDPSSODescriptors {
 			var kds []saml.KeyDescriptor
