@@ -1357,7 +1357,11 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 		retErr.PrivateErr = classify(fmt.Errorf("Error during artifact resolution: response body is larger than %d bytes", limit), ErrArtifactResolution)
 		return nil, retErr
 	}
-	assertion, err := sp.ParseXMLArtifactResponse(responseBody, possibleRequestIDs, artifactResolveRequest.ID, *req.URL)
+	// The Response inside the ArtifactResponse was delivered, by reference,
+	// to the ACS, so its Destination is checked against AcsURL. req.URL is
+	// the IdP's ArtifactResolutionService, which a Response for this SP
+	// must never name.
+	assertion, err := sp.ParseXMLArtifactResponse(responseBody, possibleRequestIDs, artifactResolveRequest.ID, sp.AcsURL)
 	if err != nil {
 		return nil, err
 	}
