@@ -18,7 +18,7 @@ import (
 // Name when there is no FriendlyName. Which attributes are present, and what
 // they are called, is up to the identity provider.
 func Example_attributes() {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		// A single attribute value:
 		email := samlsp.AttributeFromContext(r.Context(), "mail")
 		fmt.Println("mail:", email)
