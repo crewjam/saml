@@ -32,6 +32,8 @@ type Config struct {
 	certificate            *x509.Certificate
 	intermediates          []*x509.Certificate
 	decryptionKeys         []*rsa.PrivateKey
+	encryptionKey          *rsa.PrivateKey
+	encryptionCert         *x509.Certificate
 	signRequests           bool
 	backChannel            bool
 	nameIDFormat           saml.NameIDFormat
@@ -99,6 +101,14 @@ func New(identityProvider MetadataFunc, entityID string, opts ...Option) (*Confi
 		}
 		if signatureMethod(c.key) == "" {
 			return nil, errors.New("samlsp: BackChannelLogout needs an RSA or ECDSA key (see WithKey) to sign SOAP messages")
+		}
+	}
+	if c.encryptionKey != nil || c.encryptionCert != nil {
+		if c.encryptionKey == nil || c.encryptionCert == nil {
+			return nil, errors.New("samlsp: WithEncryptionKey needs both the key and its certificate")
+		}
+		if pub, ok := c.encryptionCert.PublicKey.(*rsa.PublicKey); !ok || !pub.Equal(&c.encryptionKey.PublicKey) {
+			return nil, errors.New("samlsp: the certificate of WithEncryptionKey is not for its key")
 		}
 	}
 	if c.signRequests && signatureMethod(c.key) == "" {
@@ -198,6 +208,20 @@ func WithKey(key crypto.Signer, cert *x509.Certificate, intermediates ...*x509.C
 	return optionFunc(func(c *Config, _ *configOptions) {
 		c.key, c.certificate = key, cert
 		c.intermediates = append([]*x509.Certificate(nil), intermediates...)
+	})
+}
+
+// WithEncryptionKey sets an RSA key pair that the IdP encrypts assertions
+// to, separate from the signing key of WithKey. cert is advertised in the
+// SP metadata for encryption, and key decrypts. Use it when the signing key
+// cannot decrypt (it is ECDSA, or held in an HSM that only signs), or to
+// rotate the two keys apart.
+//
+// Without it, the key of WithKey is advertised for encryption too, if it
+// is an RSA key.
+func WithEncryptionKey(key *rsa.PrivateKey, cert *x509.Certificate) Option {
+	return optionFunc(func(c *Config, _ *configOptions) {
+		c.encryptionKey, c.encryptionCert = key, cert
 	})
 }
 
@@ -318,17 +342,19 @@ func (c *Config) serviceProvider(ctx context.Context, opts []ServiceProviderOpti
 // ServiceProviderOption.
 func (c *Config) localServiceProvider(ctx context.Context) *saml.ServiceProvider {
 	sp := &saml.ServiceProvider{
-		EntityID:          c.entityID,
-		Key:               c.key,
-		Certificate:       c.certificate,
-		Intermediates:     c.intermediates,
-		DecryptionKeys:    c.decryptionKeys,
-		HTTPClient:        clientFromContext(ctx),
-		AcsURL:            c.acsURL,
-		SloURL:            c.sloURL,
-		AuthnNameIDFormat: c.nameIDFormat,
-		ReplayCache:       c.replayState,
-		Clock:             c.clock,
+		EntityID:              c.entityID,
+		Key:                   c.key,
+		Certificate:           c.certificate,
+		Intermediates:         c.intermediates,
+		DecryptionKeys:        c.decryptionKeys,
+		EncryptionKey:         c.encryptionKey,
+		EncryptionCertificate: c.encryptionCert,
+		HTTPClient:            clientFromContext(ctx),
+		AcsURL:                c.acsURL,
+		SloURL:                c.sloURL,
+		AuthnNameIDFormat:     c.nameIDFormat,
+		ReplayCache:           c.replayState,
+		Clock:                 c.clock,
 
 		AuthnContextClassRefComparator: c.authnContextComparator,
 	}

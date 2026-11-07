@@ -896,3 +896,16 @@ func TestWithReplayState(t *testing.T) {
 		t.Errorf("recorded %v, want [%s]", state.ids, a.ID)
 	}
 }
+
+// decodedResponse returns the XML of the SAMLResponse posted in r.
+func decodedResponse(t *testing.T, r *http.Request) string {
+	t.Helper()
+	if err := r.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+	buf, err := base64.StdEncoding.DecodeString(r.PostForm.Get("SAMLResponse"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(buf)
+}
