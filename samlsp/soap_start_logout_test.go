@@ -2,6 +2,7 @@ package samlsp
 
 import (
 	"context"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/xml"
 	"io"
@@ -16,6 +17,7 @@ import (
 	dsig "github.com/russellhaering/goxmldsig"
 	"gotest.tools/v3/assert"
 	is "gotest.tools/v3/assert/cmp"
+	"gotest.tools/v3/golden"
 
 	"github.com/crewjam/saml"
 )
@@ -353,8 +355,19 @@ func TestServeSLOLogoutRequestWithSOAPLogoutBinding(t *testing.T) {
 }
 
 func TestNewSOAPLogoutBindingOption(t *testing.T) {
-	opts := Options{URL: mustParseURL("https://sp.example.com/"), LogoutBinding: saml.SOAPBinding}
-	m := &Middleware{}
-	assert.NilError(t, applyBindingOptions(m, opts))
-	assert.Check(t, is.Equal(m.LogoutBinding, saml.SOAPBinding))
+	t.Run("with Key", func(t *testing.T) {
+		opts := Options{
+			URL:           mustParseURL("https://sp.example.com/"),
+			Key:           mustParsePrivateKey(golden.Get(t, "key.pem")).(*rsa.PrivateKey),
+			LogoutBinding: saml.SOAPBinding,
+		}
+		m := &Middleware{}
+		assert.NilError(t, applyBindingOptions(m, opts))
+		assert.Check(t, is.Equal(m.LogoutBinding, saml.SOAPBinding))
+	})
+	t.Run("without Key", func(t *testing.T) {
+		opts := Options{URL: mustParseURL("https://sp.example.com/"), LogoutBinding: saml.SOAPBinding}
+		m := &Middleware{}
+		assert.ErrorContains(t, applyBindingOptions(m, opts), "the SOAP logout binding requires Key")
+	})
 }

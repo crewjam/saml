@@ -127,13 +127,14 @@ type Options struct {
 	UseSimpleSignResponse bool
 
 	// LogoutBinding is the binding preferred for sending single logout
-	// messages to the IDP: saml.HTTPRedirectBinding, saml.HTTPPostBinding
-	// or saml.HTTPPostSimpleSignBinding. If empty, or if the IDP metadata
-	// has no SingleLogoutService endpoint for it, HTTP-Redirect is used when
-	// the IDP supports it, HTTP-POST otherwise. The HTTP-POST-SimpleSign
-	// binding requires SignRequest. saml.SOAPBinding sends the
-	// LogoutRequests of HandleStartLogout from the server (back-channel
-	// single logout) when the IDP supports it. See Middleware.LogoutBinding.
+	// messages to the IDP: saml.HTTPRedirectBinding, saml.HTTPPostBinding,
+	// saml.HTTPPostSimpleSignBinding or saml.SOAPBinding. If empty, or if
+	// the IDP metadata has no SingleLogoutService endpoint for it,
+	// HTTP-Redirect is used when the IDP supports it, HTTP-POST otherwise.
+	// The HTTP-POST-SimpleSign binding requires SignRequest or SignLogout.
+	// saml.SOAPBinding sends the LogoutRequests of HandleStartLogout from
+	// the server (back-channel single logout) when the IDP supports it, and
+	// requires Key, which signs them. See Middleware.LogoutBinding.
 	// (The bindings this SP advertises for receiving logout messages are set
 	// by LogoutBindings.)
 	LogoutBinding string
@@ -452,7 +453,15 @@ func applyBindingOptions(m *Middleware, opts Options) error {
 	m.Binding = opts.Binding
 
 	switch opts.LogoutBinding {
-	case "", saml.HTTPRedirectBinding, saml.HTTPPostBinding, saml.SOAPBinding:
+	case "", saml.HTTPRedirectBinding, saml.HTTPPostBinding:
+	case saml.SOAPBinding:
+		// A back-channel LogoutRequest has no browser session at the IDP to
+		// vouch for it, so the IDP accepts it only with the SP's signature
+		// (saml-bindings §3.2). ServiceProvider.MakeSOAPLogoutRequest signs
+		// with Key whenever it is set.
+		if signerutil.IsNil(opts.Key) {
+			return errors.New("samlsp: the SOAP logout binding requires Key, to sign the LogoutRequest")
+		}
 	case saml.HTTPPostSimpleSignBinding:
 		if !opts.SignRequest && !opts.SignLogout {
 			return errors.New("samlsp: the HTTP-POST-SimpleSign logout binding requires SignRequest or SignLogout")
