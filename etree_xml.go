@@ -98,8 +98,17 @@ func qualifiedName(prefix, local string) string {
 	return prefix + ":" + local
 }
 
+// xmlnsAttrName returns the attribute name that declares prefix: "xmlns"
+// for the default namespace (prefix ""), "xmlns:<prefix>" otherwise.
+func xmlnsAttrName(prefix string) string {
+	if prefix == "" {
+		return "xmlns"
+	}
+	return "xmlns:" + prefix
+}
+
 func namespaceDeclaration(prefix, uri string) xml.Attr {
-	return xml.Attr{Name: xml.Name{Local: qualifiedName("xmlns", prefix)}, Value: uri}
+	return xml.Attr{Name: xml.Name{Local: xmlnsAttrName(prefix)}, Value: uri}
 }
 
 // UnmarshalXML implements xml.Unmarshaler.

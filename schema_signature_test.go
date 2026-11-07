@@ -103,3 +103,71 @@ func TestProtocolMessageWithoutSignatureHasNilSignature(t *testing.T) {
 	assert.Check(t, response.Signature == nil)
 	assert.Check(t, response.EncryptedAssertion == nil)
 }
+
+func TestStatusDetailChildrenRoundTrip(t *testing.T) {
+	input := `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:outer="urn:outer" ID="id-1" Version="2.0" IssueInstant="2015-12-01T01:57:09Z">` +
+		issuerFixture +
+		`<samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Responder"/>` +
+		`<samlp:StatusDetail xmlns:x="urn:x" xmlns="urn:default">` +
+		`<own:Reason xmlns:own="urn:own" own:code="42">own prefix</own:Reason>` + // declared on itself
+		"\n  " + // text between children is ignored
+		`<x:Reason>prefix from StatusDetail</x:Reason>` +
+		`<Reason>default namespace from StatusDetail</Reason>` +
+		`<outer:Reason>prefix from Response</outer:Reason>` +
+		`</samlp:StatusDetail></samlp:Status></samlp:Response>`
+
+	type want struct{ space, uri, text string }
+	wants := []want{
+		{"own", "urn:own", "own prefix"},
+		{"x", "urn:x", "prefix from StatusDetail"},
+		{"", "urn:default", "default namespace from StatusDetail"},
+		// outer is declared outside StatusDetail, so it gets a generated
+		// prefix bound to the same namespace
+		{"ns0", "urn:outer", "prefix from Response"},
+	}
+	check := func(t *testing.T, children []*etree.Element) {
+		t.Helper()
+		assert.Assert(t, is.Len(children, len(wants)))
+		for i, w := range wants {
+			assert.Check(t, is.Equal("Reason", children[i].Tag))
+			assert.Check(t, is.Equal(w.space, children[i].Space))
+			assert.Check(t, is.Equal(w.uri, children[i].NamespaceURI()))
+			assert.Check(t, is.Equal(w.text, children[i].Text()))
+		}
+		assert.Check(t, is.Equal("42", children[0].SelectAttrValue("own:code", "")))
+	}
+
+	var response Response
+	assert.NilError(t, xml.Unmarshal([]byte(input), &response))
+	assert.Assert(t, response.Status.StatusDetail != nil)
+	check(t, response.Status.StatusDetail.Children)
+
+	root := marshalAndParse(t, &response)
+	detail := root.FindElement("./Status/StatusDetail")
+	assert.Assert(t, detail != nil)
+	check(t, detail.ChildElements())
+}
+
+func TestStatusDetailMarshalsEtreeChildren(t *testing.T) {
+	status := Status{
+		StatusCode: StatusCode{Value: StatusResponder},
+		StatusDetail: &StatusDetail{Children: []*etree.Element{
+			etree.NewElement("plain"),
+			func() *etree.Element {
+				el := etree.NewElement("x:Cause")
+				el.CreateAttr("xmlns:x", "urn:x")
+				el.SetText("a < b")
+				return el
+			}(),
+		}},
+	}
+	root := marshalAndParse(t, status)
+	children := root.FindElement("./StatusDetail").ChildElements()
+	assert.Assert(t, is.Len(children, 2))
+	// an element with no namespace stays out of the protocol default namespace
+	assert.Check(t, is.Equal("plain", children[0].Tag))
+	assert.Check(t, is.Equal("", children[0].NamespaceURI()))
+	assert.Check(t, is.Equal("Cause", children[1].Tag))
+	assert.Check(t, is.Equal("urn:x", children[1].NamespaceURI()))
+	assert.Check(t, is.Equal("a < b", children[1].Text()))
+}

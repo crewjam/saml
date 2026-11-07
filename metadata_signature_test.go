@@ -161,3 +161,20 @@ func TestSignedMetadataStillVerifiesAfterRoundTrip(t *testing.T) {
 	_, err = validationContext.Validate(root)
 	assert.NilError(t, err)
 }
+
+func TestMetadataSignatureFromLargerDocumentDeclaresItsDefaultNamespace(t *testing.T) {
+	// As above, but the Signature is unprefixed and relies on a default
+	// namespace declared on its parent.
+	doc := etree.NewDocument()
+	assert.NilError(t, doc.ReadFromString(
+		`<root xmlns="http://www.w3.org/2000/09/xmldsig#">`+
+			`<Signature><SignatureValue>c2lnbmF0dXJl</SignatureValue></Signature>`+
+			`</root>`))
+
+	ed := EntityDescriptor{EntityID: "https://example.com/", Signature: doc.FindElement("//Signature")}
+	root := marshalAndParse(t, ed)
+	sig := root.ChildElements()[0]
+	assert.Check(t, is.Equal("Signature", sig.Tag))
+	assert.Check(t, is.Equal(dsig.Namespace, sig.NamespaceURI()))
+	assert.Check(t, is.Equal(dsig.Namespace, sig.FindElement("./SignatureValue").NamespaceURI()))
+}

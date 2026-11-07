@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"encoding/xml"
+	"sort"
 	"strconv"
 	"time"
 
@@ -770,6 +771,69 @@ func (sm StatusDetail) Element() *etree.Element {
 		el.AddChild(child)
 	}
 	return el
+}
+
+// MarshalXML implements xml.Marshaler, writing Children as XML.
+//
+// encoding/xml cannot marshal an *etree.Element itself, so without this
+// method the children were written as their struct fields.
+func (sm StatusDetail) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+	for _, child := range sm.Children {
+		if err := encodeEtreeElement(e, child, nil); err != nil {
+			return err
+		}
+	}
+	return e.EncodeToken(start.End())
+}
+
+// UnmarshalXML implements xml.Unmarshaler, reading every child element into
+// Children. Text between the children is ignored.
+//
+// Each child keeps its prefixes. Namespaces declared on StatusDetail are
+// declared again on each child, which no longer has StatusDetail as a
+// parent. A prefix declared further out cannot be recovered and is replaced
+// by a generated one bound to the same namespace.
+func (sm *StatusDetail) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	scope := map[string]string{}
+	for _, attr := range start.Attr {
+		switch {
+		case attr.Name.Space == "xmlns":
+			scope[attr.Name.Local] = attr.Value
+		case attr.Name.Space == "" && attr.Name.Local == "xmlns":
+			scope[""] = attr.Value
+		}
+	}
+	prefixes := make([]string, 0, len(scope))
+	for prefix := range scope {
+		prefixes = append(prefixes, prefix)
+	}
+	sort.Strings(prefixes)
+
+	for {
+		tok, err := d.Token()
+		if err != nil {
+			return err
+		}
+		switch tok := tok.(type) {
+		case xml.StartElement:
+			child, err := decodeEtreeElement(d, tok, scope)
+			if err != nil {
+				return err
+			}
+			for _, prefix := range prefixes {
+				key := xmlnsAttrName(prefix)
+				if child.SelectAttr(key) == nil {
+					child.CreateAttr(key, scope[prefix])
+				}
+			}
+			sm.Children = append(sm.Children, child)
+		case xml.EndElement:
+			return nil
+		}
+	}
 }
 
 // Assertion represents the SAML element Assertion.
