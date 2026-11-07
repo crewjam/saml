@@ -349,7 +349,30 @@ type ServiceProvider struct {
 	// under the key "LogoutRequest:" followed by the ID, so they cannot
 	// collide with assertion IDs, which are recorded as is and, being
 	// xs:ID values, contain no colon.
+	//
+	// It also records each artifact ParseResponse resolves, before
+	// resolving it, and refuses an artifact it has already recorded
+	// (saml-bindings-2.0-os §3.6.5.2: an artifact is resolved only once). A
+	// type 0x0004 artifact is recorded under "Artifact:" followed by the hex
+	// SourceID, a colon and the hex MessageHandle; any other artifact under
+	// "Artifact:raw:" followed by its value.
 	ReplayCache AssertionReplayCache
+
+	// RequireStandardArtifacts, if true, makes ParseResponse refuse a
+	// SAMLart that is not a type 0x0004 artifact (saml-bindings-2.0-os
+	// §3.6.4: base64 of a 2-byte TypeCode 0x0004, a 2-byte EndpointIndex, a
+	// 20-byte SourceID and a 20-byte MessageHandle), or whose SourceID is
+	// not the SHA-1 hash of the IdP's entityID (§3.6.4.1), without
+	// contacting the IdP. The error matches ErrArtifactResolution, and also
+	// ErrMalformedMessage, ErrUnsupported or ErrIssuerMismatch. If false,
+	// such an artifact is sent unchanged to the IdP's first SOAP
+	// ArtifactResolutionService, as before.
+	//
+	// Either way, the EndpointIndex of a type 0x0004 artifact selects the
+	// indexed SOAP ArtifactResolutionService it names in the IdP metadata,
+	// falling back to the first SOAP ArtifactResolutionService when none
+	// has that index.
+	RequireStandardArtifacts bool
 
 	// EncryptLogoutNameID, if true, makes MakeLogoutRequest,
 	// MakeRedirectLogoutRequest and MakeSimpleSignLogoutRequest identify the
@@ -406,7 +429,8 @@ type ServiceProvider struct {
 //
 // ServiceProvider.ReplayCache and IdentityProvider.ReplayCache also record
 // the IDs of accepted LogoutRequests in it, under keys prefixed with
-// "LogoutRequest:".
+// "LogoutRequest:", and ServiceProvider.ReplayCache records the artifacts
+// it resolves under keys prefixed with "Artifact:".
 type AssertionReplayCache interface {
 	// Consume atomically records assertionID as used until expiresAt, after
 	// which the ServiceProvider no longer accepts the assertion; then the
@@ -1150,6 +1174,16 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID string, possibleRequestIDs []string) (*Assertion, error) {
 	retErr := &InvalidResponseError{Now: sp.now()}
 
+	artifact, err := sp.checkArtifact(artifactID)
+	if err != nil {
+		retErr.PrivateErr = classify(fmt.Errorf("invalid artifact: %w", err), ErrArtifactResolution)
+		return nil, retErr
+	}
+	if err := sp.consumeArtifact(artifactID, artifact); err != nil {
+		retErr.PrivateErr = classify(err, ErrArtifactResolution)
+		return nil, retErr
+	}
+
 	artifactResolveRequest, err := sp.MakeArtifactResolveRequest(artifactID)
 	if err != nil {
 		retErr.PrivateErr = classify(fmt.Errorf("cannot generate artifact resolution request: %w", err), ErrArtifactResolution)
@@ -1162,7 +1196,7 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 		return nil, retErr
 	}
 
-	location := sp.GetArtifactBindingLocation(SOAPBinding)
+	location := sp.artifactResolutionLocation(artifact)
 	if err := checkSOAPEndpoint(location, sp.AllowInsecureSOAPEndpoints); err != nil {
 		retErr.PrivateErr = classify(fmt.Errorf("cannot resolve artifact: %w", err), ErrArtifactResolution)
 		return nil, retErr
