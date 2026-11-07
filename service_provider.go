@@ -1846,28 +1846,9 @@ func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element, meta
 		return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
 	}
 
-	var certs []*x509.Certificate
-	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate == nil {
-		certs, err = metadataCerts()
-		if err != nil {
-			return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
-		}
-	}
-	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint != nil && sp.IDPCertificateFingerprintAlgorithm != nil && sp.IDPCertificate == nil {
-		certs, err = sp.getCertBasedOnFingerprint(el)
-		if err != nil {
-			return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
-		}
-	}
-	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate != nil {
-		cert, err := parseCert(*sp.IDPCertificate)
-		if err != nil {
-			return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
-		}
-		certs = append(certs, cert)
-	}
-	if len(certs) == 0 {
-		return fmt.Errorf("cannot validate signature on %s: saml config not set up properly, specify either idp metadata url, fingerprints or actual certificate", el.Tag)
+	certs, err := sp.signatureVerificationCerts(el, metadataCerts)
+	if err != nil {
+		return err
 	}
 
 	if sp.IgnoreCertificateExpiry {
@@ -1939,6 +1920,37 @@ func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element, meta
 	}
 
 	return nil
+}
+
+// signatureVerificationCerts returns the IdP certificates that a signature on
+// el may be made with: from the IdP metadata, the configured fingerprint or
+// the configured certificate.
+func (sp *ServiceProvider) signatureVerificationCerts(el *etree.Element, metadataCerts func() ([]*x509.Certificate, error)) ([]*x509.Certificate, error) {
+	var certs []*x509.Certificate
+	var err error
+	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate == nil {
+		certs, err = metadataCerts()
+		if err != nil {
+			return nil, fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
+		}
+	}
+	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint != nil && sp.IDPCertificateFingerprintAlgorithm != nil && sp.IDPCertificate == nil {
+		certs, err = sp.getCertBasedOnFingerprint(el)
+		if err != nil {
+			return nil, fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
+		}
+	}
+	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate != nil {
+		cert, err := parseCert(*sp.IDPCertificate)
+		if err != nil {
+			return nil, fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
+		}
+		certs = append(certs, cert)
+	}
+	if len(certs) == 0 {
+		return nil, fmt.Errorf("cannot validate signature on %s: saml config not set up properly, specify either idp metadata url, fingerprints or actual certificate", el.Tag)
+	}
+	return certs, nil
 }
 
 // SignLogoutRequest adds the `Signature` element to the `LogoutRequest`.
