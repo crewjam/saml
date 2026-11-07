@@ -331,12 +331,14 @@ func deflateAndEncode(el *etree.Element) (string, error) {
 // length" (saml-bindings-2.0-os §3.4.3 and §3.5.3).
 const MaxRelayStateLength = 80
 
-// checkRelayState refuses a RelayState longer than MaxRelayStateLength.
-// It is checked where this package starts an exchange (AuthnRequests,
-// LogoutRequests and IdP-initiated Responses), not where it echoes the
-// RelayState of a message it answers, which must be returned unchanged.
-func checkRelayState(relayState string) error {
-	if len(relayState) > MaxRelayStateLength {
+// checkRelayState refuses a RelayState longer than MaxRelayStateLength if
+// limit is set (see ServiceProvider.LimitRelayStateLength and
+// IdentityProvider.LimitRelayStateLength). It is checked where this package
+// starts an exchange (AuthnRequests, LogoutRequests and IdP-initiated
+// Responses), not where it echoes the RelayState of a message it answers,
+// which must be returned unchanged.
+func checkRelayState(limit bool, relayState string) error {
+	if limit && len(relayState) > MaxRelayStateLength {
 		return fmt.Errorf("RelayState is %d bytes, longer than the %d the SAML bindings allow: %w", len(relayState), MaxRelayStateLength, ErrRelayStateTooLong)
 	}
 	return nil

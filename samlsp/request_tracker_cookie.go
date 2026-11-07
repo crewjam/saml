@@ -53,7 +53,7 @@ func (t CookieRequestTracker) TrackRequest(w http.ResponseWriter, r *http.Reques
 
 	if t.RelayStateFunc != nil {
 		relayState := t.RelayStateFunc(w, r)
-		if len(relayState) > saml.MaxRelayStateLength {
+		if t.ServiceProvider.LimitRelayStateLength && len(relayState) > saml.MaxRelayStateLength {
 			return "", fmt.Errorf("RelayStateFunc returned %d bytes, longer than the %d the SAML bindings allow for a RelayState: %w", len(relayState), saml.MaxRelayStateLength, saml.ErrRelayStateTooLong)
 		}
 		if relayState != "" {

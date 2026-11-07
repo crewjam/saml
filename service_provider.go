@@ -358,6 +358,20 @@ type ServiceProvider struct {
 	// decrypt AES-GCM and does not say so in its metadata.
 	LogoutNameIDEncrypter xmlenc.Encrypter
 
+	// LimitRelayStateLength, if true, makes the calls that start an exchange
+	// with the IDP refuse a RelayState longer than MaxRelayStateLength (80
+	// bytes), as the SAML bindings require of senders (saml-bindings-2.0-os
+	// §3.4.3 and §3.5.3), with an error matching ErrRelayStateTooLong:
+	// AuthnRequest.Redirect, MakeRedirectAuthenticationRequest,
+	// MakePostAuthenticationRequest, AuthnRequest.SimpleSign,
+	// RedirectLogoutRequestURL, MakeRedirectLogoutRequest,
+	// MakePostLogoutRequest and LogoutRequest.SimpleSign, and samlsp's
+	// CookieRequestTracker for a RelayStateFunc result. It is off by
+	// default, because many IdPs accept a longer RelayState and
+	// applications rely on it. A RelayState the SP echoes in a
+	// LogoutResponse is never checked.
+	LimitRelayStateLength bool
+
 	// AcceptLogoutRequestBaseID, if true, lets ValidateLogoutRequest accept
 	// a LogoutRequest whose principal is a saml:BaseID (in the clear, or in
 	// an EncryptedID) rather than a NameID. The returned request's BaseID
@@ -573,7 +587,7 @@ func (sp *ServiceProvider) MakeRedirectAuthenticationRequest(relayState string) 
 // saml-bindings-2.0-os section 3.4.4.1. Any enveloped XML signature is omitted,
 // as required by the HTTP-Redirect binding.
 func (r *AuthnRequest) Redirect(relayState string, sp *ServiceProvider) (*url.URL, error) {
-	if err := checkRelayState(relayState); err != nil {
+	if err := checkRelayState(sp.LimitRelayStateLength, relayState); err != nil {
 		return nil, err
 	}
 	unsigned := *r
@@ -955,7 +969,7 @@ func (sp *ServiceProvider) SignAuthnRequest(req *AuthnRequest) error {
 // the HTTP-POST binding. It returns HTML text representing an HTML form that
 // can be sent presented to a browser to initiate the login process.
 func (sp *ServiceProvider) MakePostAuthenticationRequest(relayState string) ([]byte, error) {
-	if err := checkRelayState(relayState); err != nil {
+	if err := checkRelayState(sp.LimitRelayStateLength, relayState); err != nil {
 		return nil, err
 	}
 	req, err := sp.MakeAuthenticationRequest(sp.GetSSOBindingLocation(HTTPPostBinding), HTTPPostBinding, HTTPPostBinding)
@@ -2424,7 +2438,7 @@ func (sp *ServiceProvider) MakeRedirectLogoutRequest(nameID, relayState string, 
 // sp.SignatureMethod is set, the URL carries a query string signature
 // instead, as the binding requires (saml-bindings-2.0-os section 3.4.4.1).
 func (sp *ServiceProvider) RedirectLogoutRequestURL(req *LogoutRequest, relayState string) (*url.URL, error) {
-	if err := checkRelayState(relayState); err != nil {
+	if err := checkRelayState(sp.LimitRelayStateLength, relayState); err != nil {
 		return nil, err
 	}
 	unsigned := *req
@@ -2474,7 +2488,7 @@ func (r *LogoutRequest) Redirect(relayState string) *url.URL {
 // the HTTP-POST binding. It returns HTML text representing an HTML form that
 // can be sent presented to a browser to initiate the logout process.
 func (sp *ServiceProvider) MakePostLogoutRequest(nameID, relayState string, opts ...LogoutRequestOption) ([]byte, error) {
-	if err := checkRelayState(relayState); err != nil {
+	if err := checkRelayState(sp.LimitRelayStateLength, relayState); err != nil {
 		return nil, err
 	}
 	req, err := sp.MakeLogoutRequest(sp.GetSLOBindingLocation(HTTPPostBinding), nameID, opts...)

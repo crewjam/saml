@@ -267,6 +267,14 @@ type IdentityProvider struct {
 	// decrypted, or when Key cannot decrypt (see EncryptionCertificate).
 	DecryptionKeys []*rsa.PrivateKey
 
+	// LimitRelayStateLength, if true, makes NewIdpInitiatedRequest refuse a
+	// RelayState longer than MaxRelayStateLength (80 bytes), as the SAML
+	// bindings require of senders (saml-bindings-2.0-os §3.5.3), with an
+	// error matching ErrRelayStateTooLong; ServeIDPInitiated then answers
+	// HTTP 400. It is off by default. A RelayState the IdP echoes in a
+	// Response or LogoutResponse is never checked.
+	LimitRelayStateLength bool
+
 	// AcceptLogoutRequestBaseID, if true, lets ServeSLO and
 	// IdpLogoutRequest.Validate accept a LogoutRequest whose principal is a
 	// saml:BaseID (in the clear, or in an EncryptedID) rather than a NameID.
@@ -625,7 +633,7 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 // assertion consumer service, and otherwise the ServiceProviderProvider's
 // error, wrapped.
 func (idp *IdentityProvider) NewIdpInitiatedRequest(r *http.Request, serviceProviderID string, relayState string) (*IdpAuthnRequest, error) {
-	if err := checkRelayState(relayState); err != nil {
+	if err := checkRelayState(idp.LimitRelayStateLength, relayState); err != nil {
 		return nil, err
 	}
 	req := &IdpAuthnRequest{

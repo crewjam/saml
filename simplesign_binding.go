@@ -404,7 +404,7 @@ func (r *AuthnRequest) SimpleSign(relayState string, sp *ServiceProvider) ([]byt
 // set as the nonce attribute of the form's auto-submit <script> element, as
 // PostWithNonce does.
 func (r *AuthnRequest) SimpleSignWithNonce(relayState, nonce string, sp *ServiceProvider) ([]byte, error) {
-	if err := checkRelayState(relayState); err != nil {
+	if err := checkRelayState(sp.LimitRelayStateLength, relayState); err != nil {
 		return nil, err
 	}
 	return sp.simpleSignForm(r.Destination, redirectParamSAMLRequest, r.Element(), relayState, nonce)
@@ -434,7 +434,7 @@ func (r *LogoutRequest) SimpleSign(relayState string, sp *ServiceProvider) ([]by
 // SimpleSignWithNonce is like SimpleSign, but if nonce is not empty it is
 // set as the nonce attribute of the form's auto-submit <script> element.
 func (r *LogoutRequest) SimpleSignWithNonce(relayState, nonce string, sp *ServiceProvider) ([]byte, error) {
-	if err := checkRelayState(relayState); err != nil {
+	if err := checkRelayState(sp.LimitRelayStateLength, relayState); err != nil {
 		return nil, err
 	}
 	return sp.simpleSignForm(r.Destination, redirectParamSAMLRequest, r.Element(), relayState, nonce)

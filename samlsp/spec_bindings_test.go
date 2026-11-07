@@ -106,16 +106,25 @@ func TestSpecBinding_3_4_3_SLOResponseEchoesExactRelayState(t *testing.T) {
 }
 
 // saml-bindings-2.0-os §3.4.3 and §3.5.3: RelayState "MUST NOT exceed 80
-// bytes in length". A RelayStateFunc result longer than that is refused
-// before a tracking cookie is set or a request is sent; 80 bytes are used
-// as is.
+// bytes in length". With LimitRelayStateLength set, a RelayStateFunc result
+// longer than that is refused before a tracking cookie is set or a request
+// is sent; 80 bytes are used as is. By default it is used as is.
 func TestSpecBinding_3_4_3_RelayStateFuncAtMost80Bytes(t *testing.T) {
 	tracker := covCookieRequestTracker(t)
-	relayState := strings.Repeat("r", saml.MaxRelayStateLength)
+	relayState := strings.Repeat("r", 2*saml.MaxRelayStateLength)
 	tracker.RelayStateFunc = func(http.ResponseWriter, *http.Request) string { return relayState }
 
+	index, err := tracker.TrackRequest(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/frob", nil), "id-1")
+	assert.NilError(t, err, "not limited by default")
+	assert.Check(t, is.Equal(relayState, index))
+
+	sp := *tracker.ServiceProvider
+	sp.LimitRelayStateLength = true
+	tracker.ServiceProvider = &sp
+	relayState = strings.Repeat("r", saml.MaxRelayStateLength)
+
 	rec := httptest.NewRecorder()
-	index, err := tracker.TrackRequest(rec, httptest.NewRequest(http.MethodGet, "/frob", nil), "id-1")
+	index, err = tracker.TrackRequest(rec, httptest.NewRequest(http.MethodGet, "/frob", nil), "id-1")
 	assert.NilError(t, err)
 	assert.Check(t, is.Equal(relayState, index))
 
@@ -124,4 +133,13 @@ func TestSpecBinding_3_4_3_RelayStateFuncAtMost80Bytes(t *testing.T) {
 	_, err = tracker.TrackRequest(rec, httptest.NewRequest(http.MethodGet, "/frob", nil), "id-1")
 	assert.Check(t, errors.Is(err, saml.ErrRelayStateTooLong), "%v", err)
 	assert.Check(t, is.Equal("", rec.Header().Get("Set-Cookie")))
+}
+
+// Options.LimitRelayStateLength turns on the ServiceProvider's RelayState
+// limit; it is off by default.
+func TestOptionsLimitRelayStateLength(t *testing.T) {
+	opts := Options{URL: mustParseURL("https://sp.example.com/")}
+	assert.Check(t, !DefaultServiceProvider(opts).LimitRelayStateLength)
+	opts.LimitRelayStateLength = true
+	assert.Check(t, DefaultServiceProvider(opts).LimitRelayStateLength)
 }

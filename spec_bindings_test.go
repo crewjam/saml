@@ -611,10 +611,12 @@ func TestSpecBinding_3_4_4_1_RedirectMethodsRemoveXMLSignature(t *testing.T) {
 }
 
 // saml-bindings-2.0-os §3.4.3 and §3.5.3 (and SimpleSign §2.3): RelayState
-// "MUST NOT exceed 80 bytes in length". Every request this package starts
-// refuses a longer one with ErrRelayStateTooLong, and an 80-byte one is
-// sent unchanged. A response echoes the RelayState it was given, which "MUST
-// [be] the exact data it received", so responses are not checked.
+// "MUST NOT exceed 80 bytes in length". With LimitRelayStateLength set,
+// every request this package starts refuses a longer one with
+// ErrRelayStateTooLong, and an 80-byte one is sent unchanged. Without it
+// (the default, since many deployments rely on longer values) a longer one
+// is sent as given. A response echoes the RelayState it was given, which
+// "MUST [be] the exact data it received", so responses are never checked.
 func TestSpecBinding_3_4_3_OriginatedRelayStateAtMost80Bytes(t *testing.T) {
 	e := spcovSetup(t)
 	e.sp.SignatureMethod = dsig.RSASHA256SignatureMethod
@@ -652,12 +654,24 @@ func TestSpecBinding_3_4_3_OriginatedRelayStateAtMost80Bytes(t *testing.T) {
 		},
 	}
 	for name, start := range starts {
-		t.Run(name, func(t *testing.T) {
+		t.Run(name+" not limited by default", func(t *testing.T) {
+			e.sp.LimitRelayStateLength = false
+			assert.Check(t, start(tooLong))
+		})
+		t.Run(name+" limited", func(t *testing.T) {
+			e.sp.LimitRelayStateLength = true
+			t.Cleanup(func() { e.sp.LimitRelayStateLength = false })
 			assert.Check(t, start(ok))
 			err := start(tooLong)
 			assert.Check(t, errors.Is(err, ErrRelayStateTooLong), "%v", err)
 		})
 	}
+
+	t.Run("default redirect URL carries a longer RelayState unchanged", func(t *testing.T) {
+		u, err := e.sp.MakeRedirectAuthenticationRequest(tooLong)
+		assert.NilError(t, err)
+		assert.Check(t, is.Equal(tooLong, u.Query().Get("RelayState")))
+	})
 
 	t.Run("redirect URL carries the 80-byte RelayState unchanged", func(t *testing.T) {
 		u, err := e.sp.MakeRedirectAuthenticationRequest(ok)
@@ -666,6 +680,8 @@ func TestSpecBinding_3_4_3_OriginatedRelayStateAtMost80Bytes(t *testing.T) {
 	})
 
 	t.Run("responses echo a longer RelayState", func(t *testing.T) {
+		e.sp.LimitRelayStateLength = true
+		t.Cleanup(func() { e.sp.LimitRelayStateLength = false })
 		u, err := e.sp.MakeRedirectLogoutResponse("id-logout-request", tooLong)
 		assert.NilError(t, err)
 		assert.Check(t, is.Equal(tooLong, u.Query().Get("RelayState")))
@@ -677,6 +693,10 @@ func TestSpecBinding_3_4_3_OriginatedRelayStateAtMost80Bytes(t *testing.T) {
 		test := NewIdentityProviderTest(t, applyKey)
 		r := httptest.NewRequest(http.MethodGet, "https://idp.example.com/services/sp/whoami", nil)
 		_, err := test.IDP.NewIdpInitiatedRequest(r, test.SP.MetadataURL.String(), tooLong)
+		assert.Check(t, err, "not limited by default")
+
+		test.IDP.LimitRelayStateLength = true
+		_, err = test.IDP.NewIdpInitiatedRequest(r, test.SP.MetadataURL.String(), tooLong)
 		assert.Check(t, errors.Is(err, ErrRelayStateTooLong), "%v", err)
 		_, err = test.IDP.NewIdpInitiatedRequest(r, test.SP.MetadataURL.String(), ok)
 		assert.Check(t, err)
