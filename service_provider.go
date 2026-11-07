@@ -73,13 +73,26 @@ type ServiceProvider struct {
 
 	// Key is the private key we use to sign requests. Its public key must be
 	// an *rsa.PublicKey or an *ecdsa.PublicKey. Any crypto.Signer works for
-	// signing, including keys held in a KMS or HSM. Decrypting encrypted
-	// assertions still needs the private key in memory as an *rsa.PrivateKey.
+	// signing, including keys held in a KMS or HSM. Unless EncryptionKey is
+	// set, Key is also used to decrypt encrypted assertions, which only works
+	// when Key is an *rsa.PrivateKey.
 	Key crypto.Signer
 
 	// Certificate is the public part of Key.
 	Certificate   *x509.Certificate
 	Intermediates []*x509.Certificate
+
+	// EncryptionKey, if set, is the private key used to decrypt encrypted
+	// assertions, instead of Key. Use it to keep separate signing and
+	// encryption keys, for example when Key is an ECDSA key, which cannot be
+	// used for XML encryption.
+	EncryptionKey *rsa.PrivateKey
+
+	// EncryptionCertificate is the public part of EncryptionKey. It is
+	// advertised in the metadata as the encryption key. If it is nil, the
+	// metadata advertises Certificate for encryption, but only when its public
+	// key is an RSA key.
+	EncryptionCertificate *x509.Certificate
 
 	// HTTPClient to use during SAML artifact resolution
 	HTTPClient *http.Client
@@ -241,30 +254,45 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 	validUntil := sp.now().Add(validDuration)
 
 	var keyDescriptors []KeyDescriptor
+	var certBytes []byte
 	if sp.Certificate != nil {
-		certBytes := sp.Certificate.Raw
+		certBytes = sp.Certificate.Raw
 		for _, intermediate := range sp.Intermediates {
 			certBytes = append(certBytes, intermediate.Raw...)
 		}
-		keyDescriptors = []KeyDescriptor{
-			{
-				Use: "encryption",
-				KeyInfo: KeyInfo{
-					X509Data: X509Data{
-						X509Certificates: []X509Certificate{
-							{Data: base64.StdEncoding.EncodeToString(certBytes)},
-						},
+	}
+
+	// Advertise a key for encryption only if it is one the IdP can encrypt
+	// to: XML encryption (key transport) requires an RSA key.
+	var encryptionCertBytes []byte
+	if sp.EncryptionCertificate != nil {
+		encryptionCertBytes = sp.EncryptionCertificate.Raw
+	} else if sp.Certificate != nil {
+		if _, ok := sp.Certificate.PublicKey.(*rsa.PublicKey); ok {
+			encryptionCertBytes = certBytes
+		}
+	}
+	if encryptionCertBytes != nil {
+		keyDescriptors = append(keyDescriptors, KeyDescriptor{
+			Use: "encryption",
+			KeyInfo: KeyInfo{
+				X509Data: X509Data{
+					X509Certificates: []X509Certificate{
+						{Data: base64.StdEncoding.EncodeToString(encryptionCertBytes)},
 					},
 				},
-				EncryptionMethods: []EncryptionMethod{
-					{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
-					{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
-					{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
-					{Algorithm: "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"},
-					{Algorithm: "http://www.w3.org/2009/xmlenc11#rsa-oaep"},
-				},
 			},
-		}
+			EncryptionMethods: []EncryptionMethod{
+				{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
+				{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
+				{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
+				{Algorithm: "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"},
+				{Algorithm: "http://www.w3.org/2009/xmlenc11#rsa-oaep"},
+			},
+		})
+	}
+
+	if sp.Certificate != nil {
 		if len(sp.SignatureMethod) > 0 {
 			keyDescriptors = append(keyDescriptors, KeyDescriptor{
 				Use: "signing",
@@ -1151,11 +1179,16 @@ func (sp *ServiceProvider) decryptElement(encryptedEl *etree.Element) (*etree.El
 		return nil, err
 	}
 
-	var key interface{} = sp.Key
+	var decryptionKey interface{} = sp.Key
+	if sp.EncryptionKey != nil {
+		decryptionKey = sp.EncryptionKey
+	}
+
+	key := decryptionKey
 	keyEl := encryptedEl.FindElement("./EncryptedKey")
 	if keyEl != nil {
 		var err error
-		key, err = xmlenc.Decrypt(sp.Key, keyEl)
+		key, err = xmlenc.Decrypt(decryptionKey, keyEl)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decrypt key from response: %s", err)
 		}

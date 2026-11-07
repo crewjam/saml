@@ -38,6 +38,12 @@ type Options struct {
 	RelayStateFunc        func(w http.ResponseWriter, r *http.Request) string
 	LogoutBindings        []string
 
+	// EncryptionKey and EncryptionCertificate, if set, are used to decrypt
+	// encrypted assertions and are advertised in the metadata for encryption,
+	// instead of Key and Certificate. See saml.ServiceProvider.
+	EncryptionKey         *rsa.PrivateKey
+	EncryptionCertificate *x509.Certificate
+
 	// AssertionConsumerServiceBindings specify the bindings advertised for the
 	// AssertionConsumerService endpoint in the SP metadata. If empty, both
 	// HTTP-POST and HTTP-Artifact bindings are advertised. If set, it must
@@ -159,6 +165,8 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		Certificate:           opts.Certificate,
 		HTTPClient:            opts.HTTPClient,
 		Intermediates:         opts.Intermediates,
+		EncryptionKey:         opts.EncryptionKey,
+		EncryptionCertificate: opts.EncryptionCertificate,
 		MetadataURL:           *metadataURL,
 		AcsURL:                *acsURL,
 		SloURL:                *sloURL,
