@@ -41,3 +41,29 @@ func TestMarshalXMLOnValues(t *testing.T) {
 		})
 	}
 }
+
+// TestMarshalXMLOmitsEmptyOptionalAttributes checks that optional
+// attributes that are unset are left out, rather than written as empty
+// strings (AssertionConsumerServiceIndex="" is not a valid unsignedShort).
+func TestMarshalXMLOmitsEmptyOptionalAttributes(t *testing.T) {
+	req := AuthnRequest{
+		ID:           "id",
+		Version:      "2.0",
+		IssueInstant: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC),
+		Issuer:       &Issuer{Value: "https://sp.example.com/"},
+	}
+	out, err := xml.Marshal(req)
+	assert.NilError(t, err)
+	for _, attr := range []string{
+		"Destination", "Consent", "AssertionConsumerServiceIndex", "AssertionConsumerServiceURL",
+		"ProtocolBinding", "AttributeConsumingServiceIndex", "ProviderName",
+		"NameQualifier", "SPNameQualifier", "Format", "SPProvidedID",
+	} {
+		assert.Check(t, !strings.Contains(string(out), attr+`=`), "%s in %s", attr, out)
+	}
+
+	req.AssertionConsumerServiceURL = "https://sp.example.com/acs"
+	out, err = xml.Marshal(req)
+	assert.NilError(t, err)
+	assert.Check(t, is.Contains(string(out), `AssertionConsumerServiceURL="https://sp.example.com/acs"`))
+}

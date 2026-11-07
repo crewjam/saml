@@ -19,7 +19,7 @@ import (
 // (saml-core section 3.3.2.2.1).
 type RequestedAuthnContext struct {
 	XMLName    xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol RequestedAuthnContext"`
-	Comparison string   `xml:",attr"`
+	Comparison string   `xml:",attr,omitempty"`
 
 	// AuthnContextClassRefs lists the requested authentication context
 	// classes, in order of preference. When parsing, it holds every
@@ -70,7 +70,7 @@ func (r *RequestedAuthnContext) Element() *etree.Element {
 func (r RequestedAuthnContext) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type wire struct {
 		XMLName               xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol RequestedAuthnContext"`
-		Comparison            string   `xml:",attr"`
+		Comparison            string   `xml:",attr,omitempty"`
 		AuthnContextClassRefs []string `xml:"urn:oasis:names:tc:SAML:2.0:assertion AuthnContextClassRef"`
 	}
 	refs := r.ClassRefs()
@@ -114,8 +114,8 @@ type AuthnRequest struct {
 	ID           string    `xml:",attr"`
 	Version      string    `xml:",attr"`
 	IssueInstant time.Time `xml:",attr"`
-	Destination  string    `xml:",attr"`
-	Consent      string    `xml:",attr"`
+	Destination  string    `xml:",attr,omitempty"`
+	Consent      string    `xml:",attr,omitempty"`
 	Issuer       *Issuer   `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
 	Signature    *etree.Element
 
@@ -127,11 +127,11 @@ type AuthnRequest struct {
 
 	ForceAuthn                     *bool  `xml:",attr"`
 	IsPassive                      *bool  `xml:",attr"`
-	AssertionConsumerServiceIndex  string `xml:",attr"`
-	AssertionConsumerServiceURL    string `xml:",attr"`
-	ProtocolBinding                string `xml:",attr"`
-	AttributeConsumingServiceIndex string `xml:",attr"`
-	ProviderName                   string `xml:",attr"`
+	AssertionConsumerServiceIndex  string `xml:",attr,omitempty"`
+	AssertionConsumerServiceURL    string `xml:",attr,omitempty"`
+	ProtocolBinding                string `xml:",attr,omitempty"`
+	AttributeConsumingServiceIndex string `xml:",attr,omitempty"`
+	ProviderName                   string `xml:",attr,omitempty"`
 }
 
 // LogoutRequest  represents the SAML object of the same name, a request from an IDP
@@ -145,7 +145,7 @@ type LogoutRequest struct {
 	Version      string     `xml:",attr"`
 	IssueInstant time.Time  `xml:",attr"`
 	NotOnOrAfter *time.Time `xml:",attr"`
-	Destination  string     `xml:",attr"`
+	Destination  string     `xml:",attr,omitempty"`
 	Issuer       *Issuer    `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
 	NameID       *NameID    `xml:"urn:oasis:names:tc:SAML:2.0:assertion NameID"`
 	Signature    *etree.Element
@@ -428,10 +428,10 @@ func (r *AuthnRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) erro
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
 type Issuer struct {
 	XMLName         xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
-	NameQualifier   string   `xml:",attr"`
-	SPNameQualifier string   `xml:",attr"`
-	Format          string   `xml:",attr"`
-	SPProvidedID    string   `xml:",attr"`
+	NameQualifier   string   `xml:",attr,omitempty"`
+	SPNameQualifier string   `xml:",attr,omitempty"`
+	Format          string   `xml:",attr,omitempty"`
+	SPProvidedID    string   `xml:",attr,omitempty"`
 	Value           string   `xml:",chardata"`
 }
 
@@ -657,8 +657,8 @@ type AttributeQuery struct {
 	ID           string    `xml:",attr"`
 	Version      string    `xml:",attr"`
 	IssueInstant time.Time `xml:",attr"`
-	Destination  string    `xml:",attr"`
-	Consent      string    `xml:",attr"`
+	Destination  string    `xml:",attr,omitempty"`
+	Consent      string    `xml:",attr,omitempty"`
 	Issuer       *Issuer   `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
 	Signature    *etree.Element
 
@@ -747,7 +747,7 @@ func (r *AttributeQuery) UnmarshalXML(d *xml.Decoder, start xml.StartElement) er
 type ArtifactResponse struct {
 	XMLName      xml.Name  `xml:"urn:oasis:names:tc:SAML:2.0:protocol ArtifactResponse"`
 	ID           string    `xml:",attr"`
-	InResponseTo string    `xml:",attr"`
+	InResponseTo string    `xml:",attr,omitempty"`
 	Version      string    `xml:",attr"`
 	IssueInstant time.Time `xml:",attr"`
 	Issuer       *Issuer   `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
@@ -831,11 +831,11 @@ func (r *ArtifactResponse) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 type Response struct {
 	XMLName      xml.Name  `xml:"urn:oasis:names:tc:SAML:2.0:protocol Response"`
 	ID           string    `xml:",attr"`
-	InResponseTo string    `xml:",attr"`
+	InResponseTo string    `xml:",attr,omitempty"`
 	Version      string    `xml:",attr"`
 	IssueInstant time.Time `xml:",attr"`
-	Destination  string    `xml:",attr"`
-	Consent      string    `xml:",attr"`
+	Destination  string    `xml:",attr,omitempty"`
+	Consent      string    `xml:",attr,omitempty"`
 	Issuer       *Issuer   `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
 	Signature    *etree.Element
 	Status       Status `xml:"urn:oasis:names:tc:SAML:2.0:protocol Status"`
@@ -1324,10 +1324,10 @@ func (a *Subject) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf §2.2.3
 type NameID struct {
-	NameQualifier   string `xml:",attr"`
-	SPNameQualifier string `xml:",attr"`
-	Format          string `xml:",attr"`
-	SPProvidedID    string `xml:",attr"`
+	NameQualifier   string `xml:",attr,omitempty"`
+	SPNameQualifier string `xml:",attr,omitempty"`
+	Format          string `xml:",attr,omitempty"`
+	SPProvidedID    string `xml:",attr,omitempty"`
 	Value           string `xml:",chardata"`
 }
 
@@ -1436,9 +1436,9 @@ func (a *SubjectConfirmation) UnmarshalXML(d *xml.Decoder, start xml.StartElemen
 type SubjectConfirmationData struct {
 	NotBefore    time.Time `xml:",attr"`
 	NotOnOrAfter time.Time `xml:",attr"`
-	Recipient    string    `xml:",attr"`
-	InResponseTo string    `xml:",attr"`
-	Address      string    `xml:",attr"`
+	Recipient    string    `xml:",attr,omitempty"`
+	InResponseTo string    `xml:",attr,omitempty"`
+	Address      string    `xml:",attr,omitempty"`
 }
 
 // Element returns an etree.Element representing the object in XML form.
@@ -1680,7 +1680,7 @@ func (a *ProxyRestriction) Element() *etree.Element {
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf §2.7.2
 type AuthnStatement struct {
 	AuthnInstant        time.Time        `xml:",attr"`
-	SessionIndex        string           `xml:",attr"`
+	SessionIndex        string           `xml:",attr,omitempty"`
 	SessionNotOnOrAfter *time.Time       `xml:",attr,omitempty"`
 	SubjectLocality     *SubjectLocality `xml:"urn:oasis:names:tc:SAML:2.0:assertion SubjectLocality"`
 	AuthnContext        AuthnContext     `xml:"urn:oasis:names:tc:SAML:2.0:assertion AuthnContext"`
@@ -1740,8 +1740,8 @@ func (a *AuthnStatement) UnmarshalXML(d *xml.Decoder, start xml.StartElement) er
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf §2.7.2.1
 type SubjectLocality struct {
-	Address string `xml:",attr"`
-	DNSName string `xml:",attr"`
+	Address string `xml:",attr,omitempty"`
+	DNSName string `xml:",attr,omitempty"`
 }
 
 // Element returns an etree.Element representing the object in XML form.
@@ -1827,9 +1827,9 @@ func (a *AttributeStatement) Element() *etree.Element {
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf §2.7.3.1
 type Attribute struct {
-	FriendlyName string           `xml:",attr"`
+	FriendlyName string           `xml:",attr,omitempty"`
 	Name         string           `xml:",attr"`
-	NameFormat   string           `xml:",attr"`
+	NameFormat   string           `xml:",attr,omitempty"`
 	Values       []AttributeValue `xml:"urn:oasis:names:tc:SAML:2.0:assertion AttributeValue"`
 }
 
@@ -1855,7 +1855,7 @@ func (a *Attribute) Element() *etree.Element {
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf §2.7.3.1.1
 type AttributeValue struct {
-	Type string `xml:"http://www.w3.org/2001/XMLSchema-instance type,attr"`
+	Type string `xml:"http://www.w3.org/2001/XMLSchema-instance type,attr,omitempty"`
 
 	// Nil reports that the value is a SAML "null" value, carried as
 	// xsi:nil="true" (or "1") on an empty element (saml-core §2.7.3.1.1).
@@ -1913,11 +1913,11 @@ func (a *AttributeValue) Element() *etree.Element {
 type LogoutResponse struct {
 	XMLName      xml.Name  `xml:"urn:oasis:names:tc:SAML:2.0:protocol LogoutResponse"`
 	ID           string    `xml:",attr"`
-	InResponseTo string    `xml:",attr"`
+	InResponseTo string    `xml:",attr,omitempty"`
 	Version      string    `xml:",attr"`
 	IssueInstant time.Time `xml:",attr"`
-	Destination  string    `xml:",attr"`
-	Consent      string    `xml:",attr"`
+	Destination  string    `xml:",attr,omitempty"`
+	Consent      string    `xml:",attr,omitempty"`
 	Issuer       *Issuer   `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
 	Signature    *etree.Element
 	Status       Status `xml:"urn:oasis:names:tc:SAML:2.0:protocol Status"`
