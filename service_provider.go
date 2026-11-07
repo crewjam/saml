@@ -259,6 +259,15 @@ type ServiceProvider struct {
 	// dsig.ECDSASHA512SignatureMethod.
 	SignatureMethod string
 
+	// LogoutSignatureMethod, if non-empty, is used instead of
+	// SignatureMethod to sign the LogoutRequests and LogoutResponses the SP
+	// sends, so that they can be signed while AuthnRequests are not. The
+	// single logout profile requires LogoutRequests and LogoutResponses sent
+	// with the HTTP-Redirect or HTTP-POST binding to be signed
+	// (saml-profiles §4.4.3.1 and §4.4.3.4). If empty, SignatureMethod is
+	// used for them too. It takes the same values as SignatureMethod.
+	LogoutSignatureMethod string
+
 	// SignMetadata, if true, asks that the SP metadata be published with an
 	// enveloped XML signature made with Key; samlsp.Middleware.ServeMetadata
 	// honors it. See SignedMetadata.
@@ -611,7 +620,7 @@ func (r *AuthnRequest) Redirect(relayState string, sp *ServiceProvider) (*url.UR
 	if err != nil {
 		return nil, err
 	}
-	return sp.redirectBindingURL(r.Destination, redirectParamSAMLRequest, encoded, relayState)
+	return sp.redirectBindingURL(r.Destination, redirectParamSAMLRequest, encoded, relayState, sp.SignatureMethod)
 }
 
 // GetSSOBindingLocation returns URL for the IDP's Single Sign On Service binding
@@ -881,6 +890,16 @@ func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 	return sp.signingContext(sp.SignatureMethod)
 }
 
+// logoutSignatureMethod returns the signature method for the logout
+// messages the SP sends: LogoutSignatureMethod, or SignatureMethod if that
+// is empty. An empty result means they are not signed.
+func (sp *ServiceProvider) logoutSignatureMethod() string {
+	if sp.LogoutSignatureMethod != "" {
+		return sp.LogoutSignatureMethod
+	}
+	return sp.SignatureMethod
+}
+
 // signingContext returns a signing context for the SP's key and certificate
 // that signs with signatureMethod.
 func (sp *ServiceProvider) signingContext(signatureMethod string) (*dsig.SigningContext, error) {
@@ -1045,12 +1064,30 @@ type AssertionAttributes []AssertionAttribute
 
 // Get returns the assertion attribute whose Name or FriendlyName
 // matches name, or nil if no matching attribute is found.
+//
+// FriendlyName "MUST NOT be used as a basis for formally identifying SAML
+// attributes" (saml-core §2.7.3.1): an attribute's FriendlyName can equal
+// another attribute's Name.
+//
+// Deprecated: Get can return an attribute whose FriendlyName equals the
+// Name asked for, in place of the attribute with that Name. Use GetByName.
 func (aa AssertionAttributes) Get(name string) *AssertionAttribute {
 	for _, attr := range aa {
 		if attr.Name == name {
 			return &attr
 		}
 		if attr.FriendlyName == name {
+			return &attr
+		}
+	}
+	return nil
+}
+
+// GetByName returns the assertion attribute whose Name is name, or nil if
+// there is none. Unlike Get, it never matches a FriendlyName.
+func (aa AssertionAttributes) GetByName(name string) *AssertionAttribute {
+	for _, attr := range aa {
+		if attr.Name == name {
 			return &attr
 		}
 	}
@@ -2286,7 +2323,7 @@ func (sp *ServiceProvider) signatureVerificationCerts(el *etree.Element, metadat
 
 // SignLogoutRequest adds the `Signature` element to the `LogoutRequest`.
 func (sp *ServiceProvider) SignLogoutRequest(req *LogoutRequest) error {
-	signingContext, err := GetSigningContext(sp)
+	signingContext, err := sp.signingContext(sp.logoutSignatureMethod())
 	if err != nil {
 		return err
 	}
@@ -2347,7 +2384,7 @@ func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string, opts ...Logo
 	if err != nil {
 		return nil, err
 	}
-	if sp.SignatureMethod != "" {
+	if sp.logoutSignatureMethod() != "" {
 		if err := sp.SignLogoutRequest(req); err != nil {
 			return nil, err
 		}
@@ -2470,7 +2507,7 @@ func (sp *ServiceProvider) RedirectLogoutRequestURL(req *LogoutRequest, relaySta
 	if err != nil {
 		return nil, err
 	}
-	return sp.redirectBindingURL(unsigned.Destination, redirectParamSAMLRequest, encoded, relayState)
+	return sp.redirectBindingURL(unsigned.Destination, redirectParamSAMLRequest, encoded, relayState, sp.logoutSignatureMethod())
 }
 
 // Redirect returns a URL suitable for using the redirect binding with the
@@ -2572,7 +2609,7 @@ func (r *LogoutRequest) PostWithNonce(relayState, nonce string) []byte {
 // enveloped XML signature, which is what the HTTP-POST binding uses.
 func (sp *ServiceProvider) MakeLogoutResponse(idpURL, logoutRequestID string) (*LogoutResponse, error) {
 	response := sp.makeUnsignedLogoutResponse(idpURL, logoutRequestID)
-	if sp.SignatureMethod != "" {
+	if sp.logoutSignatureMethod() != "" {
 		if err := sp.SignLogoutResponse(response); err != nil {
 			return nil, err
 		}
@@ -2613,7 +2650,7 @@ func (sp *ServiceProvider) MakeRedirectLogoutResponse(logoutRequestID, relayStat
 	if err != nil {
 		return nil, err
 	}
-	return sp.redirectBindingURL(resp.Destination, redirectParamSAMLResponse, encoded, relayState)
+	return sp.redirectBindingURL(resp.Destination, redirectParamSAMLResponse, encoded, relayState, sp.logoutSignatureMethod())
 }
 
 // Redirect returns a URL suitable for using the redirect binding with the
@@ -2709,7 +2746,7 @@ func (r *LogoutResponse) PostWithNonce(relayState, nonce string) []byte {
 
 // SignLogoutResponse adds the `Signature` element to the `LogoutResponse`.
 func (sp *ServiceProvider) SignLogoutResponse(resp *LogoutResponse) error {
-	signingContext, err := GetSigningContext(sp)
+	signingContext, err := sp.signingContext(sp.logoutSignatureMethod())
 	if err != nil {
 		return err
 	}
