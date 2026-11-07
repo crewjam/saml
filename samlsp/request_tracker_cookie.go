@@ -83,8 +83,11 @@ func (t CookieRequestTracker) StopTrackingRequest(w http.ResponseWriter, r *http
 	if err != nil {
 		return err
 	}
+	// TrackRequest sets a host-only cookie, so delete it without a Domain
+	// attribute: browsers treat a cookie with Domain set as a different cookie
+	// and would keep the tracked request.
 	cookie.Value = ""
-	cookie.Domain = t.ServiceProvider.AcsURL.Hostname()
+	cookie.Domain = ""
 	cookie.Expires = time.Unix(1, 0) // past time as close to epoch as possible, but not zero time.Time{}
 	cookie.Path = t.ServiceProvider.AcsURL.Path
 	cookie.Secure = t.ServiceProvider.AcsURL.Scheme == "https"

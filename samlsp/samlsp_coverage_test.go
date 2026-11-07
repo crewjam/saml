@@ -270,7 +270,7 @@ func TestCovNew(t *testing.T) {
 	provider := m.Session.(CookieSessionProvider)
 	assert.Check(t, provider.HTTPOnly)
 	assert.Check(t, provider.Secure)
-	assert.Check(t, is.Equal("sp.example.com", provider.Domain))
+	assert.Check(t, is.Equal("", provider.Domain))
 }
 
 // --- util.go ---

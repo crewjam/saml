@@ -387,7 +387,8 @@ func TestCovCookieRequestTrackerStopTracking(t *testing.T) {
 	assert.Check(t, is.Equal("saml_abc", c.Name))
 	assert.Check(t, is.Equal("", c.Value))
 	assert.Check(t, is.Equal("/saml/acs", c.Path))
-	assert.Check(t, is.Equal("sp.example.com", c.Domain))
+	// TrackRequest sets a host-only cookie, so the deletion must not set Domain
+	assert.Check(t, is.Equal("", c.Domain))
 }
 
 func TestCovCookieRequestTrackerGetTrackedRequests(t *testing.T) {
