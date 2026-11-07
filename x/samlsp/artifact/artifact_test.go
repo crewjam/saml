@@ -49,13 +49,13 @@ func keyPair(t *testing.T) (*rsa.PrivateKey, *x509.Certificate) {
 	return key, cert
 }
 
-// fakeIdP plays the IdP's part of the HTTP-Artifact binding.
-type fakeIdP struct {
+// fakeIDP plays the IdP's part of the HTTP-Artifact binding.
+type fakeIDP struct {
 	key  *rsa.PrivateKey
 	cert *x509.Certificate
 }
 
-func (idp *fakeIdP) metadata() *saml.EntityDescriptor {
+func (idp *fakeIDP) metadata() *saml.EntityDescriptor {
 	endpoints := func(path string) []saml.Endpoint {
 		return []saml.Endpoint{
 			{Binding: saml.HTTPRedirectBinding, Location: "https://idp.example.com/" + path},
@@ -81,7 +81,7 @@ func (idp *fakeIdP) metadata() *saml.EntityDescriptor {
 
 // resolve sends the SP an ArtifactResolve for art, issued by issuer and
 // signed with key (unsigned if key is nil), and returns the SP's answer.
-func (idp *fakeIdP) resolve(t *testing.T, b http.Handler, art, issuer string, key *rsa.PrivateKey, cert *x509.Certificate) *httptest.ResponseRecorder {
+func (idp *fakeIDP) resolve(t *testing.T, b http.Handler, art, issuer string, key *rsa.PrivateKey, cert *x509.Certificate) *httptest.ResponseRecorder {
 	t.Helper()
 	req := &saml.ArtifactResolve{
 		ID: "id-resolve-1", Version: "2.0", IssueInstant: time.Now().UTC(),
@@ -152,10 +152,10 @@ func artifactResponse(t *testing.T, w *httptest.ResponseRecorder, spCert *x509.C
 	return nil
 }
 
-func setup(t *testing.T) (*fakeIdP, *samlsp.Config, *artifact.Binding, *artifact.MemoryStore, *x509.Certificate) {
+func setup(t *testing.T) (*fakeIDP, *samlsp.Config, *artifact.Binding, *artifact.MemoryStore, *x509.Certificate) {
 	t.Helper()
 	idpKey, idpCert := keyPair(t)
-	idp := &fakeIdP{key: idpKey, cert: idpCert}
+	idp := &fakeIDP{key: idpKey, cert: idpCert}
 	spKey, spCert := keyPair(t)
 	cfg, err := samlsp.New(samlsp.StaticMetadata(idp.metadata()), spEntityID,
 		samlsp.WithKey(spKey, spCert), samlsp.SignAuthnRequests,
