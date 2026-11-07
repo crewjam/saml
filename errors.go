@@ -135,6 +135,13 @@ var (
 	// is not.
 	ErrUnsupported = errors.New("saml: not supported")
 
+	// ErrRelayStateTooLong is returned when a message this package starts
+	// would carry a RelayState longer than MaxRelayStateLength: an
+	// AuthnRequest or LogoutRequest the SP sends, a RelayState a samlsp
+	// RelayStateFunc returns, or the RelayState of an IdP-initiated
+	// Response (ServeIDPInitiated answers HTTP 400).
+	ErrRelayStateTooLong = errors.New("saml: RelayState too long")
+
 	// ErrInvalidCertificate is attached when a certificate cannot be base64
 	// decoded or parsed: an IdP signing certificate in the IdP metadata or
 	// ServiceProvider.IDPCertificate, the certificate embedded in a

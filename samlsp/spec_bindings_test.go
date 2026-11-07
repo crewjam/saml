@@ -1,6 +1,7 @@
 package samlsp
 
 import (
+	"errors"
 	"html"
 	"net/http"
 	"net/http/httptest"
@@ -102,4 +103,25 @@ func TestSpecBinding_3_4_3_SLOResponseEchoesExactRelayState(t *testing.T) {
 		assert.Assert(t, m != nil, body)
 		assert.Check(t, is.Equal(relayState, html.UnescapeString(m[1])))
 	})
+}
+
+// saml-bindings-2.0-os §3.4.3 and §3.5.3: RelayState "MUST NOT exceed 80
+// bytes in length". A RelayStateFunc result longer than that is refused
+// before a tracking cookie is set or a request is sent; 80 bytes are used
+// as is.
+func TestSpecBinding_3_4_3_RelayStateFuncAtMost80Bytes(t *testing.T) {
+	tracker := covCookieRequestTracker(t)
+	relayState := strings.Repeat("r", saml.MaxRelayStateLength)
+	tracker.RelayStateFunc = func(http.ResponseWriter, *http.Request) string { return relayState }
+
+	rec := httptest.NewRecorder()
+	index, err := tracker.TrackRequest(rec, httptest.NewRequest(http.MethodGet, "/frob", nil), "id-1")
+	assert.NilError(t, err)
+	assert.Check(t, is.Equal(relayState, index))
+
+	relayState += "r"
+	rec = httptest.NewRecorder()
+	_, err = tracker.TrackRequest(rec, httptest.NewRequest(http.MethodGet, "/frob", nil), "id-1")
+	assert.Check(t, errors.Is(err, saml.ErrRelayStateTooLong), "%v", err)
+	assert.Check(t, is.Equal("", rec.Header().Get("Set-Cookie")))
 }

@@ -330,6 +330,23 @@ func deflateAndEncode(el *etree.Element) (string, error) {
 // query is signed as described in saml-bindings-2.0-os section 3.4.4.1. The
 // signature covers only the SAML parameters, not any query parameters already
 // present in destination.
+// MaxRelayStateLength is the longest RelayState, in bytes, that a SAML
+// message may carry with the HTTP-Redirect, HTTP-POST and
+// HTTP-POST-SimpleSign bindings: "The value MUST NOT exceed 80 bytes in
+// length" (saml-bindings-2.0-os §3.4.3 and §3.5.3).
+const MaxRelayStateLength = 80
+
+// checkRelayState refuses a RelayState longer than MaxRelayStateLength.
+// It is checked where this package starts an exchange (AuthnRequests,
+// LogoutRequests and IdP-initiated Responses), not where it echoes the
+// RelayState of a message it answers, which must be returned unchanged.
+func checkRelayState(relayState string) error {
+	if len(relayState) > MaxRelayStateLength {
+		return fmt.Errorf("RelayState is %d bytes, longer than the %d the SAML bindings allow: %w", len(relayState), MaxRelayStateLength, ErrRelayStateTooLong)
+	}
+	return nil
+}
+
 func (sp *ServiceProvider) redirectBindingURL(destination, messageParam, encodedMessage, relayState string) (*url.URL, error) {
 	if sp.SignatureMethod == "" {
 		return signedRedirectBindingURL(destination, messageParam, encodedMessage, relayState, "", nil)

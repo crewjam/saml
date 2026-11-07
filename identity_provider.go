@@ -570,8 +570,11 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 	req, err := idp.NewIdpInitiatedRequest(r, serviceProviderID, relayState)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if errors.Is(err, ErrUnknownServiceProvider) {
+		switch {
+		case errors.Is(err, ErrUnknownServiceProvider):
 			status = http.StatusNotFound
+		case errors.Is(err, ErrRelayStateTooLong):
+			status = http.StatusBadRequest
 		}
 		idp.onError(w, r, status, err)
 		return
@@ -615,6 +618,9 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 // assertion consumer service, and otherwise the ServiceProviderProvider's
 // error, wrapped.
 func (idp *IdentityProvider) NewIdpInitiatedRequest(r *http.Request, serviceProviderID string, relayState string) (*IdpAuthnRequest, error) {
+	if err := checkRelayState(relayState); err != nil {
+		return nil, err
+	}
 	req := &IdpAuthnRequest{
 		IDP:         idp,
 		HTTPRequest: r,
