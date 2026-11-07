@@ -23,10 +23,17 @@ const HTTPRedirectBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
 const HTTPArtifactBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Artifact"
 
 // HTTPPostSimpleSignBinding is the official URN for the HTTP-POST-SimpleSign
-// binding (transport). It carries messages in an HTML form like HTTP-POST, but
-// signs them with a detached signature over the form fields instead of an XML
-// signature. This package does not implement the binding; the constant exists
-// so that endpoints using it are recognised when parsing metadata.
+// binding (transport), defined in sstc-saml-binding-simplesign-cs-01. It
+// carries messages in an HTML form like HTTP-POST, but signs them with a
+// detached signature over the message XML, the RelayState and the SigAlg
+// instead of (or as well as) an XML signature.
+//
+// The service provider can send authentication requests and logout messages
+// with it (MakeSimpleSignAuthenticationRequest, MakeSimpleSignLogoutRequest,
+// MakeSimpleSignLogoutResponse), and accepts it at the ACS (ParseResponse)
+// and in the logout validation functions. The identity provider accepts
+// authentication requests sent with it and uses it for responses to an
+// AssertionConsumerService endpoint with this binding.
 const HTTPPostSimpleSignBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST-SimpleSign"
 
 // SOAPBinding is the official URN for the SOAP binding (transport)
