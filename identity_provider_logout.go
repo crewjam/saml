@@ -390,7 +390,10 @@ func (req *IdpLogoutRequest) writePostLogoutResponse(w http.ResponseWriter, resp
 
 // ServeSLO handles SAML LogoutRequests sent by service providers
 // (SP-initiated single logout, saml-profiles-2.0-os §4.4) with the
-// HTTP-Redirect or the HTTP-POST binding. Serve it at LogoutURL.
+// HTTP-Redirect or the HTTP-POST binding. Serve it at LogoutURL. It also
+// handles the LogoutResponses of service providers to the LogoutRequests the
+// IdP sends while it propagates a logout (see StartLogout and
+// SessionParticipantTracker).
 //
 // The request must be signed by the service provider and is validated as
 // described in IdpLogoutRequest.Validate. An invalid request is answered with
@@ -404,9 +407,21 @@ func (req *IdpLogoutRequest) writePostLogoutResponse(w http.ResponseWriter, resp
 // StatusResponder if InvalidateSession failed or the SessionProvider does not
 // implement SessionInvalidator, as the IdP session was then not ended.
 //
-// ServeSLO does not propagate the logout to other service providers the user
-// is logged in to.
+// If the SessionProvider implements SessionParticipantTracker and the session
+// was terminated, the logout is first propagated to the other service
+// providers the ended sessions were used for (saml-profiles-2.0-os
+// §4.4.4.2): the browser is sent to each with a LogoutRequest, one at a
+// time, and only then is the LogoutResponse sent to the service provider
+// that asked. If some of them could not be logged out, its status is
+// StatusSuccess with the second-level status StatusPartialLogout
+// (saml-core-2.0-os §3.7.3.2). Without a SessionParticipantTracker, the
+// logout is not propagated.
 func (idp *IdentityProvider) ServeSLO(w http.ResponseWriter, r *http.Request) {
+	if isLogoutResponseMessage(r) {
+		idp.serveLogoutResponse(w, r)
+		return
+	}
+
 	req, err := NewIdpLogoutRequest(idp, r)
 	if err != nil {
 		idp.Logger.Printf("failed to parse logout request: %s", err)
@@ -417,6 +432,13 @@ func (idp *IdentityProvider) ServeSLO(w http.ResponseWriter, r *http.Request) {
 		idp.Logger.Printf("failed to validate logout request: %s", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
+	}
+
+	// Find the other participants before the sessions are ended.
+	participants, tracked, participantsErr := idp.sessionParticipants(r, req.MatchesSession, req.ServiceProviderMetadata.EntityID)
+	if participantsErr != nil {
+		idp.Logger.Printf("cannot find the session participants to propagate logout request %s from %s to: %s",
+			req.Request.ID, req.ServiceProviderMetadata.EntityID, participantsErr)
 	}
 
 	statusCode := StatusSuccess
@@ -432,7 +454,15 @@ func (idp *IdentityProvider) ServeSLO(w http.ResponseWriter, r *http.Request) {
 		statusCode = StatusResponder
 	}
 
-	if err := req.WriteLogoutResponse(w, req.MakeLogoutResponse(statusCode)); err != nil {
+	if statusCode == StatusSuccess && len(participants) > 0 {
+		idp.propagateLogout(w, r, req, participants)
+		return
+	}
+	resp := req.MakeLogoutResponse(statusCode)
+	if statusCode == StatusSuccess && tracked && participantsErr != nil {
+		resp = makeLogoutResponseWithStatus(req, true)
+	}
+	if err := req.WriteLogoutResponse(w, resp); err != nil {
 		idp.Logger.Printf("failed to write logout response: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return

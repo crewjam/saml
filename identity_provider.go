@@ -465,6 +465,10 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to make assertion: %w", err))
 		return
 	}
+	if err := idp.recordSessionParticipant(r, req, session); err != nil {
+		idp.onError(w, r, http.StatusInternalServerError, err)
+		return
+	}
 	if err := idp.responseWriter().WriteResponse(w, req); err != nil {
 		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to write response: %w", err))
 		return
@@ -504,6 +508,10 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 	}
 	if err := assertionMaker.MakeAssertion(req, session); err != nil {
 		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to make assertion: %w", err))
+		return
+	}
+	if err := idp.recordSessionParticipant(r, req, session); err != nil {
+		idp.onError(w, r, http.StatusInternalServerError, err)
 		return
 	}
 
