@@ -30,6 +30,15 @@ var _ saml.SessionInvalidator = (*Server)(nil)
 //
 // Without a SessionIndex, only the browser's own session is ended.
 //
+// A LogoutRequest received with the SOAP binding (if Options.SOAPLogout is
+// set) comes from the service provider's server, so there is no session
+// cookie: every stored session the request matches is ended. Without a
+// SessionIndex, that is every session of the request's NameID, as
+// saml-core-2.0-os §3.7.3.2 asks, and the same sessions whose other
+// participants ServeSLO logs out. Any service provider registered with the
+// server can thus end all the sessions of a NameID it knows, with a request
+// signed with its key; include a SessionIndex to end only that session.
+//
 // Sessions are stored by NameID, so a request that identifies the principal
 // with a BaseID (accepted only if the IdP's AcceptLogoutRequestBaseID is set)
 // ends no session and returns an error matching saml.ErrUnsupported, and
@@ -37,6 +46,9 @@ var _ saml.SessionInvalidator = (*Server)(nil)
 func (s *Server) InvalidateSession(w http.ResponseWriter, r *http.Request, req *saml.IdpLogoutRequest) error {
 	if req.Request.NameID == nil {
 		return fmt.Errorf("%w: cannot end the sessions of a principal identified by a BaseID", saml.ErrUnsupported)
+	}
+	if req.Binding == saml.SOAPBinding {
+		return s.deleteSessionsMatching(req)
 	}
 	if cookie, err := r.Cookie(sessionCookieName); err == nil {
 		session := &saml.Session{}

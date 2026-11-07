@@ -241,6 +241,13 @@ type IdentityProvider struct {
 	// HTTP-Redirect and the HTTP-POST binding, so set it to
 	// []string{HTTPRedirectBinding, HTTPPostBinding} when LogoutURL is served
 	// by ServeSLO.
+	//
+	// Include SOAPBinding to advertise a SOAP SingleLogoutService as well,
+	// and have ServeSLO accept LogoutRequests sent server to server with the
+	// SOAP binding. ServeSLO accepts them only then. Do so only if the
+	// SessionProvider's SessionInvalidator can end sessions without the
+	// browser's cookies (see SessionInvalidator), since such a request
+	// carries none.
 	LogoutBindings []string
 
 	// EncryptionCertificate, if set, is published in the IdP metadata as the
