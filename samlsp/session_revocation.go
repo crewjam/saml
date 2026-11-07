@@ -22,7 +22,8 @@ import (
 // sends through the browser, to end the copies of the named sessions that
 // other browsers hold.
 //
-// CookieSessionProvider implements it when its Revocations store is set.
+// CookieSessionProvider implements it when its Revocations store is set and
+// its Codec implements RevocableSessionCodec.
 type SessionTerminator interface {
 	// TerminateSessions ends the sessions that req, a LogoutRequest from
 	// the IdP that has been validated, names (saml-core §3.7.1): those of
@@ -46,8 +47,9 @@ var ErrSessionRevoked = errors.New("saml: the session has been revoked")
 // against its Revocations: it knows the NameID of its user and when it was
 // issued. If it also implements SessionWithAttributes, the values of its
 // "SessionIndex" attribute are its SessionIndexes. JWTSessionClaims
-// implements it; a custom SessionCodec must make sessions that implement it
-// for back-channel single logout to end them.
+// implements it; a custom SessionCodec must make sessions that implement it,
+// and declare so by implementing RevocableSessionCodec, for back-channel
+// single logout to end them.
 type RevocableSession interface {
 	SessionWithNameID
 
@@ -66,6 +68,34 @@ func (c JWTSessionClaims) GetSessionIssuedAt() time.Time {
 }
 
 var _ RevocableSession = JWTSessionClaims{}
+
+// RevocableSessionCodec is a SessionCodec that declares whether the sessions
+// it decodes can be checked against the Revocations of a
+// CookieSessionProvider. CookieSessionProvider.TerminateSessions ends
+// sessions only when its Codec implements it and RevocableSessions reports
+// true: otherwise GetSession could not refuse the sessions it records, and
+// the IdP would be told that they had ended when they had not.
+//
+// JWTSessionCodec implements it. A custom SessionCodec whose sessions
+// implement RevocableSession should implement it too.
+type RevocableSessionCodec interface {
+	SessionCodec
+
+	// RevocableSessions reports whether every Session that Decode returns
+	// implements RevocableSession, with the NameID value and (as the
+	// "SessionIndex" attribute of SessionWithAttributes) the SessionIndexes
+	// of the assertion it was made from, and the time it was issued. These
+	// must be protected from change by the client, as the signature of a
+	// JWT protects them.
+	RevocableSessions() bool
+}
+
+// RevocableSessions implements RevocableSessionCodec: the JWTSessionClaims
+// it decodes are RevocableSessions, and the JWT signature covers what
+// identifies them.
+func (JWTSessionCodec) RevocableSessions() bool { return true }
+
+var _ RevocableSessionCodec = JWTSessionCodec{}
 
 // SessionRevocationStore records revoked sessions for a
 // CookieSessionProvider. Each record has a key, which names either every
@@ -125,12 +155,19 @@ func sessionIndexRevocationKey(nameID, sessionIndex string) string {
 // until such sessions have expired, the longer of MaxAge and, if Codec is a
 // JWTSessionCodec, its MaxAge, from now.
 //
-// It returns ErrSessionTerminationUnsupported if Revocations is nil, and an
-// error matching saml.ErrUnsupported if req identifies the user with a
-// BaseID rather than a NameID.
+// It returns ErrSessionTerminationUnsupported if Revocations is nil or Codec
+// does not declare, by implementing RevocableSessionCodec, that its sessions
+// can be revoked, and an error matching saml.ErrUnsupported if req
+// identifies the user with a BaseID rather than a NameID.
 func (c CookieSessionProvider) TerminateSessions(ctx context.Context, req *saml.LogoutRequest) error {
 	if c.Revocations == nil {
 		return ErrSessionTerminationUnsupported
+	}
+	if codec, ok := c.Codec.(RevocableSessionCodec); !ok || !codec.RevocableSessions() {
+		// GetSession could not tell the sessions apart, and would go on
+		// accepting them: report failure rather than pretend to end them.
+		return fmt.Errorf("%w: the sessions of %T cannot be revoked (see RevocableSessionCodec)",
+			ErrSessionTerminationUnsupported, c.Codec)
 	}
 	if req.NameID == nil || req.NameID.Value == "" {
 		return fmt.Errorf("%w: the LogoutRequest has no NameID", saml.ErrUnsupported)
