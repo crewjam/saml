@@ -923,24 +923,38 @@ func (m *roleDescriptorXML) UnmarshalXML(d *xml.Decoder, start xml.StartElement)
 	return nil
 }
 
-// MarshalXML implements xml.Marshaler, writing Signature as XML.
+// MarshalXML implements xml.Marshaler, writing Signature as XML,
+// cacheDuration as an xsd:duration and validUntil as a RelaxedTime. A zero
+// ValidUntil or CacheDuration is omitted.
 func (m AffiliationDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type Alias AffiliationDescriptor
+	var validUntil *RelaxedTime
+	if !m.ValidUntil.IsZero() {
+		vu := RelaxedTime(m.ValidUntil)
+		validUntil = &vu
+	}
 	aux := &struct {
-		Signature *etreeElementXML `xml:"Signature"`
+		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
+		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
-		Signature: (*etreeElementXML)(m.Signature),
-		Alias:     (*Alias)(&m),
+		ValidUntil:    validUntil,
+		CacheDuration: Duration(m.CacheDuration),
+		Signature:     (*etreeElementXML)(m.Signature),
+		Alias:         (*Alias)(&m),
 	}
 	return e.EncodeElement(aux, start)
 }
 
-// UnmarshalXML implements xml.Unmarshaler, reading Signature as XML.
+// UnmarshalXML implements xml.Unmarshaler, reading Signature as XML,
+// cacheDuration as an xsd:duration and validUntil as a RelaxedTime.
 func (m *AffiliationDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias AffiliationDescriptor
 	aux := &struct {
-		Signature *etreeElementXML `xml:"Signature"`
+		ValidUntil    RelaxedTime      `xml:"validUntil,attr,omitempty"`
+		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -948,6 +962,8 @@ func (m *AffiliationDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElem
 	if err := d.DecodeElement(aux, &start); err != nil {
 		return err
 	}
+	m.ValidUntil = time.Time(aux.ValidUntil)
+	m.CacheDuration = time.Duration(aux.CacheDuration)
 	m.Signature = (*etree.Element)(aux.Signature)
 	return nil
 }
