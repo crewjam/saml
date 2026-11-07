@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	dsig "github.com/russellhaering/goxmldsig"
 	"gotest.tools/v3/assert"
 	is "gotest.tools/v3/assert/cmp"
@@ -130,4 +131,67 @@ func TestSpecProfile_4_4_3_4_SignedLogoutResponseToIdP(t *testing.T) {
 	assert.Check(t, is.Equal(logoutRequest.ID, logoutResponse.InResponseTo))
 	assert.Assert(t, logoutResponse.Issuer != nil)
 	assert.Check(t, is.Equal(lt.m.ServiceProvider.Metadata().EntityID, logoutResponse.Issuer.Value))
+}
+
+// saml-profiles §4.1.4.3 (lines 588-591): "If an <AuthnStatement> used to
+// establish a security context for the principal contains a
+// SessionNotOnOrAfter attribute, the security context SHOULD be discarded
+// once this time is reached". The session token and cookie end at the
+// earliest SessionNotOnOrAfter (allowing for clock skew) when that comes
+// before MaxAge, and no session is created once it has passed.
+func TestSpecProfile_4_1_4_3_SessionNotOnOrAfterEndsSession(t *testing.T) {
+	test := specMiddlewareTest(t)
+	now := saml.TimeNow()
+	codec := JWTSessionCodec{
+		SigningMethod: jwt.SigningMethodRS256,
+		Audience:      "https://sp.example.com/",
+		Issuer:        "https://sp.example.com/",
+		MaxAge:        time.Hour,
+		Key:           test.Key,
+	}
+	assertion := func(ends ...time.Time) *saml.Assertion {
+		a := &saml.Assertion{Subject: &saml.Subject{NameID: &saml.NameID{Value: "alice"}}}
+		for i := range ends {
+			a.AuthnStatements = append(a.AuthnStatements, saml.AuthnStatement{AuthnInstant: now, SessionNotOnOrAfter: &ends[i]})
+		}
+		return a
+	}
+	expiresAt := func(t *testing.T, a *saml.Assertion) time.Time {
+		t.Helper()
+		s, err := codec.New(a)
+		assert.NilError(t, err)
+		return s.(JWTSessionClaims).ExpiresAt.Time
+	}
+
+	t.Run("earlier than MaxAge", func(t *testing.T) {
+		got := expiresAt(t, assertion(now.Add(10*time.Minute), now.Add(5*time.Minute)))
+		assert.Check(t, is.Equal(now.Add(5*time.Minute+saml.MaxClockSkew).Unix(), got.Unix()))
+	})
+	t.Run("later than MaxAge", func(t *testing.T) {
+		got := expiresAt(t, assertion(now.Add(2*time.Hour)))
+		assert.Check(t, is.Equal(now.Add(time.Hour).Unix(), got.Unix()))
+	})
+	t.Run("absent", func(t *testing.T) {
+		got := expiresAt(t, &saml.Assertion{AuthnStatements: []saml.AuthnStatement{{AuthnInstant: now}}})
+		assert.Check(t, is.Equal(now.Add(time.Hour).Unix(), got.Unix()))
+	})
+	t.Run("already passed", func(t *testing.T) {
+		_, err := codec.New(assertion(now.Add(-saml.MaxClockSkew - time.Minute)))
+		assert.Check(t, errors.Is(err, ErrSessionEnded), "%v", err)
+	})
+
+	t.Run("cookie", func(t *testing.T) {
+		provider := CookieSessionProvider{Name: "token", MaxAge: time.Hour, Codec: codec}
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "https://sp.example.com/saml/acs", nil)
+		assert.NilError(t, provider.CreateSession(w, r, assertion(now.Add(5*time.Minute))))
+		cookies := w.Result().Cookies()
+		assert.Assert(t, is.Len(cookies, 1))
+		assert.Check(t, is.Equal(int((5*time.Minute+saml.MaxClockSkew).Seconds()), cookies[0].MaxAge))
+
+		w = httptest.NewRecorder()
+		err := provider.CreateSession(w, r, assertion(now.Add(-saml.MaxClockSkew-time.Minute)))
+		assert.Check(t, errors.Is(err, ErrSessionEnded), "%v", err)
+		assert.Check(t, is.Len(w.Result().Cookies(), 0))
+	})
 }
