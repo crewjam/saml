@@ -83,9 +83,9 @@ func (m EntitiesDescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error
 	}
 	type Alias EntitiesDescriptor
 	aux := &struct {
-		ValidUntil    *RelaxedTime                `xml:"validUntil,attr,omitempty"`
+		ValidUntil    *RelaxedTime              `xml:"validUntil,attr,omitempty"`
 		CacheDuration *metadataCacheDurationXML `xml:"cacheDuration,attr,omitempty"`
-		Signature     *etreeElementXML            `xml:"Signature"`
+		Signature     *etreeElementXML          `xml:"Signature"`
 		*Alias
 	}{
 		ValidUntil:    validUntil,

@@ -868,7 +868,8 @@ func (sp *ServiceProvider) validateIDPMetadata() error {
 		return nil
 	}
 	if err := sp.IDPMetadata.ValidateMetadataAt(sp.now()); err != nil {
-		return classify(fmt.Errorf("IDP metadata is not current: %w", err), ErrExpired)
+		expiry := sp.IDPMetadata.MetadataExpiresAt()
+		return classify(fmt.Errorf("IDP metadata expired at %s", expiry.UTC().Format(time.RFC3339)), ErrExpired)
 	}
 	return nil
 }
@@ -1563,7 +1564,6 @@ func (sp *ServiceProvider) ParseXMLArtifactResponse(soapResponseXML []byte, poss
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
-
 	// ensure that the response XML is well-formed before we parse it
 	if err := xmlroundtrip.Validate(soapResponseXML); err != nil {
 		retErr.PrivateErr = classify(fmt.Errorf("invalid xml: %w", err), ErrMalformedMessage)
@@ -1710,10 +1710,6 @@ func (sp *ServiceProvider) parseXMLResponse(decodedResponseXML []byte, possibleR
 	retErr := &InvalidResponseError{
 		Now:      now,
 		Response: string(decodedResponseXML),
-	}
-	if err := sp.validateIDPMetadata(); err != nil {
-		retErr.PrivateErr = err
-		return nil, retErr
 	}
 
 	// ensure that the response XML is well-formed before we parse it

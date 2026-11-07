@@ -37,10 +37,10 @@ const (
 // Returned EntityDescriptor values are shared and must be treated as
 // read-only.
 type MetadataProvider struct {
-	client         *http.Client
-	metadataURL    url.URL
-	entityID       string
-	signingCerts   []*x509.Certificate
+	client      *http.Client
+	metadataURL url.URL
+	entityID    string
+	signingCerts []*x509.Certificate
 
 	mu            sync.Mutex
 	current       *saml.EntityDescriptor
@@ -185,15 +185,14 @@ func (p *MetadataProvider) fetch(ctx context.Context) (*saml.EntityDescriptor, e
 	}
 	retrievedAt := saml.TimeNow()
 	var metadata *saml.EntityDescriptor
-	if len(p.signingCerts) > 0 {
-		if p.entityID == "" {
-			metadata, err = ParseSignedMetadataAt(data, p.signingCerts, retrievedAt)
-		} else {
-			metadata, err = ParseSignedMetadataByEntityIDAt(data, p.entityID, p.signingCerts, retrievedAt)
-		}
-	} else if p.entityID == "" {
+	switch {
+	case len(p.signingCerts) > 0 && p.entityID == "":
+		metadata, err = ParseSignedMetadataAt(data, p.signingCerts, retrievedAt)
+	case len(p.signingCerts) > 0:
+		metadata, err = ParseSignedMetadataByEntityIDAt(data, p.entityID, p.signingCerts, retrievedAt)
+	case p.entityID == "":
 		metadata, err = ParseMetadataAt(data, retrievedAt)
-	} else {
+	default:
 		metadata, err = ParseMetadataByEntityIDAt(data, p.entityID, retrievedAt)
 	}
 	if err != nil {
