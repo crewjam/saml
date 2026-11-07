@@ -42,34 +42,42 @@ func main() {
 
 	keyPair, err := tls.LoadX509KeyPair("myservice.cert", "myservice.key")
 	if err != nil {
-		panic(err) // TODO handle error
+		log.Fatal(err)
 	}
 	keyPair.Leaf, err = x509.ParseCertificate(keyPair.Certificate[0])
 	if err != nil {
-		panic(err) // TODO handle error
+		log.Fatal(err)
+	}
+
+	key, ok := keyPair.PrivateKey.(*rsa.PrivateKey)
+	if !ok {
+		log.Fatal("myservice.key must hold an RSA private key")
 	}
 
 	idpMetadataXML, err := os.ReadFile(*idpMetadataPath)
 	if err != nil {
-		panic(err) // TODO handle error
+		log.Fatal(err)
 	}
 	idpMetadata, err := samlsp.ParseMetadata(idpMetadataXML)
 	if err != nil {
-		panic(err) // TODO handle error
+		log.Fatal(err)
 	}
 
 	rootURL, err := url.Parse("http://localhost:8000")
 	if err != nil {
-		panic(err) // TODO handle error
+		log.Fatal(err)
 	}
 
-	samlMiddleware, _ = samlsp.New(samlsp.Options{
+	samlMiddleware, err = samlsp.New(samlsp.Options{
 		URL:         *rootURL,
-		Key:         keyPair.PrivateKey.(*rsa.PrivateKey),
+		Key:         key,
 		Certificate: keyPair.Leaf,
 		IDPMetadata: idpMetadata,
 		SignRequest: true, // some IdP require the SLO request to be signed
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 	app := http.HandlerFunc(hello)
 
 	http.Handle("/hello", samlMiddleware.RequireAccount(app))
@@ -81,8 +89,11 @@ func main() {
 	http.HandleFunc("/logout", samlMiddleware.HandleStartLogout)
 
 	server := &http.Server{
-		Addr:              ":8000",
+		Addr:              "localhost:8000",
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
 	}
 	log.Fatal(server.ListenAndServe())
 }

@@ -1,4 +1,11 @@
 // Package main contains an example identity provider implementation.
+//
+// It is meant for local development only. Its administrative endpoints
+// (/services, /users, /sessions and /shortcuts) are unauthenticated, so
+// anyone who can reach the server can register service providers and read
+// or change users. For that reason it listens on localhost by default; pass
+// -listen to change that only on a network you trust, or set
+// samlidp.Options.AdminMiddleware to protect those endpoints.
 package main
 
 import (
@@ -49,7 +56,7 @@ func newKeyPair() (*rsa.PrivateKey, *x509.Certificate, error) {
 func main() {
 	logr := logger.DefaultLogger
 	baseURLstr := flag.String("idp", "http://localhost:8080", "The URL to the IDP")
-	listenAddr := flag.String("listen", ":8080", "The address to listen on")
+	listenAddr := flag.String("listen", "localhost:8080", "The address to listen on (the admin endpoints are unauthenticated)")
 	certOut := flag.String("cert-out", "idp-cert.pem", "Where to write the certificate the IDP signs its metadata with")
 	flag.Parse()
 
@@ -82,7 +89,10 @@ func main() {
 		logr.Fatalf("cannot write certificate: %v", err)
 	}
 
-	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("hunter2"), bcrypt.DefaultCost)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("hunter2"), bcrypt.DefaultCost)
+	if err != nil {
+		logr.Fatalf("cannot hash password: %v", err)
+	}
 	err = idpServer.Store.Put("/users/alice", samlidp.User{Name: "alice",
 		HashedPassword: hashedPassword,
 		Groups:         []string{"Administrators", "Users"},
@@ -108,7 +118,15 @@ func main() {
 		logr.Fatalf("%s", err)
 	}
 
-	if err := http.ListenAndServe(*listenAddr, idpServer); err != nil {
+	server := &http.Server{
+		Addr:              *listenAddr,
+		Handler:           idpServer,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
+	if err := server.ListenAndServe(); err != nil {
 		logr.Fatalf("%s", err)
 	}
 }

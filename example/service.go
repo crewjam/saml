@@ -27,11 +27,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"log"
 	"math/big"
 	"net/http"
 	"net/url"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -214,32 +217,32 @@ func main() {
 	rootURLstr := flag.String("url", "http://localhost:8000", "The base URL of this service")
 	idpMetadataURLstr := flag.String("idp", "http://localhost:8080/metadata", "The metadata URL for the IDP")
 	idpCertPath := flag.String("idp-cert", "idp-cert.pem", "The certificate the IDP signs its metadata with")
-	listenAddr := flag.String("listen", ":8000", "The address to listen on")
+	listenAddr := flag.String("listen", "localhost:8000", "The address to listen on")
 	flag.Parse()
 
 	key, cert, err := newKeyPair()
 	if err != nil {
-		panic(err) // TODO handle error
+		log.Fatal(err)
 	}
 
 	idpMetadataURL, err := url.Parse(*idpMetadataURLstr)
 	if err != nil {
-		panic(err) // TODO handle error
+		log.Fatal(err)
 	}
 
 	idpCert, err := readCertificate(*idpCertPath)
 	if err != nil {
-		panic(err) // TODO handle error
+		log.Fatal(err)
 	}
 	idpMetadata, err := samlsp.FetchSignedMetadata(context.Background(), http.DefaultClient,
 		*idpMetadataURL, []*x509.Certificate{idpCert})
 	if err != nil {
-		panic(err) // TODO handle error
+		log.Fatal(err)
 	}
 
 	rootURL, err := url.Parse(*rootURLstr)
 	if err != nil {
-		panic(err) // TODO handle error
+		log.Fatal(err)
 	}
 
 	samlSP, err := samlsp.New(samlsp.Options{
@@ -250,20 +253,14 @@ func main() {
 		IDPMetadata:       idpMetadata,
 	})
 	if err != nil {
-		panic(err) // TODO handle error
+		log.Fatal(err)
 	}
 
-	// register with the service provider
-	spMetadataBuf, _ := xml.MarshalIndent(samlSP.ServiceProvider.Metadata(), "", "  ")
-	spURL := *idpMetadataURL
-	spURL.Path = "/services/sp"
-	resp, err := http.Post(spURL.String(), "text/xml", bytes.NewReader(spMetadataBuf))
-	if err != nil {
-		panic(err)
-	}
-
-	if err := resp.Body.Close(); err != nil {
-		panic(err)
+	// Register with the identity provider. The example IdP accepts this
+	// unauthenticated request because its admin API is meant only for local
+	// development; see example/idp.
+	if err := registerWithIDP(*idpMetadataURL, samlSP); err != nil {
+		log.Fatal(err)
 	}
 
 	mux := http.NewServeMux()
@@ -277,7 +274,43 @@ func main() {
 	mux.Handle("POST /", samlSP.RequireAccount(http.HandlerFunc(CreateLink)))
 	mux.Handle("GET /", samlSP.RequireAccount(http.HandlerFunc(ListLinks)))
 
-	if err := http.ListenAndServe(*listenAddr, mux); err != nil {
-		panic(err)
+	server := &http.Server{
+		Addr:              *listenAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
 	}
+	log.Fatal(server.ListenAndServe())
+}
+
+// registerWithIDP uploads the service provider's metadata to the example
+// identity provider's /services API.
+func registerWithIDP(idpMetadataURL url.URL, samlSP *samlsp.Middleware) error {
+	spMetadataBuf, err := xml.MarshalIndent(samlSP.ServiceProvider.Metadata(), "", "  ")
+	if err != nil {
+		return fmt.Errorf("cannot marshal SP metadata: %w", err)
+	}
+	spURL := idpMetadataURL
+	spURL.Path = "/services/sp"
+	spURL.RawQuery = ""
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, spURL.String(), bytes.NewReader(spMetadataBuf))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "text/xml")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("cannot register with the IDP: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // nothing useful to do with a close error here
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("cannot register with the IDP: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	return nil
 }
