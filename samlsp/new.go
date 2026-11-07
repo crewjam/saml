@@ -33,10 +33,15 @@ type Options struct {
 	UseArtifactResponse   bool
 	ForceAuthn            bool // TODO(ross): this should be *bool
 	RequestedAuthnContext *saml.RequestedAuthnContext
-	CookieSameSite        http.SameSite
-	CookieName            string
-	RelayStateFunc        func(w http.ResponseWriter, r *http.Request) string
-	LogoutBindings        []string
+	// CookieSameSite sets the SameSite attribute of the session and request
+	// tracking cookies. When it is unset and URL uses https, the request
+	// tracking cookie is issued with SameSite=None, because browsers do not
+	// send a SameSite=Lax cookie with the IDP's cross-site POST to the ACS URL.
+	// See CookieRequestTracker.
+	CookieSameSite http.SameSite
+	CookieName     string
+	RelayStateFunc func(w http.ResponseWriter, r *http.Request) string
+	LogoutBindings []string
 
 	// EncryptionKey and EncryptionCertificate, if set, are used to decrypt
 	// encrypted assertions and are advertised in the metadata for encryption,
