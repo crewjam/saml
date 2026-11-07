@@ -152,6 +152,7 @@ func New(opts Options) (*Server, error) {
 			},
 			ExtraCertificates: opts.ExtraCertificates,
 			MetadataScopes:    opts.MetadataScopes,
+			NameIDFormats:     defaultNameIDFormats(),
 		},
 		logger:            logr,
 		Store:             opts.Store,
@@ -172,6 +173,18 @@ func New(opts Options) (*Server, error) {
 	}
 	s.InitializeHTTP()
 	return s, nil
+}
+
+// defaultNameIDFormats returns the NameID formats samlidp advertises in its
+// metadata: the ones it issues (see nameIDFormatForEmail), emailAddress for
+// users with an email address and transient for the others
+// (saml-metadata §2.4.3). Set Server.IDP.NameIDFormats after New to
+// advertise others, for example with a custom SessionProvider.
+func defaultNameIDFormats() []saml.NameIDFormat {
+	return []saml.NameIDFormat{
+		saml.EmailAddressNameIDFormat,
+		saml.TransientNameIDFormat,
+	}
 }
 
 // InitializeHTTP sets up the HTTP handler for the server. (This function
