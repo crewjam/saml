@@ -24,7 +24,7 @@ const (
 func racServeSSO(t *testing.T, test *IdentityProviderTest, requested *RequestedAuthnContext, achieved string) *httptest.ResponseRecorder {
 	t.Helper()
 	test.SP.RequestedAuthnContext = requested
-	test.IDP.SessionProvider = &mockSessionProvider{GetSessionFunc: func(_ http.ResponseWriter, _ *http.Request, req *IdpAuthnRequest) *Session {
+	test.IDP.SessionProvider = &mockSessionProvider{GetSessionFunc: func(_ http.ResponseWriter, _ *http.Request, _ *IdpAuthnRequest) *Session {
 		return &Session{ID: "f00df00df00d", UserName: "alice", AuthnContextClassRef: achieved}
 	}}
 	test.IDP.OnError = func(w http.ResponseWriter, r *http.Request, status int, err error) {
