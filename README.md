@@ -284,6 +284,8 @@ Some protections the SAML profiles call for are opt-in, because turning them on 
 
 - **Signed logout messages.** Set `Options.SignLogout` (see [Logging out](#logging-out)).
 
+- **Unknown conditions.** An assertion whose `<Conditions>` holds a condition this package does not understand (an extension `saml:Condition`, for example) is Indeterminate, and SAML Core says it MUST be rejected. Such conditions are ignored by default, since some IDPs send extension conditions. Set `Options.RejectUnknownConditions` (`ServiceProvider.RejectUnknownConditions`) to refuse them, or `ServiceProvider.ValidateUnknownConditions` to evaluate them yourself.
+
 - **RelayState length.** The bindings limit RelayState to 80 bytes. Set `Options.LimitRelayStateLength` (`ServiceProvider.LimitRelayStateLength`, `IdentityProvider.LimitRelayStateLength`) to refuse to send a longer one. See [RelayState](#relaystate).
 
 ## Customizing the session lifetime

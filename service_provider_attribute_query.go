@@ -239,7 +239,9 @@ func (sp *ServiceProvider) postSOAP(ctx context.Context, location string, envelo
 //     NameQualifier or SPNameQualifier means the IdP or this service
 //     provider;
 //   - it has Conditions that are currently valid and an AudienceRestriction
-//     naming this service provider (or passes ValidateAudienceRestriction);
+//     naming this service provider (or passes ValidateAudienceRestriction),
+//     and, with RejectUnknownConditions, no condition this package does not
+//     understand (or passes ValidateUnknownConditions);
 //   - any SubjectConfirmationData is currently valid, and, if it has an
 //     InResponseTo, is InResponseTo query.ID.
 //
@@ -507,6 +509,9 @@ func (sp *ServiceProvider) validateAttributeQueryAssertion(assertion *Assertion,
 	}
 	if !assertion.Conditions.NotOnOrAfter.IsZero() && pastDeadline(assertion.Conditions.NotOnOrAfter, now) {
 		return errors.New("assertion Conditions is expired")
+	}
+	if err := sp.validateUnknownConditions(assertion); err != nil {
+		return err
 	}
 	return sp.validateAudienceRestriction(assertion)
 }

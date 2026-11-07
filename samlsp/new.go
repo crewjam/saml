@@ -57,6 +57,12 @@ type Options struct {
 	// single process sees (see SessionRevocations).
 	LogoutBindings []string
 
+	// RejectUnknownConditions sets
+	// saml.ServiceProvider.RejectUnknownConditions: if true, an assertion
+	// whose Conditions holds a condition this package does not understand is
+	// refused, as saml-core §2.5.1.1 requires. It is off by default.
+	RejectUnknownConditions bool
+
 	// LimitRelayStateLength sets saml.ServiceProvider.LimitRelayStateLength:
 	// if true, a RelayStateFunc result or other RelayState the middleware
 	// would send that is longer than saml.MaxRelayStateLength (80 bytes) is
@@ -349,27 +355,28 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 	}
 
 	return saml.ServiceProvider{
-		EntityID:              opts.EntityID,
-		Key:                   opts.Key,
-		Certificate:           opts.Certificate,
-		HTTPClient:            opts.HTTPClient,
-		Intermediates:         opts.Intermediates,
-		EncryptionKey:         opts.EncryptionKey,
-		EncryptionCertificate: opts.EncryptionCertificate,
-		DecryptionKeys:        opts.DecryptionKeys,
-		MetadataURL:           *metadataURL,
-		AcsURL:                *acsURL,
-		AcsIndex:              opts.AcsIndex,
-		SloURL:                *sloURL,
-		IDPMetadata:           opts.IDPMetadata,
-		ForceAuthn:            forceAuthn,
-		RequestedAuthnContext: opts.RequestedAuthnContext,
-		SignatureMethod:       signatureMethod,
-		LogoutSignatureMethod: logoutSignatureMethod,
-		AllowIDPInitiated:     opts.AllowIDPInitiated,
-		LimitRelayStateLength: opts.LimitRelayStateLength,
-		DefaultRedirectURI:    opts.DefaultRedirectURI,
-		LogoutBindings:        opts.LogoutBindings,
+		EntityID:                opts.EntityID,
+		Key:                     opts.Key,
+		Certificate:             opts.Certificate,
+		HTTPClient:              opts.HTTPClient,
+		Intermediates:           opts.Intermediates,
+		EncryptionKey:           opts.EncryptionKey,
+		EncryptionCertificate:   opts.EncryptionCertificate,
+		DecryptionKeys:          opts.DecryptionKeys,
+		MetadataURL:             *metadataURL,
+		AcsURL:                  *acsURL,
+		AcsIndex:                opts.AcsIndex,
+		SloURL:                  *sloURL,
+		IDPMetadata:             opts.IDPMetadata,
+		ForceAuthn:              forceAuthn,
+		RequestedAuthnContext:   opts.RequestedAuthnContext,
+		SignatureMethod:         signatureMethod,
+		LogoutSignatureMethod:   logoutSignatureMethod,
+		AllowIDPInitiated:       opts.AllowIDPInitiated,
+		LimitRelayStateLength:   opts.LimitRelayStateLength,
+		RejectUnknownConditions: opts.RejectUnknownConditions,
+		DefaultRedirectURI:      opts.DefaultRedirectURI,
+		LogoutBindings:          opts.LogoutBindings,
 
 		AssertionConsumerServiceBindings: opts.AssertionConsumerServiceBindings,
 		IgnoreCertificateExpiry:          opts.IgnoreCertificateExpiry,

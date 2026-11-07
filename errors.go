@@ -129,10 +129,11 @@ var (
 	// version other than 2.0, signed AuthnRequests (WantAuthnRequestsSigned),
 	// or an assertion consumer service binding other than HTTP-POST. At the
 	// SP: a Response, ArtifactResponse, assertion, LogoutRequest or
-	// LogoutResponse whose Version is not 2.0, or a RequestedAuthnContext
+	// LogoutResponse whose Version is not 2.0, a RequestedAuthnContext
 	// Comparison other than "exact" when
 	// ValidateAuthnContextClassRef is set and AuthnContextClassRefComparator
-	// is not.
+	// is not, or, with RejectUnknownConditions, an assertion whose Conditions
+	// has a condition this package does not understand.
 	ErrUnsupported = errors.New("saml: not supported")
 
 	// ErrRelayStateTooLong is returned, when ServiceProvider or

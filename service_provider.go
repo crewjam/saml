@@ -296,6 +296,26 @@ type ServiceProvider struct {
 	// §2.5.1.4).
 	ValidateAudienceRestriction func(assertion *Assertion) error
 
+	// RejectUnknownConditions, if true, refuses an assertion whose
+	// Conditions has child elements this package does not understand, named
+	// in Conditions.UnknownConditions: anything but AudienceRestriction,
+	// OneTimeUse and ProxyRestriction, such as a saml:Condition extended
+	// with xsi:type. saml-core §2.5.1.1 makes such an assertion
+	// Indeterminate, and says it MUST be rejected; the error matches
+	// ErrUnsupported. It is off by default, so such conditions are ignored,
+	// because some IdPs send extension conditions (delegation restrictions,
+	// for example) that refusing would break. ValidateUnknownConditions, if
+	// set, decides instead.
+	RejectUnknownConditions bool
+
+	// ValidateUnknownConditions, if set, decides an assertion whose
+	// Conditions has child elements this package does not understand (see
+	// RejectUnknownConditions), whatever RejectUnknownConditions says:
+	// return nil to accept the assertion, or an error to refuse it. It is
+	// called only when there are unknown conditions, and for login and
+	// attribute query assertions alike.
+	ValidateUnknownConditions func(assertion *Assertion) error
+
 	// ValidateRequestID allows you to override the default request ID validation.
 	// If nil, the default request ID validation is used. With AllowIDPInitiated
 	// set, it also decides a non-empty assertion SubjectConfirmationData
@@ -1808,6 +1828,9 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if !assertion.Conditions.NotOnOrAfter.IsZero() && pastDeadline(assertion.Conditions.NotOnOrAfter, now) {
 		return classify(fmt.Errorf("assertion Conditions is expired"), ErrExpired)
 	}
+	if err := sp.validateUnknownConditions(assertion); err != nil {
+		return err
+	}
 
 	if err := sp.validateAudienceRestriction(assertion); err != nil {
 		return err
@@ -1816,6 +1839,30 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 		return err
 	}
 	return nil
+}
+
+// validateUnknownConditions decides an assertion whose Conditions has a
+// child element this package does not understand. Its validity cannot be
+// determined, and an Indeterminate assertion MUST be rejected (saml-core
+// §2.5.1.1, lines 872-881), so with RejectUnknownConditions it is refused;
+// otherwise the conditions are ignored. ValidateUnknownConditions, if set,
+// decides instead.
+func (sp *ServiceProvider) validateUnknownConditions(assertion *Assertion) error {
+	unknown := assertion.Conditions.UnknownConditions
+	if len(unknown) == 0 {
+		return nil
+	}
+	if sp.ValidateUnknownConditions != nil {
+		return sp.ValidateUnknownConditions(assertion)
+	}
+	if !sp.RejectUnknownConditions {
+		return nil
+	}
+	names := make([]string, len(unknown))
+	for i, name := range unknown {
+		names[i] = "{" + name.Space + "}" + name.Local
+	}
+	return classify(fmt.Errorf("assertion Conditions has unrecognised conditions %q: the assertion is Indeterminate", names), ErrUnsupported)
 }
 
 // validateAuthnContextClassRef checks, if ValidateAuthnContextClassRef is
