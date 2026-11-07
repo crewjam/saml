@@ -16,7 +16,7 @@ import (
 
 // pingRequest builds a made-up protocol message, to show that Send is not
 // tied to the messages this package knows.
-func pingRequest(issuer string) samlsp.OutgoingMessage {
+func pingRequest() samlsp.OutgoingMessage {
 	return samlsp.OutgoingMessage{
 		Service: samlsp.SingleLogoutService, Param: "SAMLRequest", RelayState: "r", Sign: true,
 		Build: func(_ *saml.ServiceProvider, destination string, modify func(any) error) (*etree.Element, error) {
@@ -24,7 +24,7 @@ func pingRequest(issuer string) samlsp.OutgoingMessage {
 			el.CreateAttr("xmlns:ex", "urn:example")
 			el.CreateAttr("ID", "id-ping")
 			el.CreateAttr("Destination", destination)
-			el.CreateElement("Issuer").SetText(issuer)
+			el.CreateElement("Issuer").SetText(spEntityID)
 			if err := modify(el); err != nil {
 				return nil, err
 			}
@@ -39,7 +39,7 @@ func TestSendCustomMessage(t *testing.T) {
 
 	// WithModify applies to messages of its type only.
 	touched := false
-	msg, err := cfg.Send(t.Context(), pingRequest(spEntityID),
+	msg, err := cfg.Send(t.Context(), pingRequest(),
 		samlsp.WithModify(func(el *etree.Element) error { el.CreateAttr("Extra", "yes"); return nil }),
 		samlsp.WithModify(func(*saml.AuthnRequest) error { touched = true; return nil }),
 		samlsp.WithBinding(saml.HTTPPostBinding))
@@ -68,7 +68,7 @@ func TestSendCustomMessage(t *testing.T) {
 	}
 
 	// Redirect, with the query string signature.
-	msg, err = cfg.Send(t.Context(), pingRequest(spEntityID))
+	msg, err = cfg.Send(t.Context(), pingRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,15 +78,15 @@ func TestSendCustomMessage(t *testing.T) {
 
 	// An error from WithModify, and invalid messages.
 	boom := errors.New("boom")
-	if _, err := cfg.Send(t.Context(), pingRequest(spEntityID), samlsp.WithModify(func(*etree.Element) error { return boom })); !errors.Is(err, boom) {
+	if _, err := cfg.Send(t.Context(), pingRequest(), samlsp.WithModify(func(*etree.Element) error { return boom })); !errors.Is(err, boom) {
 		t.Errorf("err = %v", err)
 	}
-	bad := pingRequest(spEntityID)
+	bad := pingRequest()
 	bad.Param = "Other"
 	if _, err := cfg.Send(t.Context(), bad); err == nil {
 		t.Error("an invalid Param was accepted")
 	}
-	long := pingRequest(spEntityID)
+	long := pingRequest()
 	long.RelayState = strings.Repeat("x", 81)
 	if _, err := cfg.Send(t.Context(), long); err == nil {
 		t.Error("a long RelayState was accepted for a request")
