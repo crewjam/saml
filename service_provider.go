@@ -287,6 +287,18 @@ type ServiceProvider struct {
 	// §2.5.1.4).
 	ValidateAudienceRestriction func(assertion *Assertion) error
 
+	// ValidateUnknownConditions decides an assertion whose Conditions has
+	// child elements this package does not understand, named in
+	// Conditions.UnknownConditions: anything but AudienceRestriction,
+	// OneTimeUse and ProxyRestriction, such as a saml:Condition extended
+	// with xsi:type. Such an assertion is Indeterminate and MUST be rejected
+	// (saml-core §2.5.1.1), so if nil, it is rejected with an error
+	// matching ErrUnsupported. Set it to evaluate these conditions, returning
+	// nil to accept the assertion, or to func(*Assertion) error { return nil }
+	// to ignore them. It is called only when there are unknown conditions,
+	// and for login and attribute query assertions alike.
+	ValidateUnknownConditions func(assertion *Assertion) error
+
 	// ValidateRequestID allows you to override the default request ID validation.
 	// If nil, the default request ID validation is used. With AllowIDPInitiated
 	// set, it also decides a non-empty assertion SubjectConfirmationData
@@ -1754,6 +1766,9 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if !assertion.Conditions.NotOnOrAfter.IsZero() && pastDeadline(assertion.Conditions.NotOnOrAfter, now) {
 		return classify(fmt.Errorf("assertion Conditions is expired"), ErrExpired)
 	}
+	if err := sp.validateUnknownConditions(assertion); err != nil {
+		return err
+	}
 
 	if err := sp.validateAudienceRestriction(assertion); err != nil {
 		return err
@@ -1762,6 +1777,26 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 		return err
 	}
 	return nil
+}
+
+// validateUnknownConditions rejects an assertion whose Conditions has a
+// child element this package does not understand: its validity cannot be
+// determined, and an Indeterminate assertion MUST be rejected (saml-core
+// §2.5.1.1, lines 872-881). ValidateUnknownConditions, if set, decides
+// instead.
+func (sp *ServiceProvider) validateUnknownConditions(assertion *Assertion) error {
+	unknown := assertion.Conditions.UnknownConditions
+	if len(unknown) == 0 {
+		return nil
+	}
+	if sp.ValidateUnknownConditions != nil {
+		return sp.ValidateUnknownConditions(assertion)
+	}
+	names := make([]string, len(unknown))
+	for i, name := range unknown {
+		names[i] = "{" + name.Space + "}" + name.Local
+	}
+	return classify(fmt.Errorf("assertion Conditions has unrecognised conditions %q: the assertion is Indeterminate", names), ErrUnsupported)
 }
 
 // validateAuthnContextClassRef checks, if ValidateAuthnContextClassRef is
