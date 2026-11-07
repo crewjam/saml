@@ -95,7 +95,7 @@ func (s *Server) GetSession(w http.ResponseWriter, r *http.Request, req *saml.Id
 		}
 
 		http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure is set when served over https
-			Name:     "session",
+			Name:     sessionCookieName,
 			Value:    session.ID,
 			MaxAge:   int(sessionMaxAge.Seconds()),
 			HttpOnly: true,
@@ -107,7 +107,7 @@ func (s *Server) GetSession(w http.ResponseWriter, r *http.Request, req *saml.Id
 		return session
 	}
 
-	if sessionCookie, err := r.Cookie("session"); err == nil {
+	if sessionCookie, err := r.Cookie(sessionCookieName); err == nil {
 		session := &saml.Session{}
 		if err := s.Store.Get(fmt.Sprintf("/sessions/%s", sessionCookie.Value), session); err != nil {
 			if err == ErrNotFound {
