@@ -388,7 +388,7 @@ func TestSpecBinding_3_6_3_ArtifactURLAndFormEncoding(t *testing.T) {
 	assert.Assert(t, strings.ContainsAny(artifact, "+/"))
 
 	var gotArtifacts []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		doc := etree.NewDocument()
 		if _, err := doc.ReadFrom(r.Body); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -435,7 +435,7 @@ func TestSpecBinding_3_2_2_1_ArtifactResolveSOAPEnvelope(t *testing.T) {
 	var method string
 	var body []byte
 	h := e.artifactHandler(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		method = r.Method
 		var err error
 		body, err = io.ReadAll(r.Body)
@@ -765,7 +765,7 @@ func TestSpecBinding_3_2_3_ArtifactResolveHTTPHeaders(t *testing.T) {
 	e := spcovSetup(t)
 	var header http.Header
 	h := e.artifactHandler(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header = r.Header.Clone()
 		h(w, r)
 	}))
