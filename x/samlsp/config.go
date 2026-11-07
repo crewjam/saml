@@ -46,13 +46,18 @@ type Config struct {
 // It is called with the context of each method. See RemoteMetadata,
 // ParseMetadata and StaticMetadata.
 //
-// acsURL is the absolute URL of the SP's assertion consumer service, where
-// the IdP sends its Responses. The handler at this URL calls
-// ParseResponse.
+// The entity ID is conventionally the URL where the SP serves its metadata
+// (see ServeMetadata), such as "https://sp.example.com/saml/metadata". The
+// SP's other URLs are resolved against it as URL references. The assertion
+// consumer service (ACS), where the IdP sends its Responses, is at "acs" by
+// default: "https://sp.example.com/saml/acs" in that example. Serve
+// ParseResponse there, or choose another URL with WithACSURL. If the entity
+// ID is not an absolute URL, such as a URN, WithACSURL must give an
+// absolute one.
 //
-// New returns an error if a required argument is missing or a URL is not
-// absolute. It does not call identityProvider.
-func New(identityProvider MetadataFunc, entityID, acsURL string, opts ...Option) (*Config, error) {
+// New returns an error if an argument is missing or a URL cannot be
+// resolved. It does not call identityProvider.
+func New(identityProvider MetadataFunc, entityID string, opts ...Option) (*Config, error) {
 	if identityProvider == nil {
 		return nil, errors.New("samlsp: the identity provider is nil")
 	}
@@ -60,18 +65,23 @@ func New(identityProvider MetadataFunc, entityID, acsURL string, opts ...Option)
 		return nil, errors.New("samlsp: the entity ID is empty")
 	}
 	c := &Config{identityProvider: identityProvider, entityID: entityID}
-	var err error
-	if c.acsURL, err = absoluteURL("ACS URL", acsURL); err != nil {
-		return nil, err
-	}
-	var o configOptions
+	o := configOptions{acsURL: "acs"}
 	for _, opt := range opts {
 		if opt != nil {
 			opt.applyConfig(c, &o)
 		}
 	}
+
+	var base *url.URL
+	if u, err := url.Parse(entityID); err == nil && u.IsAbs() && u.Host != "" {
+		base = u
+	}
+	var err error
+	if c.acsURL, err = resolveURL(base, "ACS URL", o.acsURL); err != nil {
+		return nil, err
+	}
 	if o.sloURL != "" {
-		if c.sloURL, err = absoluteURL("SLO URL", o.sloURL); err != nil {
+		if c.sloURL, err = resolveURL(base, "SLO URL", o.sloURL); err != nil {
 			return nil, err
 		}
 	}
@@ -81,6 +91,28 @@ func New(identityProvider MetadataFunc, entityID, acsURL string, opts ...Option)
 	return c, nil
 }
 
+// resolveURL returns ref resolved against base, the entity ID as a URL, or
+// nil if the entity ID is not one. The result must be absolute.
+func resolveURL(base *url.URL, what, ref string) (url.URL, error) {
+	if ref == "" {
+		return url.URL{}, fmt.Errorf("samlsp: the %s is empty", what)
+	}
+	u, err := url.Parse(ref)
+	if err != nil {
+		return url.URL{}, fmt.Errorf("samlsp: invalid %s: %w", what, err)
+	}
+	if !u.IsAbs() {
+		if base == nil {
+			return url.URL{}, fmt.Errorf("samlsp: the %s %q is relative, and the entity ID is not a URL to resolve it against", what, ref)
+		}
+		u = base.ResolveReference(u)
+	}
+	if u.Host == "" {
+		return url.URL{}, fmt.Errorf("samlsp: the %s %q has no host", what, u)
+	}
+	return *u, nil
+}
+
 // Option configures New.
 type Option interface {
 	applyConfig(c *Config, o *configOptions)
@@ -88,6 +120,7 @@ type Option interface {
 
 // configOptions holds options that New validates after applying them.
 type configOptions struct {
+	acsURL string
 	sloURL string
 }
 
@@ -95,12 +128,27 @@ type optionFunc func(c *Config, o *configOptions)
 
 func (f optionFunc) applyConfig(c *Config, o *configOptions) { f(c, o) }
 
-// WithSLOURL sets the absolute URL of the SP's single logout service. The
-// handler at this URL calls ParseLogoutRequest and ParseLogoutResponse.
-// Without it, the SP metadata advertises no single logout service.
+// WithACSURL sets the URL of the SP's assertion consumer service, where the
+// IdP sends its Responses. The handler at this URL calls ParseResponse. A
+// relative URL is resolved against the entity ID. The default is "acs".
+func WithACSURL(acsURL string) Option {
+	return optionFunc(func(_ *Config, o *configOptions) { o.acsURL = acsURL })
+}
+
+// WithSLOURL sets the URL of the SP's single logout service. The handler at
+// this URL calls ParseLogoutRequest and ParseLogoutResponse. A relative URL
+// is resolved against the entity ID: WithSLOURL("slo") puts it beside the
+// ACS. Without it, the SP metadata advertises no single logout service.
 func WithSLOURL(sloURL string) Option {
 	return optionFunc(func(_ *Config, o *configOptions) { o.sloURL = sloURL })
 }
+
+// ACSURL returns the URL of the SP's assertion consumer service.
+func (c *Config) ACSURL() string { return c.acsURL.String() }
+
+// SLOURL returns the URL of the SP's single logout service, or "" if there
+// is none.
+func (c *Config) SLOURL() string { return c.sloURL.String() }
 
 // WithKey sets the SP's private key and its certificate, which is published
 // in the SP metadata, with any intermediates of its chain. The key always
@@ -236,20 +284,6 @@ func (c *Config) localServiceProvider(ctx context.Context) *saml.ServiceProvider
 	// sign them whenever there is a key that can.
 	sp.LogoutSignatureMethod = method
 	return sp
-}
-
-func absoluteURL(what, s string) (url.URL, error) {
-	if s == "" {
-		return url.URL{}, fmt.Errorf("samlsp: the %s is empty", what)
-	}
-	u, err := url.Parse(s)
-	if err != nil {
-		return url.URL{}, fmt.Errorf("samlsp: invalid %s: %w", what, err)
-	}
-	if !u.IsAbs() || u.Host == "" {
-		return url.URL{}, fmt.Errorf("samlsp: the %s must be an absolute URL, not %q", what, s)
-	}
-	return *u, nil
 }
 
 // signatureMethod returns the XML signature method for key, or "" if key is

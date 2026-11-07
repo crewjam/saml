@@ -138,8 +138,8 @@ func newTestConfig(t *testing.T, ti *testIDP, opts ...samlsp.Option) *samlsp.Con
 func newTestConfigWithIDP(t *testing.T, ti *testIDP, idp samlsp.MetadataFunc, opts ...samlsp.Option) *samlsp.Config {
 	t.Helper()
 	key, cert := newKeyPair(t, "sp")
-	opts = append([]samlsp.Option{samlsp.WithKey(key, cert), samlsp.WithSLOURL(spSLOURL)}, opts...)
-	cfg, err := samlsp.New(idp, spEntityID, spACSURL, opts...)
+	opts = append([]samlsp.Option{samlsp.WithKey(key, cert), samlsp.WithSLOURL("slo")}, opts...)
+	cfg, err := samlsp.New(idp, spEntityID, opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +328,7 @@ func TestAuthnRequestBindingErrors(t *testing.T) {
 	if _, err := cfg.AuthnRequest(t.Context(), "s", samlsp.WithBinding(saml.HTTPArtifactBinding)); err == nil {
 		t.Error("expected an error for an unsupported binding")
 	}
-	noKey, err := samlsp.New(staticIDP(ti), spEntityID, spACSURL)
+	noKey, err := samlsp.New(staticIDP(ti), spEntityID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,17 +405,46 @@ func TestNewErrors(t *testing.T) {
 	ti := newTestIDP(t)
 	idp := staticIDP(ti)
 	for name, f := range map[string]func() (*samlsp.Config, error){
-		"no IdP":       func() (*samlsp.Config, error) { return samlsp.New(nil, spEntityID, spACSURL) },
-		"no entity ID": func() (*samlsp.Config, error) { return samlsp.New(idp, "", spACSURL) },
-		"no ACS":       func() (*samlsp.Config, error) { return samlsp.New(idp, spEntityID, "") },
-		"relative ACS": func() (*samlsp.Config, error) { return samlsp.New(idp, spEntityID, "/saml/acs") },
-		"relative SLO": func() (*samlsp.Config, error) {
-			return samlsp.New(idp, spEntityID, spACSURL, samlsp.WithSLOURL("/slo"))
+		"no IdP":           func() (*samlsp.Config, error) { return samlsp.New(nil, spEntityID) },
+		"no entity ID":     func() (*samlsp.Config, error) { return samlsp.New(idp, "") },
+		"URN, default ACS": func() (*samlsp.Config, error) { return samlsp.New(idp, "urn:example:sp") },
+		"URN, relative ACS": func() (*samlsp.Config, error) {
+			return samlsp.New(idp, "urn:example:sp", samlsp.WithACSURL("/saml/acs"))
 		},
-		"sign without key": func() (*samlsp.Config, error) { return samlsp.New(idp, spEntityID, spACSURL, samlsp.SignAuthnRequests) },
+		"empty ACS":        func() (*samlsp.Config, error) { return samlsp.New(idp, spEntityID, samlsp.WithACSURL("")) },
+		"ACS without host": func() (*samlsp.Config, error) { return samlsp.New(idp, spEntityID, samlsp.WithACSURL("file:///acs")) },
+		"sign without key": func() (*samlsp.Config, error) { return samlsp.New(idp, spEntityID, samlsp.SignAuthnRequests) },
 	} {
 		if _, err := f(); err == nil {
 			t.Errorf("%s: expected an error", name)
+		}
+	}
+}
+
+func TestNewURLs(t *testing.T) {
+	idp := staticIDP(newTestIDP(t))
+	for _, tt := range []struct {
+		entityID string
+		opts     []samlsp.Option
+		acs, slo string
+	}{
+		{"https://sp.example.com/saml/metadata", nil, "https://sp.example.com/saml/acs", ""},
+		{"https://sp.example.com/saml/", []samlsp.Option{samlsp.WithSLOURL("slo")}, "https://sp.example.com/saml/acs", "https://sp.example.com/saml/slo"},
+		{"https://sp.example.com", nil, "https://sp.example.com/acs", ""},
+		{"https://sp.example.com/saml/metadata", []samlsp.Option{samlsp.WithACSURL("/sso/consume"), samlsp.WithSLOURL("https://other.example.com/slo")},
+			"https://sp.example.com/sso/consume", "https://other.example.com/slo"},
+		{"urn:example:sp", []samlsp.Option{samlsp.WithACSURL("https://sp.example.com/acs")}, "https://sp.example.com/acs", ""},
+	} {
+		cfg, err := samlsp.New(idp, tt.entityID, tt.opts...)
+		if err != nil {
+			t.Errorf("%s: %v", tt.entityID, err)
+			continue
+		}
+		if cfg.ACSURL() != tt.acs || cfg.SLOURL() != tt.slo {
+			t.Errorf("%s: ACS %q, SLO %q; want %q, %q", tt.entityID, cfg.ACSURL(), cfg.SLOURL(), tt.acs, tt.slo)
+		}
+		if got := cfg.Metadata(t.Context()).SPSSODescriptors[0].AssertionConsumerServices[0].Location; got != tt.acs {
+			t.Errorf("%s: metadata ACS %q", tt.entityID, got)
 		}
 	}
 }
