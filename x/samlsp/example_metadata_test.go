@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
+	"fmt"
 	"log"
 	"math/big"
 	"net/http"
@@ -75,18 +76,35 @@ func ExampleRemoteMetadata_federation() {
 	_ = config
 }
 
-// ParseMetadata uses metadata that the application already has, such as a
-// file the IdP administrator sent.
-func ExampleParseMetadata() {
+// StaticMetadataBytes uses metadata that the application already has, such
+// as a file the IdP administrator sent.
+func ExampleStaticMetadataBytes() {
+	data := []byte(`<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://idp.example.com/metadata">
+  <IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example.com/sso"/>
+  </IDPSSODescriptor>
+</EntityDescriptor>`)
+
+	config, err := samlsp.New(samlsp.StaticMetadataBytes(data), "https://sp.example.com/saml/metadata")
+	if err != nil {
+		log.Fatal(err)
+	}
+	msg, err := config.AuthnRequest(t0(), "relay-state")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(msg.Destination)
+	// Output:
+	// https://idp.example.com/sso
+}
+
+// Metadata in a file, read when the program starts.
+func ExampleStaticMetadataBytes_file() {
 	data, err := os.ReadFile("idp-metadata.xml")
 	if err != nil {
 		log.Fatal(err)
 	}
-	idp, err := samlsp.ParseMetadata(data)
-	if err != nil {
-		log.Fatal(err)
-	}
-	config, err := samlsp.New(idp, "https://sp.example.com/saml/metadata")
+	config, err := samlsp.New(samlsp.StaticMetadataBytes(data), "https://sp.example.com/saml/metadata")
 	if err != nil {
 		log.Fatal(err)
 	}
