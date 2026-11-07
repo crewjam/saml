@@ -1,6 +1,7 @@
 package samlsp_test
 
 import (
+	"encoding/xml"
 	"errors"
 	"math"
 	"net/netip"
@@ -409,5 +410,45 @@ func TestDecodeAttributesStructure(t *testing.T) {
 	}
 	if err := a.DecodeAttributes(&badTag); err == nil || !strings.Contains(err.Error(), "unknown tag option") {
 		t.Errorf("bad tag: %v", err)
+	}
+}
+
+// address decodes a value of a complex type.
+type address struct {
+	Street string `xml:"Street"`
+	City   string `xml:"City"`
+}
+
+func (a *address) UnmarshalSAMLAttribute(attr samlsp.Attribute) error {
+	if len(attr.XML) == 0 || attr.XML[0] == "" {
+		return errors.New("not a complex value")
+	}
+	return xml.Unmarshal([]byte("<address>"+attr.XML[0]+"</address>"), a)
+}
+
+func TestDecodeAttributesComplexValues(t *testing.T) {
+	a := &samlsp.Assertion{Attributes: samlsp.Attributes{
+		{Name: "address", Values: []string{"", ""}, XML: []string{
+			`<Street xmlns="urn:example:address">1 Main St</Street><City xmlns="urn:example:address">Springfield</City>`,
+			`<Street xmlns="urn:example:address">2 Oak Ave</Street>`,
+		}},
+		{Name: "plain", Values: []string{"x"}},
+	}}
+	var got struct {
+		Home      address   `saml:"address"`
+		Addresses []address `saml:"address"`
+		Plain     string    `saml:"plain"`
+	}
+	if err := a.DecodeAttributes(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Home.Street != "1 Main St" || got.Home.City != "Springfield" {
+		t.Errorf("Home = %+v", got.Home)
+	}
+	if len(got.Addresses) != 2 || got.Addresses[1].Street != "2 Oak Ave" {
+		t.Errorf("Addresses = %+v", got.Addresses)
+	}
+	if got.Plain != "x" {
+		t.Errorf("Plain = %q", got.Plain)
 	}
 }
