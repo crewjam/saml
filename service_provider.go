@@ -317,6 +317,12 @@ var MaxIssueDelay = time.Second * 90
 // validating assertions. It defaults to 180 seconds (matches shibboleth).
 var MaxClockSkew = time.Second * 180
 
+// MaxArtifactResponseSize is the largest SOAP response body, in bytes, that
+// the service provider reads from the IDP's ArtifactResolutionService when it
+// resolves an artifact received with the HTTP-Artifact binding. A larger
+// response is rejected without being parsed.
+var MaxArtifactResponseSize int64 = 10 << 20
+
 // DefaultValidDuration is how long we assert that the SP metadata is valid.
 const DefaultValidDuration = time.Hour * 24 * 2
 
@@ -992,9 +998,14 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 		retErr.PrivateErr = classify(fmt.Errorf("Error during artifact resolution: HTTP status %d (%s)", response.StatusCode, response.Status), ErrArtifactResolution)
 		return nil, retErr
 	}
-	responseBody, err := io.ReadAll(response.Body)
+	limit := MaxArtifactResponseSize
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {
 		retErr.PrivateErr = classify(fmt.Errorf("Error during artifact resolution: %w", err), ErrArtifactResolution)
+		return nil, retErr
+	}
+	if int64(len(responseBody)) > limit {
+		retErr.PrivateErr = classify(fmt.Errorf("Error during artifact resolution: response body is larger than %d bytes", limit), ErrArtifactResolution)
 		return nil, retErr
 	}
 	assertion, err := sp.ParseXMLArtifactResponse(responseBody, possibleRequestIDs, artifactResolveRequest.ID, *req.URL)
