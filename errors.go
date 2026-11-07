@@ -128,7 +128,9 @@ var (
 	// implemented. At the IdP: an HTTP method other than GET or POST, a SAML
 	// version other than 2.0, signed AuthnRequests (WantAuthnRequestsSigned),
 	// or an assertion consumer service binding other than HTTP-POST. At the
-	// SP: a RequestedAuthnContext Comparison other than "exact" when
+	// SP: a Response, ArtifactResponse, assertion, LogoutRequest or
+	// LogoutResponse whose Version is not 2.0, or a RequestedAuthnContext
+	// Comparison other than "exact" when
 	// ValidateAuthnContextClassRef is set and AuthnContextClassRefComparator
 	// is not.
 	ErrUnsupported = errors.New("saml: not supported")

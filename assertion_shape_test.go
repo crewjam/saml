@@ -55,6 +55,7 @@ func TestValidateAssertionMissingElements(t *testing.T) {
 	}
 	full := func() *Assertion {
 		return &Assertion{
+			Version:      "2.0",
 			IssueInstant: now,
 			Issuer:       Issuer{Value: "https://idp.example.com/"},
 			Subject: &Subject{SubjectConfirmations: []SubjectConfirmation{{
@@ -95,6 +96,6 @@ func TestValidateLogoutResponseWithoutIssuer(t *testing.T) {
 		SloURL:      mustParseURL("https://sp.example.com/slo"),
 		IDPMetadata: &EntityDescriptor{EntityID: "https://idp.example.com/"},
 	}
-	resp := &LogoutResponse{Destination: "https://sp.example.com/slo", IssueInstant: TimeNow()}
+	resp := &LogoutResponse{Version: "2.0", Destination: "https://sp.example.com/slo", IssueInstant: TimeNow()}
 	assert.Check(t, is.ErrorContains(sp.validateLogoutResponse(resp), "issuer does not match"))
 }
