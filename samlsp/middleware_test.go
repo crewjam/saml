@@ -874,3 +874,65 @@ func TestJWTSessionCodec_UnsupportedAlgorithmReturnsError(t *testing.T) {
 	_, err = codec.Encode(tc)
 	assert.Check(t, is.ErrorContains(err, "unsupported algorithm for crypto.Signer"))
 }
+
+func TestIsLocalRedirect(t *testing.T) {
+	for _, tc := range []struct {
+		uri  string
+		want bool
+	}{
+		{"/", true},
+		{"/foo", true},
+		{"/foo/bar", true},
+		{"/foo?bar=baz", true},
+		{"/foo#fragment", true},
+		{"/foo?next=//elsewhere", true},
+		{"", false},
+		{"foo", false},
+		{" /foo", false},
+		{"//evil.example", false},
+		{"//evil.example/path", false},
+		{"https://evil.example", false},
+		{"http://evil.example", false},
+		{"javascript:alert(1)", false},
+		{"data:text/html,<script>", false},
+		{"mailto:a@evil.example", false},
+		{"/\\evil.example", false},
+		{"/foo\\bar", false},
+		{"/\t/evil.example", false},
+		{"/\n/evil.example", false},
+		{"/\r/evil.example", false},
+		{"/\x00/evil.example", false},
+		{"/\x7f/evil.example", false},
+		{"/%zz", false},
+	} {
+		assert.Check(t, is.Equal(tc.want, isLocalRedirect(tc.uri)), "isLocalRedirect(%q)", tc.uri)
+	}
+}
+
+// With AllowIDPInitiated and no tracked request, the middleware follows
+// RelayState only when it is a path on this site.
+func TestMiddlewareIDPInitiatedRelayStateRedirect(t *testing.T) {
+	for relayState, want := range map[string]string{
+		"/landing":              "/landing",
+		"https://evil.example/": "/default",
+		"//evil.example/":       "/default",
+		"/\\evil.example/":      "/default",
+		"/\t/evil.example/":     "/default",
+		"javascript:alert(1)":   "/default",
+	} {
+		t.Run(relayState, func(t *testing.T) {
+			test := NewMiddlewareTest(t)
+			test.Middleware.ServiceProvider.AllowIDPInitiated = true
+
+			form := url.Values{"RelayState": {relayState}}
+			req := httptest.NewRequest(http.MethodPost, "/saml2/acs", strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			assert.NilError(t, req.ParseForm())
+
+			rec := httptest.NewRecorder()
+			test.Middleware.CreateSessionFromAssertion(rec, req, &saml.Assertion{}, "/default")
+			assert.Check(t, is.Equal(http.StatusFound, rec.Code))
+			assert.Check(t, is.Equal(want, rec.Header().Get("Location")))
+		})
+	}
+}
