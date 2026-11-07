@@ -180,7 +180,7 @@ When a user visits `/logout`:
 
 The middleware also handles IDP initiated logout: when the IDP sends a signed `LogoutRequest` to `/saml/slo`, the middleware deletes the session cookie of that browser and answers the IDP with a `LogoutResponse`.
 
-For single logout to work, the IDP needs to know the SLO URL. It is in the service provider's metadata, or you can enter `<root URL>/saml/slo` in the IDP's settings. Many IDPs require logout requests to be signed; set `Options.SignRequest` to sign them. If the IDP requires the NameID to be encrypted, set `ServiceProvider.EncryptLogoutNameID`: the request then carries an `EncryptedID`, encrypted to the encryption certificate in the IDP's metadata, with the strongest cipher the metadata lists for it, AES-256-GCM if it lists none. Set `ServiceProvider.LogoutNameIDEncrypter` for an IDP that cannot decrypt AES-GCM. If you need different behaviour, for example to end server-side sessions, the `ServiceProvider` methods `MakeLogoutRequest`, `RedirectLogoutRequestURL`, `ParseLogoutResponse`, `ValidateLogoutRequest` and `MakeRedirectLogoutResponse` are the building blocks `HandleStartLogout` and `ServeSLO` use.
+For single logout to work, the IDP needs to know the SLO URL. It is in the service provider's metadata, or you can enter `<root URL>/saml/slo` in the IDP's settings. The SAML single logout profile requires logout requests and responses sent with the HTTP-Redirect or HTTP-POST binding to be signed, and many IDPs enforce it. They are not signed by default: set `Options.SignLogout` to sign them with `Key` (`ServiceProvider.LogoutSignatureMethod`), or `Options.SignRequest`, which signs authentication requests too. If the IDP requires the NameID to be encrypted, set `ServiceProvider.EncryptLogoutNameID`: the request then carries an `EncryptedID`, encrypted to the encryption certificate in the IDP's metadata, with the strongest cipher the metadata lists for it, AES-256-GCM if it lists none. Set `ServiceProvider.LogoutNameIDEncrypter` for an IDP that cannot decrypt AES-GCM. If you need different behaviour, for example to end server-side sessions, the `ServiceProvider` methods `MakeLogoutRequest`, `RedirectLogoutRequestURL`, `ParseLogoutResponse`, `ValidateLogoutRequest` and `MakeRedirectLogoutResponse` are the building blocks `HandleStartLogout` and `ServeSLO` use.
 
 ### Trusting the IDP's metadata
 
@@ -270,6 +270,16 @@ Both directions also support the **HTTP POST SimpleSign** binding ([sstc-saml-bi
 
 The package can produce signed SAML assertions, and can validate both signed and encrypted SAML assertions. As an identity provider it also encrypts the assertions it produces, both for SP-initiated and IdP-initiated (`ServeIDPInitiated`) logins, whenever the service provider's metadata publishes an encryption certificate (a `KeyDescriptor` with `use="encryption"`, or one with no `use`). The algorithms default to RSA-OAEP-MGF1P with SHA-1 and AES-128-CBC for compatibility; set `IdentityProvider.AssertionEncrypter` to choose others, for example `xmlenc.OAEP_SHA256()` with `AES256GCM`.
 
+### Hardening the service provider
+
+Some protections the SAML profiles call for are opt-in, because turning them on by default could break working deployments. Consider enabling them:
+
+- **Replay protection.** The Web Browser SSO profile says the service provider "MUST ensure that bearer assertions are not replayed". The tracking cookie already ties a response to the request this browser started, but an IDP-initiated response (`AllowIDPInitiated`) can be replayed until it expires unless a replay cache is configured. Set `Options.ReplayCache` (`ServiceProvider.ReplayCache`) to `samlsp.NewMemoryReplayCache(n)` for a single process, or to an `AssertionReplayCache` backed by a store shared by all instances. It also refuses replayed logout requests.
+
+- **Signed logout messages.** Set `Options.SignLogout` (see [Logging out](#logging-out)).
+
+- **RelayState length.** The bindings limit RelayState to 80 bytes. Set `Options.LimitRelayStateLength` (`ServiceProvider.LimitRelayStateLength`, `IdentityProvider.LimitRelayStateLength`) to refuse to send a longer one. See [RelayState](#relaystate).
+
 ## Customizing the session lifetime
 
 Sessions last one hour by default. This used to be set with `samlsp.Options.CookieMaxAge`, which has been removed. To change it, set the `MaxAge` of both the session cookie and the JWT it holds, then assign the provider to the middleware:
@@ -294,7 +304,20 @@ Setting only the cookie's `MaxAge` is not enough: the browser keeps the cookie, 
 
 The _RelayState_ parameter allows you to pass user state information across the authentication flow. The most common use for this is to allow a user to request a deep link into your site, be redirected through the SAML login flow, and upon successful completion, be directed to the originally requested link, rather than the root.
 
-Unfortunately, _RelayState_ is less useful than it could be. Firstly, it is **not** authenticated, so anything you supply must be signed to avoid XSS or CSRF. Secondly, it is limited to 80 bytes in length, which precludes signing. (See section 3.6.3.1 of SAMLProfiles.)
+Unfortunately, _RelayState_ is less useful than it could be. Firstly, it is **not** authenticated, so anything you supply must be signed to avoid XSS or CSRF. Secondly, the SAML bindings limit it to 80 bytes (saml-bindings-2.0-os sections 3.4.3 and 3.5.3), which precludes signing. Many IDPs accept longer values, so this package does not enforce the limit unless `LimitRelayStateLength` is set on the `ServiceProvider` or `IdentityProvider` (`samlsp.Options.LimitRelayStateLength`); a RelayState received in a request is always returned unchanged.
+
+## Conformance notes
+
+[SAMLConformance](http://docs.oasis-open.org/security/saml/v2.0/saml-conformance-2.0-os.pdf) and the bindings list algorithms an implementation MUST support. This package deliberately departs from that list where an algorithm is weak or rarely used:
+
+| Algorithm | Required by | Status |
+|---|---|---|
+| DSA-SHA1 signatures (`SigAlg` of the HTTP-Redirect and HTTP-POST-SimpleSign bindings) | saml-bindings §3.4.4.1, SimpleSign §2.5 | Not supported: refused as an unsupported signature algorithm. Go's `crypto/x509` no longer verifies DSA. |
+| HMAC-SHA1 XML signatures | saml-conformance §4.1 | Not supported: there is no shared-key configuration. |
+| Triple DES (`tripledes-cbc`) block encryption | saml-conformance §4.2 | Implemented, but not accepted for decryption unless the application calls `xmlenc.RegisterDecrypter(xmlenc.TripleDES)`. |
+| RSA-v1.5 (`rsa-1_5`) key transport | saml-conformance §4.2 | Implemented (`xmlenc.PKCS1v15()`), but not accepted for decryption unless the application calls `xmlenc.RegisterDecrypter(xmlenc.PKCS1v15())`: it is open to Bleichenbacher padding-oracle attacks. |
+
+RSA-SHA1 signatures, AES-128/256 (CBC and GCM) and RSA-OAEP are supported; set `ServiceProvider.RejectSHA1Signatures` or `IdentityProvider.RejectSHA1Signatures` to refuse SHA-1 signatures.
 
 ## References
 
