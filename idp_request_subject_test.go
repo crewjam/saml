@@ -14,11 +14,19 @@ import (
 const (
 	reqSubjEmailFormat = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
 	reqSubjHoKMethod   = "urn:oasis:names:tc:SAML:2.0:cm:holder-of-key"
+
+	reqSubjPersistentFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
 )
 
 // reqSubjNewTest returns an IdP test whose session is alice@example.com,
 // with the emailAddress NameID Format.
 func reqSubjNewTest(t *testing.T) *IdentityProviderTest {
+	t.Helper()
+	return reqSubjNewTestFormat(t, reqSubjEmailFormat)
+}
+
+// reqSubjNewTestFormat is reqSubjNewTest with the given NameID Format.
+func reqSubjNewTestFormat(t *testing.T, format string) *IdentityProviderTest {
 	t.Helper()
 	test := idpErrNewTest(t)
 	test.IDP.SessionProvider = &mockSessionProvider{
@@ -27,7 +35,7 @@ func reqSubjNewTest(t *testing.T) *IdentityProviderTest {
 				ID:           "f00df00df00d",
 				UserName:     "alice",
 				NameID:       "alice@example.com",
-				NameIDFormat: reqSubjEmailFormat,
+				NameIDFormat: format,
 			}
 		},
 	}
@@ -89,15 +97,22 @@ func TestIDPRequestSubjectMatchingNameID(t *testing.T) {
 	idpEntityID := test.IDP.Metadata().EntityID
 	spEntityID := test.SP.Metadata().EntityID
 
-	for name, nameID := range map[string]*NameID{
-		"value only":            {Value: "alice@example.com"},
-		"format":                {Value: "alice@example.com", Format: reqSubjEmailFormat},
-		"unspecified format":    {Value: "alice@example.com", Format: nameIDFormatUnspecified},
-		"qualifiers":            {Value: "alice@example.com", NameQualifier: idpEntityID, SPNameQualifier: spEntityID},
-		"format and qualifiers": {Value: "alice@example.com", Format: reqSubjEmailFormat, NameQualifier: idpEntityID, SPNameQualifier: spEntityID},
+	// NameQualifier and SPNameQualifier are only emitted for the persistent
+	// and transient formats, so the cases with qualifiers use a persistent
+	// session.
+	for name, tc := range map[string]struct {
+		sessionFormat string
+		nameID        *NameID
+	}{
+		"value only":            {reqSubjEmailFormat, &NameID{Value: "alice@example.com"}},
+		"format":                {reqSubjEmailFormat, &NameID{Value: "alice@example.com", Format: reqSubjEmailFormat}},
+		"unspecified format":    {reqSubjEmailFormat, &NameID{Value: "alice@example.com", Format: nameIDFormatUnspecified}},
+		"qualifiers":            {reqSubjPersistentFormat, &NameID{Value: "alice@example.com", NameQualifier: idpEntityID, SPNameQualifier: spEntityID}},
+		"format and qualifiers": {reqSubjPersistentFormat, &NameID{Value: "alice@example.com", Format: reqSubjPersistentFormat, NameQualifier: idpEntityID, SPNameQualifier: spEntityID}},
 	} {
+		nameID := tc.nameID
 		t.Run(name, func(t *testing.T) {
-			test := reqSubjNewTest(t)
+			test := reqSubjNewTestFormat(t, tc.sessionFormat)
 			id, w := reqSubjServe(t, test, &Subject{NameID: nameID})
 			reqSubjCheckSuccess(t, test, id, w)
 		})
