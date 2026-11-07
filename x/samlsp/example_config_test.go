@@ -36,10 +36,10 @@ func exampleIDP() samlsp.MetadataFunc {
 }
 
 // The entity ID is usually the URL of the SP metadata, and the other
-// endpoints are found relative to it.
+// ACS is beside it unless WithACSURL says otherwise.
 func ExampleNew() {
 	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
-		samlsp.WithSLOURL("slo"))
+		samlsp.WithSLOURL("https://sp.example.com/saml/slo"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -50,11 +50,10 @@ func ExampleNew() {
 	// https://sp.example.com/saml/slo
 }
 
-// Use WithACSURL and WithSLOURL when the endpoints are elsewhere. A relative
-// URL is resolved against the entity ID.
+// Use WithACSURL when the ACS is elsewhere.
 func ExampleNew_customURLs() {
 	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
-		samlsp.WithACSURL("/auth/saml/callback"),
+		samlsp.WithACSURL("https://sp.example.com/auth/saml/callback"),
 		samlsp.WithSLOURL("https://sp.example.com/auth/saml/logout"))
 	if err != nil {
 		log.Fatal(err)
@@ -66,8 +65,7 @@ func ExampleNew_customURLs() {
 	// https://sp.example.com/auth/saml/logout
 }
 
-// An entity ID that is not a URL, such as a URN, gives nothing to resolve
-// against, so the ACS URL must be absolute.
+// An entity ID that is not a URL, such as a URN, needs WithACSURL.
 func ExampleNew_urnEntityID() {
 	_, err := samlsp.New(exampleIDP(), "urn:example:sp")
 	fmt.Println(err)
@@ -79,7 +77,7 @@ func ExampleNew_urnEntityID() {
 	}
 	fmt.Println(config.EntityID(), config.ACSURL())
 	// Output:
-	// samlsp: the ACS URL "acs" is relative, and the entity ID is not a URL to resolve it against
+	// samlsp: the entity ID "urn:example:sp" is not a URL to put the ACS beside; use WithACSURL
 	// urn:example:sp https://sp.example.com/saml/acs
 }
 
@@ -105,11 +103,10 @@ func ExampleConfig_ServeMetadata() {
 // Option of their own. Passed to New, it applies to every call.
 func ExampleWithServiceProvider() {
 	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
-		samlsp.RejectUnknownConditions,
 		samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
-			// Refuse assertions whose AuthnContextClassRef does not satisfy
-			// the RequestedAuthnContext of the AuthnRequest.
-			sp.ValidateAuthnContextClassRef = true
+			// This IdP signs only its assertions and encrypts them with
+			// AES-CBC, which the default hardening refuses.
+			sp.RequireSignedResponseForCBC = false
 		}),
 	)
 	if err != nil {

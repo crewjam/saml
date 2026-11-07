@@ -17,7 +17,7 @@ import (
 func ExampleConfig_LogoutRequest() {
 	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
 		samlsp.WithKey(spKey, spCert), // logout messages are signed
-		samlsp.WithSLOURL("slo"))
+		samlsp.WithSLOURL("https://sp.example.com/saml/slo"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func ExampleConfig_LogoutRequest() {
 func ExampleConfig_ParseLogoutRequest() {
 	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
 		samlsp.WithKey(spKey, spCert),
-		samlsp.WithSLOURL("slo"))
+		samlsp.WithSLOURL("https://sp.example.com/saml/slo"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func ExampleConfig_ParseLogoutRequest() {
 func ExampleWithStatus() {
 	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
 		samlsp.WithKey(spKey, spCert),
-		samlsp.WithSLOURL("slo"))
+		samlsp.WithSLOURL("https://sp.example.com/saml/slo"))
 	if err != nil {
 		log.Fatal(err)
 	}

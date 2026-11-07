@@ -138,7 +138,7 @@ func newTestConfig(t *testing.T, ti *testIDP, opts ...samlsp.Option) *samlsp.Con
 func newTestConfigWithIDP(t *testing.T, ti *testIDP, idp samlsp.MetadataFunc, opts ...samlsp.Option) *samlsp.Config {
 	t.Helper()
 	key, cert := newKeyPair(t, "sp")
-	opts = append([]samlsp.Option{samlsp.WithKey(key, cert), samlsp.WithSLOURL("slo")}, opts...)
+	opts = append([]samlsp.Option{samlsp.WithKey(key, cert), samlsp.WithSLOURL(spSLOURL)}, opts...)
 	cfg, err := samlsp.New(idp, spEntityID, opts...)
 	if err != nil {
 		t.Fatal(err)
@@ -408,10 +408,12 @@ func TestNewErrors(t *testing.T) {
 		"no IdP":           func() (*samlsp.Config, error) { return samlsp.New(nil, spEntityID) },
 		"no entity ID":     func() (*samlsp.Config, error) { return samlsp.New(idp, "") },
 		"URN, default ACS": func() (*samlsp.Config, error) { return samlsp.New(idp, "urn:example:sp") },
-		"URN, relative ACS": func() (*samlsp.Config, error) {
-			return samlsp.New(idp, "urn:example:sp", samlsp.WithACSURL("/saml/acs"))
+		"relative ACS": func() (*samlsp.Config, error) {
+			return samlsp.New(idp, spEntityID, samlsp.WithACSURL("/saml/acs"))
 		},
-		"empty ACS":        func() (*samlsp.Config, error) { return samlsp.New(idp, spEntityID, samlsp.WithACSURL("")) },
+		"relative SLO": func() (*samlsp.Config, error) {
+			return samlsp.New(idp, spEntityID, samlsp.WithSLOURL("slo"))
+		},
 		"ACS without host": func() (*samlsp.Config, error) { return samlsp.New(idp, spEntityID, samlsp.WithACSURL("file:///acs")) },
 		"sign without key": func() (*samlsp.Config, error) { return samlsp.New(idp, spEntityID, samlsp.SignAuthnRequests) },
 	} {
@@ -429,9 +431,9 @@ func TestNewURLs(t *testing.T) {
 		acs, slo string
 	}{
 		{"https://sp.example.com/saml/metadata", nil, "https://sp.example.com/saml/acs", ""},
-		{"https://sp.example.com/saml/", []samlsp.Option{samlsp.WithSLOURL("slo")}, "https://sp.example.com/saml/acs", "https://sp.example.com/saml/slo"},
+		{"https://sp.example.com/saml/", []samlsp.Option{samlsp.WithSLOURL("https://sp.example.com/saml/slo")}, "https://sp.example.com/saml/acs", "https://sp.example.com/saml/slo"},
 		{"https://sp.example.com", nil, "https://sp.example.com/acs", ""},
-		{"https://sp.example.com/saml/metadata", []samlsp.Option{samlsp.WithACSURL("/sso/consume"), samlsp.WithSLOURL("https://other.example.com/slo")},
+		{"https://sp.example.com/saml/metadata", []samlsp.Option{samlsp.WithACSURL("https://sp.example.com/sso/consume"), samlsp.WithSLOURL("https://other.example.com/slo")},
 			"https://sp.example.com/sso/consume", "https://other.example.com/slo"},
 		{"urn:example:sp", []samlsp.Option{samlsp.WithACSURL("https://sp.example.com/acs")}, "https://sp.example.com/acs", ""},
 	} {
@@ -761,5 +763,72 @@ func TestSignMetadata(t *testing.T) {
 	cfg.ServeMetadata(w, httptest.NewRequest(http.MethodGet, spEntityID, nil))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "SignatureValue") {
 		t.Fatalf("metadata is not signed: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHardeningDefaults(t *testing.T) {
+	ti := newTestIDP(t)
+	var got saml.ServiceProvider
+	cfg := newTestConfig(t, ti)
+	if _, err := cfg.AuthnRequest(t.Context(), "s", samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) { got = *sp })); err != nil {
+		t.Fatal(err)
+	}
+	for name, on := range map[string]bool{
+		"ValidateAuthnContextClassRef": got.ValidateAuthnContextClassRef,
+		"RejectUnknownConditions":      got.RejectUnknownConditions,
+		"RequireSignedResponseForCBC":  got.RequireSignedResponseForCBC,
+		"RejectSHA1Signatures":         got.RejectSHA1Signatures,
+		"RejectExpiredIDPMetadata":     got.RejectExpiredIDPMetadata,
+		"RequireStandardArtifacts":     got.RequireStandardArtifacts,
+		"LimitRelayStateLength":        got.LimitRelayStateLength,
+		"!AllowInsecureSOAPEndpoints":  !got.AllowInsecureSOAPEndpoints,
+		"!IgnoreCertificateExpiry":     !got.IgnoreCertificateExpiry,
+	} {
+		if !on {
+			t.Errorf("%s is not set", name)
+		}
+	}
+
+	if _, err := cfg.AuthnRequest(t.Context(), strings.Repeat("x", 81)); err == nil {
+		t.Error("a RelayState longer than 80 bytes was accepted")
+	}
+}
+
+func TestAuthnContextChecked(t *testing.T) {
+	ti := newTestIDP(t) // authenticates with PasswordProtectedTransport
+	cfg := newTestConfig(t, ti)
+
+	for _, tt := range []struct {
+		name    string
+		ctx     samlsp.AuthnContextOption
+		wantErr error
+	}{
+		{"satisfied", samlsp.WithAuthnContext(samlsp.ComparisonExact, samlsp.AuthnContextX509, samlsp.AuthnContextPasswordProtectedTransport), nil},
+		{"not satisfied", samlsp.WithAuthnContext(samlsp.ComparisonExact, samlsp.AuthnContextX509), saml.ErrAuthnContextMismatch},
+		{"no comparator", samlsp.WithAuthnContext(samlsp.ComparisonMinimum, samlsp.AuthnContextPassword), saml.ErrUnsupported},
+	} {
+		msg, err := cfg.AuthnRequest(t.Context(), "s", tt.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID(msg.ID), tt.ctx)
+		if tt.wantErr == nil && err != nil || tt.wantErr != nil && !errors.Is(err, tt.wantErr) {
+			t.Errorf("%s: err = %v, want %v", tt.name, err, tt.wantErr)
+		}
+	}
+
+	// With a comparator, "minimum" is decided by it.
+	cfg = newTestConfig(t, ti, samlsp.WithAuthnContextComparator(
+		func(c samlsp.AuthnContextComparison, requested []samlsp.AuthnContextClass, got samlsp.AuthnContextClass) bool {
+			return c == samlsp.ComparisonMinimum && requested[0] == samlsp.AuthnContextPassword &&
+				got == samlsp.AuthnContextPasswordProtectedTransport
+		}))
+	minimum := samlsp.WithAuthnContext(samlsp.ComparisonMinimum, samlsp.AuthnContextPassword)
+	msg, err := cfg.AuthnRequest(t.Context(), "s", minimum)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID(msg.ID), minimum); err != nil {
+		t.Errorf("minimum with comparator: %v", err)
 	}
 }
