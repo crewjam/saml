@@ -168,6 +168,9 @@ func (sp *ServiceProvider) redirectBindingCerts() ([]*x509.Certificate, error) {
 // verifyRedirectBindingSignature checks the query string signature of an
 // HTTP-Redirect binding message against the IDP's signing certificates.
 func (sp *ServiceProvider) verifyRedirectBindingSignature(m *redirectBindingMessage) error {
+	if err := checkSigAlgNotSHA1(sp.RejectSHA1Signatures, m.SigAlg); err != nil {
+		return err
+	}
 	return checkRedirectBindingSignature(m, sp.redirectBindingCerts, sp.dsigClock().Now(), sp.IgnoreCertificateExpiry)
 }
 
@@ -284,17 +287,19 @@ func (sp *ServiceProvider) readRedirectBindingMessage(rawQuery, messageParam str
 		return nil, retErr
 	}
 
+	root := doc.Root()
 	if m.SignedContent != nil {
 		err = sp.verifyRedirectBindingSignature(m)
 	} else {
-		err = sp.validateSignature(doc.Root())
+		// Read the message from what the enveloped signature covers.
+		root, err = sp.validatedElement(root)
 	}
 	if err != nil {
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
 
-	return doc.Root(), nil
+	return root, nil
 }
 
 // deflateAndEncode serializes el, deflates it and base64 encodes the result,

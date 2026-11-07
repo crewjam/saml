@@ -54,6 +54,18 @@ const (
 	PersistentNameIDFormat   NameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
 )
 
+// SignedElementVerifier is a SignatureVerifier that also returns what the
+// signature covers: the element without its Signature, as dsig's
+// ValidationContext.Validate returns it. When the ServiceProvider's
+// SignatureVerifier implements it, the service provider reads the signed
+// message from the element it returns rather than from the message as
+// received. A SignatureVerifier that does not implement it keeps the old
+// behaviour: the message is read as received.
+type SignedElementVerifier interface {
+	SignatureVerifier
+	VerifySignedElement(validationContext *dsig.ValidationContext, el *etree.Element) (*etree.Element, error)
+}
+
 // SignatureVerifier verifies a signature
 //
 // Can be implemented in order to override ServiceProvider's default
@@ -150,6 +162,14 @@ type ServiceProvider struct {
 	// AuthnNameIDFormat is the format used in the NameIDPolicy for
 	// authentication requests
 	AuthnNameIDFormat NameIDFormat
+
+	// SendUnspecifiedNameIDFormat, when true and AuthnNameIDFormat is
+	// UnspecifiedNameIDFormat, sends the full unspecified URI as the Format
+	// of the AuthnRequest NameIDPolicy and the LogoutRequest NameID. By
+	// default the Format is left off, which the spec reads as unspecified
+	// (SAML Core §2.2.2, §3.4.1.1), but some IdPs (e.g. Keycloak) reject a
+	// request without it.
+	SendUnspecifiedNameIDFormat bool
 
 	// Scoping, when set, is sent in authentication requests. Proxying identity
 	// providers (gateways) use its IDPList to choose which identity provider to
@@ -288,11 +308,28 @@ type ServiceProvider struct {
 	// them.
 	IgnoreCertificateExpiry bool
 
+	// RejectSHA1Signatures, if true, refuses messages from the IDP that are
+	// signed with a SHA-1 based algorithm: an XML signature whose
+	// SignatureMethod or any DigestMethod is SHA-1 based (rsa-sha1,
+	// ecdsa-sha1, dsa-sha1, hmac-sha1 or sha1), and an HTTP-Redirect or
+	// HTTP-POST-SimpleSign signature whose SigAlg is. The check applies to
+	// every signature the ServiceProvider verifies, including those checked
+	// by SignatureVerifier, and the error matches ErrUnsupported (and, for
+	// XML signatures, ErrInvalidSignature). If false, SHA-1 is accepted.
+	RejectSHA1Signatures bool
+
 	// ReplayCache, if set, records the ID of the assertion each accepted
 	// response is accepted for, and refuses a response whose assertion it
 	// has already recorded. Without it, a captured assertion is accepted
 	// again until it expires, and an IdP-initiated one has no request ID to
 	// tie it to a single use. If nil, assertions are not checked for replay.
+	//
+	// It also records the ID of each LogoutRequest that ValidateLogoutRequest
+	// (and the other LogoutRequest validation methods) accept, and refuses a
+	// LogoutRequest whose ID it has already recorded. These IDs are recorded
+	// under the key "LogoutRequest:" followed by the ID, so they cannot
+	// collide with assertion IDs, which are recorded as is and, being
+	// xs:ID values, contain no colon.
 	ReplayCache AssertionReplayCache
 }
 
@@ -300,6 +337,10 @@ type ServiceProvider struct {
 // is accepted only once. Implementations must be safe for concurrent use, and
 // should be shared by every server that accepts assertions for the same
 // service provider.
+//
+// ServiceProvider.ReplayCache and IdentityProvider.ReplayCache also record
+// the IDs of accepted LogoutRequests in it, under keys prefixed with
+// "LogoutRequest:".
 type AssertionReplayCache interface {
 	// Consume atomically records assertionID as used until expiresAt, the
 	// last moment the ServiceProvider would accept the assertion; after
@@ -403,7 +444,14 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 					},
 				},
 			},
+			// In order of preference. AES-GCM comes first: CBC has no
+			// integrity check, so a sender of modified ciphertexts can learn
+			// about the plaintext from whether it decrypts to valid XML. CBC
+			// stays listed for IdPs that cannot use GCM.
 			EncryptionMethods: []EncryptionMethod{
+				{Algorithm: xmlenc.AES256GCM.Algorithm()},
+				{Algorithm: xmlenc.AES128GCM.Algorithm()},
+				{Algorithm: xmlenc.AES192GCM.Algorithm()},
 				{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
 				{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
 				{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
@@ -488,9 +536,12 @@ func (sp *ServiceProvider) MakeRedirectAuthenticationRequest(relayState string) 
 
 // Redirect returns a URL suitable for using the redirect binding with the request.
 // If sp.SignatureMethod is set, the query string is signed as described in
-// saml-bindings-2.0-os section 3.4.4.1.
+// saml-bindings-2.0-os section 3.4.4.1. Any enveloped XML signature is omitted,
+// as required by the HTTP-Redirect binding.
 func (r *AuthnRequest) Redirect(relayState string, sp *ServiceProvider) (*url.URL, error) {
-	encoded, err := deflateAndEncode(r.Element())
+	unsigned := *r
+	unsigned.Signature = nil
+	encoded, err := deflateAndEncode(unsigned.Element())
 	if err != nil {
 		return nil, err
 	}
@@ -1159,10 +1210,12 @@ func (sp *ServiceProvider) parseArtifactResponse(artifactResponseEl *etree.Eleme
 	}
 
 	var signatureRequirement signatureRequirement
-	sigErr := sp.validateSignature(artifactResponseEl)
+	signedArtifactResponseEl, sigErr := sp.validatedElement(artifactResponseEl)
 	switch sigErr {
 	case nil:
 		signatureRequirement = signatureNotRequired
+		// Take the Response from what the signature covers.
+		artifactResponseEl = signedArtifactResponseEl
 	case errSignatureElementNotPresent:
 		signatureRequirement = signatureRequired
 	default:
@@ -1190,7 +1243,8 @@ func (sp *ServiceProvider) parseArtifactResponse(artifactResponseEl *etree.Eleme
 //
 // This function handles decrypting the message, verifying the digital
 // signature on the assertion, and verifying that the specified conditions
-// and properties are met.
+// and properties are met. A Subject identified by an EncryptedID is given
+// the NameID it holds, decrypted like an EncryptedAssertion.
 //
 // If the function fails it will return an InvalidResponseError whose
 // properties are useful in describing which part of the parsing process
@@ -1276,10 +1330,14 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 	var responseHasSignature bool
 	switch signatureRequirement {
 	case signatureRequired:
-		responseSignatureErr = sp.validateSignature(responseEl)
+		var signed *etree.Element
+		signed, responseSignatureErr = sp.validatedElement(responseEl)
 		switch responseSignatureErr {
 		case nil:
 			responseHasSignature = true
+			// Read the Response, and the assertions in it, from what the
+			// signature covers.
+			responseEl = signed
 		case errSignatureElementNotPresent:
 			// the Response is not signed, so each Assertion must be (checked below)
 		default:
@@ -1466,7 +1524,12 @@ func (sp *ServiceProvider) decryptElement(encryptedEl *etree.Element) (*etree.El
 	if err != nil {
 		return nil, err
 	}
+	return parsePlaintext(plaintextEl)
+}
 
+// parsePlaintext parses the plaintext of a decrypted element and returns its
+// root element.
+func parsePlaintext(plaintextEl []byte) (*etree.Element, error) {
 	// Whether a modified ciphertext decrypts to well-formed XML is what the
 	// attacks on XML Encryption in CBC mode (Jager and Somorovsky, 2011)
 	// learn from, so plaintext that is not a well-formed element gets the
@@ -1503,15 +1566,20 @@ func decryptWithKey(decryptionKey interface{}, encryptedEl, encryptedDataEl *etr
 
 func (sp *ServiceProvider) parseAssertion(assertionEl *etree.Element, possibleRequestIDs []string, now time.Time, signatureRequirement signatureRequirement) (*Assertion, error) {
 	if signatureRequirement == signatureRequired {
-		sigErr := sp.validateSignature(assertionEl)
+		signed, sigErr := sp.validatedElement(assertionEl)
 		if sigErr != nil {
 			return nil, sigErr
 		}
+		// Read the assertion from what the signature covers.
+		assertionEl = signed
 	}
 
 	// parse the assertion we just validated
 	var assertion Assertion
 	if err := unmarshalElement(assertionEl, &assertion); err != nil {
+		return nil, err
+	}
+	if err := sp.decryptEncryptedIDs(assertion.Subject); err != nil {
 		return nil, err
 	}
 
@@ -1520,6 +1588,60 @@ func (sp *ServiceProvider) parseAssertion(assertionEl *etree.Element, possibleRe
 	}
 
 	return &assertion, nil
+}
+
+// decryptEncryptedIDs sets the NameID of subject, and of each of its
+// SubjectConfirmations, that is given as an EncryptedID (saml-core §2.2.4)
+// to the NameID the EncryptedID holds, decrypted with the SP's decryption
+// keys. The EncryptedID is then cleared, since NameID and EncryptedID are
+// alternatives and an assertion that is marshalled again must hold only one.
+// It is called after the assertion's signature, which covers the
+// EncryptedID, has been checked.
+func (sp *ServiceProvider) decryptEncryptedIDs(subject *Subject) error {
+	if subject == nil {
+		return nil
+	}
+	nameID, err := sp.decryptEncryptedID(subject.NameID, subject.EncryptedID)
+	if err != nil {
+		return fmt.Errorf("assertion Subject: %w", err)
+	}
+	subject.NameID = nameID
+	subject.EncryptedID = nil
+	for i := range subject.SubjectConfirmations {
+		subjectConfirmation := &subject.SubjectConfirmations[i]
+		nameID, err := sp.decryptEncryptedID(subjectConfirmation.NameID, subjectConfirmation.EncryptedID)
+		if err != nil {
+			return fmt.Errorf("assertion SubjectConfirmation: %w", err)
+		}
+		subjectConfirmation.NameID = nameID
+		subjectConfirmation.EncryptedID = nil
+	}
+	return nil
+}
+
+// decryptEncryptedID returns the NameID held by encryptedID, or nameID if
+// encryptedID is nil. The two are alternatives, so an element with both is
+// rejected, and an EncryptedID must hold a saml:NameID; other identifiers
+// (such as a BaseID) are not supported.
+func (sp *ServiceProvider) decryptEncryptedID(nameID *NameID, encryptedID *etree.Element) (*NameID, error) {
+	if encryptedID == nil {
+		return nameID, nil
+	}
+	if nameID != nil {
+		return nil, classify(errors.New("has both a NameID and an EncryptedID"), ErrMalformedMessage)
+	}
+	nameIDEl, err := sp.decryptElement(encryptedID)
+	if err != nil {
+		return nil, classify(fmt.Errorf("failed to decrypt EncryptedID: %w", err), ErrDecryptionFailed)
+	}
+	if nameIDEl.Tag != "NameID" || nameIDEl.NamespaceURI() != "urn:oasis:names:tc:SAML:2.0:assertion" {
+		return nil, classify(fmt.Errorf("EncryptedID holds a %s element, only saml:NameID is supported", nameIDEl.FullTag()), ErrUnsupported)
+	}
+	var decrypted NameID
+	if err := unmarshalElement(nameIDEl, &decrypted); err != nil {
+		return nil, err
+	}
+	return &decrypted, nil
 }
 
 // validateAssertion checks that the conditions specified in assertion match
@@ -1697,6 +1819,38 @@ func (sp *ServiceProvider) consumeAssertion(assertion *Assertion) error {
 	return nil
 }
 
+// logoutRequestReplayKeyPrefix is prepended to the ID of a LogoutRequest to
+// form the key it is recorded under in an AssertionReplayCache. It keeps
+// LogoutRequest IDs apart from assertion IDs, which are recorded as is and,
+// being xs:ID values, cannot contain a colon.
+const logoutRequestReplayKeyPrefix = "LogoutRequest:"
+
+// logoutRequestAcceptableUntil returns the last moment a LogoutRequest is
+// accepted: IssueInstant plus MaxIssueDelay or, if it is earlier, the
+// NotOnOrAfter time allowing for clock skew.
+func logoutRequestAcceptableUntil(req *LogoutRequest) time.Time {
+	deadline := req.IssueInstant.Add(MaxIssueDelay)
+	if req.NotOnOrAfter != nil {
+		deadline = earliest(deadline, skewedDeadline(*req.NotOnOrAfter))
+	}
+	return deadline
+}
+
+// consumeLogoutRequest records the ID of req in cache, if cache is not nil,
+// refusing req if it was recorded before. req must already be validated.
+func consumeLogoutRequest(cache AssertionReplayCache, req *LogoutRequest) error {
+	if cache == nil {
+		return nil
+	}
+	if req.ID == "" {
+		return classify(errors.New("logout request has no ID to check for replay"), ErrMissingElement)
+	}
+	if err := cache.Consume(logoutRequestReplayKeyPrefix+req.ID, logoutRequestAcceptableUntil(req)); err != nil {
+		return fmt.Errorf("logout request %q: %w", req.ID, err)
+	}
+	return nil
+}
+
 // bearerSubjectConfirmationMethod is the SubjectConfirmation Method of the
 // SAML web browser SSO profile.
 const bearerSubjectConfirmationMethod = "urn:oasis:names:tc:SAML:2.0:cm:bearer" //nolint:gosec // not a credential
@@ -1802,17 +1956,10 @@ func stripKeyInfoWithoutCertificate(el *etree.Element) bool {
 	return true
 }
 
-// validateWithEachCert validates the signature on el against each of certs
+// validatedWithEachCert validates the signature on el against each of certs
 // in turn, with a copy of base that trusts only that certificate, and
-// returns nil as soon as one of them verifies it. Otherwise it returns the
-// error from the last certificate tried.
-func validateWithEachCert(base *dsig.ValidationContext, certs []*x509.Certificate, el *etree.Element) error {
-	_, err := validatedWithEachCert(base, certs, el)
-	return err
-}
-
-// validatedWithEachCert is validateWithEachCert, returning the signed
-// element as dsig's Validate does.
+// returns the signed element as dsig's Validate does for the first that
+// succeeds, or the last error.
 func validatedWithEachCert(base *dsig.ValidationContext, certs []*x509.Certificate, el *etree.Element) (*etree.Element, error) {
 	var err error
 	for _, cert := range certs {
@@ -1835,52 +1982,49 @@ func validatedWithEachCert(base *dsig.ValidationContext, certs []*x509.Certifica
 // ErrInvalidSignature with errors.Is, and also ErrUntrustedCertificate or
 // ErrCertificateNotValidNow when that is why validation failed.
 func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
-	return sp.validateSignatureWith(el, sp.getIDPSigningCerts)
+	_, err := sp.verifySignedElement(el, sp.getIDPSigningCerts)
+	return err
 }
 
-// validateSignatureWith is validateSignature, trusting the certificates
+// validatedElement is validateSignature, returning on success the element
+// to read the message from: what the signature covers, parsed from the
+// canonical bytes that were digested, with el's Signature put back. Data
+// el holds that the signature does not cover (such as a namespace
+// declaration exclusive canonicalization leaves out) is not in it. If a
+// SignatureVerifier that does not implement SignedElementVerifier checked
+// the signature, it returns el.
+func (sp *ServiceProvider) validatedElement(el *etree.Element) (*etree.Element, error) {
+	return sp.verifySignedElement(el, sp.getIDPSigningCerts)
+}
+
+// verifySignedElement is validatedElement, trusting the certificates
 // metadataCerts returns when the IdP's certificates come from its metadata
-// (that is, when neither IDPCertificate nor IDPCertificateFingerprint is set).
-// Its errors are classified as validateSignature's are.
-func (sp *ServiceProvider) validateSignatureWith(el *etree.Element, metadataCerts func() ([]*x509.Certificate, error)) error {
-	err := sp.validateSignatureUnclassified(el, metadataCerts)
+// (that is, when neither IDPCertificate nor IDPCertificateFingerprint is
+// set). Its errors are classified as validateSignature's are.
+func (sp *ServiceProvider) verifySignedElement(el *etree.Element, metadataCerts func() ([]*x509.Certificate, error)) (*etree.Element, error) {
+	signed, err := sp.validateSignatureUnclassified(el, metadataCerts)
 	if err == nil || err == errSignatureElementNotPresent {
-		return err
+		return signed, err
 	}
-	return classify(err, ErrInvalidSignature)
+	return nil, classify(err, ErrInvalidSignature)
 }
 
-func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element, metadataCerts func() ([]*x509.Certificate, error)) error {
+func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element, metadataCerts func() ([]*x509.Certificate, error)) (*etree.Element, error) {
+	original := el
 	sigEl, err := findChild(el, "http://www.w3.org/2000/09/xmldsig#", "Signature")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if sigEl == nil {
-		return errSignatureElementNotPresent
+		return nil, errSignatureElementNotPresent
+	}
+	if err := checkXMLSignatureNotSHA1(sp.RejectSHA1Signatures, sigEl); err != nil {
+		return nil, fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
 	}
 
-	var certs []*x509.Certificate
-	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate == nil {
-		certs, err = metadataCerts()
-		if err != nil {
-			return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
-		}
-	}
-	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint != nil && sp.IDPCertificateFingerprintAlgorithm != nil && sp.IDPCertificate == nil {
-		certs, err = sp.getCertBasedOnFingerprint(el)
-		if err != nil {
-			return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
-		}
-	}
-	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate != nil {
-		cert, err := parseCert(*sp.IDPCertificate)
-		if err != nil {
-			return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
-		}
-		certs = append(certs, cert)
-	}
-	if len(certs) == 0 {
-		return fmt.Errorf("cannot validate signature on %s: saml config not set up properly, specify either idp metadata url, fingerprints or actual certificate", el.Tag)
+	certs, err := sp.signatureVerificationCerts(el, metadataCerts)
+	if err != nil {
+		return nil, err
 	}
 
 	if sp.IgnoreCertificateExpiry {
@@ -1911,20 +2055,41 @@ func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element, meta
 	tag := el.Tag
 	ctx, err := unboundedParentContext(el)
 	if err != nil {
-		return fmt.Errorf("cannot validate signature on %s: %w", tag, err)
+		return nil, fmt.Errorf("cannot validate signature on %s: %w", tag, err)
 	}
 	ctx, err = ctx.SubContext(el)
 	if err != nil {
-		return fmt.Errorf("cannot validate signature on %s: %w", tag, err)
+		return nil, fmt.Errorf("cannot validate signature on %s: %w", tag, err)
 	}
+	// A copy of the Signature, carrying the declarations it needs, to put
+	// back into the verified element (which does not include it).
+	sigCtx, err := ctx.SubContext(sigEl)
+	if err != nil {
+		return nil, fmt.Errorf("cannot validate signature on %s: %w", tag, err)
+	}
+	sigCopy, err := etreeutils.NSDetatch(sigCtx, sigEl)
+	if err != nil {
+		return nil, fmt.Errorf("cannot validate signature on %s: %w", tag, err)
+	}
+	sigIndex := sigEl.Index()
 	// NSDetatch returns a nil element with its error, so the tag is kept above.
 	el, err = etreeutils.NSDetatch(ctx, el)
 	if err != nil {
-		return fmt.Errorf("cannot validate signature on %s: %w", tag, err)
+		return nil, fmt.Errorf("cannot validate signature on %s: %w", tag, err)
 	}
 
 	if sp.SignatureVerifier != nil {
-		return sp.SignatureVerifier.VerifySignature(validationContext, el)
+		if v, ok := sp.SignatureVerifier.(SignedElementVerifier); ok {
+			signed, err := v.VerifySignedElement(validationContext, el)
+			if err != nil {
+				return nil, err
+			}
+			return withSignature(signed, sigCopy, sigIndex), nil
+		}
+		if err := sp.SignatureVerifier.VerifySignature(validationContext, el); err != nil {
+			return nil, err
+		}
+		return original, nil
 	}
 
 	// Without a certificate in KeyInfo, dsig can only pick the signing
@@ -1937,21 +2102,66 @@ func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element, meta
 	// certificate, so this accepts exactly what one of them would accept
 	// had the IdP named it in KeyInfo.
 	if noCertInKeyInfo && len(certs) > 1 {
-		if err := validateWithEachCert(validationContext, certs, el); err != nil {
-			return fmt.Errorf("cannot validate signature on %s: %w", tag, err)
+		signed, err := validatedWithEachCert(validationContext, certs, el)
+		if err != nil {
+			return nil, fmt.Errorf("cannot validate signature on %s: %w", tag, err)
 		}
-		return nil
+		return withSignature(signed, sigCopy, sigIndex), nil
 	}
 
-	if _, err := validationContext.Validate(el); err != nil {
+	signed, err := validationContext.Validate(el)
+	if err != nil {
 		err = fmt.Errorf("cannot validate signature on %s: %w", tag, err)
 		if kind := classifyCertificate(el, certs, validationContext.Clock.Now()); kind != nil {
-			return classify(err, kind)
+			return nil, classify(err, kind)
 		}
-		return err
+		return nil, err
 	}
 
-	return nil
+	return withSignature(signed, sigCopy, sigIndex), nil
+}
+
+// withSignature puts sig back into signed, the element a signature
+// validation returned (which the enveloped-signature transform removed it
+// from), at index or after the last child if signed has fewer, so that the
+// message read from signed still has its Signature.
+func withSignature(signed, sig *etree.Element, index int) *etree.Element {
+	if index > len(signed.Child) {
+		index = len(signed.Child)
+	}
+	signed.InsertChildAt(index, sig)
+	return signed
+}
+
+// signatureVerificationCerts returns the IdP certificates that a signature on
+// el may be made with: from the IdP metadata, the configured fingerprint or
+// the configured certificate.
+func (sp *ServiceProvider) signatureVerificationCerts(el *etree.Element, metadataCerts func() ([]*x509.Certificate, error)) ([]*x509.Certificate, error) {
+	var certs []*x509.Certificate
+	var err error
+	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate == nil {
+		certs, err = metadataCerts()
+		if err != nil {
+			return nil, fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
+		}
+	}
+	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint != nil && sp.IDPCertificateFingerprintAlgorithm != nil && sp.IDPCertificate == nil {
+		certs, err = sp.getCertBasedOnFingerprint(el)
+		if err != nil {
+			return nil, fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
+		}
+	}
+	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate != nil {
+		cert, err := parseCert(*sp.IDPCertificate)
+		if err != nil {
+			return nil, fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
+		}
+		certs = append(certs, cert)
+	}
+	if len(certs) == 0 {
+		return nil, fmt.Errorf("cannot validate signature on %s: saml config not set up properly, specify either idp metadata url, fingerprints or actual certificate", el.Tag)
+	}
+	return certs, nil
 }
 
 // SignLogoutRequest adds the `Signature` element to the `LogoutRequest`.
@@ -1985,10 +2195,27 @@ type LogoutRequestOption func(*LogoutRequest)
 func WithSessionIndex(sessionIndex string) LogoutRequestOption {
 	return func(req *LogoutRequest) {
 		if sessionIndex == "" {
-			req.SessionIndex = nil
+			req.setSessionIndexes(nil)
 			return
 		}
-		req.SessionIndex = &SessionIndex{Value: sessionIndex}
+		req.setSessionIndexes([]SessionIndex{{Value: sessionIndex}})
+	}
+}
+
+// WithSessionIndexes sets the SessionIndex elements of a LogoutRequest, one
+// for each non-empty value, in order (saml-core-2.0-os section 3.7.1). Use it
+// instead of WithSessionIndex to end several sessions of the principal at the
+// IDP with one request. Without any non-empty value, the request carries no
+// SessionIndex.
+func WithSessionIndexes(sessionIndexes ...string) LogoutRequestOption {
+	return func(req *LogoutRequest) {
+		indexes := make([]SessionIndex, 0, len(sessionIndexes))
+		for _, sessionIndex := range sessionIndexes {
+			if sessionIndex != "" {
+				indexes = append(indexes, SessionIndex{Value: sessionIndex})
+			}
+		}
+		req.setSessionIndexes(indexes)
 	}
 }
 
@@ -2062,13 +2289,16 @@ func (sp *ServiceProvider) RedirectLogoutRequestURL(req *LogoutRequest, relaySta
 
 // Redirect returns a URL suitable for using the redirect binding with the
 // request. The URL carries no query string signature; use
-// ServiceProvider.MakeRedirectLogoutRequest to produce a signed one.
+// ServiceProvider.MakeRedirectLogoutRequest to produce a signed one. Any
+// enveloped XML signature is omitted, as required by the HTTP-Redirect binding.
 func (r *LogoutRequest) Redirect(relayState string) *url.URL {
 	w := &bytes.Buffer{}
 	w1 := base64.NewEncoder(base64.StdEncoding, w)
 	w2, _ := flate.NewWriter(w1, 9)
 	doc := etree.NewDocument()
-	doc.SetRoot(r.Element())
+	unsigned := *r
+	unsigned.Signature = nil
+	doc.SetRoot(unsigned.Element())
 	if _, err := doc.WriteTo(w2); err != nil {
 		panic(err)
 	}
@@ -2199,13 +2429,16 @@ func (sp *ServiceProvider) MakeRedirectLogoutResponse(logoutRequestID, relayStat
 
 // Redirect returns a URL suitable for using the redirect binding with the
 // LogoutResponse. The URL carries no query string signature; use
-// ServiceProvider.MakeRedirectLogoutResponse to produce a signed one.
+// ServiceProvider.MakeRedirectLogoutResponse to produce a signed one. Any
+// enveloped XML signature is omitted, as required by the HTTP-Redirect binding.
 func (r *LogoutResponse) Redirect(relayState string) *url.URL {
 	w := &bytes.Buffer{}
 	w1 := base64.NewEncoder(base64.StdEncoding, w)
 	w2, _ := flate.NewWriter(w1, 9)
 	doc := etree.NewDocument()
-	doc.SetRoot(r.Element())
+	unsigned := *r
+	unsigned.Signature = nil
+	doc.SetRoot(unsigned.Element())
 	if _, err := doc.WriteTo(w2); err != nil {
 		panic(err)
 	}
@@ -2310,7 +2543,11 @@ func (sp *ServiceProvider) nameIDFormat() string {
 		// To maintain library back-compat, use "transient" if unset.
 		nameIDFormat = string(TransientNameIDFormat)
 	case UnspecifiedNameIDFormat:
-		// Spec defines an empty value as "unspecified" so don't set one.
+		// Spec defines an empty value as "unspecified" so don't set one,
+		// unless the IdP needs it spelled out.
+		if sp.SendUnspecifiedNameIDFormat {
+			nameIDFormat = string(UnspecifiedNameIDFormat)
+		}
 	default:
 		nameIDFormat = string(sp.AuthnNameIDFormat)
 	}
@@ -2451,13 +2688,14 @@ func (sp *ServiceProvider) parseLogoutResponseForm(postFormData string) (*Logout
 		return nil, retErr
 	}
 
-	if err := sp.validateSignature(doc.Root()); err != nil {
+	signed, err := sp.validatedElement(doc.Root())
+	if err != nil {
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
 
 	var resp LogoutResponse
-	if err := unmarshalElement(doc.Root(), &resp); err != nil {
+	if err := unmarshalElement(signed, &resp); err != nil {
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
@@ -2535,6 +2773,10 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 // ValidateLogoutRequest validates a LogoutRequest sent by the IDP (IDP
 // initiated single logout), using the HTTP-Redirect, HTTP-POST or
 // HTTP-POST-SimpleSign binding. It returns the request only if it is valid.
+// If the request identifies the principal with an EncryptedID rather than a
+// NameID, it is decrypted with the service provider's decryption keys (as
+// for encrypted assertions) and NameID is set to the result. All the
+// request's SessionIndexes are returned by its AllSessionIndexes method.
 //
 // The request must be signed by the IDP. With the HTTP-Redirect binding that
 // is either a query string signature (SigAlg and Signature parameters) or an
@@ -2542,6 +2784,9 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 // signature. A posted form that carries a SigAlg or Signature field is an
 // HTTP-POST-SimpleSign message and must have a valid SimpleSign signature
 // (an enveloped XML signature it also carries must be valid too).
+//
+// If ReplayCache is set, the request's ID is recorded in it once the request
+// is otherwise valid, and a request whose ID is already recorded is refused.
 //
 // The caller should end the session identified by the returned request's
 // NameID (and SessionIndex, if present) and then answer the IDP, for example
@@ -2609,12 +2854,13 @@ func (sp *ServiceProvider) ValidateLogoutRequestForm(postFormData string) (*Logo
 		return nil, retErr
 	}
 
-	if err := sp.validateSignature(doc.Root()); err != nil {
+	signed, err := sp.validatedElement(doc.Root())
+	if err != nil {
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
 
-	return sp.unmarshalAndValidateLogoutRequest(doc.Root(), retErr)
+	return sp.unmarshalAndValidateLogoutRequest(signed, retErr)
 }
 
 // validateLogoutRequestRedirectQuery validates a LogoutRequest received via
@@ -2642,6 +2888,10 @@ func (sp *ServiceProvider) unmarshalAndValidateLogoutRequest(root *etree.Element
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
+	if err := consumeLogoutRequest(sp.ReplayCache, &req); err != nil {
+		retErr.PrivateErr = err
+		return nil, retErr
+	}
 	return &req, nil
 }
 
@@ -2664,11 +2914,7 @@ func (sp *ServiceProvider) validateLogoutRequest(req *LogoutRequest) error {
 	if req.Issuer == nil || req.Issuer.Value != sp.IDPMetadata.EntityID {
 		return classify(fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
 	}
-	if req.NameID == nil || req.NameID.Value == "" {
-		return classify(errors.New("request does not contain a NameID"), ErrMissingElement)
-	}
-
-	return nil
+	return resolveLogoutRequestNameID(req, sp.decryptElement)
 }
 
 func firstSet(a, b string) string {

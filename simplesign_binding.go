@@ -174,6 +174,9 @@ func parseSimpleSignRequest(req *http.Request, messageParam string) (*simpleSign
 // control is ignored: the signature is only ever checked against trusted
 // certificates.
 func (sp *ServiceProvider) verifySimpleSignSignature(m *simpleSignMessage) error {
+	if err := checkSigAlgNotSHA1(sp.RejectSHA1Signatures, m.SigAlg); err != nil {
+		return err
+	}
 	algorithm, signature, err := decodeDetachedSignature(m.SigAlg, m.Signature, simpleSignBase64)
 	if err != nil {
 		return err
@@ -253,11 +256,17 @@ func (sp *ServiceProvider) readSimpleSignMessage(m *simpleSignMessage, retErr *I
 		return nil, retErr
 	}
 
-	if err := sp.validateSignature(doc.Root()); err != nil && !errors.Is(err, errSignatureElementNotPresent) {
+	signed, err := sp.validatedElement(doc.Root())
+	switch {
+	case err == nil:
+		// Read the message from what the enveloped signature covers.
+		return signed, nil
+	case errors.Is(err, errSignatureElementNotPresent):
+		return doc.Root(), nil
+	default:
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
-	return doc.Root(), nil
 }
 
 // The auto-submitting forms for the HTTP-POST-SimpleSign binding. Their

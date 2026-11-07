@@ -218,11 +218,11 @@ func TestIDPServeSLORoundTrip(t *testing.T) {
 			func(t *testing.T, test *sloTest, req *LogoutRequest) *http.Request {
 				return test.signedPostRequest(t, req)
 			}, http.StatusFound},
-		{"redirect request with enveloped signature", []string{HTTPRedirectBinding},
+		{"redirect drops enveloped signature and is rejected", []string{HTTPRedirectBinding},
 			func(t *testing.T, test *sloTest, req *LogoutRequest) *http.Request {
 				assert.NilError(t, test.SP.SignLogoutRequest(req))
 				return httptest.NewRequest(http.MethodGet, req.Redirect(sloTestRelayState).String(), nil)
-			}, http.StatusFound},
+			}, http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			test := newSLOTest(t)
@@ -231,6 +231,11 @@ func TestIDPServeSLORoundTrip(t *testing.T) {
 
 			w := test.serve(tc.makeRequest(t, test, req))
 			assert.Equal(t, tc.wantCode, w.Code, w.Body.String())
+			if tc.wantCode == http.StatusBadRequest {
+				assert.Equal(t, 0, test.sessions.calls)
+				assert.Assert(t, is.Len(test.sessions.invalidated, 0))
+				return
+			}
 
 			// The SP accepts the response: it is signed by the IdP, addressed
 			// to the SP's SLO URL, and answers the request.

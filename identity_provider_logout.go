@@ -25,8 +25,8 @@ import (
 //
 // InvalidateSession must terminate the IdP session (or sessions) that req
 // refers to. Use req.MatchesSession to decide whether a Session is one of
-// them: its NameID must be the request's NameID and, if the request carries a
-// SessionIndex, its Index must be that SessionIndex. Ending no session, for
+// them: its NameID must be the request's NameID and, if the request carries
+// SessionIndexes, its Index must be one of them. Ending no session, for
 // example because the user is already logged out, is not an error.
 //
 // InvalidateSession may set headers on w, for example to expire a session
@@ -117,12 +117,21 @@ func NewIdpLogoutRequest(idp *IdentityProvider, r *http.Request) (*IdpLogoutRequ
 // ServiceProviderMetadata and SLOEndpoint. It returns a non-nil error if the
 // request is not valid.
 //
+// The principal is identified by a NameID or an EncryptedID. An EncryptedID
+// is decrypted with the IdP's Key, the private key of the certificate the IdP
+// metadata publishes for encryption, which must be an *rsa.PrivateKey;
+// Request.NameID is then set to the NameID it holds.
+//
 // The request must be signed: with the HTTP-Redirect binding, with a query
 // string signature (SigAlg and Signature) or an enveloped XML signature;
 // with the HTTP-POST binding, with an enveloped XML signature. The signature
 // is checked against the signing certificates in the service provider's
 // metadata (saml-profiles-2.0-os §4.4.4.1). As is usual for keys distributed
 // in metadata, the certificates' validity periods are not checked.
+//
+// If IdentityProvider.ReplayCache is set, the request's ID is recorded in it
+// once the request is otherwise valid, and a request whose ID is already
+// recorded is refused, so Validate accepts a given request only once.
 func (req *IdpLogoutRequest) Validate() error {
 	root, err := req.parseRequest()
 	if err != nil {
@@ -147,8 +156,20 @@ func (req *IdpLogoutRequest) Validate() error {
 	}
 	req.ServiceProviderMetadata = serviceProvider
 
-	if err := req.verifySignature(root); err != nil {
+	signed, err := req.verifySignature(root)
+	if err != nil {
 		return fmt.Errorf("cannot verify signature of logout request from %s: %w", serviceProviderID, err)
+	}
+	if signed != nil {
+		// Read the request again from what the enveloped signature covers.
+		// The issuer it names must be the one whose keys verified it.
+		req.Request = LogoutRequest{}
+		if err := unmarshalElement(signed, &req.Request); err != nil {
+			return fmt.Errorf("cannot parse logout request: %w", err)
+		}
+		if req.Request.Issuer == nil || req.Request.Issuer.Value != serviceProviderID {
+			return fmt.Errorf("signed logout request is not from %s", serviceProviderID)
+		}
 	}
 	if err := req.validateFields(); err != nil {
 		return err
@@ -157,6 +178,12 @@ func (req *IdpLogoutRequest) Validate() error {
 	req.SLOEndpoint, err = req.sloEndpoint()
 	if err != nil {
 		return fmt.Errorf("cannot respond to logout request from %s: %w", serviceProviderID, err)
+	}
+
+	// Record the request last, so that only a request that is otherwise
+	// valid uses up its ID.
+	if err := consumeLogoutRequest(req.IDP.ReplayCache, &req.Request); err != nil {
+		return fmt.Errorf("cannot accept logout request from %s: %w", serviceProviderID, err)
 	}
 	return nil
 }
@@ -188,20 +215,30 @@ func (req *IdpLogoutRequest) parseRequest() (*etree.Element, error) {
 
 // verifySignature checks the signature of the request against the signing
 // certificates of the service provider that issued it.
-func (req *IdpLogoutRequest) verifySignature(root *etree.Element) error {
+//
+// For an enveloped XML signature it returns what the signature covers (see
+// verifiedEnvelopedElement); for a query string signature, which covers the
+// whole message, it returns nil.
+func (req *IdpLogoutRequest) verifySignature(root *etree.Element) (*etree.Element, error) {
 	// spSigningCerts (shared with the HTTP-POST-SimpleSign binding) fails if
 	// the metadata has no signing certificate.
 	certs, err := spSigningCerts(req.ServiceProviderMetadata)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if req.redirectMessage != nil && req.redirectMessage.SignedContent != nil {
-		return checkRedirectBindingSignature(req.redirectMessage, func() ([]*x509.Certificate, error) {
+		if err := checkSigAlgNotSHA1(req.IDP.RejectSHA1Signatures, req.redirectMessage.SigAlg); err != nil {
+			return nil, err
+		}
+		return nil, checkRedirectBindingSignature(req.redirectMessage, func() ([]*x509.Certificate, error) {
 			return certs, nil
 		}, req.Now, true)
 	}
-	return verifyEnvelopedSignature(root, certs, Clock)
+	if err := checkEnvelopedSignatureNotSHA1(req.IDP.RejectSHA1Signatures, root); err != nil {
+		return nil, err
+	}
+	return verifiedEnvelopedElement(root, certs, Clock)
 }
 
 // validateFields checks the fields of the (authenticated) request.
@@ -230,8 +267,8 @@ func (req *IdpLogoutRequest) validateFields() error {
 	if r.NotOnOrAfter != nil && !req.Now.Before(r.NotOnOrAfter.Add(MaxClockSkew)) {
 		return fmt.Errorf("logout request expired at %s", r.NotOnOrAfter)
 	}
-	if r.NameID == nil || r.NameID.Value == "" {
-		return errors.New("logout request does not contain a NameID")
+	if err := resolveLogoutRequestNameID(r, req.IDP.decryptElement); err != nil {
+		return fmt.Errorf("logout request: %w", err)
 	}
 	return nil
 }
@@ -276,8 +313,8 @@ func logoutResponseLocation(endpoint Endpoint) string {
 
 // MatchesSession reports whether session is one that the logout request asks
 // to terminate: its NameID must be the request's NameID and, if the request
-// carries a SessionIndex, its Index must be equal to it. Call it only after
-// Validate has succeeded.
+// carries any SessionIndex, its Index must be equal to one of them
+// (saml-core-2.0-os §3.7.1). Call it only after Validate has succeeded.
 func (req *IdpLogoutRequest) MatchesSession(session *Session) bool {
 	if session == nil || req.Request.NameID == nil || req.Request.NameID.Value == "" {
 		return false
@@ -285,10 +322,16 @@ func (req *IdpLogoutRequest) MatchesSession(session *Session) bool {
 	if session.NameID != req.Request.NameID.Value {
 		return false
 	}
-	if req.Request.SessionIndex != nil && req.Request.SessionIndex.Value != session.Index {
-		return false
+	sessionIndexes := req.Request.AllSessionIndexes()
+	if len(sessionIndexes) == 0 {
+		return true
 	}
-	return true
+	for _, sessionIndex := range sessionIndexes {
+		if sessionIndex.Value == session.Index {
+			return true
+		}
+	}
+	return false
 }
 
 // MakeLogoutResponse returns an unsigned LogoutResponse to the request with
@@ -393,11 +436,14 @@ func (req *IdpLogoutRequest) writePostLogoutResponse(w http.ResponseWriter, resp
 
 // ServeSLO handles SAML LogoutRequests sent by service providers
 // (SP-initiated single logout, saml-profiles-2.0-os §4.4) with the
-// HTTP-Redirect or the HTTP-POST binding. Serve it at LogoutURL.
+// HTTP-Redirect or the HTTP-POST binding. Serve it at LogoutURL. It also
+// handles the LogoutResponses of service providers to the LogoutRequests the
+// IdP sends while it propagates a logout (see StartLogout and
+// SessionParticipantTracker).
 //
 // The request must be signed by the service provider and is validated as
-// described in IdpLogoutRequest.Validate. An invalid request is answered with
-// HTTP 400 and no LogoutResponse.
+// described in IdpLogoutRequest.Validate. An invalid request, or one already
+// recorded in ReplayCache, is answered with HTTP 400 and no LogoutResponse.
 //
 // For a valid request, the IdP session is terminated by calling
 // InvalidateSession if the SessionProvider implements SessionInvalidator.
@@ -407,9 +453,21 @@ func (req *IdpLogoutRequest) writePostLogoutResponse(w http.ResponseWriter, resp
 // StatusResponder if InvalidateSession failed or the SessionProvider does not
 // implement SessionInvalidator, as the IdP session was then not ended.
 //
-// ServeSLO does not propagate the logout to other service providers the user
-// is logged in to.
+// If the SessionProvider implements SessionParticipantTracker and the session
+// was terminated, the logout is first propagated to the other service
+// providers the ended sessions were used for (saml-profiles-2.0-os
+// §4.4.4.2): the browser is sent to each with a LogoutRequest, one at a
+// time, and only then is the LogoutResponse sent to the service provider
+// that asked. If some of them could not be logged out, its status is
+// StatusSuccess with the second-level status StatusPartialLogout
+// (saml-core-2.0-os §3.7.3.2). Without a SessionParticipantTracker, the
+// logout is not propagated.
 func (idp *IdentityProvider) ServeSLO(w http.ResponseWriter, r *http.Request) {
+	if isLogoutResponseMessage(r) {
+		idp.serveLogoutResponse(w, r)
+		return
+	}
+
 	req, err := NewIdpLogoutRequest(idp, r)
 	if err != nil {
 		idp.Logger.Printf("failed to parse logout request: %s", err)
@@ -420,6 +478,13 @@ func (idp *IdentityProvider) ServeSLO(w http.ResponseWriter, r *http.Request) {
 		idp.Logger.Printf("failed to validate logout request: %s", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
+	}
+
+	// Find the other participants before the sessions are ended.
+	participants, tracked, participantsErr := idp.sessionParticipants(r, req.MatchesSession, req.ServiceProviderMetadata.EntityID)
+	if participantsErr != nil {
+		idp.Logger.Printf("cannot find the session participants to propagate logout request %s from %s to: %s",
+			req.Request.ID, req.ServiceProviderMetadata.EntityID, participantsErr)
 	}
 
 	statusCode := StatusSuccess
@@ -435,24 +500,26 @@ func (idp *IdentityProvider) ServeSLO(w http.ResponseWriter, r *http.Request) {
 		statusCode = StatusResponder
 	}
 
-	if err := req.WriteLogoutResponse(w, req.MakeLogoutResponse(statusCode)); err != nil {
+	if statusCode == StatusSuccess && len(participants) > 0 {
+		idp.propagateLogout(w, r, req, participants)
+		return
+	}
+	resp := req.MakeLogoutResponse(statusCode)
+	if statusCode == StatusSuccess && tracked && participantsErr != nil {
+		resp = makeLogoutResponseWithStatus(req, true)
+	}
+	if err := req.WriteLogoutResponse(w, resp); err != nil {
 		idp.Logger.Printf("failed to write logout response: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 }
 
-// verifyEnvelopedSignature checks the enveloped XML signature of el, which
-// must be a direct child of el and reference it, against certs. The
-// certificates' validity periods are ignored. clock may be nil.
-func verifyEnvelopedSignature(el *etree.Element, certs []*x509.Certificate, clock *dsig.Clock) error {
-	_, err := verifiedEnvelopedElement(el, certs, clock)
-	return err
-}
-
-// verifiedEnvelopedElement is verifyEnvelopedSignature, returning what the
-// signature covers: el without its Signature, parsed from the canonical
-// bytes that were digested.
+// verifiedEnvelopedElement checks the enveloped XML signature of el, which
+// must be a direct child of el and reference it, against certs, and returns
+// what the signature covers: el without its Signature, parsed from the
+// canonical bytes that were digested. The certificates' validity periods are
+// ignored. clock may be nil.
 func verifiedEnvelopedElement(el *etree.Element, certs []*x509.Certificate, clock *dsig.Clock) (*etree.Element, error) {
 	sigEl, err := findChild(el, "http://www.w3.org/2000/09/xmldsig#", "Signature")
 	if err != nil {

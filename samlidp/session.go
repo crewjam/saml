@@ -233,7 +233,7 @@ func (s *Server) HandleGetSession(w http.ResponseWriter, r *http.Request) {
 // HandleDeleteSession handles the `DELETE /sessions/:id` request. It invalidates the
 // specified session.
 func (s *Server) HandleDeleteSession(w http.ResponseWriter, r *http.Request) {
-	err := s.Store.Delete(fmt.Sprintf("/sessions/%s", r.PathValue("id")))
+	err := s.deleteSession(r.PathValue("id"))
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return

@@ -256,7 +256,8 @@ func (sp *ServiceProvider) postSOAP(ctx context.Context, location string, envelo
 // AttributeAuthorityDescriptor, or, if it publishes none, those of its
 // IDPSSODescriptor (or IDPCertificate or IDPCertificateFingerprint, if set).
 //
-// EncryptedAssertions are decrypted as for login. Every assertion must be
+// EncryptedAssertions, and EncryptedIDs in place of a Subject NameID, are
+// decrypted as for login. Every assertion must be
 // valid, or the response is rejected:
 //
 //   - its Issuer is the IdP entity ID, and it was recently issued;
@@ -307,9 +308,13 @@ func (sp *ServiceProvider) parseAttributeQueryResponse(soapResponseXML []byte, q
 		return nil, err
 	}
 
-	responseSigned, err := sp.attributeQuerySignature(responseEl)
+	signedResponseEl, responseSigned, err := sp.attributeQuerySignature(responseEl)
 	if err != nil {
 		return nil, err
+	}
+	if responseSigned {
+		// Read the Response, and its assertions, from what the signature covers.
+		responseEl = signedResponseEl
 	}
 
 	var response Response
@@ -393,16 +398,18 @@ func (sp *ServiceProvider) attributeAuthoritySigningCerts() ([]*x509.Certificate
 }
 
 // attributeQuerySignature reports whether el carries a valid signature by
-// the attribute authority. A signature that is present but not valid is an
+// the attribute authority and, if so, returns what the signature covers
+// (see validatedElement). A signature that is present but not valid is an
 // error.
-func (sp *ServiceProvider) attributeQuerySignature(el *etree.Element) (bool, error) {
-	switch err := sp.validateSignatureWith(el, sp.attributeAuthoritySigningCerts); err {
+func (sp *ServiceProvider) attributeQuerySignature(el *etree.Element) (*etree.Element, bool, error) {
+	signed, err := sp.verifySignedElement(el, sp.attributeAuthoritySigningCerts)
+	switch err {
 	case nil:
-		return true, nil
+		return signed, true, nil
 	case errSignatureElementNotPresent:
-		return false, nil
+		return nil, false, nil
 	default:
-		return false, err
+		return nil, false, err
 	}
 }
 
@@ -454,6 +461,20 @@ func (sp *ServiceProvider) attributeQueryAssertions(responseEl *etree.Element, q
 	if err != nil {
 		return nil, err
 	}
+	plaintextAssertionEls, err := findChildren(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "Assertion")
+	if err != nil {
+		return nil, err
+	}
+
+	// As for a login response: each assertion of an unsigned Response is
+	// decrypted and its signature checked, which costs more per assertion,
+	// so an unsigned Response may carry only one. Count before decrypting.
+	if signatureRequired {
+		if n := len(encryptedAssertionEls) + len(plaintextAssertionEls); n > 1 {
+			return nil, classify(fmt.Errorf("an unsigned Response must contain exactly one Assertion or EncryptedAssertion, not %d", n), ErrMalformedMessage)
+		}
+	}
+
 	for _, encryptedAssertionEl := range encryptedAssertionEls {
 		assertionEl, err := sp.decryptElement(encryptedAssertionEl)
 		if err != nil {
@@ -465,10 +486,6 @@ func (sp *ServiceProvider) attributeQueryAssertions(responseEl *etree.Element, q
 		assertionEls = append(assertionEls, assertionEl)
 	}
 
-	plaintextAssertionEls, err := findChildren(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "Assertion")
-	if err != nil {
-		return nil, err
-	}
 	assertionEls = append(assertionEls, plaintextAssertionEls...)
 
 	assertions := make([]Assertion, 0, len(assertionEls))
@@ -484,8 +501,11 @@ func (sp *ServiceProvider) attributeQueryAssertions(responseEl *etree.Element, q
 
 func (sp *ServiceProvider) attributeQueryAssertion(assertionEl *etree.Element, query *AttributeQuery, now time.Time, signatureRequired bool) (*Assertion, error) {
 	if signatureRequired {
-		switch err := sp.validateSignatureWith(assertionEl, sp.attributeAuthoritySigningCerts); err {
+		signed, err := sp.verifySignedElement(assertionEl, sp.attributeAuthoritySigningCerts)
+		switch err {
 		case nil:
+			// Read the assertion from what the signature covers.
+			assertionEl = signed
 		case errSignatureElementNotPresent:
 			return nil, errors.New("neither the Response nor its Assertion is signed")
 		default:
@@ -495,6 +515,9 @@ func (sp *ServiceProvider) attributeQueryAssertion(assertionEl *etree.Element, q
 	var assertion Assertion
 	if err := unmarshalElement(assertionEl, &assertion); err != nil {
 		return nil, err
+	}
+	if err := sp.decryptEncryptedIDs(assertion.Subject); err != nil {
+		return nil, fmt.Errorf("assertion %q: %w", assertion.ID, err)
 	}
 	if err := sp.validateAttributeQueryAssertion(&assertion, query, now); err != nil {
 		return nil, fmt.Errorf("assertion %q: %w", assertion.ID, err)

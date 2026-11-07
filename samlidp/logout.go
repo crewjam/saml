@@ -21,8 +21,8 @@ var _ saml.SessionInvalidator = (*Server)(nil)
 //
 //   - the browser's session, named by its session cookie, if it matches the
 //     request. The session cookie is then expired.
-//   - if the request carries a SessionIndex, any stored session with that
-//     index and the request's NameID. This ends the session when the browser
+//   - if the request carries any SessionIndex, any stored session with one
+//     of those indexes and the request's NameID. This ends the session when the browser
 //     did not send the session cookie, for example because the LogoutRequest
 //     arrived in a cross-site POST. The SessionIndex is a random value the
 //     IdP only discloses in the assertions it issues, so a service provider
@@ -35,7 +35,7 @@ func (s *Server) InvalidateSession(w http.ResponseWriter, r *http.Request, req *
 		err := s.Store.Get(sessionKey(cookie.Value), session)
 		switch {
 		case err == nil && req.MatchesSession(session):
-			if err := s.Store.Delete(sessionKey(cookie.Value)); err != nil {
+			if err := s.deleteSession(cookie.Value); err != nil {
 				return err
 			}
 			expireSessionCookie(w, r)
@@ -48,10 +48,20 @@ func (s *Server) InvalidateSession(w http.ResponseWriter, r *http.Request, req *
 		}
 	}
 
-	if req.Request.SessionIndex == nil || req.Request.SessionIndex.Value == "" {
+	if !hasSessionIndex(&req.Request) {
 		return nil
 	}
 	return s.deleteSessionsMatching(req)
+}
+
+// hasSessionIndex reports whether req carries a non-empty SessionIndex.
+func hasSessionIndex(req *saml.LogoutRequest) bool {
+	for _, sessionIndex := range req.AllSessionIndexes() {
+		if sessionIndex.Value != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // deleteSessionsMatching deletes every stored session that req matches.
@@ -71,7 +81,7 @@ func (s *Server) deleteSessionsMatching(req *saml.IdpLogoutRequest) error {
 		if !req.MatchesSession(session) {
 			continue
 		}
-		if err := s.Store.Delete(sessionKey(id)); err != nil {
+		if err := s.deleteSession(id); err != nil {
 			return err
 		}
 	}
