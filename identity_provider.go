@@ -176,6 +176,19 @@ type IdentityProvider struct {
 	ValidDuration           *time.Duration
 	ResponseFormTemplate    *template.Template
 
+	// Clock, if non-nil, is the time source for everything this
+	// IdentityProvider does that depends on the current time: timestamps
+	// on the metadata, assertions, responses and logout messages it issues,
+	// the time checks on the requests and logout messages it receives, the
+	// expiry of its logout state, and certificate validity during signature
+	// validation.
+	//
+	// If nil, the real clock is used (through the deprecated package-level
+	// TimeNow and Clock). Setting this field instead of replacing those
+	// globals allows IdentityProviders with different clocks to be used
+	// concurrently, for example in parallel tests.
+	Clock *dsig.Clock
+
 	// SimpleSignResponseFormTemplate, if set, replaces the default
 	// auto-submitting HTML form used to send responses to ACS endpoints with
 	// the HTTP-POST-SimpleSign binding. It is executed with an
@@ -458,6 +471,24 @@ type IdentityProvider struct {
 	AuthnContextClassStrengths map[string]int
 }
 
+// now returns the current time as seen by this IdentityProvider. idp may be
+// nil, in which case the default clock is used.
+func (idp *IdentityProvider) now() time.Time {
+	if idp == nil {
+		return clockNow(nil)
+	}
+	return clockNow(idp.Clock)
+}
+
+// dsigClock returns the clock to use for signature validation. It may be
+// nil, in which case dsig uses the real clock.
+func (idp *IdentityProvider) dsigClock() *dsig.Clock {
+	if idp == nil {
+		return dsigClockOrDefault(nil)
+	}
+	return dsigClockOrDefault(idp.Clock)
+}
+
 // Metadata returns the metadata structure for this identity provider.
 func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 	certStr := base64.StdEncoding.EncodeToString(idp.Certificate.Raw)
@@ -480,7 +511,7 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 
 	ed := &EntityDescriptor{
 		EntityID:      idp.MetadataURL.String(),
-		ValidUntil:    TimeNow().Add(validDuration),
+		ValidUntil:    idp.now().Add(validDuration),
 		CacheDuration: validDuration,
 		IDPSSODescriptors: []IDPSSODescriptor{
 			{
@@ -818,7 +849,7 @@ func (idp *IdentityProvider) NewIdpInitiatedRequest(r *http.Request, serviceProv
 		IDP:         idp,
 		HTTPRequest: r,
 		RelayState:  relayState,
-		Now:         TimeNow(),
+		Now:         idp.now(),
 	}
 
 	// Resolve the service provider and its ACS endpoint before the
@@ -888,7 +919,7 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 	req := &IdpAuthnRequest{
 		IDP:         idp,
 		HTTPRequest: r,
-		Now:         TimeNow(),
+		Now:         idp.now(),
 	}
 
 	switch r.Method {
@@ -1444,7 +1475,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 
 	req.Assertion = &Assertion{
 		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
-		IssueInstant: TimeNow(),
+		IssueInstant: req.IDP.now(),
 		Version:      "2.0",
 		Issuer: Issuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",

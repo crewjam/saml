@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	dsig "github.com/russellhaering/goxmldsig"
+
 	"github.com/crewjam/saml"
 )
 
@@ -29,9 +31,14 @@ var ErrReplayCacheFull = errors.New("samlsp: replay cache is full")
 // unexpired ID, since dropping one would let that assertion be replayed.
 // A full cache therefore blocks logins until its oldest IDs expire.
 //
-// Expiry is judged by saml.TimeNow, so it is meant for a ServiceProvider that
-// uses the default clock.
+// Expiry is judged by Clock, which should be the Clock of the
+// ServiceProvider that uses the cache.
 type MemoryReplayCache struct {
+	// Clock, if non-nil, is the time source for judging expiry. If nil, the
+	// real clock is used (through the deprecated saml.TimeNow). Set it
+	// before the cache is used.
+	Clock *dsig.Clock
+
 	mu         sync.Mutex
 	maxEntries int
 	entries    map[string]time.Time
@@ -59,7 +66,7 @@ func (c *MemoryReplayCache) Consume(assertionID string, expiresAt time.Time) err
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	now := saml.TimeNow()
+	now := clockNow(c.Clock)
 	if prev, ok := c.entries[assertionID]; ok && !now.After(prev) {
 		return saml.ErrAssertionReplayed
 	}

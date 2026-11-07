@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/crewjam/saml"
+	dsig "github.com/russellhaering/goxmldsig"
 )
 
 // ErrFormTooLarge is returned by MemoryFormReplayStore.SaveForm when the body
@@ -92,6 +92,10 @@ type MemoryFormReplayStore struct {
 	// is saved.
 	Allow func(r *http.Request) bool
 
+	// Clock, if non-nil, is the time source for the expiry of saved forms. If nil, the real
+	// clock is used (through the deprecated saml.TimeNow).
+	Clock *dsig.Clock
+
 	mu    sync.Mutex
 	forms map[string]memoryFormEntry
 }
@@ -137,7 +141,7 @@ func (s *MemoryFormReplayStore) SaveForm(r *http.Request, index string) (bool, e
 		return false, err
 	}
 
-	now := saml.TimeNow()
+	now := clockNow(s.Clock)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.forms == nil {
@@ -169,7 +173,7 @@ func (s *MemoryFormReplayStore) TakeForm(_ *http.Request, index string) (*SavedF
 		return nil, false, nil
 	}
 	delete(s.forms, index)
-	if !saml.TimeNow().Before(entry.expires) {
+	if !clockNow(s.Clock).Before(entry.expires) {
 		return nil, false, nil
 	}
 	return &entry.form, true, nil

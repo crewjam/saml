@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/internal/signerutil"
@@ -38,6 +39,10 @@ type JWTSessionCodec struct {
 	// another attribute's Name, so an attribute can stand in for another.
 	// Set this when attribute values are used for authorization.
 	KeyAttributesByName bool
+
+	// Clock, if non-nil, is the time source for the times of the sessions it issues and for checking their expiry. If nil, the real
+	// clock is used (through the deprecated saml.TimeNow).
+	Clock *dsig.Clock
 }
 
 var _ SessionCodec = JWTSessionCodec{}
@@ -46,7 +51,7 @@ var _ SessionCodec = JWTSessionCodec{}
 //
 // The returned Session is a JWTSessionClaims.
 func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
-	now := saml.TimeNow()
+	now := clockNow(c.Clock)
 	expiresAt := now.Add(c.MaxAge)
 	if end, ok := sessionEnd(assertion); ok {
 		if !now.Before(end) {
@@ -166,7 +171,7 @@ func (c JWTSessionCodec) Decode(signed string) (Session, error) {
 	}
 	parser := jwt.NewParser(
 		jwt.WithValidMethods([]string{c.SigningMethod.Alg()}),
-		jwt.WithTimeFunc(saml.TimeNow),
+		jwt.WithTimeFunc(func() time.Time { return clockNow(c.Clock) }),
 		jwt.WithAudience(c.Audience),
 		jwt.WithIssuer(c.Issuer),
 	)

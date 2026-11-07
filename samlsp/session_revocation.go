@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	dsig "github.com/russellhaering/goxmldsig"
+
 	"github.com/crewjam/saml"
 )
 
@@ -173,7 +175,7 @@ func (c CookieSessionProvider) TerminateSessions(ctx context.Context, req *saml.
 		return fmt.Errorf("%w: the LogoutRequest has no NameID", saml.ErrUnsupported)
 	}
 	nameID := req.NameID.Value
-	now := saml.TimeNow()
+	now := clockNow(c.Clock)
 	expiresAt := now.Add(c.sessionLifetime())
 
 	sessionIndexes := req.AllSessionIndexes()
@@ -269,8 +271,13 @@ var ErrSessionRevocationStoreFull = errors.New("samlsp: session revocation store
 // ErrSessionRevocationStoreFull rather than drop an unexpired one, which
 // would let a revoked session be used again.
 //
-// Expiry is judged by saml.TimeNow.
+// Expiry is judged by Clock.
 type MemorySessionRevocationStore struct {
+	// Clock, if non-nil, is the time source for judging expiry. If nil, the
+	// real clock is used (through the deprecated saml.TimeNow). Set it
+	// before the store is used.
+	Clock *dsig.Clock
+
 	mu         sync.Mutex
 	maxEntries int
 	entries    map[string]sessionRevocation
@@ -303,7 +310,7 @@ func (s *MemorySessionRevocationStore) Revoke(_ context.Context, key string, rev
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	now := saml.TimeNow()
+	now := clockNow(s.Clock)
 	if prev, ok := s.entries[key]; ok && !now.After(prev.expiresAt) {
 		if prev.revokedAt.After(revokedAt) {
 			revokedAt = prev.revokedAt
@@ -337,7 +344,7 @@ func (s *MemorySessionRevocationStore) RevokedAt(_ context.Context, key string) 
 	if !ok {
 		return time.Time{}, nil
 	}
-	if saml.TimeNow().After(entry.expiresAt) {
+	if clockNow(s.Clock).After(entry.expiresAt) {
 		delete(s.entries, key)
 		return time.Time{}, nil
 	}

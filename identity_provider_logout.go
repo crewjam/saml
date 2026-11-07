@@ -95,7 +95,7 @@ func NewIdpLogoutRequest(idp *IdentityProvider, r *http.Request) (*IdpLogoutRequ
 	req := &IdpLogoutRequest{
 		IDP:         idp,
 		HTTPRequest: r,
-		Now:         TimeNow(),
+		Now:         idp.now(),
 	}
 
 	switch {
@@ -271,7 +271,7 @@ func (req *IdpLogoutRequest) verifySignature(root *etree.Element) (*etree.Elemen
 	if err := checkEnvelopedSignatureNotSHA1(req.IDP.RejectSHA1Signatures, root); err != nil {
 		return nil, err
 	}
-	return verifiedEnvelopedElement(root, certs, Clock)
+	return verifiedEnvelopedElement(root, certs, req.IDP.dsigClock())
 }
 
 // validateFields checks the fields of the (authenticated) request.

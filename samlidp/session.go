@@ -16,6 +16,15 @@ import (
 
 var sessionMaxAge = time.Hour
 
+// now returns the current time from the Clock of s.IDP or, if it is nil,
+// from the deprecated saml.TimeNow.
+func (s *Server) now() time.Time {
+	if s.IDP.Clock != nil {
+		return s.IDP.Clock.Now().UTC()
+	}
+	return saml.TimeNow() //nolint:staticcheck // the fallback when no Clock is set
+}
+
 // dummyPasswordHash is compared against the submitted password when the user
 // does not exist (or has no usable password hash), so that every login attempt
 // costs the same bcrypt work. It is a hash of a random value at
@@ -103,12 +112,13 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, req *saml.
 		return nil
 	}
 
+	now := s.now()
 	session := &saml.Session{
 		ID:           base64.StdEncoding.EncodeToString(randomBytes(32)),
 		NameID:       user.Email,
 		NameIDFormat: nameIDFormatForEmail(user.Email),
-		CreateTime:   saml.TimeNow(),
-		ExpireTime:   saml.TimeNow().Add(sessionMaxAge),
+		CreateTime:   now,
+		ExpireTime:   now.Add(sessionMaxAge),
 		Index:        hex.EncodeToString(randomBytes(32)),
 		UserName:     user.Name,
 		// nolint:gocritic // Groups should be a slice here.
@@ -152,7 +162,7 @@ func (s *Server) lookupSession(r *http.Request) (*saml.Session, error) {
 		}
 		return nil, err
 	}
-	if saml.TimeNow().After(session.ExpireTime) {
+	if s.now().After(session.ExpireTime) {
 		return nil, nil
 	}
 	return session, nil
