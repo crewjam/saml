@@ -181,8 +181,8 @@ func next(t *testing.T, w *httptest.ResponseRecorder) *http.Request {
 	}
 }
 
-// serveIdP sends r to the IdP's ServeSLO with the browser's IdP cookies.
-func (pt *propagationTest) serveIdP(r *http.Request) *httptest.ResponseRecorder {
+// serveIDP sends r to the IdP's ServeSLO with the browser's IdP cookies.
+func (pt *propagationTest) serveIDP(r *http.Request) *httptest.ResponseRecorder {
 	for _, c := range pt.cookies {
 		r.AddCookie(c)
 	}
@@ -250,7 +250,7 @@ func (pt *propagationTest) run(t *testing.T, w *httptest.ResponseRecorder) *http
 		if sp == nil || r.URL.Path != sp.SloURL.Path || !hasSAMLRequest(r) {
 			return w
 		}
-		w = pt.serveIdP(pt.spAnswer(t, sp, r))
+		w = pt.serveIDP(pt.spAnswer(t, sp, r))
 	}
 	t.Fatal("logout does not end")
 	return nil
@@ -376,7 +376,7 @@ func TestSPInitiatedLogoutPropagation(t *testing.T) {
 			u, err := initiator.RedirectLogoutRequestURL(logoutRequest, "initiator-relay-state")
 			assert.NilError(t, err)
 
-			w := pt.run(t, pt.serveIdP(httptest.NewRequest(http.MethodGet, u.String(), nil)))
+			w := pt.run(t, pt.serveIDP(httptest.NewRequest(http.MethodGet, u.String(), nil)))
 			assert.Check(t, pt.sessions.ended)
 			assert.Check(t, is.Len(pt.received[initiator.MetadataURL.String()], 0))
 			assert.Check(t, is.Len(pt.received[pt.sps[1].MetadataURL.String()], 1))
@@ -408,7 +408,7 @@ func TestSPInitiatedLogoutOnlyParticipant(t *testing.T) {
 	assert.NilError(t, err)
 
 	// With no other participant, the LogoutResponse is sent at once.
-	w := pt.serveIdP(httptest.NewRequest(http.MethodGet, u.String(), nil))
+	w := pt.serveIDP(httptest.NewRequest(http.MethodGet, u.String(), nil))
 	resp, err := pt.sps[0].ParseLogoutResponse(next(t, w), []string{logoutRequest.ID})
 	assert.NilError(t, err)
 	assert.Check(t, is.Nil(resp.Status.StatusCode.StatusCode))
@@ -423,7 +423,7 @@ func TestSPInitiatedLogoutParticipantLookupFails(t *testing.T) {
 	u, err := pt.sps[0].RedirectLogoutRequestURL(logoutRequest, "")
 	assert.NilError(t, err)
 
-	w := pt.serveIdP(httptest.NewRequest(http.MethodGet, u.String(), nil))
+	w := pt.serveIDP(httptest.NewRequest(http.MethodGet, u.String(), nil))
 	resp, err := pt.sps[0].ParseLogoutResponse(next(t, w), []string{logoutRequest.ID})
 	assert.NilError(t, err)
 	assert.Assert(t, resp.Status.StatusCode.StatusCode != nil)
@@ -501,12 +501,12 @@ func TestIDPRejectsBadLogoutResponses(t *testing.T) {
 			req, err := sp.ValidateLogoutRequest(r)
 			assert.NilError(t, err)
 
-			w = pt.serveIdP(tc.response(t, pt, sp, req))
+			w = pt.serveIDP(tc.response(t, pt, sp, req))
 			assert.Check(t, is.Equal(http.StatusBadRequest, w.Code))
 			assert.Check(t, is.Len(w.Result().Cookies(), 0), "the logout state is unchanged")
 
 			// The genuine answer is still accepted afterwards.
-			w = pt.serveIdP(spLogoutResponse(t, sp, req.ID, StatusSuccess, HTTPRedirectBinding))
+			w = pt.serveIDP(spLogoutResponse(t, sp, req.ID, StatusSuccess, HTTPRedirectBinding))
 			r = next(t, w)
 			assert.Check(t, is.Equal(pt.sps[1].SloURL.Host, r.URL.Host))
 		})
@@ -558,7 +558,7 @@ func TestIDPRejectsLogoutResponseWithoutValidState(t *testing.T) {
 }
 
 func stateCookie(value string) *http.Cookie {
-	return &http.Cookie{Name: logoutStateCookieName, Value: value, Secure: true, HttpOnly: true, SameSite: http.SameSiteNoneMode}
+	return &http.Cookie{Name: logoutStateCookieName, Value: value, Secure: true, HttpOnly: true, SameSite: http.SameSiteNoneMode} //nolint:gosec // test copy of the IdP state cookie, which must be SameSite=None so HTTP-POST LogoutResponses carry it
 }
 
 // Without a SessionParticipantTracker, a LogoutResponse at the IdP is never
