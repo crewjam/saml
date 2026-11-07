@@ -129,7 +129,7 @@ func NewIdpLogoutRequest(idp *IdentityProvider, r *http.Request) (*IdpLogoutRequ
 			return nil, fmt.Errorf("cannot decompress request: %w", err)
 		}
 		req.Binding = HTTPRedirectBinding
-		req.RelayState = r.URL.Query().Get(redirectParamRelayState)
+		req.RelayState = m.RelayState
 		req.redirectMessage = m
 	case r.Method == http.MethodPost:
 		if err := r.ParseForm(); err != nil {
