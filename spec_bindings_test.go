@@ -608,3 +608,76 @@ func TestSpecBinding_3_4_4_1_RedirectMethodsRemoveXMLSignature(t *testing.T) {
 		assert.Check(t, resp.Signature != nil, "caller's response was modified")
 	})
 }
+
+// saml-bindings-2.0-os §3.4.5.1, §3.5.5.1 and §3.2.3.3: an HTTP responder
+// carrying a SAML message SHOULD "Include a Cache-Control header field set
+// to "no-cache, no-store"" and "a Pragma header field set to "no-cache"".
+// The IdP sets both on its Responses and LogoutResponses, with every
+// binding.
+func TestSpecBinding_3_4_5_1_IdPResponsesAreNotCached(t *testing.T) {
+	checkNoCache := func(t *testing.T, h http.Header) {
+		t.Helper()
+		assert.Check(t, is.Equal("no-cache, no-store", h.Get("Cache-Control")))
+		assert.Check(t, is.Equal("no-cache", h.Get("Pragma")))
+	}
+
+	t.Run("Response", func(t *testing.T) {
+		test := NewIdentityProviderTest(t, applyKey)
+		test.IDP.SessionProvider = &mockSessionProvider{GetSessionFunc: func(http.ResponseWriter, *http.Request, *IdpAuthnRequest) *Session {
+			return &Session{ID: "s", NameID: "alice@example.com"}
+		}}
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "https://idp.example.com/services/sp/whoami", nil)
+		test.IDP.ServeIDPInitiated(w, r, test.SP.MetadataURL.String(), "rs")
+		assert.Assert(t, is.Equal(http.StatusOK, w.Code), w.Body.String())
+		assert.Check(t, is.Contains(w.Body.String(), "SAMLResponse"))
+		checkNoCache(t, w.Header())
+	})
+
+	e := spcovSetup(t)
+	idp := &IdentityProvider{
+		Key:         e.idpKey,
+		Certificate: e.idpCert,
+		MetadataURL: mustParseURL(spcovIDPEntityID),
+		LogoutURL:   mustParseURL("https://idp.example.com/slo"),
+	}
+	for _, binding := range []string{HTTPRedirectBinding, HTTPPostBinding, SOAPBinding} {
+		t.Run("LogoutResponse "+binding, func(t *testing.T) {
+			req := &IdpLogoutRequest{
+				IDP:         idp,
+				HTTPRequest: httptest.NewRequest(http.MethodGet, "https://idp.example.com/slo", nil),
+				RelayState:  "rs",
+				Request:     LogoutRequest{ID: "id-lr"},
+				SLOEndpoint: &Endpoint{Binding: binding, Location: "https://sp.example.com/saml/slo"},
+				Now:         spcovNow,
+			}
+			w := httptest.NewRecorder()
+			assert.NilError(t, req.WriteLogoutResponse(w, req.MakeLogoutResponse(StatusSuccess)))
+			checkNoCache(t, w.Header())
+		})
+	}
+}
+
+// saml-bindings-2.0-os §3.2.3 (lines 342-345): the SOAP binding's HTTP
+// transport "requires the use of a SOAPAction header as part of a SOAP HTTP
+// request" (SOAP 1.1 §6.1.1), and §3.2.3.2: requesters SHOULD send
+// "Cache-Control: no-cache, no-store" and "Pragma: no-cache". The SP's
+// ArtifactResolve request carries all three.
+func TestSpecBinding_3_2_3_ArtifactResolveHTTPHeaders(t *testing.T) {
+	e := spcovSetup(t)
+	var header http.Header
+	h := e.artifactHandler(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header = r.Header.Clone()
+		h(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	e.sp.IDPMetadata.IDPSSODescriptors[0].ArtifactResolutionServices[0].Location = srv.URL + "/artifact"
+	e.sp.HTTPClient = srv.Client()
+
+	_, err := e.sp.ParseResponse(spcovArtifactRequest("the-artifact"), []string{spcovRequestID})
+	assert.NilError(t, err)
+	assert.Check(t, is.Equal("http://www.oasis-open.org/committees/security", header.Get("SOAPAction")))
+	assert.Check(t, is.Equal("no-cache, no-store", header.Get("Cache-Control")))
+	assert.Check(t, is.Equal("no-cache", header.Get("Pragma")))
+}

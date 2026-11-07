@@ -263,6 +263,7 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		setNoCacheHeaders(w.Header())
 		w.Header().Add("Location", redirectURL.String())
 		w.WriteHeader(http.StatusFound)
 		return
@@ -304,6 +305,16 @@ func (m *Middleware) scriptNonce(r *http.Request) string {
 	return m.ScriptNonce(r)
 }
 
+// setNoCacheHeaders sets the headers the SAML bindings ask of an HTTP
+// response that carries a SAML message, so that neither the browser nor a
+// proxy keeps a copy: "Include a Cache-Control header field set to
+// "no-cache, no-store". Include a Pragma header field set to "no-cache"."
+// (saml-bindings-2.0-os §3.4.5.1 and §3.5.5.1).
+func setNoCacheHeaders(h http.Header) {
+	h.Set("Cache-Control", "no-cache, no-store")
+	h.Set("Pragma", "no-cache")
+}
+
 // writePostForm writes an HTML page holding form, the auto-submitting form of
 // the HTTP-POST binding whose script has the hash scriptHash.
 func (m *Middleware) writePostForm(w http.ResponseWriter, scriptHash string, form []byte) {
@@ -312,6 +323,7 @@ func (m *Middleware) writePostForm(w http.ResponseWriter, scriptHash string, for
 		"script-src '"+scriptHash+"'; "+
 		"reflected-xss block; referrer no-referrer;")
 	w.Header().Add("Content-type", "text/html")
+	setNoCacheHeaders(w.Header())
 	var buf bytes.Buffer
 	buf.WriteString(`<!DOCTYPE html><html><body>`)
 	buf.Write(form)

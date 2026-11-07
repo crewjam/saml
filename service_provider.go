@@ -1102,7 +1102,11 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 		retErr.PrivateErr = classify(err, ErrArtifactResolution)
 		return nil, retErr
 	}
+	// The SOAP binding over HTTP requires a SOAPAction header
+	// (saml-bindings-2.0-os §3.2.3, SOAP 1.1 §6.1.1).
 	req.Header.Set("Content-Type", "text/xml")
+	req.Header.Set("SOAPAction", soapActionSAML)
+	setNoCacheHeaders(req.Header)
 
 	httpClient := sp.HTTPClient
 	if httpClient == nil {
