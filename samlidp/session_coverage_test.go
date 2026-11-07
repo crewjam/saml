@@ -16,7 +16,7 @@ import (
 	"github.com/crewjam/saml"
 )
 
-const covLoginForm = `<html><p></p><form method="post" action="https://idp.example.com/login">`
+const covLoginForm = `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Log in</title></head><body><p></p><form method="post" action="https://idp.example.com/login">`
 
 func covLoginRequest(body string) *http.Request {
 	r := httptest.NewRequest("POST", "https://idp.example.com/login", strings.NewReader(body))

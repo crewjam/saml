@@ -801,6 +801,23 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 	return req, nil
 }
 
+// isSigned reports whether the request carries a signature: an enveloped
+// ds:Signature element, the SigAlg or Signature query parameter of the
+// HTTP-Redirect binding, or the signature of the HTTP-POST-SimpleSign
+// binding. The signature itself is not checked here.
+func (req *IdpAuthnRequest) isSigned() bool {
+	if req.simpleSign != nil || req.Request.Signature != nil {
+		return true
+	}
+	if req.HTTPRequest != nil && req.HTTPRequest.Method == http.MethodGet && req.HTTPRequest.URL != nil {
+		query := req.HTTPRequest.URL.Query()
+		if query.Has("SigAlg") || query.Has("Signature") {
+			return true
+		}
+	}
+	return false
+}
+
 // Validate checks that the authentication request is valid and assigns
 // the AuthnRequest and Metadata properties. Returns a non-nil error if the
 // request is not valid.
@@ -809,7 +826,10 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 // are not checked. A request sent with the HTTP-POST-SimpleSign binding must
 // carry a valid SimpleSign signature made with a signing certificate from
 // the service provider's metadata (its validity period is not checked), and
-// a Destination equal to SSOURL; it is rejected otherwise.
+// a Destination equal to SSOURL; it is rejected otherwise. Any other request
+// that carries a signature, enveloped or in the SigAlg and Signature query
+// parameters, must also have a Destination equal to SSOURL, as
+// saml-bindings-2.0-os §3.4.5.2 and §3.5.5.2 require of signed messages.
 func (req *IdpAuthnRequest) Validate() error {
 	if err := xmlroundtrip.Validate(req.RequestBuffer); err != nil {
 		return classify(err, ErrMalformedMessage)
@@ -841,13 +861,14 @@ func (req *IdpAuthnRequest) Validate() error {
 	//   then verify that the value matches the location at which the message has
 	//   been received.
 	//
-	// We require the destination be correct either (a) if signing is enabled or
-	// (b) if it was provided.
+	// (and §3.5.5.2 for HTTP-POST). We require the destination be correct
+	// (a) if signing is enabled, (b) if it was provided, or (c) if the
+	// request is signed, even though that signature is not checked.
 	//
 	// A request sent with the HTTP-POST-SimpleSign binding is signed, so it
 	// must carry a Destination (sstc-saml-binding-simplesign-cs-01 §2.4).
 	mustHaveDestination := idpSsoDescriptor.WantAuthnRequestsSigned != nil && *idpSsoDescriptor.WantAuthnRequestsSigned
-	mustHaveDestination = mustHaveDestination || req.Request.Destination != "" || req.simpleSign != nil
+	mustHaveDestination = mustHaveDestination || req.Request.Destination != "" || req.isSigned()
 	if mustHaveDestination {
 		if req.Request.Destination != req.IDP.SSOURL.String() {
 			return classify(fmt.Errorf("expected destination to be %q, not %q", req.IDP.SSOURL.String(), req.Request.Destination), ErrDestinationMismatch)
@@ -1450,7 +1471,10 @@ func (req *IdpAuthnRequest) PostBinding() (IdpAuthnRequestForm, error) {
 	return form, nil
 }
 
-var defaultResponseFormTemplate = template.Must(template.New("saml-post-form").Parse(`<html>` +
+var defaultResponseFormTemplate = template.Must(template.New("saml-post-form").Parse(`` +
+	`<html xmlns="http://www.w3.org/1999/xhtml">` +
+	`<head><title>Continue</title></head>` +
+	`<body>` +
 	`<form method="post" action="{{.URL}}" id="SAMLResponseForm">` +
 	`<input type="hidden" name="SAMLResponse" value="{{.SAMLResponse}}" />` +
 	`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
@@ -1458,6 +1482,7 @@ var defaultResponseFormTemplate = template.Must(template.New("saml-post-form").P
 	`</form>` +
 	`<script>document.getElementById('SAMLSubmitButton').style.visibility='hidden';</script>` +
 	`<script>document.getElementById('SAMLResponseForm').submit();</script>` +
+	`</body>` +
 	`</html>`))
 
 // WriteResponse writes the `Response` to the http.ResponseWriter. If
