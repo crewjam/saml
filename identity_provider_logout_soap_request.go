@@ -104,7 +104,7 @@ func (idp *IdentityProvider) serveSOAPLogoutRequest(w http.ResponseWriter, r *ht
 		return
 	}
 	failed := idp.logoutParticipantsSOAP(r, participants)
-	partial := failed > 0 || (tracked && participantsErr != nil)
+	partial := failed > 0 || idp.participantsUnknown(tracked, participantsErr)
 	idp.writeSOAPLogoutResponse(w, req, makeLogoutResponseWithStatus(req, partial))
 }
 

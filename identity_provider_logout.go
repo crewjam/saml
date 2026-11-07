@@ -521,7 +521,10 @@ func (req *IdpLogoutRequest) writePostLogoutResponse(w http.ResponseWriter, resp
 // LogoutResponse sent to the service provider that asked. If some of them
 // could not be logged out, its status is StatusSuccess with the second-level
 // status StatusPartialLogout (saml-core-2.0-os §3.7.3.2). Without a
-// SessionParticipantTracker, the logout is not propagated.
+// SessionParticipantTracker, the logout is not propagated, and the status is
+// a plain StatusSuccess unless ReportPartialLogoutWithoutTracker is set, in
+// which case it carries StatusPartialLogout, as the other participants could
+// not be contacted.
 //
 // If LogoutBindings includes SOAPBinding, ServeSLO also accepts a
 // LogoutRequest sent server to server with the SOAP binding
@@ -580,7 +583,7 @@ func (idp *IdentityProvider) ServeSLO(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := req.MakeLogoutResponse(statusCode)
-	if statusCode == StatusSuccess && tracked && participantsErr != nil {
+	if statusCode == StatusSuccess && idp.participantsUnknown(tracked, participantsErr) {
 		resp = makeLogoutResponseWithStatus(req, true)
 	}
 	if err := req.WriteLogoutResponse(w, resp); err != nil {

@@ -330,6 +330,19 @@ type IdentityProvider struct {
 	// tests and development setups.
 	AllowInsecureSOAPEndpoints bool
 
+	// ReportPartialLogoutWithoutTracker, if true, makes ServeSLO answer a
+	// LogoutRequest with the second-level status StatusPartialLogout under
+	// StatusSuccess when the SessionProvider does not implement
+	// SessionParticipantTracker. The IdP then cannot know which other
+	// service providers the session was used for, nor contact them, and
+	// saml-core-2.0-os §3.7.3.2 requires a session authority that cannot
+	// contact all the session participants to say so with PartialLogout. If
+	// false, such a logout is answered with a plain StatusSuccess, as
+	// before. It has no effect when the SessionProvider tracks session
+	// participants: the second-level status then reports whether they were
+	// all logged out.
+	ReportPartialLogoutWithoutTracker bool
+
 	// SendErrorResponses makes ServeSSO answer an AuthnRequest that is
 	// expired (ErrExpired) or not SAML 2.0 with a SAML error <Response> sent
 	// to the service provider's assertion consumer service, as saml-core
