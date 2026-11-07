@@ -1288,15 +1288,32 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 		signatureRequirement = signatureNotRequired
 	}
 
+	encryptedAssertionEls, err := findChildren(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "EncryptedAssertion")
+	if err != nil {
+		return nil, err
+	}
+	assertionEls, err := findChildren(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "Assertion")
+	if err != nil {
+		return nil, err
+	}
+
+	// Nothing has authenticated an unsigned Response, so each of its
+	// assertions must be decrypted and its signature checked, which costs
+	// more for each one and more again for each namespace declaration in
+	// scope. A Response carries one assertion in practice (and only the
+	// first is returned), and other SAML libraries refuse an unsigned
+	// Response with more than one, so refuse it before doing any of that.
+	if signatureRequirement == signatureRequired {
+		if n := len(encryptedAssertionEls) + len(assertionEls); n > 1 {
+			return nil, classify(fmt.Errorf("an unsigned Response must contain exactly one Assertion or EncryptedAssertion, not %d", n), ErrMalformedMessage)
+		}
+	}
+
 	var errs []error
 	var assertions []Assertion
 
 	// look for encrypted assertions
 	{
-		encryptedAssertionEls, err := findChildren(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "EncryptedAssertion")
-		if err != nil {
-			return nil, err
-		}
 		for _, encryptedAssertionEl := range encryptedAssertionEls {
 			assertion, err := sp.parseEncryptedAssertion(encryptedAssertionEl, possibleRequestIDs, now, signatureRequirement)
 			if err != nil {
@@ -1309,10 +1326,6 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 
 	// look for plaintext assertions
 	{
-		assertionEls, err := findChildren(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "Assertion")
-		if err != nil {
-			return nil, err
-		}
 		for _, assertionEl := range assertionEls {
 			assertion, err := sp.parseAssertion(assertionEl, possibleRequestIDs, now, signatureRequirement)
 			if err != nil {
