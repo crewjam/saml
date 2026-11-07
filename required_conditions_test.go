@@ -27,6 +27,7 @@ func validAssertion(now time.Time) *Assertion {
 			NotOnOrAfter:         now.Add(time.Minute),
 			AudienceRestrictions: []AudienceRestriction{{Audience: Audience{Value: "https://sp.example.com/metadata"}}},
 		},
+		AuthnStatements: []AuthnStatement{{AuthnInstant: now}},
 	}
 }
 

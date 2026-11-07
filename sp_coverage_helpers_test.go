@@ -131,6 +131,7 @@ func (e *spcovEnv) assertion() *Assertion {
 				{Audience: Audience{Value: e.sp.MetadataURL.String()}},
 			},
 		},
+		AuthnStatements: []AuthnStatement{{AuthnInstant: spcovNow, SessionIndex: "index-1"}},
 	}
 }
 
