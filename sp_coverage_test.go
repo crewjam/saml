@@ -10,7 +10,10 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/xml"
 	"errors"
+	"html"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +22,8 @@ import (
 	"github.com/russellhaering/goxmldsig/etreeutils"
 	"gotest.tools/v3/assert"
 	is "gotest.tools/v3/assert/cmp"
+
+	"github.com/crewjam/saml/testsaml"
 )
 
 func TestSpcovNameIDFormatElement(t *testing.T) {
@@ -402,4 +407,63 @@ func TestSpcovElementToStringAndUnmarshal(t *testing.T) {
 	}
 	bad := spcovParse(t, `<x>nope</x>`)
 	assert.Error(t, unmarshalElement(bad, &n), `strconv.ParseInt: parsing "nope": invalid syntax`)
+}
+
+// TestSpcovLogoutRequestSessionIndex checks that WithSessionIndex puts a
+// SessionIndex element into SP initiated LogoutRequests for every binding,
+// and that it is covered by the enveloped signature.
+func TestSpcovLogoutRequestSessionIndex(t *testing.T) {
+	e := spcovSetup(t)
+
+	// unset by default
+	req, err := e.sp.MakeLogoutRequest("https://idp.example.com/slo", "alice")
+	assert.NilError(t, err)
+	assert.Check(t, is.Nil(req.SessionIndex))
+
+	// an empty value leaves it unset
+	req, err = e.sp.MakeLogoutRequest("https://idp.example.com/slo", "alice", WithSessionIndex(""))
+	assert.NilError(t, err)
+	assert.Check(t, is.Nil(req.SessionIndex))
+
+	// signed request (HTTP-POST binding): SessionIndex is inside the signature
+	e.sp.SignatureMethod = dsig.RSASHA256SignatureMethod
+	validationContext := dsig.NewDefaultValidationContext(&dsig.MemoryX509CertificateStore{
+		Roots: []*x509.Certificate{e.sp.Certificate},
+	})
+	validationContext.IdAttribute = "ID"
+	validationContext.Clock = Clock
+
+	req, err = e.sp.MakeLogoutRequest("https://idp.example.com/slo", "alice", WithSessionIndex("sess-1"))
+	assert.NilError(t, err)
+	assert.Assert(t, req.SessionIndex != nil)
+	assert.Check(t, is.Equal("sess-1", req.SessionIndex.Value))
+	assert.Assert(t, req.Signature != nil)
+	verified, err := validationContext.Validate(spcovParse(t, string(spcovSerialize(t, req.Element()))))
+	assert.NilError(t, err)
+	assert.Check(t, is.Equal("sess-1", verified.FindElement("./SessionIndex").Text()))
+
+	req.SessionIndex.Value = "sess-other"
+	_, err = validationContext.Validate(spcovParse(t, string(spcovSerialize(t, req.Element()))))
+	assert.Error(t, err, "Signature could not be verified")
+
+	form, err := e.sp.MakePostLogoutRequest("alice", "state", WithSessionIndex("sess-2"))
+	assert.NilError(t, err)
+	m := regexp.MustCompile(`name="SAMLRequest" value="([^"]*)"`).FindSubmatch(form)
+	assert.Assert(t, m != nil)
+	decoded, err := base64.StdEncoding.DecodeString(html.UnescapeString(string(m[1])))
+	assert.NilError(t, err)
+	var postReq LogoutRequest
+	assert.NilError(t, xml.Unmarshal(decoded, &postReq))
+	assert.Assert(t, postReq.SessionIndex != nil)
+	assert.Check(t, is.Equal("sess-2", postReq.SessionIndex.Value))
+
+	// HTTP-Redirect binding
+	redirectURL, err := e.sp.MakeRedirectLogoutRequest("alice", "state", WithSessionIndex("sess-3"))
+	assert.NilError(t, err)
+	decoded, err = testsaml.ParseRedirectRequest(redirectURL)
+	assert.NilError(t, err)
+	var redirectReq LogoutRequest
+	assert.NilError(t, xml.Unmarshal(decoded, &redirectReq))
+	assert.Assert(t, redirectReq.SessionIndex != nil)
+	assert.Check(t, is.Equal("sess-3", redirectReq.SessionIndex.Value))
 }

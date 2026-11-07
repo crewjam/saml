@@ -1478,11 +1478,31 @@ func (sp *ServiceProvider) SignLogoutRequest(req *LogoutRequest) error {
 	return nil
 }
 
+// LogoutRequestOption customizes a LogoutRequest produced by
+// MakeLogoutRequest, MakeRedirectLogoutRequest or MakePostLogoutRequest. The
+// option is applied before the request is signed.
+type LogoutRequestOption func(*LogoutRequest)
+
+// WithSessionIndex sets the SessionIndex element of a LogoutRequest, which
+// identifies the session at the IDP to terminate (saml-core-2.0-os section
+// 3.7.1). The value is typically the SessionIndex attribute of the
+// AuthnStatement in the assertion the IDP issued at login. Some IDPs require
+// it to perform single logout. An empty value leaves SessionIndex unset.
+func WithSessionIndex(sessionIndex string) LogoutRequestOption {
+	return func(req *LogoutRequest) {
+		if sessionIndex == "" {
+			req.SessionIndex = nil
+			return
+		}
+		req.SessionIndex = &SessionIndex{Value: sessionIndex}
+	}
+}
+
 // MakeLogoutRequest produces a new LogoutRequest object for idpURL. If
 // sp.SignatureMethod is set, the request carries an enveloped XML signature,
 // which is what the HTTP-POST binding uses.
-func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string) (*LogoutRequest, error) {
-	req := sp.makeUnsignedLogoutRequest(idpURL, nameID)
+func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string, opts ...LogoutRequestOption) (*LogoutRequest, error) {
+	req := sp.makeUnsignedLogoutRequest(idpURL, nameID, opts...)
 	if sp.SignatureMethod != "" {
 		if err := sp.SignLogoutRequest(req); err != nil {
 			return nil, err
@@ -1491,8 +1511,8 @@ func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string) (*LogoutRequ
 	return req, nil
 }
 
-func (sp *ServiceProvider) makeUnsignedLogoutRequest(idpURL, nameID string) *LogoutRequest {
-	return &LogoutRequest{
+func (sp *ServiceProvider) makeUnsignedLogoutRequest(idpURL, nameID string, opts ...LogoutRequestOption) *LogoutRequest {
+	req := &LogoutRequest{
 		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
 		IssueInstant: sp.now(),
 		Version:      "2.0",
@@ -1508,6 +1528,10 @@ func (sp *ServiceProvider) makeUnsignedLogoutRequest(idpURL, nameID string) *Log
 			SPNameQualifier: sp.Metadata().EntityID,
 		},
 	}
+	for _, opt := range opts {
+		opt(req)
+	}
+	return req
 }
 
 // MakeRedirectLogoutRequest creates a SAML LogoutRequest using the
@@ -1518,8 +1542,8 @@ func (sp *ServiceProvider) makeUnsignedLogoutRequest(idpURL, nameID string) *Log
 // signature (SigAlg and Signature parameters) as the binding requires
 // (saml-bindings-2.0-os section 3.4.4.1), rather than with an enveloped XML
 // signature.
-func (sp *ServiceProvider) MakeRedirectLogoutRequest(nameID, relayState string) (*url.URL, error) {
-	req := sp.makeUnsignedLogoutRequest(sp.GetSLOBindingLocation(HTTPRedirectBinding), nameID)
+func (sp *ServiceProvider) MakeRedirectLogoutRequest(nameID, relayState string, opts ...LogoutRequestOption) (*url.URL, error) {
+	req := sp.makeUnsignedLogoutRequest(sp.GetSLOBindingLocation(HTTPRedirectBinding), nameID, opts...)
 	encoded, err := deflateAndEncode(req.Element())
 	if err != nil {
 		return nil, err
@@ -1561,8 +1585,8 @@ func (r *LogoutRequest) Redirect(relayState string) *url.URL {
 // MakePostLogoutRequest creates a SAML authentication request using
 // the HTTP-POST binding. It returns HTML text representing an HTML form that
 // can be sent presented to a browser to initiate the logout process.
-func (sp *ServiceProvider) MakePostLogoutRequest(nameID, relayState string) ([]byte, error) {
-	req, err := sp.MakeLogoutRequest(sp.GetSLOBindingLocation(HTTPPostBinding), nameID)
+func (sp *ServiceProvider) MakePostLogoutRequest(nameID, relayState string, opts ...LogoutRequestOption) ([]byte, error) {
+	req, err := sp.MakeLogoutRequest(sp.GetSLOBindingLocation(HTTPPostBinding), nameID, opts...)
 	if err != nil {
 		return nil, err
 	}
