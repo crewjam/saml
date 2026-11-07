@@ -191,7 +191,7 @@ func TestSPRejectsBadSubjectEncryptedID(t *testing.T) {
 				return eidEncrypt(t, mustParseCertificate(golden.Get(t, "cert_2017.pem")), eidNameIDEl(eidNameID))
 			},
 			kind:    ErrDecryptionFailed,
-			wantErr: "assertion Subject: failed to decrypt EncryptedID",
+			wantErr: "assertion Subject: cannot decrypt EncryptedID",
 		},
 		{
 			name: "holds an Issuer",
@@ -231,7 +231,7 @@ func TestSPRejectsBadSubjectEncryptedID(t *testing.T) {
 				return el
 			},
 			kind:    ErrDecryptionFailed,
-			wantErr: "assertion Subject: failed to decrypt EncryptedID",
+			wantErr: "assertion Subject: cannot decrypt EncryptedID",
 		},
 	}
 	for _, tc := range testCases {
@@ -311,6 +311,6 @@ func TestParseXMLAttributeQueryResponseEncryptedID(t *testing.T) {
 			a.Subject.NameID = nil
 			a.Subject.EncryptedID = eidEncrypt(t, mustParseCertificate(golden.Get(t, "cert_2017.pem")), eidNameIDEl(aqNameID))
 		}}), query)
-		assert.Check(t, is.ErrorContains(spcovPrivateErr(t, err), `assertion "id-assertion": assertion Subject: failed to decrypt EncryptedID`))
+		assert.Check(t, is.ErrorContains(spcovPrivateErr(t, err), `assertion "id-assertion": assertion Subject: cannot decrypt EncryptedID`))
 	})
 }
