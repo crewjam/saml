@@ -18,7 +18,7 @@ func decryptAES128CBC(t *testing.T, key, padded []byte) ([]byte, error) {
 	t.Helper()
 	block, err := aes.NewCipher(key)
 	assert.NilError(t, err)
-	iv := make([]byte, block.BlockSize())
+	iv := make([]byte, block.BlockSize(), block.BlockSize()+len(padded))
 	ciphertext := make([]byte, len(padded))
 	cipher.NewCBCEncrypter(block, iv).CryptBlocks(ciphertext, padded) //nolint:gosec // fixed IV for a deterministic test
 	el := encryptedData(AES128CBC.Algorithm(), 0)
