@@ -126,7 +126,7 @@ func (e RSA) Decrypt(key interface{}, ciphertextEl *etree.Element) ([]byte, erro
 			e.DigestMethod = SHA1
 		} else {
 			hashAlgorithmStr := digestMethodEl.SelectAttrValue("Algorithm", "")
-			digestMethod, ok := digestMethods[hashAlgorithmStr]
+			digestMethod, ok := lookupDigestMethod(hashAlgorithmStr)
 			if !ok {
 				return nil, ErrAlgorithmNotImplemented(hashAlgorithmStr)
 			}
