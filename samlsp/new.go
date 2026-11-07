@@ -44,6 +44,10 @@ type Options struct {
 	EncryptionKey         *rsa.PrivateKey
 	EncryptionCertificate *x509.Certificate
 
+	// DecryptionKeys are further keys that decrypt encrypted assertions, for
+	// key rotation. See saml.ServiceProvider.
+	DecryptionKeys []*rsa.PrivateKey
+
 	// AssertionConsumerServiceBindings specify the bindings advertised for the
 	// AssertionConsumerService endpoint in the SP metadata. If empty, both
 	// HTTP-POST and HTTP-Artifact bindings are advertised. If set, it must
@@ -178,6 +182,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		Intermediates:         opts.Intermediates,
 		EncryptionKey:         opts.EncryptionKey,
 		EncryptionCertificate: opts.EncryptionCertificate,
+		DecryptionKeys:        opts.DecryptionKeys,
 		MetadataURL:           *metadataURL,
 		AcsURL:                *acsURL,
 		SloURL:                *sloURL,
