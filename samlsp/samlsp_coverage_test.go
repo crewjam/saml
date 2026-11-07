@@ -218,6 +218,10 @@ func TestCovDefaultServiceProvider(t *testing.T) {
 
 	sp = DefaultServiceProvider(Options{URL: mustParseURL("https://sp.example.com/"), Key: key, IgnoreCertificateExpiry: true})
 	assert.Check(t, sp.IgnoreCertificateExpiry)
+	assert.Check(t, is.Nil(sp.DecryptionKeys))
+
+	sp = DefaultServiceProvider(Options{URL: mustParseURL("https://sp.example.com/"), Key: key, DecryptionKeys: []*rsa.PrivateKey{key}})
+	assert.Check(t, is.DeepEqual([]*rsa.PrivateKey{key}, sp.DecryptionKeys))
 
 	sp = DefaultServiceProvider(Options{
 		URL:                              mustParseURL("https://sp.example.com/"),
