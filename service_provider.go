@@ -360,7 +360,7 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 						ValidUntil:                 roleValidUntil,
 					},
 					SingleLogoutServices: sloEndpoints,
-					NameIDFormats:        []NameIDFormat{sp.AuthnNameIDFormat},
+					NameIDFormats:        []NameIDFormat{sp.metadataNameIDFormat()},
 				},
 				AuthnRequestsSigned:  &authnRequestsSigned,
 				WantAssertionsSigned: &wantAssertionsSigned,
@@ -1804,6 +1804,18 @@ func (sp *ServiceProvider) nameIDFormat() string {
 		nameIDFormat = string(sp.AuthnNameIDFormat)
 	}
 	return nameIDFormat
+}
+
+// metadataNameIDFormat returns the NameIDFormat advertised in the SP metadata.
+// Unlike the NameIDPolicy in an AuthnRequest, where an omitted Format means
+// "unspecified", a metadata NameIDFormat element must contain a URI, so the
+// effective format is always emitted.
+func (sp *ServiceProvider) metadataNameIDFormat() NameIDFormat {
+	if sp.AuthnNameIDFormat == "" {
+		// Matches the default used by nameIDFormat() for requests.
+		return TransientNameIDFormat
+	}
+	return sp.AuthnNameIDFormat
 }
 
 // ValidateLogoutResponseRequest validates the LogoutResponse content from the

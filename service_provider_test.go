@@ -105,6 +105,27 @@ func TestSPCanSetAuthenticationNameIDFormat(t *testing.T) {
 	assert.Check(t, is.Equal(string(EmailAddressNameIDFormat), *req.NameIDPolicy.Format))
 }
 
+func TestSPMetadataNameIDFormat(t *testing.T) {
+	s := ServiceProvider{
+		MetadataURL: mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+	}
+
+	for _, tc := range []struct {
+		configured NameIDFormat
+		expected   NameIDFormat
+	}{
+		{"", TransientNameIDFormat}, // never emit an empty <NameIDFormat/>
+		{TransientNameIDFormat, TransientNameIDFormat},
+		{UnspecifiedNameIDFormat, UnspecifiedNameIDFormat},
+		{EmailAddressNameIDFormat, EmailAddressNameIDFormat},
+	} {
+		s.AuthnNameIDFormat = tc.configured
+		formats := s.Metadata().SPSSODescriptors[0].NameIDFormats
+		assert.Check(t, is.DeepEqual([]NameIDFormat{tc.expected}, formats))
+	}
+}
+
 func TestSPCanProduceMetadataWithEncryptionCert(t *testing.T) {
 	test := NewServiceProviderTest(t)
 	s := ServiceProvider{
