@@ -89,6 +89,9 @@ func New(identityProvider MetadataFunc, entityID string, opts ...Option) (*Confi
 			return nil, err
 		}
 	}
+	if c.replayState == nil {
+		c.replayState = newMemoryReplayState(c.clock.Now)
+	}
 	if c.signRequests && signatureMethod(c.key) == "" {
 		return nil, errors.New("samlsp: SignAuthnRequests needs an RSA or ECDSA key (see WithKey)")
 	}
@@ -194,11 +197,16 @@ func WithNameIDFormat(format saml.NameIDFormat) Option {
 	return optionFunc(func(c *Config, _ *configOptions) { c.nameIDFormat = format })
 }
 
-// WithReplayState makes ParseResponse refuse an assertion it has already
-// accepted. state records the IDs of accepted assertions until they
-// expire. saml/samlsp.NewMemoryReplayCache returns one for a single
-// process; applications served by several processes need state that the
-// processes share, such as a database table.
+// WithReplayState sets where ParseResponse and ParseLogoutRequest record
+// the IDs of the messages they accept, so that each is accepted only once.
+//
+// By default, a Config records them in memory, which protects one process
+// only: a Response replayed to another process, or after a restart, is
+// accepted. Applications served by several processes need state that the
+// processes share, such as a table with a unique key on the ID. Consume
+// must fail with saml.ErrAssertionReplayed for an ID it has recorded with
+// an expiry that has not passed, and may forget an ID once its expiry has
+// passed. Records need no size limit: see the package documentation.
 func WithReplayState(state saml.AssertionReplayCache) Option {
 	return optionFunc(func(c *Config, _ *configOptions) { c.replayState = state })
 }
