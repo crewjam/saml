@@ -20,6 +20,11 @@ import (
 // the time for every user of the package in the process, so it cannot be
 // done safely by concurrent tests or by programs that need different
 // clocks.
+//
+// TimeNow, Clock and RandReader are process-wide and read without
+// synchronization: replace them only before any ServiceProvider or
+// IdentityProvider is used (for example in TestMain or an init function),
+// never while requests are being handled.
 var TimeNow = func() time.Time { return time.Now().UTC() }
 
 // Clock is assigned to dsig validation contexts if it is not nil,
@@ -50,7 +55,9 @@ func dsigClockOrDefault(clock *dsig.Clock) *dsig.Clock {
 
 // RandReader is the io.Reader that produces cryptographically random
 // bytes when they are need by the library. The default value is
-// rand.Reader, but it can be replaced for testing.
+// rand.Reader, but it can be replaced for testing. See TimeNow for when it
+// may be replaced. Replacing it outside tests weakens every ID and key the
+// library generates.
 var RandReader = rand.Reader
 
 //nolint:unparam // This always receives 20, but we want the option to do more or less if needed.

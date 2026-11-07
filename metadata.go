@@ -157,6 +157,12 @@ type EntityDescriptor struct {
 	// ContactPersons. When metadata is written, a non-nil ContactPerson
 	// replaces the first element of ContactPersons, or is the only contact
 	// person if ContactPersons is empty.
+	//
+	// Because of this, code that parses metadata and then assigns a new
+	// slice to ContactPersons must also set ContactPerson to nil (or to
+	// &ContactPersons[0]). Otherwise ContactPerson still points to the first
+	// contact of the parsed slice, and that contact is written in place of
+	// the first element of the new slice.
 	ContactPerson *ContactPerson `xml:"-"`
 
 	// ContactPersons are the md:ContactPerson elements of the entity.

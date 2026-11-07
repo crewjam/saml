@@ -82,3 +82,21 @@ func TestSubjectConfirmationDataNotBeforeRelaxed(t *testing.T) {
 	assert.NilError(t, err)
 	assert.Check(t, is.Contains(string(out), `NotOnOrAfter="2030-01-01T00:05:00Z"`))
 }
+
+// TestContactPersonsReplacedAfterParsing checks the documented way of
+// replacing ContactPersons of parsed metadata: clearing the deprecated
+// ContactPerson alias makes the new slice authoritative.
+func TestContactPersonsReplacedAfterParsing(t *testing.T) {
+	const in = `<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://sp.example.com/">` +
+		`<ContactPerson contactType="technical"><EmailAddress>mailto:old@example.com</EmailAddress></ContactPerson>` +
+		`</EntityDescriptor>`
+	var ed EntityDescriptor
+	assert.NilError(t, xml.Unmarshal([]byte(in), &ed))
+
+	ed.ContactPersons = []ContactPerson{{ContactType: "support", EmailAddresses: []string{"mailto:new@example.com"}}}
+	ed.ContactPerson = nil
+	out, err := xml.Marshal(ed)
+	assert.NilError(t, err)
+	assert.Check(t, is.Contains(string(out), "mailto:new@example.com"))
+	assert.Check(t, !strings.Contains(string(out), "mailto:old@example.com"), string(out))
+}
