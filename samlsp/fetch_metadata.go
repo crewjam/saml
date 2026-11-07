@@ -3,6 +3,7 @@ package samlsp
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -27,6 +28,10 @@ import (
 // IDPSSODescriptor (nested <EntitiesDescriptor> elements included):
 // ParseMetadata cannot tell which of several IDPs the caller means to
 // trust. Use ParseMetadataByEntityID to pick one out of an aggregate.
+//
+// ParseMetadata does not check a signature on the metadata, so the
+// metadata must come from a source the caller trusts. See
+// ParseSignedMetadata.
 func ParseMetadata(data []byte) (*saml.EntityDescriptor, error) {
 	entity := &saml.EntityDescriptor{}
 
@@ -114,6 +119,30 @@ func countIDPEntities(entities *saml.EntitiesDescriptor) int {
 	return n
 }
 
+// ParseSignedMetadata is ParseMetadata for metadata whose root element must
+// carry a valid enveloped XML signature made with one of certs, the IDP's
+// (or its federation's) metadata signing certificates, obtained from a
+// source the caller trusts. Only the content the signature covers is
+// parsed. See saml.VerifyMetadataSignature.
+func ParseSignedMetadata(data []byte, certs []*x509.Certificate) (*saml.EntityDescriptor, error) {
+	signed, err := saml.VerifyMetadataSignature(data, certs)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMetadata(signed)
+}
+
+// ParseSignedMetadataByEntityID is ParseMetadataByEntityID for metadata
+// whose root element must carry a valid enveloped XML signature made with
+// one of certs. See ParseSignedMetadata.
+func ParseSignedMetadataByEntityID(data []byte, entityID string, certs []*x509.Certificate) (*saml.EntityDescriptor, error) {
+	signed, err := saml.VerifyMetadataSignature(data, certs)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMetadataByEntityID(signed, entityID)
+}
+
 // metadataRootElement returns the name of the root element of data.
 func metadataRootElement(data []byte) (xml.Name, error) {
 	decoder := xml.NewDecoder(bytes.NewReader(data))
@@ -145,6 +174,11 @@ func findEntityByID(entities *saml.EntitiesDescriptor, entityID string) *saml.En
 }
 
 // FetchMetadata returns metadata from an IDP metadata URL.
+//
+// The metadata names the certificates the service provider trusts to sign
+// assertions, so whoever controls the response controls who can log in. It
+// is not authenticated beyond what httpClient does: use an https URL, and
+// prefer FetchSignedMetadata, or metadata kept with the application.
 func FetchMetadata(ctx context.Context, httpClient *http.Client, metadataURL url.URL) (*saml.EntityDescriptor, error) {
 	data, err := fetchMetadataBytes(ctx, httpClient, metadataURL)
 	if err != nil {
@@ -162,6 +196,27 @@ func FetchMetadataByEntityID(ctx context.Context, httpClient *http.Client, metad
 		return nil, err
 	}
 	return ParseMetadataByEntityID(data, entityID)
+}
+
+// FetchSignedMetadata fetches metadata from metadataURL and parses it with
+// ParseSignedMetadata: its root element must carry a valid signature made
+// with one of certs.
+func FetchSignedMetadata(ctx context.Context, httpClient *http.Client, metadataURL url.URL, certs []*x509.Certificate) (*saml.EntityDescriptor, error) {
+	data, err := fetchMetadataBytes(ctx, httpClient, metadataURL)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSignedMetadata(data, certs)
+}
+
+// FetchSignedMetadataByEntityID fetches metadata from metadataURL and parses
+// it with ParseSignedMetadataByEntityID.
+func FetchSignedMetadataByEntityID(ctx context.Context, httpClient *http.Client, metadataURL url.URL, entityID string, certs []*x509.Certificate) (*saml.EntityDescriptor, error) {
+	data, err := fetchMetadataBytes(ctx, httpClient, metadataURL)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSignedMetadataByEntityID(data, entityID, certs)
 }
 
 func fetchMetadataBytes(ctx context.Context, httpClient *http.Client, metadataURL url.URL) ([]byte, error) {

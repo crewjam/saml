@@ -1729,6 +1729,13 @@ func stripKeyInfoWithoutCertificate(el *etree.Element) bool {
 // returns nil as soon as one of them verifies it. Otherwise it returns the
 // error from the last certificate tried.
 func validateWithEachCert(base *dsig.ValidationContext, certs []*x509.Certificate, el *etree.Element) error {
+	_, err := validatedWithEachCert(base, certs, el)
+	return err
+}
+
+// validatedWithEachCert is validateWithEachCert, returning the signed
+// element as dsig's Validate does.
+func validatedWithEachCert(base *dsig.ValidationContext, certs []*x509.Certificate, el *etree.Element) (*etree.Element, error) {
 	var err error
 	for _, cert := range certs {
 		ctx := dsig.NewDefaultValidationContext(&dsig.MemoryX509CertificateStore{
@@ -1736,11 +1743,12 @@ func validateWithEachCert(base *dsig.ValidationContext, certs []*x509.Certificat
 		})
 		ctx.IdAttribute = base.IdAttribute
 		ctx.Clock = base.Clock
-		if _, err = ctx.Validate(el); err == nil {
-			return nil
+		var signed *etree.Element
+		if signed, err = ctx.Validate(el); err == nil {
+			return signed, nil
 		}
 	}
-	return err
+	return nil, err
 }
 
 // validateSignature returns nil iff the Signature embedded in the element is valid
