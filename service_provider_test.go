@@ -105,6 +105,31 @@ func TestSPCanSetAuthenticationNameIDFormat(t *testing.T) {
 	assert.Check(t, is.Equal(string(EmailAddressNameIDFormat), *req.NameIDPolicy.Format))
 }
 
+func TestSPCanSetScoping(t *testing.T) {
+	test := NewServiceProviderTest(t)
+
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+	}
+
+	// no Scoping by default
+	req, err := s.MakeAuthenticationRequest("", HTTPRedirectBinding, HTTPPostBinding)
+	assert.Check(t, err)
+	assert.Check(t, req.Scoping == nil)
+	assert.Check(t, is.Len(req.Element().FindElements("./samlp:Scoping"), 0))
+
+	s.Scoping = &Scoping{IDPList: &IDPList{IDPEntries: []IDPEntry{{ProviderID: "https://idp.example.com"}}}}
+	req, err = s.MakeAuthenticationRequest("", HTTPRedirectBinding, HTTPPostBinding)
+	assert.Check(t, err)
+	assert.Check(t, is.DeepEqual(s.Scoping, req.Scoping))
+	entry := req.Element().FindElement("./samlp:Scoping/samlp:IDPList/samlp:IDPEntry")
+	assert.Assert(t, entry != nil)
+	assert.Check(t, is.Equal("https://idp.example.com", entry.SelectAttrValue("ProviderID", "")))
+}
+
 func TestSPMetadataNameIDFormat(t *testing.T) {
 	s := ServiceProvider{
 		MetadataURL: mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
