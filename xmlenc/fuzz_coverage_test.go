@@ -16,7 +16,6 @@ import (
 
 	"github.com/beevik/etree"
 	"gotest.tools/v3/assert"
-	is "gotest.tools/v3/assert/cmp"
 )
 
 // covFuzzKey is the RSA key the tests decrypt with when calling Fuzz.
@@ -53,15 +52,15 @@ func covTestKeyDocument(t testing.TB, e RSA) []byte {
 }
 
 func TestCovFuzz(t *testing.T) {
-	assert.Check(t, is.Equal(0, Fuzz(covFuzzKey(), []byte("<unclosed"))), "not XML")
-	assert.Check(t, is.Equal(0, Fuzz(covFuzzKey(), []byte(`<?xml version="1.0"?>`))), "no root element")
-	assert.Check(t, is.Equal(0, Fuzz(covFuzzKey(), []byte("<EncryptedData/>"))), "does not decrypt")
+	assert.Check(t, decryptForFuzzing(covFuzzKey(), []byte("<unclosed")) != nil, "not XML")
+	assert.Check(t, decryptForFuzzing(covFuzzKey(), []byte(`<?xml version="1.0"?>`)) != nil, "no root element")
+	assert.Check(t, decryptForFuzzing(covFuzzKey(), []byte("<EncryptedData/>")) != nil, "does not decrypt")
 
 	e := OAEP()
 	e.BlockCipher = AES128CBC
-	assert.Check(t, is.Equal(1, Fuzz(covFuzzKey(), covTestKeyDocument(t, e))), "decrypts")
+	assert.Check(t, decryptForFuzzing(covFuzzKey(), covTestKeyDocument(t, e)) == nil, "decrypts")
 	e.BlockCipher = AES256GCM
-	assert.Check(t, is.Equal(1, Fuzz(covFuzzKey(), covTestKeyDocument(t, e))), "decrypts")
+	assert.Check(t, decryptForFuzzing(covFuzzKey(), covTestKeyDocument(t, e)) == nil, "decrypts")
 }
 
 // covSeeds returns the fuzzing corpus, past crashers and a set of malformed
@@ -114,8 +113,22 @@ func covSeeds(t testing.TB) [][]byte {
 // Malformed input must be refused with an error, never a panic.
 func TestCovFuzzSeedsDoNotPanic(t *testing.T) {
 	for _, seed := range covSeeds(t) {
-		assert.Check(t, is.Equal(0, Fuzz(covFuzzKey(), seed)), "%q", seed)
+		assert.Check(t, decryptForFuzzing(covFuzzKey(), seed) != nil, "%q", seed)
 	}
+}
+
+// decryptForFuzzing parses data as XML and decrypts its root element with
+// key. It is what the fuzz tests exercise.
+func decryptForFuzzing(key *rsa.PrivateKey, data []byte) error {
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(data); err != nil {
+		return err
+	}
+	if doc.Root() == nil {
+		return ErrCannotFindRequiredElement("root element")
+	}
+	_, err := Decrypt(key, doc.Root())
+	return err
 }
 
 // FuzzDecrypt fuzzes Decrypt with hostile documents, seeded with the corpus
