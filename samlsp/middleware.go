@@ -65,6 +65,34 @@ type Middleware struct {
 	// is set as the nonce attribute of the form's <script> element, for
 	// applications whose own Content-Security-Policy allows scripts by nonce.
 	ScriptNonce func(r *http.Request) string
+
+	// FormReplayStore, if set, lets a POST request that starts the auth flow
+	// be posted again once the user has logged in. If it is nil, the
+	// default, the user is redirected to the URI of the request with a GET
+	// request, and the form is lost.
+	//
+	// The form is saved only if the browser says the request comes from a
+	// page on the same origin (by the Sec-Fetch-Site or Origin header), and
+	// only if the FormReplayStore accepts it. After login it is posted back
+	// by an auto-submitting form, which carries the new session cookie.
+	// Enable this only for forms that are safe to submit again, and keep
+	// validating them, CSRF tokens included, as usual.
+	//
+	// Forms are saved under the RelayState returned by the RequestTracker,
+	// which must be unique to each auth flow: a RelayStateFunc that returns
+	// a fixed value must not be used with FormReplayStore.
+	FormReplayStore FormReplayStore
+
+	// LogoutBinding is the binding preferred for sending logout messages to
+	// the IDP (LogoutRequests from HandleStartLogout, and LogoutResponses to
+	// IDP initiated logout): saml.HTTPRedirectBinding,
+	// saml.HTTPPostBinding or saml.HTTPPostSimpleSignBinding. It is used
+	// when the IDP metadata has a SingleLogoutService endpoint for it.
+	// Otherwise, and when it is empty, HTTP-Redirect is used if the IDP
+	// supports it, HTTP-POST otherwise. The HTTP-POST-SimpleSign binding
+	// signs messages with ServiceProvider.Key and SignatureMethod, which
+	// must be set.
+	LogoutBinding string
 }
 
 // ServeHTTP implements http.Handler and serves the SAML-specific HTTP endpoints
@@ -222,6 +250,13 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if m.FormReplayStore != nil && r.Method == http.MethodPost && isSameOriginRequest(r) {
+		if _, err := m.FormReplayStore.SaveForm(r, relayState); err != nil {
+			m.OnError(w, r, err)
+			return
+		}
+	}
+
 	if binding == saml.HTTPRedirectBinding {
 		redirectURL, err := authReq.Redirect(relayState, &m.ServiceProvider)
 		if err != nil {
@@ -253,7 +288,8 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 // The SHA-256 hashes of the auto-submit scripts of the HTTP-POST binding
 // forms, for the Content-Security-Policy of the pages that carry them. The
 // form of an AuthnRequest and of a LogoutRequest share the same script, as
-// does the HTTP-POST-SimpleSign AuthnRequest form.
+// do the HTTP-POST-SimpleSign AuthnRequest and LogoutRequest forms; the
+// HTTP-POST and HTTP-POST-SimpleSign LogoutResponse forms share the other.
 const (
 	postRequestScriptHash  = "sha256-AjPdJSbZmeWHnEc5ykvJFay8FTWeTeRbs9dutfZ0HqE="
 	postResponseScriptHash = "sha256-ae3F9sw3MnGNUqmT+7gdyojm/I6ukOUOr9mHRkJJvCU="
@@ -288,10 +324,11 @@ func (m *Middleware) writePostForm(w http.ResponseWriter, scriptHash string, for
 
 // CreateSessionFromAssertion is invoked by ServeHTTP when we have a new, valid SAML assertion.
 func (m *Middleware) CreateSessionFromAssertion(w http.ResponseWriter, r *http.Request, assertion *saml.Assertion, redirectURI string) {
+	var replay *SavedForm
 	if trackedRequestIndex := r.Form.Get("RelayState"); trackedRequestIndex != "" {
 		trackedRequest, err := m.RequestTracker.GetTrackedRequest(r, trackedRequestIndex)
 		if err != nil {
-			if err == http.ErrNoCookie && m.ServiceProvider.AllowIDPInitiated {
+			if errors.Is(err, http.ErrNoCookie) && m.ServiceProvider.AllowIDPInitiated {
 				// The RelayState of an unsolicited response comes from the
 				// IdP, or from whoever posted the form, so only follow it
 				// to a path on this site.
@@ -309,11 +346,36 @@ func (m *Middleware) CreateSessionFromAssertion(w http.ResponseWriter, r *http.R
 			}
 
 			redirectURI = trackedRequest.URI
+
+			if m.FormReplayStore != nil {
+				saved, ok, err := m.FormReplayStore.TakeForm(r, trackedRequestIndex)
+				if err != nil {
+					m.OnError(w, r, err)
+					return
+				}
+				// Replay the form only to the URI of the tracked request,
+				// whose cookie this browser holds, and only on this site.
+				if ok && saved.URI == trackedRequest.URI && isLocalRedirect(saved.URI) {
+					replay = saved
+				}
+			}
 		}
 	}
 
 	if err := m.Session.CreateSession(w, r, assertion); err != nil {
 		m.OnError(w, r, err)
+		return
+	}
+
+	if replay != nil {
+		form, err := replayForm(replay.URI, replay.Form, m.scriptNonce(r))
+		if err != nil {
+			m.OnError(w, r, err)
+			return
+		}
+		// The page holds the user's form data.
+		w.Header().Set("Cache-Control", "no-store")
+		m.writePostForm(w, replayScriptHash, form)
 		return
 	}
 

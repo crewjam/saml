@@ -22,6 +22,11 @@ import (
 // Note: this is needed because IDP metadata is sometimes wrapped in
 // an <EntitiesDescriptor>, and sometimes the top level element is an
 // <EntityDescriptor>.
+//
+// For an <EntitiesDescriptor> aggregate, it returns the first entity, in
+// document order, that has an IDPSSODescriptor. Nested <EntitiesDescriptor>
+// elements are searched too. Use ParseMetadataByEntityID to pick a specific
+// IDP out of an aggregate.
 func ParseMetadata(data []byte) (*saml.EntityDescriptor, error) {
 	entity := &saml.EntityDescriptor{}
 
@@ -33,17 +38,21 @@ func ParseMetadata(data []byte) (*saml.EntityDescriptor, error) {
 
 	// this comparison is ugly, but it is how the error is generated in encoding/xml
 	if err != nil && err.Error() == "expected element type <EntityDescriptor> but have <EntitiesDescriptor>" {
+		// Unmarshal the whole aggregate first, so that malformed metadata is
+		// rejected wherever the error is.
 		entities := &saml.EntitiesDescriptor{}
 		if err := xml.Unmarshal(data, entities); err != nil {
 			return nil, err
 		}
 
-		for i, e := range entities.EntityDescriptors {
-			if len(e.IDPSSODescriptors) > 0 {
-				return &entities.EntityDescriptors[i], nil
-			}
+		entity, err := firstIDPEntity(data)
+		if err != nil {
+			return nil, err
 		}
-		return nil, errors.New("no entity found with IDPSSODescriptor")
+		if entity == nil {
+			return nil, errors.New("no entity found with IDPSSODescriptor")
+		}
+		return entity, nil
 	}
 	if err != nil {
 		return nil, err
@@ -119,6 +128,56 @@ func findEntityByID(entities *saml.EntitiesDescriptor, entityID string) *saml.En
 		}
 	}
 	return nil
+}
+
+// metadataNamespace is the SAML 2.0 metadata namespace.
+const metadataNamespace = "urn:oasis:names:tc:SAML:2.0:metadata"
+
+// firstIDPEntity returns the first <EntityDescriptor> with an
+// IDPSSODescriptor in the <EntitiesDescriptor> aggregate data, or in any
+// <EntitiesDescriptor> nested in it, in document order. It returns nil if
+// there is none.
+//
+// EntitiesDescriptor keeps nested aggregates and entities in separate
+// slices, which loses their relative order, so data is walked token by
+// token instead.
+func firstIDPEntity(data []byte) (*saml.EntityDescriptor, error) {
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		start, ok := token.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if start.Name.Space != metadataNamespace {
+			if err := decoder.Skip(); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		switch start.Name.Local {
+		case "EntitiesDescriptor":
+			// descend into the aggregate
+		case "EntityDescriptor":
+			entity := &saml.EntityDescriptor{}
+			if err := decoder.DecodeElement(entity, &start); err != nil {
+				return nil, err
+			}
+			if len(entity.IDPSSODescriptors) > 0 {
+				return entity, nil
+			}
+		default:
+			if err := decoder.Skip(); err != nil {
+				return nil, err
+			}
+		}
+	}
 }
 
 // FetchMetadata returns metadata from an IDP metadata URL.
