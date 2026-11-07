@@ -13,6 +13,7 @@ import (
 // requiredConditionsSP, so each test removes exactly one part of it.
 func validAssertion(now time.Time) *Assertion {
 	return &Assertion{
+		Version:      "2.0",
 		IssueInstant: now,
 		Issuer:       Issuer{Value: "https://idp.example.com/"},
 		Subject: &Subject{SubjectConfirmations: []SubjectConfirmation{{

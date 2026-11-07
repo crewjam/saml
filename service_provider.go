@@ -1220,6 +1220,10 @@ func (sp *ServiceProvider) parseArtifactResponse(artifactResponseEl *etree.Eleme
 			retErr.PrivateErr = err
 			return nil, retErr
 		}
+		if err := checkVersion("ArtifactResponse", artifactResponse.Version); err != nil {
+			retErr.PrivateErr = err
+			return nil, retErr
+		}
 		if artifactResponse.InResponseTo != artifactRequestID {
 			retErr.PrivateErr = classify(fmt.Errorf("`InResponseTo` does not match the artifact request ID (expected %s)", artifactRequestID), ErrRequestIDMismatch)
 			return nil, retErr
@@ -1387,6 +1391,9 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 		var response Response
 		if err := unmarshalElement(responseEl, &response); err != nil {
 			return nil, classify(fmt.Errorf("cannot unmarshal response: %w", err), ErrMalformedMessage)
+		}
+		if err := checkVersion("response", response.Version); err != nil {
+			return nil, err
 		}
 
 		// If the response is *not* signed, the Destination may be omitted.
@@ -1643,7 +1650,24 @@ func (sp *ServiceProvider) decryptEncryptedID(nameID *NameID, encryptedID *etree
 // the requirements to accept. If validation fails, it returns an error describing
 // the failure. (The digital signature on the assertion is not checked -- this
 // should be done before calling this function).
+// samlVersion is the only SAML version this package reads and writes.
+const samlVersion = "2.0"
+
+// checkVersion refuses a message or assertion whose Version is not 2.0
+// (saml-core §4.1.2 and §4.1.3.1: a relying party MUST NOT process an
+// assertion, and a responder MUST reject a request, with an unsupported
+// major version). what names the element in the error.
+func checkVersion(what, version string) error {
+	if version != samlVersion {
+		return classify(fmt.Errorf("%s Version %q is not %s", what, version, samlVersion), ErrUnsupported)
+	}
+	return nil
+}
+
 func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleRequestIDs []string, now time.Time) error {
+	if err := checkVersion("assertion", assertion.Version); err != nil {
+		return err
+	}
 	if issueDeadline(assertion).Before(now) {
 		return classify(fmt.Errorf("expired on %s", issueDeadline(assertion)), ErrExpired)
 	}
@@ -2840,6 +2864,9 @@ func (sp *ServiceProvider) validateLogoutResponseRedirectQuery(rawQuery string) 
 
 // validateLogoutResponse validates the LogoutResponse fields. Returns a nil error if the LogoutResponse is valid.
 func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
+	if err := checkVersion("LogoutResponse", resp.Version); err != nil {
+		return err
+	}
 	if resp.Destination != sp.SloURL.String() {
 		return classify(fmt.Errorf("`Destination` does not match SloURL (expected %q)", sp.SloURL.String()), ErrDestinationMismatch)
 	}
@@ -2987,6 +3014,14 @@ func (sp *ServiceProvider) unmarshalAndValidateLogoutRequest(root *etree.Element
 
 // validateLogoutRequest validates the LogoutRequest fields. Returns a nil error if the LogoutRequest is valid.
 func (sp *ServiceProvider) validateLogoutRequest(req *LogoutRequest) error {
+	if err := checkVersion("LogoutRequest", req.Version); err != nil {
+		return err
+	}
+	// The LogoutResponse answers the request by its ID (saml-core §3.2.1:
+	// ID is required, and InResponseTo must match it).
+	if req.ID == "" {
+		return classify(errors.New("LogoutRequest has no ID"), ErrMissingElement)
+	}
 	if req.Destination != sp.SloURL.String() {
 		return classify(fmt.Errorf("`Destination` does not match SloURL (expected %q)", sp.SloURL.String()), ErrDestinationMismatch)
 	}
