@@ -36,7 +36,6 @@ type authnOptions struct {
 	isPassive       bool
 	authnContext    *saml.RequestedAuthnContext
 	acsIndex        *int
-	modify          []func(*saml.AuthnRequest) error
 }
 
 type authnOptionFunc func(*authnOptions)
@@ -89,7 +88,7 @@ func (a AuthnContextOption) applyResponse(o *responseOptions) { o.authnContext =
 // the order given, after the other options have shaped the request. An
 // error from modify is returned by AuthnRequest.
 func WithAuthnRequest(modify func(req *saml.AuthnRequest) error) AuthnOption {
-	return authnOptionFunc(func(o *authnOptions) { o.modify = append(o.modify, modify) })
+	return WithModify(modify)
 }
 
 func modifyRequest(f func(req *saml.AuthnRequest)) AuthnOption {
@@ -196,6 +195,7 @@ func WithResponseBinding(binding string) AuthnOption {
 type MessageOption interface {
 	AuthnOption
 	LogoutOption
+	applyMessage(*messageOptions)
 }
 
 type messageOptions struct {
@@ -203,12 +203,14 @@ type messageOptions struct {
 	custom      Binding
 	scriptNonce string
 	sp          []ServiceProviderOption
+	modify      []func(any) error
 }
 
 type messageOptionFunc func(*messageOptions)
 
-func (f messageOptionFunc) applyAuthn(o *authnOptions)   { f(&o.messageOptions) }
-func (f messageOptionFunc) applyLogout(o *logoutOptions) { f(&o.messageOptions) }
+func (f messageOptionFunc) applyMessage(o *messageOptions) { f(o) }
+func (f messageOptionFunc) applyAuthn(o *authnOptions)     { f(&o.messageOptions) }
+func (f messageOptionFunc) applyLogout(o *logoutOptions)   { f(&o.messageOptions) }
 
 // WithBinding sends the message with binding: saml.HTTPRedirectBinding,
 // saml.HTTPPostBinding or saml.HTTPPostSimpleSignBinding. The
@@ -261,90 +263,45 @@ func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...Au
 	for _, opt := range opts {
 		opt.applyAuthn(&o)
 	}
-	sp, err := c.serviceProvider(ctx, o.sp)
-	if err != nil {
-		return nil, err
-	}
 	switch o.responseBinding {
 	case saml.HTTPPostBinding, saml.HTTPArtifactBinding, saml.HTTPPostSimpleSignBinding:
 	default:
 		return nil, fmt.Errorf("samlsp: unsupported response binding %q", o.responseBinding)
 	}
-
-	binding, location, err := pickBinding(o.messageOptions, sp.GetSSOBindingLocation)
-	if err != nil {
-		return nil, err
-	}
-	if o.forceAuthn {
-		t := true
-		sp.ForceAuthn = &t
-	}
-	if o.authnContext != nil {
-		sp.RequestedAuthnContext = o.authnContext
-	}
-	if o.acsIndex != nil {
-		if !hasACSIndex(sp.Metadata(), *o.acsIndex) {
-			return nil, fmt.Errorf("samlsp: the SP metadata has no AssertionConsumerService with index %d", *o.acsIndex)
-		}
-		sp.AcsIndex = o.acsIndex
-	}
-
-	// Build the request unsigned (the binding argument "" makes no
-	// signature), so that IsPassive can be set before signing.
-	req, err := sp.MakeAuthenticationRequest(location, "", o.responseBinding)
-	if err != nil {
-		return nil, err
-	}
-	if o.isPassive {
-		t := true
-		req.IsPassive = &t
-	}
-	for _, modify := range o.modify {
-		if err := modify(req); err != nil {
-			return nil, err
-		}
-	}
-
-	if o.custom != nil {
-		return o.custom.Encode(ctx, &OutboundMessage{
-			ID: req.ID, Binding: binding, Destination: location, Param: "SAMLRequest",
-			RelayState: relayState, ScriptNonce: o.scriptNonce,
-			element: func() (*etree.Element, error) {
-				if sp.SignatureMethod != "" && req.Signature == nil {
-					if err := sp.SignAuthnRequest(req); err != nil {
-						return nil, err
-					}
+	return c.send(ctx, OutgoingMessage{
+		Service:    SingleSignOnService,
+		Param:      "SAMLRequest",
+		RelayState: relayState,
+		Sign:       c.signRequests,
+		Build: func(sp *saml.ServiceProvider, destination string, modify func(any) error) (*etree.Element, error) {
+			if o.forceAuthn {
+				t := true
+				sp.ForceAuthn = &t
+			}
+			if o.authnContext != nil {
+				sp.RequestedAuthnContext = o.authnContext
+			}
+			if o.acsIndex != nil {
+				if !hasACSIndex(sp.Metadata(), *o.acsIndex) {
+					return nil, fmt.Errorf("samlsp: the SP metadata has no AssertionConsumerService with index %d", *o.acsIndex)
 				}
-				return req.Element(), nil
-			},
-		})
-	}
-
-	m := &Message{ID: req.ID, Binding: binding, Destination: location, RelayState: relayState, scriptHash: requestScriptHash}
-	switch binding {
-	case saml.HTTPRedirectBinding:
-		if m.redirectURL, err = req.Redirect(relayState, sp); err != nil {
-			return nil, err
-		}
-	case saml.HTTPPostBinding:
-		if sp.SignatureMethod != "" {
-			if err := sp.SignAuthnRequest(req); err != nil {
+				sp.AcsIndex = o.acsIndex
+			}
+			// The binding argument "" makes no signature; Send signs.
+			req, err := sp.MakeAuthenticationRequest(destination, "", o.responseBinding)
+			if err != nil {
 				return nil, err
 			}
-		}
-		m.form = req.PostWithNonce(relayState, o.scriptNonce)
-	case saml.HTTPPostSimpleSignBinding:
-		if sp.SignatureMethod == "" {
-			sp.SignatureMethod = sp.LogoutSignatureMethod
-		}
-		if sp.SignatureMethod == "" {
-			return nil, errors.New("samlsp: the HTTP-POST-SimpleSign binding needs an RSA or ECDSA key (see WithKey)")
-		}
-		if m.form, err = req.SimpleSignWithNonce(relayState, o.scriptNonce, sp); err != nil {
-			return nil, err
-		}
-	}
-	return m, nil
+			if o.isPassive {
+				t := true
+				req.IsPassive = &t
+			}
+			if err := modify(req); err != nil {
+				return nil, err
+			}
+			return req.Element(), nil
+		},
+	}, o.messageOptions)
 }
 
 // ResponseOption customizes ParseResponse.
