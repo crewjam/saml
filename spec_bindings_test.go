@@ -555,3 +555,56 @@ func TestSpecBinding_3_4_5_IDPLogoutRedirectStatus(t *testing.T) {
 	assert.Check(t, loc.Query().Get("SAMLResponse") != "")
 	assert.Check(t, loc.Query().Get("Signature") != "")
 }
+
+// HTTP-Redirect, saml-bindings-2.0-os §3.4.4.1 (lines 578-579): "Any
+// signature on the SAML protocol message, including the <ds:Signature> XML
+// element itself, MUST be removed." AuthnRequest.Redirect,
+// LogoutRequest.Redirect and LogoutResponse.Redirect must drop an enveloped
+// signature before deflating, even when called on an already signed message,
+// and must leave the caller's message signed.
+func TestSpecBinding_3_4_4_1_RedirectMethodsRemoveXMLSignature(t *testing.T) {
+	e := spcovSetup(t)
+	e.sp.SignatureMethod = dsig.RSASHA256SignatureMethod
+
+	inflated := func(t *testing.T, u *url.URL, param string) *etree.Element {
+		t.Helper()
+		raw, err := base64.StdEncoding.DecodeString(u.Query().Get(param))
+		assert.NilError(t, err)
+		doc := etree.NewDocument()
+		assert.NilError(t, doc.ReadFromBytes(spcovInflate(t, raw)))
+		return doc.Root()
+	}
+
+	t.Run("AuthnRequest", func(t *testing.T) {
+		// The POST binding makes MakeAuthenticationRequest sign the XML.
+		req, err := e.sp.MakeAuthenticationRequest(e.sp.GetSSOBindingLocation(HTTPRedirectBinding), HTTPPostBinding, HTTPPostBinding)
+		assert.NilError(t, err)
+		assert.Assert(t, req.Signature != nil)
+
+		u, err := req.Redirect("relay", e.sp)
+		assert.NilError(t, err)
+		assert.Check(t, inflated(t, u, "SAMLRequest").FindElement("./Signature") == nil)
+		assert.Check(t, u.Query().Get("Signature") != "", "query string signature still added")
+		assert.Check(t, req.Signature != nil, "caller's request was modified")
+	})
+
+	t.Run("LogoutRequest", func(t *testing.T) {
+		req, err := e.sp.MakeLogoutRequest(e.sp.GetSLOBindingLocation(HTTPRedirectBinding), "alice")
+		assert.NilError(t, err)
+		assert.Assert(t, req.Signature != nil)
+
+		u := req.Redirect("relay")
+		assert.Check(t, inflated(t, u, "SAMLRequest").FindElement("./Signature") == nil)
+		assert.Check(t, req.Signature != nil, "caller's request was modified")
+	})
+
+	t.Run("LogoutResponse", func(t *testing.T) {
+		resp, err := e.sp.MakeLogoutResponse(e.sp.GetSLOBindingLocation(HTTPRedirectBinding), "id-1")
+		assert.NilError(t, err)
+		assert.Assert(t, resp.Signature != nil)
+
+		u := resp.Redirect("relay")
+		assert.Check(t, inflated(t, u, "SAMLResponse").FindElement("./Signature") == nil)
+		assert.Check(t, resp.Signature != nil, "caller's response was modified")
+	})
+}
