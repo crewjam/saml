@@ -178,6 +178,13 @@ type IdentityProvider struct {
 	// When empty it defaults to the transient format for backwards compatibility.
 	NameIDFormats []NameIDFormat
 
+	// MetadataScopes are published in the IdP metadata as Shibboleth
+	// shibmd:Scope extension elements, which tell service providers the
+	// scopes the IdP is authoritative for, i.e. the parts after the "@" in
+	// scoped attribute values such as eduPersonScopedAffiliation. When
+	// empty, no scopes are published.
+	MetadataScopes []ShibbolethScope
+
 	// AssertionEncrypter, if set, encrypts assertions for service providers
 	// that publish an encryption certificate. It is passed the SP's
 	// *x509.Certificate as the key. Use it to select the key transport,
@@ -292,6 +299,12 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 				},
 			},
 		})
+	}
+
+	if len(idp.MetadataScopes) > 0 {
+		ed.IDPSSODescriptors[0].Extensions = &Extensions{
+			ShibbolethScopes: append([]ShibbolethScope(nil), idp.MetadataScopes...),
+		}
 	}
 
 	if idp.LogoutURL.String() != "" {

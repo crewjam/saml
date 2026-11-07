@@ -1,6 +1,7 @@
 package samlsp
 
 import (
+	"errors"
 	"log"
 	"net/http"
 
@@ -12,10 +13,12 @@ import (
 type ErrorFunction func(w http.ResponseWriter, r *http.Request, err error)
 
 // DefaultOnError is the default ErrorFunction implementation. It prints
-// an message via the standard log package and returns a simple text
-// "Forbidden" message to the user.
+// a message via the standard log package and returns a simple text
+// "Forbidden" message to the user. If err is, or wraps, a
+// *saml.InvalidResponseError, its private details are logged.
 func DefaultOnError(w http.ResponseWriter, _ *http.Request, err error) {
-	if parseErr, ok := err.(*saml.InvalidResponseError); ok {
+	var parseErr *saml.InvalidResponseError
+	if errors.As(err, &parseErr) {
 		log.Printf("WARNING: received invalid saml response: %s (now: %s) %s", //nolint:gosec // logging the invalid response is intended
 			parseErr.Response, parseErr.Now, parseErr.PrivateErr)
 	} else {

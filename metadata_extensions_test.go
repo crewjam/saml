@@ -55,14 +55,14 @@ func TestMetadataExtensions(t *testing.T) {
 	assert.Assert(t, is.Len(idp.Extensions.SigningMethods, 1))
 	assert.Check(t, is.Equal(idp.Extensions.SigningMethods[0].Algorithm, "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256"))
 
+	assert.Check(t, is.DeepEqual(idp.Extensions.ShibbolethScopes, []ShibbolethScope{{
+		XMLName: xml.Name{Space: ShibbolethMetadataNamespace, Local: "Scope"},
+		Value:   "example.com",
+	}}))
+
 	// Extension elements without a field of their own are kept, with their
 	// namespaces, attributes, text and children.
 	assert.Check(t, is.DeepEqual(idp.Extensions.Other, []ExtensionElement{
-		{
-			XMLName:  xml.Name{Space: "urn:mace:shibboleth:metadata:1.0", Local: "Scope"},
-			Attrs:    []xml.Attr{{Name: xml.Name{Local: "regexp"}, Value: "false"}},
-			CharData: "example.com",
-		},
 		{
 			XMLName: xml.Name{Space: "urn:oasis:names:tc:SAML:metadata:ui", Local: "UIInfo"},
 			Children: []ExtensionElement{{
