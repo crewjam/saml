@@ -26,9 +26,10 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
-	xrv "github.com/mattermost/xml-roundtrip-validator"
 	dsig "github.com/russellhaering/goxmldsig"
 	"github.com/russellhaering/goxmldsig/etreeutils"
+
+	"github.com/crewjam/saml/internal/xmlroundtrip"
 
 	"github.com/crewjam/saml/internal/signerutil"
 	"github.com/crewjam/saml/logger"
@@ -1092,7 +1093,7 @@ func (sp *ServiceProvider) ParseXMLArtifactResponse(soapResponseXML []byte, poss
 	}
 
 	// ensure that the response XML is well-formed before we parse it
-	if err := xrv.Validate(bytes.NewReader(soapResponseXML)); err != nil {
+	if err := xmlroundtrip.Validate(soapResponseXML); err != nil {
 		retErr.PrivateErr = classify(fmt.Errorf("invalid xml: %w", err), ErrMalformedMessage)
 		return nil, retErr
 	}
@@ -1226,7 +1227,7 @@ func (sp *ServiceProvider) parseXMLResponse(decodedResponseXML []byte, possibleR
 	}
 
 	// ensure that the response XML is well-formed before we parse it
-	if err := xrv.Validate(bytes.NewReader(decodedResponseXML)); err != nil {
+	if err := xmlroundtrip.Validate(decodedResponseXML); err != nil {
 		retErr.PrivateErr = classify(fmt.Errorf("invalid xml: %w", err), ErrMalformedMessage)
 		return nil, retErr
 	}
@@ -1470,7 +1471,7 @@ func (sp *ServiceProvider) decryptElement(encryptedEl *etree.Element) (*etree.El
 	// attacks on XML Encryption in CBC mode (Jager and Somorovsky, 2011)
 	// learn from, so plaintext that is not a well-formed element gets the
 	// same error as a ciphertext with bad padding, without detail.
-	if err := xrv.Validate(bytes.NewReader(plaintextEl)); err != nil {
+	if err := xmlroundtrip.Validate(plaintextEl); err != nil {
 		return nil, xmlenc.ErrDecryptionFailed
 	}
 
@@ -2428,7 +2429,7 @@ func (sp *ServiceProvider) parseLogoutResponseForm(postFormData string) (*Logout
 	retErr.Response = string(rawResponseBuf)
 
 	// TODO(ross): add test case for this (SLO does not have tests right now)
-	if err := xrv.Validate(bytes.NewReader(rawResponseBuf)); err != nil {
+	if err := xmlroundtrip.Validate(rawResponseBuf); err != nil {
 		return nil, classify(fmt.Errorf("response contains invalid XML: %w", err), ErrMalformedMessage)
 	}
 
@@ -2586,7 +2587,7 @@ func (sp *ServiceProvider) ValidateLogoutRequestForm(postFormData string) (*Logo
 	}
 	retErr.Response = string(rawRequestBuf)
 
-	if err := xrv.Validate(bytes.NewReader(rawRequestBuf)); err != nil {
+	if err := xmlroundtrip.Validate(rawRequestBuf); err != nil {
 		return nil, classify(fmt.Errorf("request contains invalid XML: %w", err), ErrMalformedMessage)
 	}
 

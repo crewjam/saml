@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
-	xrv "github.com/mattermost/xml-roundtrip-validator"
 
 	"github.com/crewjam/saml/internal/signerutil"
+	"github.com/crewjam/saml/internal/xmlroundtrip"
 	"github.com/crewjam/saml/logger"
 )
 
@@ -347,7 +347,7 @@ func (sp *ServiceProvider) parseAttributeQueryResponse(soapResponseXML []byte, q
 // returns the samlp:Response that must be the only element of its Body. Each
 // element is matched by its namespace, not just its local name.
 func soapResponseElement(soapResponseXML []byte) (*etree.Element, error) {
-	if err := xrv.Validate(bytes.NewReader(soapResponseXML)); err != nil {
+	if err := xmlroundtrip.Validate(soapResponseXML); err != nil {
 		return nil, fmt.Errorf("invalid xml: %s", err)
 	}
 	doc := etree.NewDocument()
