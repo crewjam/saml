@@ -403,3 +403,56 @@ func TestRequestedAuthnContextDeprecatedSingleClassRef(t *testing.T) {
 		`</samlp:RequestedAuthnContext>`, string(x)))
 	assert.Check(t, is.DeepEqual([]string{"urn:oasis:names:tc:SAML:2.0:ac:classes:Password"}, r.ClassRefs()))
 }
+
+func TestScopingElement(t *testing.T) {
+	proxyCount := 2
+	req := AuthnRequest{Scoping: &Scoping{
+		ProxyCount: &proxyCount,
+		IDPList: &IDPList{
+			IDPEntries: []IDPEntry{
+				{ProviderID: "https://idp1.example.com"},
+				{ProviderID: "https://idp2.example.com", Name: "IDP 2", Loc: "https://idp2.example.com/sso"},
+			},
+			GetComplete: "https://gateway.example.com/idplist",
+		},
+		RequesterIDs: []string{"https://sp.example.com"},
+	}}
+
+	doc := etree.NewDocument()
+	doc.SetRoot(req.Element())
+	x, err := doc.WriteToBytes()
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(`<samlp:AuthnRequest xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="" Version="" IssueInstant="0001-01-01T00:00:00Z">`+
+		`<samlp:Scoping ProxyCount="2">`+
+		`<samlp:IDPList>`+
+		`<samlp:IDPEntry ProviderID="https://idp1.example.com"/>`+
+		`<samlp:IDPEntry ProviderID="https://idp2.example.com" Name="IDP 2" Loc="https://idp2.example.com/sso"/>`+
+		`<samlp:GetComplete>https://gateway.example.com/idplist</samlp:GetComplete>`+
+		`</samlp:IDPList>`+
+		`<samlp:RequesterID>https://sp.example.com</samlp:RequesterID>`+
+		`</samlp:Scoping>`+
+		`</samlp:AuthnRequest>`, string(x)))
+
+	// The element form parses back through the encoding/xml struct tags.
+	var got AuthnRequest
+	assert.Check(t, xml.Unmarshal(x, &got))
+	assert.Assert(t, got.Scoping != nil)
+	assert.Assert(t, got.Scoping.ProxyCount != nil)
+	assert.Check(t, is.Equal(2, *got.Scoping.ProxyCount))
+	assert.Assert(t, got.Scoping.IDPList != nil)
+	assert.Check(t, is.Len(got.Scoping.IDPList.IDPEntries, 2))
+	assert.Check(t, is.Equal("https://idp1.example.com", got.Scoping.IDPList.IDPEntries[0].ProviderID))
+	assert.Check(t, is.Equal("IDP 2", got.Scoping.IDPList.IDPEntries[1].Name))
+	assert.Check(t, is.Equal("https://idp2.example.com/sso", got.Scoping.IDPList.IDPEntries[1].Loc))
+	assert.Check(t, is.Equal("https://gateway.example.com/idplist", got.Scoping.IDPList.GetComplete))
+	assert.Check(t, is.DeepEqual([]string{"https://sp.example.com"}, got.Scoping.RequesterIDs))
+}
+
+func TestScopingElementMinimal(t *testing.T) {
+	s := Scoping{IDPList: &IDPList{IDPEntries: []IDPEntry{{ProviderID: "https://idp.example.com"}}}}
+	doc := etree.NewDocument()
+	doc.SetRoot(s.Element())
+	x, err := doc.WriteToBytes()
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(`<samlp:Scoping><samlp:IDPList><samlp:IDPEntry ProviderID="https://idp.example.com"/></samlp:IDPList></samlp:Scoping>`, string(x)))
+}

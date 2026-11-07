@@ -177,6 +177,8 @@
 //
 // This package supports the Web SSO profile. Message flows from the service provider to the IDP are supported using the HTTP Redirect binding and the HTTP POST binding. Message flows from the IDP to the service provider are supported via the HTTP POST binding.
 //
+// Both directions also support the HTTP POST SimpleSign binding (sstc-saml-binding-simplesign-cs-01), which signs the posted message with a detached signature in the SigAlg and Signature form fields. See HTTPPostSimpleSignBinding.
+//
 // The package can produce signed SAML assertions, and can validate both signed and encrypted SAML assertions.
 //
 // # RelayState

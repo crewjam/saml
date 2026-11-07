@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/xml"
+	"errors"
 	"html"
 	"net/http"
 	"net/url"
@@ -103,6 +104,31 @@ func TestSPCanSetAuthenticationNameIDFormat(t *testing.T) {
 	req, err = s.MakeAuthenticationRequest("", HTTPRedirectBinding, HTTPPostBinding)
 	assert.Check(t, err)
 	assert.Check(t, is.Equal(string(EmailAddressNameIDFormat), *req.NameIDPolicy.Format))
+}
+
+func TestSPCanSetScoping(t *testing.T) {
+	test := NewServiceProviderTest(t)
+
+	s := ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:      mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+	}
+
+	// no Scoping by default
+	req, err := s.MakeAuthenticationRequest("", HTTPRedirectBinding, HTTPPostBinding)
+	assert.Check(t, err)
+	assert.Check(t, req.Scoping == nil)
+	assert.Check(t, is.Len(req.Element().FindElements("./samlp:Scoping"), 0))
+
+	s.Scoping = &Scoping{IDPList: &IDPList{IDPEntries: []IDPEntry{{ProviderID: "https://idp.example.com"}}}}
+	req, err = s.MakeAuthenticationRequest("", HTTPRedirectBinding, HTTPPostBinding)
+	assert.Check(t, err)
+	assert.Check(t, is.DeepEqual(s.Scoping, req.Scoping))
+	entry := req.Element().FindElement("./samlp:Scoping/samlp:IDPList/samlp:IDPEntry")
+	assert.Assert(t, entry != nil)
+	assert.Check(t, is.Equal("https://idp.example.com", entry.SelectAttrValue("ProviderID", "")))
 }
 
 func TestSPMetadataNameIDFormat(t *testing.T) {
@@ -2003,6 +2029,9 @@ func TestParseBadXMLArtifactResponse(t *testing.T) {
 	assertion, err = sp.ParseXMLArtifactResponse(samlResponse, possibleReqIDs, reqID, sp.AcsURL)
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
 		"cannot validate signature on ArtifactResponse: Cert is not valid at this time"))
+	assert.Check(t, errors.Is(err, ErrInvalidSignature))
+	assert.Check(t, errors.Is(err, ErrCertificateNotValidNow))
+	assert.Check(t, !errors.Is(err, ErrUntrustedCertificate))
 	assert.Check(t, is.Nil(assertion))
 
 	// IgnoreCertificateExpiry accepts the signature despite the expired certificate

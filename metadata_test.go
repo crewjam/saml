@@ -363,3 +363,35 @@ func TestCanParseIDPMetadataWithRoleDescriptorCacheDuration(t *testing.T) {
 	assert.Check(t, is.Len(idp.KeyDescriptors, 1))
 	assert.Check(t, is.Len(idp.SingleSignOnServices, 2))
 }
+
+func TestMetadataKeepsHTTPPostSimpleSignLocations(t *testing.T) {
+	// HTTP-POST-SimpleSign is an HTTP binding. Endpoints that use it must keep
+	// their Location rather than having it blanked like an unknown binding.
+	input := `<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://example.com/metadata">
+  <IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST-SimpleSign" Location="https://idp.example.com/sso"/>
+  </IDPSSODescriptor>
+  <SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST-SimpleSign" Location="https://sp.example.com/acs" index="1"/>
+  </SPSSODescriptor>
+</EntityDescriptor>`
+
+	var ed EntityDescriptor
+	assert.NilError(t, xml.Unmarshal([]byte(input), &ed))
+	assert.Assert(t, is.Len(ed.IDPSSODescriptors, 1))
+	assert.Assert(t, is.Len(ed.IDPSSODescriptors[0].SingleSignOnServices, 1))
+	sso := ed.IDPSSODescriptors[0].SingleSignOnServices[0]
+	assert.Check(t, is.Equal(sso.Binding, HTTPPostSimpleSignBinding))
+	assert.Check(t, is.Equal(sso.Location, "https://idp.example.com/sso"))
+	assert.Assert(t, is.Len(ed.SPSSODescriptors, 1))
+	assert.Assert(t, is.Len(ed.SPSSODescriptors[0].AssertionConsumerServices, 1))
+	assert.Check(t, is.Equal(ed.SPSSODescriptors[0].AssertionConsumerServices[0].Location, "https://sp.example.com/acs"))
+
+	// Like the other HTTP bindings, a non-HTTP scheme is rejected.
+	bad := `<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://example.com/metadata">
+  <SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST-SimpleSign" Location="javascript:alert(1)" index="1"/>
+  </SPSSODescriptor>
+</EntityDescriptor>`
+	assert.Check(t, is.ErrorContains(xml.Unmarshal([]byte(bad), &EntityDescriptor{}), `invalid url scheme "javascript"`))
+}

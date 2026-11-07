@@ -72,7 +72,7 @@ func encryptOAEP(dm DigestMethod, mgfHash crypto.Hash, pubKey *rsa.PublicKey, pl
 		}
 		return rsa.EncryptOAEP(dm.Hash(), RandReader, pubKey, plaintext, nil)
 	}
-	return rsa.EncryptOAEPWithOptions(RandReader, pubKey, plaintext, &rsa.OAEPOptions{
+	return rsaEncryptOAEP(RandReader, pubKey, plaintext, &rsa.OAEPOptions{
 		Hash:    h,
 		MGFHash: mgfHash,
 	})

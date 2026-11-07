@@ -22,6 +22,20 @@ const HTTPRedirectBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
 // HTTPArtifactBinding is the official URN for the HTTP-Artifact binding (transport)
 const HTTPArtifactBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Artifact"
 
+// HTTPPostSimpleSignBinding is the official URN for the HTTP-POST-SimpleSign
+// binding (transport), defined in sstc-saml-binding-simplesign-cs-01. It
+// carries messages in an HTML form like HTTP-POST, but signs them with a
+// detached signature over the message XML, the RelayState and the SigAlg
+// instead of (or as well as) an XML signature.
+//
+// The service provider can send authentication requests and logout messages
+// with it (MakeSimpleSignAuthenticationRequest, MakeSimpleSignLogoutRequest,
+// MakeSimpleSignLogoutResponse), and accepts it at the ACS (ParseResponse)
+// and in the logout validation functions. The identity provider accepts
+// authentication requests sent with it and uses it for responses to an
+// AssertionConsumerService endpoint with this binding.
+const HTTPPostSimpleSignBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST-SimpleSign"
+
 // SOAPBinding is the official URN for the SOAP binding (transport)
 const SOAPBinding = "urn:oasis:names:tc:SAML:2.0:bindings:SOAP"
 
@@ -475,6 +489,7 @@ func checkEndpointLocation(binding string, location string) (string, error) {
 	switch binding {
 	case HTTPPostBinding,
 		HTTPRedirectBinding,
+		HTTPPostSimpleSignBinding,
 		HTTPArtifactBinding,
 		SOAPBinding,
 		SOAPBindingV1:

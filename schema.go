@@ -123,7 +123,7 @@ type AuthnRequest struct {
 	NameIDPolicy          *NameIDPolicy `xml:"urn:oasis:names:tc:SAML:2.0:protocol NameIDPolicy"`
 	Conditions            *Conditions   `xml:"urn:oasis:names:tc:SAML:2.0:assertion Conditions"`
 	RequestedAuthnContext *RequestedAuthnContext
-	// Scoping               *Scoping // TODO
+	Scoping               *Scoping `xml:"urn:oasis:names:tc:SAML:2.0:protocol Scoping"`
 
 	ForceAuthn                     *bool  `xml:",attr"`
 	IsPassive                      *bool  `xml:",attr"`
@@ -292,9 +292,9 @@ func (r *AuthnRequest) Element() *etree.Element {
 	if r.RequestedAuthnContext != nil {
 		el.AddChild(r.RequestedAuthnContext.Element())
 	}
-	// if r.Scoping != nil {
-	// 	el.AddChild(r.Scoping.Element())
-	// }
+	if r.Scoping != nil {
+		el.AddChild(r.Scoping.Element())
+	}
 	if r.ForceAuthn != nil {
 		el.CreateAttr("ForceAuthn", strconv.FormatBool(*r.ForceAuthn))
 	}
@@ -408,6 +408,77 @@ func (a *NameIDPolicy) Element() *etree.Element {
 	}
 	if a.AllowCreate != nil {
 		el.CreateAttr("AllowCreate", strconv.FormatBool(*a.AllowCreate))
+	}
+	return el
+}
+
+// Scoping represents the SAML object of the same name. It lets a requester
+// specify the identity providers it trusts to authenticate the presenter,
+// which proxying identity providers (gateways) use to pick a delegate IDP.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf § 3.4.1.2
+type Scoping struct {
+	XMLName      xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol Scoping"`
+	ProxyCount   *int     `xml:",attr"`
+	IDPList      *IDPList `xml:"urn:oasis:names:tc:SAML:2.0:protocol IDPList"`
+	RequesterIDs []string `xml:"urn:oasis:names:tc:SAML:2.0:protocol RequesterID"`
+}
+
+// Element returns an etree.Element representing the object in XML form.
+func (a *Scoping) Element() *etree.Element {
+	el := etree.NewElement("samlp:Scoping")
+	if a.ProxyCount != nil {
+		el.CreateAttr("ProxyCount", strconv.Itoa(*a.ProxyCount))
+	}
+	if a.IDPList != nil {
+		el.AddChild(a.IDPList.Element())
+	}
+	for _, requesterID := range a.RequesterIDs {
+		el.CreateElement("samlp:RequesterID").SetText(requesterID)
+	}
+	return el
+}
+
+// IDPList represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf § 3.4.1.3
+type IDPList struct {
+	XMLName     xml.Name   `xml:"urn:oasis:names:tc:SAML:2.0:protocol IDPList"`
+	IDPEntries  []IDPEntry `xml:"urn:oasis:names:tc:SAML:2.0:protocol IDPEntry"`
+	GetComplete string     `xml:"urn:oasis:names:tc:SAML:2.0:protocol GetComplete,omitempty"`
+}
+
+// Element returns an etree.Element representing the object in XML form.
+func (a *IDPList) Element() *etree.Element {
+	el := etree.NewElement("samlp:IDPList")
+	for i := range a.IDPEntries {
+		el.AddChild(a.IDPEntries[i].Element())
+	}
+	if a.GetComplete != "" {
+		el.CreateElement("samlp:GetComplete").SetText(a.GetComplete)
+	}
+	return el
+}
+
+// IDPEntry represents the SAML object of the same name.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf § 3.4.1.3.1
+type IDPEntry struct {
+	XMLName    xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol IDPEntry"`
+	ProviderID string   `xml:",attr"`
+	Name       string   `xml:",attr,omitempty"`
+	Loc        string   `xml:",attr,omitempty"`
+}
+
+// Element returns an etree.Element representing the object in XML form.
+func (a *IDPEntry) Element() *etree.Element {
+	el := etree.NewElement("samlp:IDPEntry")
+	el.CreateAttr("ProviderID", a.ProviderID)
+	if a.Name != "" {
+		el.CreateAttr("Name", a.Name)
+	}
+	if a.Loc != "" {
+		el.CreateAttr("Loc", a.Loc)
 	}
 	return el
 }
