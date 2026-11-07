@@ -16,17 +16,55 @@ type Service struct {
 	// Name is the name of the service provider
 	Name string
 
-	// Metdata is the XML metadata of the service provider.
+	// Metadata is the metadata of the service provider. When RawMetadata is
+	// set, Metadata is parsed from it and is not itself stored.
 	Metadata saml.EntityDescriptor
+
+	// RawMetadata is the metadata document exactly as HandlePutService
+	// received it, XML signatures and all. Services stored by earlier
+	// versions have only Metadata.
+	RawMetadata []byte `json:",omitempty"`
 }
 
-// UnmarshalJSON implements json.Unmarshaler.
-//
-// An XML signature (an *etree.Element) cannot be decoded from JSON, so
-// HandlePutService drops the signatures from metadata before storing it.
-// Services stored before that was done may still hold JSON-encoded
-// signatures; they are decoded without them.
+// MarshalJSON implements json.Marshaler. A Service with RawMetadata is
+// stored as its Name and RawMetadata only: the parsed Metadata can hold XML
+// signatures (*etree.Element), which do not survive a JSON round trip.
+func (s Service) MarshalJSON() ([]byte, error) {
+	if len(s.RawMetadata) == 0 {
+		type alias Service
+		return json.Marshal(alias(s))
+	}
+	return json.Marshal(struct {
+		Name        string
+		RawMetadata []byte
+	}{Name: s.Name, RawMetadata: s.RawMetadata})
+}
+
+// UnmarshalJSON implements json.Unmarshaler. A Service stored with
+// RawMetadata gets its Metadata parsed from it. A Service stored by an
+// earlier version is decoded from its JSON-encoded Metadata; any XML
+// signatures in it, which cannot be decoded from JSON, are left out.
 func (s *Service) UnmarshalJSON(data []byte) error {
+	var stored struct {
+		Name        string
+		RawMetadata []byte
+	}
+	if err := json.Unmarshal(data, &stored); err != nil {
+		return err
+	}
+	if len(stored.RawMetadata) == 0 {
+		return s.unmarshalLegacyJSON(data)
+	}
+	md, err := parseSPMetadata(stored.RawMetadata)
+	if err != nil {
+		return err
+	}
+	*s = Service{Name: stored.Name, Metadata: *md, RawMetadata: stored.RawMetadata}
+	return nil
+}
+
+// unmarshalLegacyJSON decodes a Service stored without RawMetadata.
+func (s *Service) unmarshalLegacyJSON(data []byte) error {
 	type alias Service
 	err := json.Unmarshal(data, (*alias)(s))
 	if err == nil {
@@ -76,35 +114,6 @@ func deleteSignatures(v interface{}) bool {
 	return removed
 }
 
-// clearSignatures removes the XML signatures from md. They cannot be stored
-// as JSON, and they are of no use once the metadata has been accepted: they
-// were checked then, if SPMetadataCertificates was set, and they do not
-// verify against metadata that has been decoded and encoded again.
-func clearSignatures(md *saml.EntityDescriptor) {
-	md.Signature = nil
-	for i := range md.RoleDescriptors {
-		md.RoleDescriptors[i].Signature = nil
-	}
-	for i := range md.IDPSSODescriptors {
-		md.IDPSSODescriptors[i].Signature = nil
-	}
-	for i := range md.SPSSODescriptors {
-		md.SPSSODescriptors[i].Signature = nil
-	}
-	for i := range md.AuthnAuthorityDescriptors {
-		md.AuthnAuthorityDescriptors[i].Signature = nil
-	}
-	for i := range md.AttributeAuthorityDescriptors {
-		md.AttributeAuthorityDescriptors[i].Signature = nil
-	}
-	for i := range md.PDPDescriptors {
-		md.PDPDescriptors[i].Signature = nil
-	}
-	if md.AffiliationDescriptor != nil {
-		md.AffiliationDescriptor.Signature = nil
-	}
-}
-
 // GetServiceProvider returns the Service Provider metadata for the
 // service provider ID, which is typically the service provider's
 // metadata URL. If an appropriate service provider cannot be found then
@@ -148,7 +157,12 @@ func (s *Server) HandleGetService(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
-	err = xml.NewEncoder(w).Encode(service.Metadata)
+	if len(service.RawMetadata) > 0 {
+		w.Header().Set("Content-Type", "application/samlmetadata+xml")
+		_, err = w.Write(service.RawMetadata)
+	} else {
+		err = xml.NewEncoder(w).Encode(service.Metadata)
+	}
 	if err != nil {
 		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -163,11 +177,18 @@ func (s *Server) HandleGetService(w http.ResponseWriter, r *http.Request) {
 // metadata, or metadata whose signature does not verify, is refused with
 // 400 Bad Request.
 //
-// XML signatures in the metadata are not stored.
+// The request body is stored as it was received (see Service.RawMetadata),
+// and GET /services/:id returns it unchanged.
 func (s *Server) HandlePutService(w http.ResponseWriter, r *http.Request) {
 	service := Service{}
 
-	metadata, err := getVerifiedSPMetadata(r.Body, s.SPMetadataCertificates)
+	data, err := readSPMetadata(r.Body)
+	if err != nil {
+		s.logger.Printf("ERROR: %s", err)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+	metadata, err := verifiedSPMetadata(data, s.SPMetadataCertificates)
 	if err != nil {
 		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
@@ -175,7 +196,7 @@ func (s *Server) HandlePutService(w http.ResponseWriter, r *http.Request) {
 	}
 
 	service.Metadata = *metadata
-	clearSignatures(&service.Metadata)
+	service.RawMetadata = data
 
 	err = s.Store.Put(fmt.Sprintf("/services/%s", r.PathValue("id")), &service)
 	if err != nil {

@@ -30,24 +30,32 @@ func getService(t *testing.T, test *ServerTest) *httptest.ResponseRecorder {
 	return w
 }
 
-// assertServiceReadable checks that the stored service can be read back
-// from the store, through GET /services/sp, and by initializeServices.
-func assertServiceReadable(t *testing.T, test *ServerTest) {
+// assertStoredAsReceived checks that the service PUT with metadata was
+// stored as it was received: the store holds the exact bytes, GET
+// /services/sp returns them unchanged, and the parsed metadata, from the
+// store and as registered by initializeServices, still has its signatures.
+func assertStoredAsReceived(t *testing.T, test *ServerTest, metadata string) {
 	t.Helper()
 
 	var service Service
 	assert.NilError(t, test.Store.Get("/services/sp", &service))
+	assert.Check(t, is.Equal(metadata, string(service.RawMetadata)))
 	assert.Check(t, is.Equal(signedSPEntityID, service.Metadata.EntityID))
-	assertNoSignatures(t, &service.Metadata)
+	assert.Check(t, hasSignature(&service.Metadata), "parsed metadata lost its signatures")
 
 	w := getService(t, test)
 	assert.Assert(t, is.Equal(http.StatusOK, w.Code))
-	var got saml.EntityDescriptor
-	assert.NilError(t, xml.Unmarshal(w.Body.Bytes(), &got))
-	assert.Check(t, is.Equal(signedSPEntityID, got.EntityID))
-	assert.Check(t, is.Contains(acsLocations(&got), "https://sp.example.com/saml2/acs"))
-	assertNoSignatures(t, &got)
+	assert.Check(t, is.Equal(metadata, w.Body.String()))
+	assert.Check(t, is.Equal("application/samlmetadata+xml", w.Header().Get("Content-Type")))
 
+	assertRegisteredAfterRestart(t, test)
+	assert.Check(t, hasSignature(test.Server.serviceProviders[signedSPEntityID]))
+}
+
+// assertRegisteredAfterRestart checks that initializeServices registers the
+// stored service.
+func assertRegisteredAfterRestart(t *testing.T, test *ServerTest) {
+	t.Helper()
 	delete(test.Server.serviceProviders, signedSPEntityID)
 	assert.NilError(t, test.Server.initializeServices())
 	registered, ok := test.Server.serviceProviders[signedSPEntityID]
@@ -55,21 +63,18 @@ func assertServiceReadable(t *testing.T, test *ServerTest) {
 	assert.Check(t, is.Contains(acsLocations(registered), "https://sp.example.com/saml2/acs"))
 }
 
-func assertNoSignatures(t *testing.T, md *saml.EntityDescriptor) {
-	t.Helper()
-	assert.Check(t, md.Signature == nil)
+// hasSignature reports whether md, or one of its SPSSODescriptors, holds
+// an XML signature.
+func hasSignature(md *saml.EntityDescriptor) bool {
+	if md.Signature != nil {
+		return true
+	}
 	for _, d := range md.SPSSODescriptors {
-		assert.Check(t, d.Signature == nil)
+		if d.Signature != nil {
+			return true
+		}
 	}
-	for _, d := range md.IDPSSODescriptors {
-		assert.Check(t, d.Signature == nil)
-	}
-	for _, d := range md.RoleDescriptors {
-		assert.Check(t, d.Signature == nil)
-	}
-	if md.AffiliationDescriptor != nil {
-		assert.Check(t, md.AffiliationDescriptor.Signature == nil)
-	}
+	return false
 }
 
 func TestPutServiceStoresSignedMetadataReadably(t *testing.T) {
@@ -80,8 +85,8 @@ func TestPutServiceStoresSignedMetadataReadably(t *testing.T) {
 	assert.Check(t, is.Equal(http.StatusNoContent, putService(t, test, metadata)))
 	registered, ok := test.Server.serviceProviders[signedSPEntityID]
 	assert.Assert(t, ok)
-	assertNoSignatures(t, registered)
-	assertServiceReadable(t, test)
+	assert.Check(t, registered.Signature != nil)
+	assertStoredAsReceived(t, test, metadata)
 }
 
 func TestPutServiceStoresNestedSignaturesReadably(t *testing.T) {
@@ -113,7 +118,7 @@ func TestPutServiceStoresNestedSignaturesReadably(t *testing.T) {
 		test := NewServerTest(t)
 		metadata := signDescriptor(t, unsigned(t, test))
 		assert.Check(t, is.Equal(http.StatusNoContent, putService(t, test, metadata)))
-		assertServiceReadable(t, test)
+		assertStoredAsReceived(t, test, metadata)
 	})
 
 	t.Run("signed EntityDescriptor in signed EntitiesDescriptor", func(t *testing.T) {
@@ -123,13 +128,14 @@ func TestPutServiceStoresNestedSignaturesReadably(t *testing.T) {
 		metadata := `<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata">` +
 			fakeSignature + entity + `</EntitiesDescriptor>`
 		assert.Check(t, is.Equal(http.StatusNoContent, putService(t, test, metadata)))
-		assertServiceReadable(t, test)
+		assertStoredAsReceived(t, test, metadata)
 	})
 }
 
 func TestStoredServiceWithSignatureLoads(t *testing.T) {
-	// A service stored before signatures were dropped has its Signature
-	// JSON-encoded in the store. It must load, without the signature.
+	// A service stored by an earlier version, without RawMetadata, has its
+	// Signature JSON-encoded in the store. It must load, without the
+	// signature, which cannot be decoded from JSON.
 	test := NewServerTest(t)
 	el, err := test.SP.SignedMetadata()
 	assert.NilError(t, err)
@@ -145,13 +151,41 @@ func TestStoredServiceWithSignatureLoads(t *testing.T) {
 	md.SPSSODescriptors[0].Signature = sig.Root()
 
 	assert.NilError(t, test.Store.Put("/services/sp", &Service{Name: "sp", Metadata: md}))
-	assertServiceReadable(t, test)
+
+	var service Service
+	assert.NilError(t, test.Store.Get("/services/sp", &service))
+	assert.Check(t, is.Equal(signedSPEntityID, service.Metadata.EntityID))
+	assert.Check(t, is.Len(service.RawMetadata, 0))
+	assert.Check(t, !hasSignature(&service.Metadata))
+
+	w := getService(t, test)
+	assert.Assert(t, is.Equal(http.StatusOK, w.Code))
+	var got saml.EntityDescriptor
+	assert.NilError(t, xml.Unmarshal(w.Body.Bytes(), &got))
+	assert.Check(t, is.Equal(signedSPEntityID, got.EntityID))
+
+	assertRegisteredAfterRestart(t, test)
+}
+
+func TestStoredLegacyServiceWithoutSignatureUnchanged(t *testing.T) {
+	// A service stored by an earlier version without signatures decodes as
+	// it always did.
+	test := NewServerTest(t)
+	md, err := getSPMetadata(strings.NewReader(unsignedSPMetadata(t, test.SP)))
+	assert.NilError(t, err)
+	assert.NilError(t, test.Store.Put("/services/sp", &Service{Name: "sp", Metadata: *md}))
+
+	var service Service
+	assert.NilError(t, test.Store.Get("/services/sp", &service))
+	assert.Check(t, is.DeepEqual(md.SPSSODescriptors[0].AssertionConsumerServices, service.Metadata.SPSSODescriptors[0].AssertionConsumerServices))
+	assertRegisteredAfterRestart(t, test)
 }
 
 func TestPutServiceWithSPMetadataCertificatesStoresReadably(t *testing.T) {
 	test := NewServerTest(t)
 	test.Server.SPMetadataCertificates = []*x509.Certificate{test.SPCertificate}
 
-	assert.Check(t, is.Equal(http.StatusNoContent, putService(t, test, signedSPMetadata(t, test.SP))))
-	assertServiceReadable(t, test)
+	metadata := signedSPMetadata(t, test.SP)
+	assert.Check(t, is.Equal(http.StatusNoContent, putService(t, test, metadata)))
+	assertStoredAsReceived(t, test, metadata)
 }
