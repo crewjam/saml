@@ -1,6 +1,7 @@
 package samlsp
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"time"
@@ -99,8 +100,11 @@ func (c CookieSessionProvider) DeleteSession(w http.ResponseWriter, r *http.Requ
 	return nil
 }
 
-// GetSession returns the current Session associated with the request, or
-// ErrNoSession if there is no valid session.
+// GetSession returns the current Session associated with the request, or an
+// error matching ErrNoSession (as determined by errors.Is) if there is no valid
+// session. When the cookie is present but cannot be decoded, the returned error
+// also wraps the error from Codec.Decode, so callers can see why the session
+// was rejected.
 func (c CookieSessionProvider) GetSession(r *http.Request) (Session, error) {
 	cookie, err := r.Cookie(c.Name)
 	if err == http.ErrNoCookie {
@@ -111,7 +115,7 @@ func (c CookieSessionProvider) GetSession(r *http.Request) (Session, error) {
 
 	session, err := c.Codec.Decode(cookie.Value)
 	if err != nil {
-		return nil, ErrNoSession
+		return nil, fmt.Errorf("%w: %w", ErrNoSession, err)
 	}
 	return session, nil
 }

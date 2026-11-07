@@ -254,7 +254,9 @@ func TestCovCookieSessionProviderGetSession(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(&http.Cookie{Name: "token", Value: "garbage", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	_, err = p.GetSession(req)
-	assert.Check(t, is.Equal(ErrNoSession, err))
+	// the decode failure still means "no session", but its cause is kept
+	assert.Check(t, errors.Is(err, ErrNoSession))
+	assert.Check(t, errors.Is(err, jwt.ErrTokenMalformed), "got %v", err)
 
 	rec := httptest.NewRecorder()
 	assert.Assert(t, p.CreateSession(rec, httptest.NewRequest(http.MethodGet, "/", nil), &saml.Assertion{}))
