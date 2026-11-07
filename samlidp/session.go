@@ -96,6 +96,10 @@ func (s *Server) GetSession(w http.ResponseWriter, r *http.Request, req *saml.Id
 // authenticate checks the username and password posted in r and, if they
 // are valid, creates a session, sets the session cookie and returns the
 // session. Otherwise it prompts the user to log in again and returns nil.
+//
+// The username comes from the request, so it is logged quoted (%q): a
+// username with a newline or other control characters cannot forge log
+// lines.
 func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, req *saml.IdpAuthnRequest) *saml.Session {
 	user := User{}
 	lookupErr := s.Store.Get(fmt.Sprintf("/users/%s", r.PostForm.Get("user")), &user)
@@ -110,12 +114,12 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, req *saml.
 	compareErr := compareHashAndPassword(hash, []byte(r.PostForm.Get("password")))
 
 	if lookupErr != nil {
-		s.logger.Printf("ERROR: User '%s' doesn't exists", r.PostForm.Get("user"))
+		s.logger.Printf("ERROR: User %q does not exist", r.PostForm.Get("user"))
 		s.promptLogin(w, req, "Invalid username or password")
 		return nil
 	}
 	if compareErr != nil || !isBcryptHash(user.HashedPassword) {
-		s.logger.Printf("ERROR: Invalid password for user '%s'", r.PostForm.Get("user"))
+		s.logger.Printf("ERROR: Invalid password for user %q", r.PostForm.Get("user"))
 		s.promptLogin(w, req, "Invalid username or password")
 		return nil
 	}
@@ -144,7 +148,7 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, req *saml.
 
 	http.SetCookie(w, s.sessionCookie(r, session.ID, int(sessionMaxAge.Seconds())))
 
-	s.logger.Printf("User '%s' authenticated successfully", r.PostForm.Get("user"))
+	s.logger.Printf("User %q authenticated successfully", r.PostForm.Get("user"))
 	return session
 }
 
