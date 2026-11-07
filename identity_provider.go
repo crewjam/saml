@@ -52,6 +52,13 @@ type Session struct {
 	UserScopedAffiliation  string
 	EduPersonPrincipalName string `json:",omitempty"`
 
+	// AuthnContextClassRef is the authentication context class the user
+	// was actually authenticated with, such as
+	// "urn:oasis:names:tc:SAML:2.0:ac:classes:X509". DefaultAssertionMaker
+	// asserts it in the AuthnStatement. When empty, PasswordProtectedTransport
+	// is asserted, as before. See IdentityProvider.EnforceRequestedAuthnContext.
+	AuthnContextClassRef string `json:",omitempty"`
+
 	CustomAttributes []Attribute
 }
 
@@ -358,6 +365,30 @@ type IdentityProvider struct {
 	// *StatusError gets an error Response, in ServeSSO and
 	// ServeIDPInitiated.
 	SendErrorResponses bool
+
+	// EnforceRequestedAuthnContext, if true, makes DefaultAssertionMaker
+	// check the AuthnContextClassRef it asserts (Session.AuthnContextClassRef,
+	// or PasswordProtectedTransport when that is empty) against the
+	// RequestedAuthnContext of the AuthnRequest, with the "exact" (or
+	// omitted), "minimum", "maximum" and "better" Comparisons of saml-core
+	// §3.3.2.2.1 as amended by errata E65. When it does not satisfy any of
+	// the requested classes, MakeAssertion returns a *StatusError, and
+	// ServeSSO answers with a Response with the status Responder and the
+	// second-level status NoAuthnContext and no assertion. An unknown
+	// Comparison is answered with Requester. Only AuthnContextClassRefs are
+	// evaluated; a request that names none is always satisfied.
+	//
+	// If false, the default, the RequestedAuthnContext is ignored and the
+	// assertion is made whatever the service provider asked for, as before.
+	EnforceRequestedAuthnContext bool
+
+	// AuthnContextClassStrengths ranks authentication context classes for
+	// the "minimum", "maximum" and "better" Comparisons, when
+	// EnforceRequestedAuthnContext is set: a higher number is stronger, and
+	// classes with the same number are equally strong. A class that is not
+	// in the map is not ranked, and only satisfies a request that names it.
+	// If nil, DefaultAuthnContextClassStrengths is used.
+	AuthnContextClassStrengths map[string]int
 }
 
 // Metadata returns the metadata structure for this identity provider.
@@ -1084,6 +1115,11 @@ type DefaultAssertionMaker struct {
 // MakeAssertion implements AssertionMaker. It produces a SAML assertion from the
 // given request and assigns it to req.Assertion.
 func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Session) error {
+	authnContextClassRef, err := req.authnContextClassRef(session)
+	if err != nil {
+		return err
+	}
+
 	attributes := []Attribute{}
 
 	var attributeConsumingService *AttributeConsumingService
@@ -1367,7 +1403,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 				},
 				AuthnContext: AuthnContext{
 					AuthnContextClassRef: &AuthnContextClassRef{
-						Value: "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport",
+						Value: authnContextClassRef,
 					},
 				},
 			},
