@@ -1331,15 +1331,32 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 		signatureRequirement = signatureNotRequired
 	}
 
+	encryptedAssertionEls, err := findChildren(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "EncryptedAssertion")
+	if err != nil {
+		return nil, err
+	}
+	assertionEls, err := findChildren(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "Assertion")
+	if err != nil {
+		return nil, err
+	}
+
+	// Nothing has authenticated an unsigned Response, so each of its
+	// assertions must be decrypted and its signature checked, which costs
+	// more for each one and more again for each namespace declaration in
+	// scope. A Response carries one assertion in practice (and only the
+	// first is returned), and other SAML libraries refuse an unsigned
+	// Response with more than one, so refuse it before doing any of that.
+	if signatureRequirement == signatureRequired {
+		if n := len(encryptedAssertionEls) + len(assertionEls); n > 1 {
+			return nil, classify(fmt.Errorf("an unsigned Response must contain exactly one Assertion or EncryptedAssertion, not %d", n), ErrMalformedMessage)
+		}
+	}
+
 	var errs []error
 	var assertions []Assertion
 
 	// look for encrypted assertions
 	{
-		encryptedAssertionEls, err := findChildren(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "EncryptedAssertion")
-		if err != nil {
-			return nil, err
-		}
 		for _, encryptedAssertionEl := range encryptedAssertionEls {
 			assertion, err := sp.parseEncryptedAssertion(encryptedAssertionEl, possibleRequestIDs, now, signatureRequirement)
 			if err != nil {
@@ -1352,10 +1369,6 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 
 	// look for plaintext assertions
 	{
-		assertionEls, err := findChildren(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "Assertion")
-		if err != nil {
-			return nil, err
-		}
 		for _, assertionEl := range assertionEls {
 			assertion, err := sp.parseAssertion(assertionEl, possibleRequestIDs, now, signatureRequirement)
 			if err != nil {
@@ -2653,24 +2666,33 @@ func firstSet(a, b string) string {
 }
 
 // findChildren returns all the elements matching childNS/childTag that are direct children of parentEl.
+//
+// The namespace context of parentEl is built once. Building it for every
+// child (NSBuildParentContext and SubContext both copy every declaration in
+// scope) made the cost the number of children times the number of
+// declarations, so a small unsigned message with many declarations and many
+// matching children took seconds and gigabytes to read.
 func findChildren(parentEl *etree.Element, childNS string, childTag string) ([]*etree.Element, error) {
 	//nolint:prealloc // We don't know how many child elements we'll actually put into this array.
 	var rv []*etree.Element
+	var parentCtx *etreeutils.NSContext
 	for _, childEl := range parentEl.ChildElements() {
 		if childEl.Tag != childTag {
 			continue
 		}
 
-		ctx, err := etreeutils.NSBuildParentContext(childEl)
-		if err != nil {
-			return nil, err
-		}
-		ctx, err = ctx.SubContext(childEl)
-		if err != nil {
-			return nil, err
+		if parentCtx == nil {
+			ctx, err := etreeutils.NSBuildParentContext(childEl)
+			if err != nil {
+				return nil, err
+			}
+			parentCtx = &ctx
 		}
 
-		ns, err := ctx.LookupPrefix(childEl.Space)
+		if err := checkNamespaceDeclarations(childEl); err != nil {
+			return nil, err
+		}
+		ns, err := lookupElementNamespace(*parentCtx, childEl)
 		if err != nil {
 			return nil, classify(fmt.Errorf("[%s]:%s cannot find prefix %s: %w", childNS, childTag, childEl.Space, err), ErrMalformedMessage)
 		}
@@ -2682,6 +2704,43 @@ func findChildren(parentEl *etree.Element, childNS string, childTag string) ([]*
 	}
 
 	return rv, nil
+}
+
+// checkNamespaceDeclarations makes the checks NSContext.SubContext makes of
+// el's namespace declarations.
+func checkNamespaceDeclarations(el *etree.Element) error {
+	for _, attr := range el.Attr {
+		switch {
+		case attr.Space == "xmlns" && attr.Key == "xml" && attr.Value != etreeutils.XMLNamespace:
+			return etreeutils.ErrReservedNamespace
+		case attr.Space == "xmlns" && attr.Key == "xmlns":
+			return etreeutils.ErrReservedNamespace
+		case attr.Space == "" && attr.Key == "xmlns" && attr.Value == etreeutils.XMLNSNamespace:
+			return etreeutils.ErrInvalidDefaultNamespace
+		}
+	}
+	return nil
+}
+
+// lookupElementNamespace returns the namespace of el's prefix, given
+// parentCtx, the namespace context of el's parent: what
+// parentCtx.SubContext(el) followed by LookupPrefix(el.Space) returns,
+// without copying parentCtx. Check el's declarations with
+// checkNamespaceDeclarations first.
+func lookupElementNamespace(parentCtx etreeutils.NSContext, el *etree.Element) (string, error) {
+	ns, declared := "", false
+	for _, attr := range el.Attr {
+		switch {
+		case attr.Space == "xmlns" && attr.Key == el.Space:
+			ns, declared = attr.Value, true
+		case attr.Space == "" && attr.Key == "xmlns" && el.Space == "":
+			ns, declared = attr.Value, true
+		}
+	}
+	if declared {
+		return ns, nil
+	}
+	return parentCtx.LookupPrefix(el.Space)
 }
 
 // findOneChild finds the specified child element. Returns an error if the element doesn't exist.
