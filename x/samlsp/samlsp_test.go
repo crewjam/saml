@@ -527,11 +527,10 @@ func TestSPInitiatedLogout(t *testing.T) {
 	}
 }
 
-func TestIDPInitiatedLogout(t *testing.T) {
-	ti := newTestIDP(t)
-	cfg := newTestConfig(t, ti)
-
-	// Build the LogoutRequest the IdP would send, signed with its key.
+// idpLogoutRequest returns a LogoutRequest from ti to the SP for alice, and
+// its XML, signed with ti's key.
+func idpLogoutRequest(t *testing.T, ti *testIDP) (*saml.LogoutRequest, []byte) {
+	t.Helper()
 	req := &saml.LogoutRequest{
 		ID:           "id-logout-1",
 		Version:      "2.0",
@@ -545,6 +544,9 @@ func TestIDPInitiatedLogout(t *testing.T) {
 	if err := signer.SetSignatureMethod(dsig.RSASHA256SignatureMethod); err != nil {
 		t.Fatal(err)
 	}
+	// Exclusive canonicalization, as IdPs use, so that the signature
+	// still verifies inside a SOAP envelope.
+	signer.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList("")
 	signed, err := signer.SignEnveloped(req.Element())
 	if err != nil {
 		t.Fatal(err)
@@ -555,6 +557,14 @@ func TestIDPInitiatedLogout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return req, buf
+}
+
+func TestIDPInitiatedLogout(t *testing.T) {
+	ti := newTestIDP(t)
+	cfg := newTestConfig(t, ti)
+
+	req, buf := idpLogoutRequest(t, ti)
 	r := postForm(spSLOURL, url.Values{
 		"SAMLRequest": {base64.StdEncoding.EncodeToString(buf)},
 		"RelayState":  {"idp-state"},

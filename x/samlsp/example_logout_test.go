@@ -59,10 +59,10 @@ func ExampleConfig_ParseLogoutRequest() {
 
 	http.HandleFunc("/saml/slo", func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.FormValue("SAMLRequest") != "":
+		case samlsp.IsLogoutRequest(r):
 			req, err := config.ParseLogoutRequest(r.Context(), r)
 			if err != nil {
-				http.Error(w, "bad logout request", http.StatusBadRequest)
+				samlsp.WriteLogoutRequestError(w, r)
 				return
 			}
 			// End the sessions it names, in this browser and elsewhere.
@@ -76,7 +76,7 @@ func ExampleConfig_ParseLogoutRequest() {
 			}
 			msg.Write(w)
 
-		case r.FormValue("SAMLResponse") != "":
+		case samlsp.IsLogoutResponse(r):
 			requestID := takePendingRequest(r)
 			_, err := config.ParseLogoutResponse(r.Context(), r, samlsp.WithRequestID(requestID))
 			var status saml.ErrBadStatus
@@ -118,4 +118,32 @@ func ExampleWithStatus() {
 	fmt.Println(msg.Destination, msg.RedirectURL().Query().Get("RelayState"))
 	// Output:
 	// https://idp.example.com/slo abc
+}
+
+// With BackChannelLogout, the SP can end a user's sessions at the IdP
+// without the browser, for example when an administrator disables the
+// account. The IdP can do the same to the SP: ParseLogoutRequest accepts
+// its SOAP LogoutRequests at the SLO URL, and LogoutResponse answers them.
+func ExampleConfig_SendLogoutRequest() {
+	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
+		samlsp.WithKey(spKey, spCert),
+		samlsp.WithSLOURL("https://sp.example.com/saml/slo"),
+		samlsp.BackChannelLogout)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	http.HandleFunc("POST /admin/users/{id}/disable", func(w http.ResponseWriter, r *http.Request) {
+		nameID, sessionIndexes, _ := currentSession(r) // the disabled user's, from the application's store
+		endSessionsOf(r.Context(), nameID, sessionIndexes)
+
+		_, err := config.SendLogoutRequest(r.Context(), nameID, samlsp.WithSessionIndex(sessionIndexes...))
+		switch {
+		case errors.Is(err, samlsp.ErrNoEndpoint):
+			log.Print("the IdP does not support back-channel logout")
+		case err != nil:
+			log.Printf("the IdP did not end the user's sessions: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 }

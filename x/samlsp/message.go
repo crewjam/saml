@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"net/http"
 	"net/url"
+
+	"github.com/crewjam/saml"
 )
 
 // Message is a SAML protocol message that is ready to send to the identity
@@ -16,8 +18,9 @@ type Message struct {
 	ID string
 
 	// Binding is the SAML binding that carries the message:
-	// saml.HTTPRedirectBinding, saml.HTTPPostBinding or
-	// saml.HTTPPostSimpleSignBinding.
+	// saml.HTTPRedirectBinding, saml.HTTPPostBinding,
+	// saml.HTTPPostSimpleSignBinding, or saml.SOAPBinding for the answer to
+	// a back-channel LogoutRequest.
 	Binding string
 
 	// Destination is the IdP endpoint the message is sent to.
@@ -26,9 +29,10 @@ type Message struct {
 	// RelayState is the RelayState that goes with the message.
 	RelayState string
 
-	redirectURL *url.URL
-	form        []byte
-	scriptHash  string
+	redirectURL  *url.URL
+	form         []byte
+	scriptHash   string
+	soapResponse *saml.LogoutResponse
 }
 
 // RedirectURL returns the URL to redirect the browser to, for a message
@@ -44,9 +48,14 @@ func (m *Message) RedirectURL() *url.URL {
 // Write sends the message to the browser. With the HTTP-Redirect binding,
 // it writes a 302 redirect. With the POST bindings, it writes an HTML page
 // with a form that submits itself, and a Content-Security-Policy that allows
-// only the form's script. Write must be called before anything else is
-// written to w.
+// only the form's script. With the SOAP binding, which LogoutResponse uses
+// to answer a back-channel LogoutRequest, it writes the SOAP response to
+// the IdP. Write must be called before anything else is written to w.
 func (m *Message) Write(w http.ResponseWriter) {
+	if m.soapResponse != nil {
+		_ = saml.WriteSOAPLogoutResponse(w, m.soapResponse)
+		return
+	}
 	h := w.Header()
 	// saml-bindings-2.0-os §3.4.5.1 and §3.5.5.1.
 	h.Set("Cache-Control", "no-cache, no-store")
