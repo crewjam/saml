@@ -86,6 +86,7 @@ var allErrorKinds = []error{
 	ErrIssuerMismatch, ErrDestinationMismatch, ErrRequestIDMismatch,
 	ErrAudienceMismatch, ErrDecryptionFailed, ErrArtifactResolution,
 	ErrUnknownServiceProvider, ErrUnknownAssertionConsumerService, ErrUnsupported,
+	ErrInvalidCertificate,
 }
 
 func checkOnlyKind(t *testing.T, err error, want error) {
@@ -339,4 +340,87 @@ func TestIdpAuthnRequestErrorKinds(t *testing.T) {
 		_, err := req.PostBinding()
 		checkOnlyKind(t, err, ErrUnsupported)
 	})
+}
+
+func TestNewIdpInitiatedRequestErrorKinds(t *testing.T) {
+	test := idpcovNewTest(t)
+	r := httptest.NewRequest("GET", "https://idp.example.com/saml/idp-initiated", nil)
+	spID := test.SP.MetadataURL.String()
+
+	req, err := test.IDP.NewIdpInitiatedRequest(r, spID, "relay")
+	assert.NilError(t, err)
+	assert.Equal(t, HTTPPostBinding, req.ACSEndpoint.Binding)
+	assert.Equal(t, "relay", req.RelayState)
+	assert.Equal(t, spID, req.ServiceProviderMetadata.EntityID)
+
+	t.Run("unknown service provider", func(t *testing.T) {
+		_, err := test.IDP.NewIdpInitiatedRequest(r, "https://other-sp.example.com/metadata", "")
+		assert.Error(t, err, "cannot find service provider: https://other-sp.example.com/metadata")
+		checkOnlyKind(t, err, ErrUnknownServiceProvider)
+		assert.Check(t, errors.Is(err, os.ErrNotExist))
+	})
+
+	withProvider := func(t *testing.T, f func(*http.Request, string) (*EntityDescriptor, error)) {
+		old := test.IDP.ServiceProviderProvider
+		t.Cleanup(func() { test.IDP.ServiceProviderProvider = old })
+		test.IDP.ServiceProviderProvider = &mockServiceProviderProvider{GetServiceProviderFunc: f}
+	}
+
+	t.Run("no HTTP-POST assertion consumer service", func(t *testing.T) {
+		withProvider(t, func(*http.Request, string) (*EntityDescriptor, error) {
+			return &EntityDescriptor{EntityID: spID, SPSSODescriptors: []SPSSODescriptor{{
+				AssertionConsumerServices: []IndexedEndpoint{{Binding: HTTPRedirectBinding, Location: "https://sp.example.com/acs"}},
+			}}}, nil
+		})
+		_, err := test.IDP.NewIdpInitiatedRequest(r, spID, "")
+		assert.Error(t, err, "saml metadata does not contain an Assertion Customer Service url")
+		checkOnlyKind(t, err, ErrUnknownAssertionConsumerService)
+	})
+
+	t.Run("service provider lookup error is wrapped", func(t *testing.T) {
+		lookupErr := errors.New("database on fire")
+		withProvider(t, func(*http.Request, string) (*EntityDescriptor, error) { return nil, lookupErr })
+		_, err := test.IDP.NewIdpInitiatedRequest(r, spID, "")
+		checkOnlyKind(t, err, nil)
+		assert.Check(t, errors.Is(err, lookupErr))
+	})
+}
+
+func TestInvalidCertificateErrorKinds(t *testing.T) {
+	t.Run("IdP: SP encryption certificate", func(t *testing.T) {
+		test := idpcovNewTest(t)
+		for _, data := range []string{"!!!", base64.StdEncoding.EncodeToString([]byte("not a certificate"))} {
+			req := idpcovMadeAssertion(t, test)
+			req.SPSSODescriptor.KeyDescriptors = []KeyDescriptor{idpcovCertKeyDescriptor("encryption", data)}
+			_, err := req.getSPEncryptionCert()
+			checkOnlyKind(t, err, ErrInvalidCertificate)
+			checkOnlyKind(t, req.MakeAssertionEl(), ErrInvalidCertificate)
+		}
+	})
+
+	e := spcovSetup(t)
+	notACert := base64.StdEncoding.EncodeToString([]byte("not a certificate"))
+	tests := []struct {
+		name   string
+		mutate func(sp *ServiceProvider)
+	}{
+		{"SP: IdP metadata certificate base64", func(sp *ServiceProvider) {
+			sp.IDPMetadata.IDPSSODescriptors[0].KeyDescriptors[0].KeyInfo.X509Data.X509Certificates[0].Data = "!!!"
+		}},
+		{"SP: IdP metadata certificate", func(sp *ServiceProvider) {
+			sp.IDPMetadata.IDPSSODescriptors[0].KeyDescriptors[0].KeyInfo.X509Data.X509Certificates[0].Data = notACert
+		}},
+		{"SP: IDPCertificate", func(sp *ServiceProvider) { sp.IDPCertificate = &notACert }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sp := *e.sp
+			sp.IDPMetadata = spcovIDPMetadata(e.idpCert)
+			tc.mutate(&sp)
+			_, err := sp.ParseXMLResponse(e.signedResponse(t), []string{spcovRequestID}, sp.AcsURL)
+			assert.Check(t, errors.Is(err, ErrInvalidCertificate))
+			assert.Check(t, errors.Is(err, ErrInvalidSignature))
+			assert.Check(t, !errors.Is(err, ErrUntrustedCertificate))
+		})
+	}
 }

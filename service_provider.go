@@ -507,12 +507,12 @@ func (sp *ServiceProvider) getIDPSigningCerts() ([]*x509.Certificate, error) {
 		certStr = regex.ReplaceAllString(certStr, "")
 		certBytes, err := base64.StdEncoding.DecodeString(certStr)
 		if err != nil {
-			return nil, fmt.Errorf("cannot parse certificate: %s", err)
+			return nil, classify(fmt.Errorf("cannot parse certificate: %w", err), ErrInvalidCertificate)
 		}
 
 		parsedCert, err := x509.ParseCertificate(certBytes)
 		if err != nil {
-			return nil, err
+			return nil, classify(err, ErrInvalidCertificate)
 		}
 		certs[i] = parsedCert
 	}
@@ -558,12 +558,12 @@ func parseCert(x509Data string) (*x509.Certificate, error) {
 	certStr := regex.ReplaceAllString(x509Data, "")
 	certBytes, err := base64.StdEncoding.DecodeString(certStr)
 	if err != nil {
-		return nil, fmt.Errorf("parse cert, cannot base64 decode cert string: %w", err)
+		return nil, classify(fmt.Errorf("parse cert, cannot base64 decode cert string: %w", err), ErrInvalidCertificate)
 	}
 
 	parsedCert, err := x509.ParseCertificate(certBytes)
 	if err != nil {
-		return nil, fmt.Errorf("parse cert, cannot parse certificate: %w", err)
+		return nil, classify(fmt.Errorf("parse cert, cannot parse certificate: %w", err), ErrInvalidCertificate)
 	}
 
 	return parsedCert, nil

@@ -122,6 +122,14 @@ var (
 	// (WantAuthnRequestsSigned), or an assertion consumer service binding
 	// other than HTTP-POST.
 	ErrUnsupported = errors.New("saml: not supported")
+
+	// ErrInvalidCertificate is attached when a certificate cannot be base64
+	// decoded or parsed: an IdP signing certificate in the IdP metadata or
+	// ServiceProvider.IDPCertificate, the certificate embedded in a
+	// signature when checking ServiceProvider.IDPCertificateFingerprint, or
+	// an SP encryption certificate in the SP metadata the IdP holds. At the
+	// SP the error also matches ErrInvalidSignature.
+	ErrInvalidCertificate = errors.New("saml: invalid certificate")
 )
 
 // Unwrap returns PrivateErr, so that errors.Is and errors.As can inspect the

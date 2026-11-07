@@ -357,55 +357,21 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 // ServeIDPInitiated handes an IDP-initiated authorization request. Requests of this
 // type require us to know a registered service provider and (optionally) the RelayState
 // that will be passed to the application.
+//
+// It responds with StatusNotFound if the service provider is unknown, and
+// with StatusInternalServerError if the service provider cannot be looked up
+// or has no usable assertion consumer service, or the assertion cannot be
+// created or returned. To handle these failures differently, build a handler
+// from NewIdpInitiatedRequest, whose errors can be matched with errors.Is.
 func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Request, serviceProviderID string, relayState string) {
-	req := &IdpAuthnRequest{
-		IDP:         idp,
-		HTTPRequest: r,
-		RelayState:  relayState,
-		Now:         TimeNow(),
-	}
-
-	// Resolve the service provider and its ACS endpoint before asking the
-	// SessionProvider for a session, as ServeSSO does via Validate. Otherwise
-	// a request for an unknown service provider would prompt the user to log
-	// in before failing, and the SessionProvider would see a request without
-	// ServiceProviderMetadata.
-	var err error
-	req.ServiceProviderMetadata, err = idp.ServiceProviderProvider.GetServiceProvider(r, serviceProviderID)
-	if err == os.ErrNotExist {
-		idp.Logger.Printf("cannot find service provider: %s", serviceProviderID)
-		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
-		return
-	} else if err != nil {
-		idp.Logger.Printf("cannot find service provider %s: %v", serviceProviderID, err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
-
-	// find an ACS endpoint that we can use
-	for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
-		for _, endpoint := range spssoDescriptor.AssertionConsumerServices {
-			if endpoint.Binding == HTTPPostBinding {
-				// explicitly copy loop iterator variables
-				//
-				// c.f. https://github.com/golang/go/wiki/CommonMistakes#using-reference-to-loop-iterator-variable
-				//
-				// (note that I'm pretty sure this isn't strictly necessary because we break out of the loop immediately,
-				// but it certainly doesn't hurt anything and may prevent bugs in the future.)
-				endpoint, spssoDescriptor := endpoint, spssoDescriptor
-
-				req.ACSEndpoint = &endpoint
-				req.SPSSODescriptor = &spssoDescriptor
-				break
-			}
+	req, err := idp.NewIdpInitiatedRequest(r, serviceProviderID, relayState)
+	if err != nil {
+		idp.Logger.Printf("%s", err)
+		status := http.StatusInternalServerError
+		if errors.Is(err, ErrUnknownServiceProvider) {
+			status = http.StatusNotFound
 		}
-		if req.ACSEndpoint != nil {
-			break
-		}
-	}
-	if req.ACSEndpoint == nil {
-		idp.Logger.Printf("saml metadata does not contain an Assertion Customer Service url")
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		http.Error(w, http.StatusText(status), status)
 		return
 	}
 
@@ -431,6 +397,66 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+}
+
+// NewIdpInitiatedRequest returns the IdpAuthnRequest for an IdP-initiated
+// login to the service provider serviceProviderID, with its metadata and the
+// first HTTP-POST assertion consumer service in it resolved. It is the part
+// of ServeIDPInitiated that runs before the SessionProvider is asked for a
+// session.
+//
+// It returns an error matching ErrUnknownServiceProvider (and os.ErrNotExist)
+// if the ServiceProviderProvider does not know serviceProviderID,
+// ErrUnknownAssertionConsumerService if the service provider has no HTTP-POST
+// assertion consumer service, and otherwise the ServiceProviderProvider's
+// error, wrapped.
+func (idp *IdentityProvider) NewIdpInitiatedRequest(r *http.Request, serviceProviderID string, relayState string) (*IdpAuthnRequest, error) {
+	req := &IdpAuthnRequest{
+		IDP:         idp,
+		HTTPRequest: r,
+		RelayState:  relayState,
+		Now:         TimeNow(),
+	}
+
+	// Resolve the service provider and its ACS endpoint before the
+	// SessionProvider is asked for a session, as ServeSSO does via Validate.
+	// Otherwise a request for an unknown service provider would prompt the
+	// user to log in before failing, and the SessionProvider would see a
+	// request without ServiceProviderMetadata.
+	var err error
+	req.ServiceProviderMetadata, err = idp.ServiceProviderProvider.GetServiceProvider(r, serviceProviderID)
+	if err == os.ErrNotExist {
+		return nil, classify(fmt.Errorf("cannot find service provider: %s", serviceProviderID), ErrUnknownServiceProvider, os.ErrNotExist)
+	} else if err != nil {
+		return nil, fmt.Errorf("cannot find service provider %s: %w", serviceProviderID, err)
+	}
+
+	// find an ACS endpoint that we can use
+	for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
+		for _, endpoint := range spssoDescriptor.AssertionConsumerServices {
+			if endpoint.Binding == HTTPPostBinding {
+				// explicitly copy loop iterator variables
+				//
+				// c.f. https://github.com/golang/go/wiki/CommonMistakes#using-reference-to-loop-iterator-variable
+				//
+				// (note that I'm pretty sure this isn't strictly necessary because we break out of the loop immediately,
+				// but it certainly doesn't hurt anything and may prevent bugs in the future.)
+				endpoint, spssoDescriptor := endpoint, spssoDescriptor
+
+				req.ACSEndpoint = &endpoint
+				req.SPSSODescriptor = &spssoDescriptor
+				break
+			}
+		}
+		if req.ACSEndpoint != nil {
+			break
+		}
+	}
+	if req.ACSEndpoint == nil {
+		return nil, classify(errors.New("saml metadata does not contain an Assertion Customer Service url"), ErrUnknownAssertionConsumerService)
+	}
+
+	return req, nil
 }
 
 // IdpAuthnRequest is used by IdentityProvider to handle a single authentication request.
@@ -1128,11 +1154,11 @@ func (req *IdpAuthnRequest) getSPEncryptionCert() (*x509.Certificate, error) {
 	certStr = regexp.MustCompile(`\s+`).ReplaceAllString(certStr, "")
 	certBytes, err := base64.StdEncoding.DecodeString(certStr)
 	if err != nil {
-		return nil, fmt.Errorf("cannot decode certificate base64: %v", err)
+		return nil, classify(fmt.Errorf("cannot decode certificate base64: %w", err), ErrInvalidCertificate)
 	}
 	cert, err := x509.ParseCertificate(certBytes)
 	if err != nil {
-		return nil, fmt.Errorf("cannot parse certificate: %v", err)
+		return nil, classify(fmt.Errorf("cannot parse certificate: %w", err), ErrInvalidCertificate)
 	}
 	return cert, nil
 }
