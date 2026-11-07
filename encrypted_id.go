@@ -193,6 +193,14 @@ type namedDecryptionKey struct {
 	key  interface{}
 }
 
+// maxEncryptedKeyCandidates is the most xenc:EncryptedKey elements
+// decryptWithKeys tries. Encrypted elements may be decrypted before any
+// signature over them is checked, and each candidate costs a private-key
+// operation for every decryption key, so the number tried is bounded. The
+// ones whose Recipient matches are tried first, so a legitimate
+// multi-recipient element still decrypts.
+const maxEncryptedKeyCandidates = 4
+
 // decryptWithKeys decrypts encryptedEl, an element with an
 // xenc:EncryptedData child such as saml:EncryptedID or
 // saml:EncryptedAssertion, with the first of keys that can, and returns the
@@ -203,7 +211,8 @@ type namedDecryptionKey struct {
 // (saml-core errata E43, §6.3: "It is RECOMMENDED that implementations simply
 // use the first key they understand and ignore any additional keys"). Those
 // whose Recipient is recipient are tried first, then the others in document
-// order, each with every one of keys.
+// order, each with every one of keys. At most maxEncryptedKeyCandidates
+// EncryptedKeys are tried.
 func decryptWithKeys(encryptedEl *etree.Element, keys []namedDecryptionKey, recipient string) (*etree.Element, error) {
 	encryptedDataEl, err := findOneChild(encryptedEl, "http://www.w3.org/2001/04/xmlenc#", "EncryptedData")
 	if err != nil {
@@ -214,6 +223,12 @@ func decryptWithKeys(encryptedEl *etree.Element, keys []namedDecryptionKey, reci
 	}
 
 	encryptedKeyEls := encryptedKeyCandidates(encryptedEl, encryptedDataEl, recipient)
+	if len(encryptedKeyEls) > maxEncryptedKeyCandidates {
+		// Each candidate costs one private-key operation per key, and the
+		// element may come from an unsigned Response, so an attacker could
+		// otherwise make one request cost seconds of CPU.
+		encryptedKeyEls = encryptedKeyEls[:maxEncryptedKeyCandidates]
+	}
 	if len(encryptedKeyEls) == 0 {
 		// No EncryptedKey: the keys are used on the EncryptedData directly.
 		encryptedKeyEls = []*etree.Element{nil}
