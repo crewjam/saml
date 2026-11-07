@@ -163,7 +163,7 @@ func TestCovGetDefaultSigningMethod(t *testing.T) {
 	assert.Check(t, is.Equal(jwt.SigningMethodES512, getDefaultSigningMethod(covECDSAKey(t, elliptic.P521()))))
 	_, edKey, err := ed25519.GenerateKey(rand.Reader)
 	assert.Assert(t, err)
-	assert.Check(t, is.Equal(jwt.SigningMethodRS256, getDefaultSigningMethod(edKey)))
+	assert.Check(t, is.Equal(jwt.SigningMethodEdDSA, getDefaultSigningMethod(edKey)))
 }
 
 // TestCovSessionWithECDSAKeys checks that sessions can be created and read back
