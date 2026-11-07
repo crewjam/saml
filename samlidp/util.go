@@ -37,48 +37,66 @@ func getSPMetadata(r io.Reader) (*saml.EntityDescriptor, error) {
 // signature made with one of certs, and only the content the signature
 // covers is parsed (see saml.VerifyMetadataSignature). Unsigned metadata is
 // then refused.
-func getVerifiedSPMetadata(r io.Reader, certs []*x509.Certificate) (spMetadata *saml.EntityDescriptor, err error) {
+func getVerifiedSPMetadata(r io.Reader, certs []*x509.Certificate) (*saml.EntityDescriptor, error) {
+	data, err := readSPMetadata(r)
+	if err != nil {
+		return nil, err
+	}
+	return verifiedSPMetadata(data, certs)
+}
+
+// readSPMetadata reads a metadata document from r, at most
+// MaxServiceMetadataSize bytes.
+func readSPMetadata(r io.Reader) ([]byte, error) {
 	limit := MaxServiceMetadataSize
-	var data []byte
-	if data, err = io.ReadAll(io.LimitReader(r, limit+1)); err != nil {
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
 		return nil, err
 	}
 	if int64(len(data)) > limit {
 		return nil, fmt.Errorf("metadata is larger than %d bytes (MaxServiceMetadataSize)", limit)
 	}
+	return data, nil
+}
 
+// verifiedSPMetadata parses the metadata document data as
+// getVerifiedSPMetadata does.
+func verifiedSPMetadata(data []byte, certs []*x509.Certificate) (*saml.EntityDescriptor, error) {
 	if len(certs) > 0 {
+		var err error
 		if data, err = saml.VerifyMetadataSignature(data, certs); err != nil {
 			return nil, err
 		}
 	}
+	return parseSPMetadata(data)
+}
 
-	spMetadata = &saml.EntityDescriptor{}
+// parseSPMetadata parses the metadata document data as getSPMetadata does,
+// without checking any signature.
+func parseSPMetadata(data []byte) (*saml.EntityDescriptor, error) {
 	if err := xmlroundtrip.Validate(data); err != nil {
 		return nil, err
 	}
 
-	if err := xml.Unmarshal(data, &spMetadata); err != nil {
-		if err.Error() == "expected element type <EntityDescriptor> but have <EntitiesDescriptor>" {
-			entities := &saml.EntitiesDescriptor{}
-			if err := xml.Unmarshal(data, &entities); err != nil {
-				return nil, err
-			}
-
-			sps := spEntities(entities)
-			switch len(sps) {
-			case 0:
-				return nil, errors.New("metadata contained no service provider metadata")
-			case 1:
-				return sps[0], nil
-			default:
-				return nil, fmt.Errorf("metadata holds %d entities with an SPSSODescriptor; register them one at a time", len(sps))
-			}
+	spMetadata := &saml.EntityDescriptor{}
+	if err := xml.Unmarshal(data, spMetadata); err != nil {
+		if err.Error() != "expected element type <EntityDescriptor> but have <EntitiesDescriptor>" {
+			return nil, err
 		}
-
-		return nil, err
+		entities := &saml.EntitiesDescriptor{}
+		if err := xml.Unmarshal(data, entities); err != nil {
+			return nil, err
+		}
+		sps := spEntities(entities)
+		switch len(sps) {
+		case 0:
+			return nil, errors.New("metadata contained no service provider metadata")
+		case 1:
+			return sps[0], nil
+		default:
+			return nil, fmt.Errorf("metadata holds %d entities with an SPSSODescriptor; register them one at a time", len(sps))
+		}
 	}
-
 	return spMetadata, nil
 }
 
