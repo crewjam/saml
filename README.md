@@ -179,6 +179,31 @@ The middleware also handles IDP initiated logout: when the IDP sends a signed `L
 
 For single logout to work, the IDP needs to know the SLO URL. It is in the service provider's metadata, or you can enter `<root URL>/saml/slo` in the IDP's settings. Many IDPs require logout requests to be signed; set `Options.SignRequest` to sign them. If you need different behaviour, for example to end server-side sessions, the `ServiceProvider` methods `MakeLogoutRequest`, `RedirectLogoutRequestURL`, `ParseLogoutResponse`, `ValidateLogoutRequest` and `MakeRedirectLogoutResponse` are the building blocks `HandleStartLogout` and `ServeSLO` use.
 
+### Querying attributes from the IDP
+
+An IDP that is also a SAML attribute authority (for example Shibboleth) can be asked for a user's attributes outside of a login, with an `AttributeQuery` sent over the SOAP back channel (the Assertion Query/Request profile). This needs an `AttributeAuthorityDescriptor` with a SOAP `AttributeService` in the IDP metadata, and the IDP must be willing to answer this service provider:
+
+```golang
+// The NameID the IDP issued for the user, as received at login, so that its
+// Format and qualifiers match what the IDP knows the user by.
+nameID := saml.NameID{
+	Format: string(saml.PersistentNameIDFormat),
+	Value:  "AAdzZWNyZXQx...",
+}
+result, err := samlSP.ServiceProvider.QueryAttributes(ctx, nameID,
+	saml.Attribute{Name: "urn:oid:0.9.2342.19200300.100.1.3", NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:uri"})
+if err != nil {
+	return err
+}
+for _, attribute := range result.Attributes {
+	for _, value := range attribute.Values {
+		fmt.Println(attribute.Name, value.Value)
+	}
+}
+```
+
+Leave out the attributes to ask for everything the IDP releases to you. The query is signed with the service provider's key, and the response is accepted only if it answers this query, is signed by the IDP (the `Response`, or every `Assertion`), and every assertion is about the queried NameID, addressed to this service provider and currently valid. The result describes the user but does not authenticate them: never start a session from it. `QueryAttributes` sends the query with `ServiceProvider.HTTPClient`; to use your own transport, build the query with `MakeAttributeQuery`, send `query.SoapRequest()`, and validate the reply with `ParseXMLAttributeQueryResponse`.
+
 ## Getting Started as an Identity Provider
 
 Please see `example/idp/` for a substantially complete example of how to use the library and helpers to be an identity provider.

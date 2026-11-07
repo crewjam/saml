@@ -625,6 +625,112 @@ func (r *ArtifactResolve) UnmarshalXML(d *xml.Decoder, start xml.StartElement) e
 	return nil
 }
 
+// soapEnvelopeNamespace is the namespace of the SOAP 1.1 Envelope, the only
+// SOAP version the SAML SOAP binding uses (saml-bindings §3.2.1).
+const soapEnvelopeNamespace = "http://schemas.xmlsoap.org/soap/envelope/"
+
+// AttributeQuery represents the SAML object of the same name, a request
+// from a service provider to an attribute authority for attributes of a
+// subject (saml-core §3.3.2.3).
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+type AttributeQuery struct {
+	XMLName xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol AttributeQuery"`
+
+	ID           string    `xml:",attr"`
+	Version      string    `xml:",attr"`
+	IssueInstant time.Time `xml:",attr"`
+	Destination  string    `xml:",attr"`
+	Consent      string    `xml:",attr"`
+	Issuer       *Issuer   `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
+	Signature    *etree.Element
+
+	// Subject names the principal whose attributes are requested.
+	Subject *Subject `xml:"urn:oasis:names:tc:SAML:2.0:assertion Subject"`
+
+	// Attributes, if any, names the attributes requested. An Attribute
+	// with Values asks only for those values. If empty, the attribute
+	// authority returns every attribute the requester may see.
+	Attributes []Attribute `xml:"urn:oasis:names:tc:SAML:2.0:assertion Attribute"`
+}
+
+// Element returns an etree.Element representing the object in XML form.
+func (r *AttributeQuery) Element() *etree.Element {
+	el := etree.NewElement("samlp:AttributeQuery")
+	el.CreateAttr("xmlns:saml", "urn:oasis:names:tc:SAML:2.0:assertion")
+	el.CreateAttr("xmlns:samlp", "urn:oasis:names:tc:SAML:2.0:protocol")
+	el.CreateAttr("ID", r.ID)
+	el.CreateAttr("Version", r.Version)
+	el.CreateAttr("IssueInstant", r.IssueInstant.Format(timeFormat))
+	if r.Destination != "" {
+		el.CreateAttr("Destination", r.Destination)
+	}
+	if r.Consent != "" {
+		el.CreateAttr("Consent", r.Consent)
+	}
+	if r.Issuer != nil {
+		el.AddChild(r.Issuer.Element())
+	}
+	if r.Signature != nil {
+		el.AddChild(r.Signature)
+	}
+	if r.Subject != nil {
+		el.AddChild(r.Subject.Element())
+	}
+	for i := range r.Attributes {
+		el.AddChild(r.Attributes[i].Element())
+	}
+	return el
+}
+
+// SoapRequest returns a SOAP 1.1 Envelope containing the AttributeQuery, as
+// the SAML SOAP binding sends it (saml-bindings §3.2).
+func (r *AttributeQuery) SoapRequest() *etree.Element {
+	envelope := etree.NewElement("soapenv:Envelope")
+	envelope.CreateAttr("xmlns:soapenv", soapEnvelopeNamespace)
+	body := etree.NewElement("soapenv:Body")
+	envelope.AddChild(body)
+	body.AddChild(r.Element())
+	return envelope
+}
+
+// MarshalXML implements xml.Marshaler
+func (r *AttributeQuery) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
+	type Alias AttributeQuery
+	aux := &struct {
+		IssueInstant RelaxedTime `xml:",attr"`
+		// Issuer is repeated so that it is written before Signature, as
+		// the schema requires.
+		Issuer    *Issuer          `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
+		Signature *etreeElementXML `xml:"Signature"`
+		*Alias
+	}{
+		IssueInstant: RelaxedTime(r.IssueInstant),
+		Issuer:       r.Issuer,
+		Signature:    (*etreeElementXML)(r.Signature),
+		Alias:        (*Alias)(r),
+	}
+	return e.Encode(aux)
+}
+
+// UnmarshalXML implements xml.Unmarshaler
+func (r *AttributeQuery) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	type Alias AttributeQuery
+	aux := &struct {
+		IssueInstant RelaxedTime      `xml:",attr"`
+		Signature    *etreeElementXML `xml:"Signature"`
+		*Alias
+	}{
+		Alias: (*Alias)(r),
+	}
+	if err := d.DecodeElement(&aux, &start); err != nil {
+		return err
+	}
+	r.Signature = (*etree.Element)(aux.Signature)
+	r.IssueInstant = time.Time(aux.IssueInstant)
+	return nil
+}
+
 // ArtifactResponse represents the SAML object of the same name.
 type ArtifactResponse struct {
 	XMLName      xml.Name  `xml:"urn:oasis:names:tc:SAML:2.0:protocol ArtifactResponse"`
