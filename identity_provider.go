@@ -132,6 +132,11 @@ type IdentityProvider struct {
 	// digest and AES-128-CBC, for compatibility with existing service
 	// providers.
 	AssertionEncrypter xmlenc.Encrypter
+
+	// SignMetadata, if true, causes ServeMetadata to publish metadata that
+	// carries an enveloped XML signature made with the IdP's key. See
+	// SignedMetadata.
+	SignMetadata bool
 }
 
 // Metadata returns the metadata structure for this identity provider.
@@ -225,9 +230,65 @@ func (idp *IdentityProvider) Handler() http.Handler {
 	return mux
 }
 
-// ServeMetadata is an http.HandlerFunc that serves the IDP metadata
+// SignedMetadata returns the IdP metadata as an XML element carrying an
+// enveloped signature made with the IdP's key (saml-metadata-2.0-os §3).
+//
+// The signature references the EntityDescriptor by its ID attribute; one is
+// generated if the metadata does not have one. The returned element must be
+// serialized as-is: re-indenting it changes the signed content.
+func (idp *IdentityProvider) SignedMetadata() (*etree.Element, error) {
+	ed := idp.Metadata()
+	if ed.ID == "" {
+		ed.ID = fmt.Sprintf("id-%x", randomBytes(20))
+	}
+
+	buf, err := xml.Marshal(ed)
+	if err != nil {
+		return nil, err
+	}
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(buf); err != nil {
+		return nil, err
+	}
+
+	signingContext, err := idp.signingContext()
+	if err != nil {
+		return nil, err
+	}
+	el := doc.Root()
+	sigEl, err := signingContext.ConstructSignature(el, true)
+	if err != nil {
+		return nil, err
+	}
+
+	// The metadata schema requires ds:Signature to be the first child of
+	// EntityDescriptor. The enveloped-signature transform removes it before
+	// the digest is computed, so its position does not affect validity.
+	el.InsertChildAt(0, sigEl)
+	return el, nil
+}
+
+// ServeMetadata is an http.HandlerFunc that serves the IDP metadata. If
+// SignMetadata is set, the metadata is signed.
 func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, _ *http.Request) {
-	buf, _ := xml.MarshalIndent(idp.Metadata(), "", "  ")
+	var buf []byte
+	if idp.SignMetadata {
+		el, err := idp.SignedMetadata()
+		if err != nil {
+			idp.Logger.Printf("ERROR: failed to sign metadata: %s", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+		doc := etree.NewDocument()
+		doc.SetRoot(el)
+		if buf, err = doc.WriteToBytes(); err != nil {
+			idp.Logger.Printf("ERROR: %s", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		buf, _ = xml.MarshalIndent(idp.Metadata(), "", "  ")
+	}
 	w.Header().Set("Content-Type", "application/samlmetadata+xml")
 	if _, err := w.Write(buf); err != nil {
 		idp.Logger.Printf("ERROR: %s", err)
@@ -1116,26 +1177,31 @@ func (req *IdpAuthnRequest) MakeResponse() error {
 
 // signingContext will create a signing context for the request.
 func (req *IdpAuthnRequest) signingContext() (*dsig.SigningContext, error) {
+	return req.IDP.signingContext()
+}
+
+// signingContext returns a signing context for the IdP's key and certificate.
+func (idp *IdentityProvider) signingContext() (*dsig.SigningContext, error) {
 	// Create a cert chain based off of the IDP cert and its intermediates.
-	certificates := make([][]byte, 0, 1+len(req.IDP.Intermediates))
-	certificates = append(certificates, req.IDP.Certificate.Raw)
-	for _, cert := range req.IDP.Intermediates {
+	certificates := make([][]byte, 0, 1+len(idp.Intermediates))
+	certificates = append(certificates, idp.Certificate.Raw)
+	for _, cert := range idp.Intermediates {
 		certificates = append(certificates, cert.Raw)
 	}
 
 	var signingContext *dsig.SigningContext
 	var err error
 	// If signer is set, use it instead of the private key.
-	if req.IDP.Signer != nil {
-		signingContext, err = dsig.NewSigningContext(req.IDP.Signer, certificates)
+	if idp.Signer != nil {
+		signingContext, err = dsig.NewSigningContext(idp.Signer, certificates)
 		if err != nil {
 			return nil, err
 		}
 	} else {
 		keyPair := tls.Certificate{
 			Certificate: certificates,
-			PrivateKey:  req.IDP.Key,
-			Leaf:        req.IDP.Certificate,
+			PrivateKey:  idp.Key,
+			Leaf:        idp.Certificate,
 		}
 		keyStore := dsig.TLSCertKeyStore(keyPair)
 
@@ -1144,11 +1210,11 @@ func (req *IdpAuthnRequest) signingContext() (*dsig.SigningContext, error) {
 
 	// Default to SHA-256 if the signature method isn't set. SHA-1 based
 	// methods are deprecated for XML signatures.
-	signatureMethod := req.IDP.SignatureMethod
+	signatureMethod := idp.SignatureMethod
 	if signatureMethod == "" {
-		publicKey := req.IDP.Certificate.PublicKey
-		if req.IDP.Signer != nil {
-			publicKey = req.IDP.Signer.Public()
+		publicKey := idp.Certificate.PublicKey
+		if idp.Signer != nil {
+			publicKey = idp.Signer.Public()
 		}
 		signatureMethod = dsig.RSASHA256SignatureMethod
 		if _, ok := publicKey.(*ecdsa.PublicKey); ok {
