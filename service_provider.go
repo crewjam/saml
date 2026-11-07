@@ -2183,8 +2183,15 @@ func (sp *ServiceProvider) validatedElement(el *etree.Element) (*etree.Element, 
 // set). Its errors are classified as validateSignature's are.
 func (sp *ServiceProvider) verifySignedElement(el *etree.Element, metadataCerts func() ([]*x509.Certificate, error)) (*etree.Element, error) {
 	signed, err := sp.validateSignatureUnclassified(el, metadataCerts)
-	if err == nil || err == errSignatureElementNotPresent {
-		return signed, err
+	if err == errSignatureElementNotPresent {
+		return nil, err
+	}
+	if err == nil {
+		// el still carries its Signature (and ID); signed may not.
+		if err = checkSignatureReference(el); err == nil {
+			return signed, nil
+		}
+		err = fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
 	}
 	return nil, classify(err, ErrInvalidSignature)
 }
