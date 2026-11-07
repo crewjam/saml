@@ -192,6 +192,17 @@ func OAEP_SHA256() RSA { //nolint:revive
 	return e
 }
 
+// OAEP_SHA384 returns a version of RSA that implements RSA in OAEP mode
+// (XML Encryption 1.1). By default the block cipher used is AES-256 CBC and the
+// digest method is SHA-384. You can specify other ciphers and digest methods by
+// assigning to BlockCipher or DigestMethod. The mask generation function is
+// MGF1 with the same hash as the digest method, and is stated in the output.
+func OAEP_SHA384() RSA { //nolint:revive
+	e := oaep11()
+	e.DigestMethod = SHA384
+	return e
+}
+
 // OAEP_SHA512 returns a version of RSA that implements RSA in OAEP mode
 // (XML Encryption 1.1). By default the block cipher used is AES-256 CBC and the
 // digest method is SHA-512. You can specify other ciphers and digest methods by

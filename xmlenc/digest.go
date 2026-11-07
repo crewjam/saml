@@ -38,6 +38,14 @@ var (
 		hash:      sha256.New,
 	}
 
+	// SHA384 implements the SHA-384 digest method. RFC 4051 section 2.1.3
+	// assigns it a URI in the XML Signature "more" namespace; XML Encryption
+	// does not define one of its own.
+	SHA384 = digestMethod{
+		algorithm: "http://www.w3.org/2001/04/xmldsig-more#sha384",
+		hash:      sha512.New384,
+	}
+
 	// SHA512 implements the SHA-512 digest method (RFC 4051 section 2.3.4).
 	SHA512 = digestMethod{
 		algorithm: "http://www.w3.org/2001/04/xmlenc#sha512",
@@ -72,6 +80,7 @@ var (
 func init() {
 	RegisterDigestMethod(SHA1)
 	RegisterDigestMethod(SHA256)
+	RegisterDigestMethod(SHA384)
 	RegisterDigestMethod(SHA512)
 	RegisterDigestMethod(RIPEMD160)
 	RegisterDigestMethod(legacySHA256)

@@ -20,6 +20,7 @@ func TestRegisteredDigestMethodURIs(t *testing.T) {
 	for _, uri := range []string{
 		"http://www.w3.org/2000/09/xmldsig#sha1",
 		"http://www.w3.org/2001/04/xmlenc#sha256",
+		"http://www.w3.org/2001/04/xmldsig-more#sha384",
 		"http://www.w3.org/2001/04/xmlenc#sha512",
 		"http://www.w3.org/2001/04/xmlenc#ripemd160",
 		"http://www.w3.org/2000/09/xmldsig#sha256",
