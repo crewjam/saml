@@ -1547,7 +1547,12 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 // received: responseEl itself, or, inside a signed ArtifactResponse, its
 // counterpart in the ArtifactResponse as received (see receivedChildren).
 // Its signature, and those of its assertions, are checked there.
-func (sp *ServiceProvider) parseReceivedResponse(responseEl, receivedEl *etree.Element, possibleRequestIDs []string, now time.Time, signatureRequirement signatureRequirement, currentURL url.URL) (*Assertion, error) {
+// checkResponseSignature checks the signature of the Response responseEl
+// (received as receivedEl) as signatureRequirement asks, and returns the
+// element to read the Response from (what its signature covers, if it is
+// signed), whether the Response is signed (or vouched for by the binding),
+// and the requirement left for its assertions.
+func (sp *ServiceProvider) checkResponseSignature(responseEl, receivedEl *etree.Element, signatureRequirement signatureRequirement) (*etree.Element, bool, signatureRequirement, error) {
 	var responseSignatureErr error
 	var responseHasSignature bool
 	switch signatureRequirement {
@@ -1565,12 +1570,12 @@ func (sp *ServiceProvider) parseReceivedResponse(responseEl, receivedEl *etree.E
 		default:
 			// A Signature is present but invalid: reject the Response before
 			// looking at any of its other contents.
-			return nil, responseSignatureErr
+			return nil, false, signatureRequirement, responseSignatureErr
 		}
 	case signatureVerifiedByBinding:
 		responseHasSignature = true
 		if err := sp.validateSignature(responseEl); err != nil && err != errSignatureElementNotPresent {
-			return nil, err
+			return nil, false, signatureRequirement, err
 		}
 		signatureRequirement = signatureNotRequired
 	case signatureNotRequired:
@@ -1582,8 +1587,16 @@ func (sp *ServiceProvider) parseReceivedResponse(responseEl, receivedEl *etree.E
 			responseEl = signed
 		case errSignatureElementNotPresent:
 		default:
-			return nil, err
+			return nil, false, signatureRequirement, err
 		}
+	}
+	return responseEl, responseHasSignature, signatureRequirement, nil
+}
+
+func (sp *ServiceProvider) parseReceivedResponse(responseEl, receivedEl *etree.Element, possibleRequestIDs []string, now time.Time, signatureRequirement signatureRequirement, currentURL url.URL) (*Assertion, error) {
+	responseEl, responseHasSignature, signatureRequirement, err := sp.checkResponseSignature(responseEl, receivedEl, signatureRequirement)
+	if err != nil {
+		return nil, err
 	}
 
 	// validate request attributes
