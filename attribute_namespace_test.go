@@ -1,6 +1,7 @@
 package saml
 
 import (
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
@@ -195,4 +196,23 @@ func TestParseXMLResponseIgnoresNamespaceDeclarationInSignedAssertion(t *testing
 	assert.Assert(t, is.Len(assertion.AttributeStatements[0].Attributes, 1))
 	assert.Check(t, is.Equal(assertion.AttributeStatements[0].Attributes[0].Name, "displayName"))
 	assert.Check(t, assertion.Subject.SubjectConfirmations[0].SubjectConfirmationData.NotOnOrAfter.Equal(spcovNow.Add(5*time.Minute)))
+}
+
+// The identity provider reads a signed LogoutRequest the same way: a
+// declaration added after signing must not extend its NotOnOrAfter.
+func TestIDPLogoutRequestNotOnOrAfterIgnoresNamespaceDeclaration(t *testing.T) {
+	test := newSLOTest(t)
+	req := test.logoutRequest()
+	notOnOrAfter := TimeNow().Add(-MaxClockSkew - time.Second)
+	req.NotOnOrAfter = &notOnOrAfter
+
+	doc := etree.NewDocument()
+	assert.NilError(t, doc.ReadFromBytes(test.signElement(t, req.Element())))
+	doc.Root().CreateAttr("xmlns:NotOnOrAfter", "2999-01-01T00:00:00Z")
+	buf, err := doc.WriteToBytes()
+	assert.NilError(t, err)
+
+	w := test.serve(postRequestBytes(test.IDP.LogoutURL.String(), buf))
+	assert.Check(t, is.Equal(http.StatusBadRequest, w.Code))
+	assert.Check(t, is.Equal(0, test.sessions.calls))
 }
