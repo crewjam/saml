@@ -106,13 +106,13 @@ func (app *soapLogoutApp) post(t *testing.T, contentType string, body []byte) (i
 	return resp.StatusCode, respBody
 }
 
-// soapLogoutRequest returns a LogoutRequest from the IdP for nameID with the
+// soapLogoutRequest returns a LogoutRequest from the IdP for alice with the
 // given SessionIndexes.
-func (app *soapLogoutApp) soapLogoutRequest(nameID string, sessionIndexes ...string) *saml.LogoutRequest {
+func (app *soapLogoutApp) soapLogoutRequest(sessionIndexes ...string) *saml.LogoutRequest {
 	req := app.lt.logoutRequest()
 	req.ID = soapLogoutRequestID
 	req.Destination = ""
-	req.NameID = &saml.NameID{Value: nameID}
+	req.NameID = &saml.NameID{Value: "alice@example.com"}
 	saml.WithSessionIndexes(sessionIndexes...)(req)
 	return req
 }
@@ -182,7 +182,7 @@ func TestServeSLOSOAPLogoutRequestEndsSession(t *testing.T) {
 		assert.Check(t, is.Equal(app.get(t, c), http.StatusOK))
 	}
 
-	status, body := app.post(t, "text/xml; charset=utf-8", app.idpSOAP(t, app.soapLogoutRequest("alice@example.com", "index-1")))
+	status, body := app.post(t, "text/xml; charset=utf-8", app.idpSOAP(t, app.soapLogoutRequest("index-1")))
 	assert.Check(t, is.Equal(status, http.StatusOK))
 	assert.Check(t, is.Equal(app.logoutResponseStatus(t, body), saml.StatusSuccess))
 	assert.Check(t, is.Len(app.errors, 0))
@@ -213,7 +213,7 @@ func TestServeSLOSOAPLogoutRequestWithoutSessionIndex(t *testing.T) {
 	aliceNoIndex := app.cookie(t, "alice@example.com", logoutTestNow)
 	bob := app.cookie(t, "bob@example.com", logoutTestNow, "index-1")
 
-	status, body := app.post(t, "text/xml", app.idpSOAP(t, app.soapLogoutRequest("alice@example.com")))
+	status, body := app.post(t, "text/xml", app.idpSOAP(t, app.soapLogoutRequest()))
 	assert.Check(t, is.Equal(status, http.StatusOK))
 	assert.Check(t, is.Equal(app.logoutResponseStatus(t, body), saml.StatusSuccess))
 
@@ -235,7 +235,7 @@ func TestServeSLOSOAPLogoutRequestSessionWithoutIndex(t *testing.T) {
 	app := newSOAPLogoutApp(t)
 	aliceNoIndex := app.cookie(t, "alice@example.com", logoutTestNow)
 	aliceOther := app.cookie(t, "alice@example.com", logoutTestNow, "index-2")
-	status, _ := app.post(t, "text/xml", app.idpSOAP(t, app.soapLogoutRequest("alice@example.com", "index-1")))
+	status, _ := app.post(t, "text/xml", app.idpSOAP(t, app.soapLogoutRequest("index-1")))
 	assert.Check(t, is.Equal(status, http.StatusOK))
 	assert.Check(t, is.Equal(app.get(t, aliceNoIndex), http.StatusFound))
 	assert.Check(t, is.Equal(app.get(t, aliceOther), http.StatusOK))
@@ -246,7 +246,7 @@ func TestServeSLOSOAPLogoutRequestSessionWithoutIndex(t *testing.T) {
 func TestServeSLOSOAPLogoutRequestCookieTampering(t *testing.T) {
 	app := newSOAPLogoutApp(t)
 	alice := app.cookie(t, "alice@example.com", logoutTestNow, "index-1")
-	status, _ := app.post(t, "text/xml", app.idpSOAP(t, app.soapLogoutRequest("alice@example.com", "index-1")))
+	status, _ := app.post(t, "text/xml", app.idpSOAP(t, app.soapLogoutRequest("index-1")))
 	assert.Check(t, is.Equal(status, http.StatusOK))
 
 	// Move the issue time after the logout, keeping the signature.
@@ -258,10 +258,15 @@ func TestServeSLOSOAPLogoutRequestCookieTampering(t *testing.T) {
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims(claims))
 	unsigned, err := token.SigningString()
 	assert.NilError(t, err)
-	tampered := *alice
-	tampered.Value = unsigned + "." + parts[2]
-	assert.Check(t, is.Equal(app.get(t, &tampered), http.StatusFound))
-	_, err = app.lt.m.Session.GetSession(requestWithCookie(&tampered))
+	tampered := &http.Cookie{
+		Name:     alice.Name,
+		Value:    unsigned + "." + parts[2],
+		Secure:   true,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	}
+	assert.Check(t, is.Equal(app.get(t, tampered), http.StatusFound))
+	_, err = app.lt.m.Session.GetSession(requestWithCookie(tampered))
 	assert.Check(t, is.ErrorIs(err, ErrNoSession))
 	assert.Check(t, !errors.Is(err, ErrSessionRevoked))
 }
@@ -294,23 +299,23 @@ func TestServeSLOSOAPLogoutRequestRejects(t *testing.T) {
 		wantErr error
 	}{
 		{name: "unsigned", body: func(t *testing.T, app *soapLogoutApp) []byte {
-			return soapEnvelope(t, app.soapLogoutRequest("alice@example.com").Element(), nil, nil, "")
+			return soapEnvelope(t, app.soapLogoutRequest().Element(), nil, nil, "")
 		}, wantErr: saml.ErrInvalidSignature},
 		{name: "signed by someone else", body: func(t *testing.T, app *soapLogoutApp) []byte {
-			return soapEnvelope(t, app.soapLogoutRequest("alice@example.com").Element(), evilKey, evilCert, dsig.RSASHA256SignatureMethod)
+			return soapEnvelope(t, app.soapLogoutRequest().Element(), evilKey, evilCert, dsig.RSASHA256SignatureMethod)
 		}, wantErr: saml.ErrInvalidSignature},
 		{name: "wrong issuer", body: func(t *testing.T, app *soapLogoutApp) []byte {
-			req := app.soapLogoutRequest("alice@example.com")
+			req := app.soapLogoutRequest()
 			req.Issuer.Value = "https://evil.example.com/"
 			return app.idpSOAP(t, req)
 		}, wantErr: saml.ErrIssuerMismatch},
 		{name: "SHA-1 with RejectSHA1Signatures", body: func(t *testing.T, app *soapLogoutApp) []byte {
-			return soapEnvelope(t, app.soapLogoutRequest("alice@example.com").Element(), app.lt.idpKey, app.lt.idpCert, dsig.RSASHA1SignatureMethod)
+			return soapEnvelope(t, app.soapLogoutRequest().Element(), app.lt.idpKey, app.lt.idpCert, dsig.RSASHA1SignatureMethod)
 		}, setup: func(_ *testing.T, app *soapLogoutApp) {
 			app.lt.m.ServiceProvider.RejectSHA1Signatures = true
 		}, wantErr: saml.ErrUnsupported},
 		{name: "oversized body", body: func(t *testing.T, app *soapLogoutApp) []byte {
-			return app.idpSOAP(t, app.soapLogoutRequest("alice@example.com"))
+			return app.idpSOAP(t, app.soapLogoutRequest())
 		}, setup: func(t *testing.T, _ *soapLogoutApp) {
 			old := saml.MaxSOAPLogoutMessageSize
 			saml.MaxSOAPLogoutMessageSize = 100
@@ -347,7 +352,7 @@ func TestServeSLOSOAPLogoutRequestRejects(t *testing.T) {
 func TestServeSLOSOAPLogoutRequestReplay(t *testing.T) {
 	app := newSOAPLogoutApp(t)
 	app.lt.m.ServiceProvider.ReplayCache = NewMemoryReplayCache(10)
-	body := app.idpSOAP(t, app.soapLogoutRequest("alice@example.com"))
+	body := app.idpSOAP(t, app.soapLogoutRequest())
 
 	status, _ := app.post(t, "text/xml", body)
 	assert.Check(t, is.Equal(status, http.StatusOK))
@@ -361,7 +366,7 @@ func TestServeSLOSOAPLogoutRequestReplay(t *testing.T) {
 func TestServeSLOSOAPNotSOAPContentType(t *testing.T) {
 	app := newSOAPLogoutApp(t)
 	alice := app.cookie(t, "alice@example.com", logoutTestNow)
-	status, _ := app.post(t, "text/plain", app.idpSOAP(t, app.soapLogoutRequest("alice@example.com")))
+	status, _ := app.post(t, "text/plain", app.idpSOAP(t, app.soapLogoutRequest()))
 	assert.Check(t, is.Equal(status, http.StatusForbidden))
 	assert.Assert(t, is.Len(app.errors, 1))
 	assert.Check(t, is.ErrorIs(app.errors[0], errSLOUnexpectedMessage))
@@ -395,7 +400,7 @@ func TestServeSLOSOAPLogoutRequestResponder(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newSOAPLogoutApp(t)
 			tc.setup(app)
-			status, body := app.post(t, "text/xml", app.idpSOAP(t, app.soapLogoutRequest("alice@example.com")))
+			status, body := app.post(t, "text/xml", app.idpSOAP(t, app.soapLogoutRequest()))
 			assert.Check(t, is.Equal(status, http.StatusOK))
 			assert.Check(t, is.Equal(app.logoutResponseStatus(t, body), saml.StatusResponder))
 			assert.Assert(t, is.Len(app.errors, 1))

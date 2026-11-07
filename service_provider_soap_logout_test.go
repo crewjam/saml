@@ -196,7 +196,7 @@ func TestValidateSOAPLogoutRequestRejects(t *testing.T) {
 			r.Header.Set("Content-Type", "application/soap+xml")
 			return r
 		}, ErrMalformedMessage, "not a SOAP message"},
-		{"GET", func(t *testing.T, e *spcovEnv) *http.Request {
+		{"GET", func(_ *testing.T, e *spcovEnv) *http.Request {
 			r := httptest.NewRequest(http.MethodGet, e.sp.SloURL.String(), nil)
 			r.Header.Set("Content-Type", "text/xml")
 			return r
