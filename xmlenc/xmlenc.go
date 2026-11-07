@@ -18,6 +18,10 @@ var RandReader = rand.Reader
 // Encrypter is an interface that encrypts things. Given a plaintext it returns an
 // XML EncryptedData or EncryptedKey element. The required type of `key` varies
 // depending on the implementation.
+//
+// nonce should be nil, so that the implementation generates any nonce or IV
+// it needs from RandReader. Implementations that use a nonce (GCM) accept a
+// caller-supplied one only for reproducible tests: see GCM.Encrypt.
 type Encrypter interface {
 	Encrypt(key interface{}, plaintext []byte, nonce []byte) (*etree.Element, error)
 }

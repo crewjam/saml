@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/beevik/etree"
@@ -49,7 +50,7 @@ func (e RSA) Encrypt(certificate interface{}, plaintext []byte, nonce []byte) (*
 
 	// generate a key
 	key := make([]byte, e.BlockCipher.KeySize())
-	if _, err := RandReader.Read(key); err != nil {
+	if _, err := io.ReadFull(RandReader, key); err != nil {
 		return nil, err
 	}
 
@@ -59,7 +60,7 @@ func (e RSA) Encrypt(certificate interface{}, plaintext []byte, nonce []byte) (*
 	encryptedKey := keyInfoEl.CreateElement("xenc:EncryptedKey")
 	{
 		randBuf := make([]byte, 16)
-		if _, err := RandReader.Read(randBuf); err != nil {
+		if _, err := io.ReadFull(RandReader, randBuf); err != nil {
 			return nil, err
 		}
 		encryptedKey.CreateAttr("Id", fmt.Sprintf("_%x", randBuf))
@@ -167,6 +168,12 @@ func (e RSA) Decrypt(key interface{}, ciphertextEl *etree.Element) ([]byte, erro
 //
 // OAEP implements the older RSA-OAEP (2001 spec) for backward compatibility, you might
 // prefer OAEP_SHA256 over using this method.
+//
+// AES-CBC has no integrity check, so a recipient cannot detect a modified
+// ciphertext (see ErrDecryptionFailed). Assign AES128GCM or AES256GCM to
+// BlockCipher when the recipient supports AES-GCM, as XML Encryption 1.1
+// recipients do. The CBC default is kept for compatibility with recipients
+// that support only XML Encryption 1.0.
 func OAEP() RSA {
 	return RSA{
 		BlockCipher:  AES256CBC,
@@ -186,6 +193,12 @@ func OAEP() RSA {
 // digest method is SHA-256. You can specify other ciphers and digest methods by
 // assigning to BlockCipher or DigestMethod. The mask generation function is
 // MGF1 with the same hash as the digest method, and is stated in the output.
+//
+// AES-CBC has no integrity check, so a recipient cannot detect a modified
+// ciphertext (see ErrDecryptionFailed). Assign AES128GCM or AES256GCM to
+// BlockCipher when the recipient supports AES-GCM, as XML Encryption 1.1
+// recipients do. The CBC default is kept for compatibility with recipients
+// that support only XML Encryption 1.0.
 func OAEP_SHA256() RSA { //nolint:revive
 	e := oaep11()
 	e.DigestMethod = SHA256
@@ -197,6 +210,12 @@ func OAEP_SHA256() RSA { //nolint:revive
 // digest method is SHA-384. You can specify other ciphers and digest methods by
 // assigning to BlockCipher or DigestMethod. The mask generation function is
 // MGF1 with the same hash as the digest method, and is stated in the output.
+//
+// AES-CBC has no integrity check, so a recipient cannot detect a modified
+// ciphertext (see ErrDecryptionFailed). Assign AES128GCM or AES256GCM to
+// BlockCipher when the recipient supports AES-GCM, as XML Encryption 1.1
+// recipients do. The CBC default is kept for compatibility with recipients
+// that support only XML Encryption 1.0.
 func OAEP_SHA384() RSA { //nolint:revive
 	e := oaep11()
 	e.DigestMethod = SHA384
@@ -208,6 +227,12 @@ func OAEP_SHA384() RSA { //nolint:revive
 // digest method is SHA-512. You can specify other ciphers and digest methods by
 // assigning to BlockCipher or DigestMethod. The mask generation function is
 // MGF1 with the same hash as the digest method, and is stated in the output.
+//
+// AES-CBC has no integrity check, so a recipient cannot detect a modified
+// ciphertext (see ErrDecryptionFailed). Assign AES128GCM or AES256GCM to
+// BlockCipher when the recipient supports AES-GCM, as XML Encryption 1.1
+// recipients do. The CBC default is kept for compatibility with recipients
+// that support only XML Encryption 1.0.
 func OAEP_SHA512() RSA { //nolint:revive
 	e := oaep11()
 	e.DigestMethod = SHA512
@@ -239,6 +264,12 @@ func oaep11() RSA {
 // PKCS1v15 returns a version of RSA that implements RSA in PKCS1v15 mode. By default
 // the block cipher used is AES-256 CBC. The DigestMethod field is ignored because PKCS1v15
 // does not use a digest function.
+//
+// AES-CBC has no integrity check, so a recipient cannot detect a modified
+// ciphertext (see ErrDecryptionFailed). Assign AES128GCM or AES256GCM to
+// BlockCipher when the recipient supports AES-GCM, as XML Encryption 1.1
+// recipients do. The CBC default is kept for compatibility with recipients
+// that support only XML Encryption 1.0.
 func PKCS1v15() RSA {
 	return RSA{
 		BlockCipher:  AES256CBC,
