@@ -416,6 +416,9 @@ func (sp *ServiceProvider) attributeQuerySignature(el *etree.Element) (*etree.El
 // validateAttributeQueryResponse checks the Response to query, apart from
 // its signature and assertions.
 func (sp *ServiceProvider) validateAttributeQueryResponse(response *Response, query *AttributeQuery, signed bool, now time.Time) error {
+	if err := checkVersion("response", response.Version); err != nil {
+		return err
+	}
 	if response.InResponseTo != query.ID {
 		return fmt.Errorf("`InResponseTo` %q does not match the attribute query ID %q", response.InResponseTo, query.ID)
 	}
@@ -529,6 +532,9 @@ func (sp *ServiceProvider) attributeQueryAssertion(assertionEl *etree.Element, q
 // as an answer to query. Unlike validateAssertion, it does not require a
 // bearer SubjectConfirmation; see ParseXMLAttributeQueryResponse.
 func (sp *ServiceProvider) validateAttributeQueryAssertion(assertion *Assertion, query *AttributeQuery, now time.Time) error {
+	if err := checkVersion("assertion", assertion.Version); err != nil {
+		return err
+	}
 	if issueDeadline(assertion).Before(now) {
 		return fmt.Errorf("expired on %s", issueDeadline(assertion))
 	}

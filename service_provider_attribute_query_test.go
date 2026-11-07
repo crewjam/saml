@@ -720,3 +720,21 @@ func TestGetAttributeServiceLocation(t *testing.T) {
 	e.sp.IDPMetadata = nil
 	assert.Check(t, is.Equal(e.sp.GetAttributeServiceLocation(SOAPBinding), ""))
 }
+
+// An attribute query Response, and each assertion in it, must be SAML 2.0
+// (saml-core §4.1.2, §4.1.3.3).
+func TestParseXMLAttributeQueryResponseVersion(t *testing.T) {
+	e := aqSetup(t)
+	query := e.aqQuery(t)
+
+	o := aqOptions{signResponse: true, sign: func(el *etree.Element) *etree.Element {
+		el.CreateAttr("Version", "3.0")
+		return e.idpSign(t, el)
+	}}
+	_, err := e.sp.ParseXMLAttributeQueryResponse(e.aqSOAP(t, query, o), query)
+	assert.Check(t, is.ErrorContains(spcovPrivateErr(t, err), `response Version "3.0" is not 2.0`))
+
+	a := e.aqAssertion(query)
+	a.Version = "3.0"
+	assert.Check(t, is.ErrorContains(e.sp.validateAttributeQueryAssertion(a, query, TimeNow()), `assertion Version "3.0" is not 2.0`))
+}
