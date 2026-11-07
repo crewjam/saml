@@ -170,6 +170,11 @@ type ServiceProvider struct {
 	// dsig.ECDSASHA512SignatureMethod.
 	SignatureMethod string
 
+	// SignMetadata, if true, asks that the SP metadata be published with an
+	// enveloped XML signature made with Key; samlsp.Middleware.ServeMetadata
+	// honors it. See SignedMetadata.
+	SignMetadata bool
+
 	// LogoutBindings specify the bindings available for SLO endpoint. If empty,
 	// HTTP-POST binding is used.
 	LogoutBindings []string
@@ -614,10 +619,36 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding stri
 	return &req, nil
 }
 
+// SignedMetadata returns the SP metadata as an XML element carrying an
+// enveloped signature made with Key and Certificate (saml-metadata-2.0-os §3).
+//
+// It signs with SignatureMethod, or, when that is empty, with SHA-256 for the
+// key type; signing metadata does not require request signing to be enabled.
+// The signature references the EntityDescriptor by its ID attribute; one is
+// generated if the metadata does not have one. The returned element must be
+// serialized as-is: re-indenting it changes the signed content.
+func (sp *ServiceProvider) SignedMetadata() (*etree.Element, error) {
+	signatureMethod := sp.SignatureMethod
+	if signatureMethod == "" && !signerutil.IsNil(sp.Key) {
+		signatureMethod = defaultSignatureMethod(sp.Key.Public())
+	}
+	signingContext, err := sp.signingContext(signatureMethod)
+	if err != nil {
+		return nil, err
+	}
+	return signMetadata(sp.Metadata(), signingContext)
+}
+
 // GetSigningContext returns a dsig.SigningContext initialized based on the Service Provider's configuration
 func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
+	return sp.signingContext(sp.SignatureMethod)
+}
+
+// signingContext returns a signing context for the SP's key and certificate
+// that signs with signatureMethod.
+func (sp *ServiceProvider) signingContext(signatureMethod string) (*dsig.SigningContext, error) {
 	if signerutil.IsNil(sp.Key) {
-		return nil, fmt.Errorf("signature method %s requires a non-nil private key", sp.SignatureMethod)
+		return nil, fmt.Errorf("signature method %s requires a non-nil private key", signatureMethod)
 	}
 	if sp.Certificate == nil {
 		return nil, errors.New("cannot sign: ServiceProvider.Certificate is nil")
@@ -637,13 +668,13 @@ func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 	// We check the public key type to support crypto.Signer implementations
 	// (like KMS/HSM signers) that aren't literal *rsa.PrivateKey or *ecdsa.PrivateKey.
 	pubKey := sp.Key.Public()
-	switch sp.SignatureMethod {
+	switch signatureMethod {
 	case dsig.RSASHA1SignatureMethod,
 		dsig.RSASHA256SignatureMethod,
 		dsig.RSASHA384SignatureMethod,
 		dsig.RSASHA512SignatureMethod:
 		if _, ok := pubKey.(*rsa.PublicKey); !ok {
-			return nil, fmt.Errorf("signature method %s requires an RSA key, got %T", sp.SignatureMethod, pubKey)
+			return nil, fmt.Errorf("signature method %s requires an RSA key, got %T", signatureMethod, pubKey)
 		}
 
 	case dsig.ECDSASHA1SignatureMethod,
@@ -651,10 +682,10 @@ func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 		dsig.ECDSASHA384SignatureMethod,
 		dsig.ECDSASHA512SignatureMethod:
 		if _, ok := pubKey.(*ecdsa.PublicKey); !ok {
-			return nil, fmt.Errorf("signature method %s requires an ECDSA key, got %T", sp.SignatureMethod, pubKey)
+			return nil, fmt.Errorf("signature method %s requires an ECDSA key, got %T", signatureMethod, pubKey)
 		}
 	default:
-		return nil, fmt.Errorf("invalid signing method %s", sp.SignatureMethod)
+		return nil, fmt.Errorf("invalid signing method %s", signatureMethod)
 	}
 
 	keyStore := dsig.TLSCertKeyStore(keyPair)
@@ -667,7 +698,7 @@ func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 		return nil, err
 	}
 	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
-	if err := signingContext.SetSignatureMethod(sp.SignatureMethod); err != nil {
+	if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
 		return nil, err
 	}
 

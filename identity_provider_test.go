@@ -246,6 +246,50 @@ func TestIDPHTTPCanHandleMetadataRequest(t *testing.T) {
 		w.Body.String())
 }
 
+func TestIDPCanServeSignedMetadata(t *testing.T) {
+	for name, opt := range map[string]idpTestOpts{"key": applyKey, "signer": applySigner} {
+		t.Run(name, func(t *testing.T) {
+			test := NewIdentityProviderTest(t, opt)
+			test.IDP.SignMetadata = true
+
+			w := httptest.NewRecorder()
+			r, _ := http.NewRequest("GET", "https://idp.example.com/saml/metadata", nil)
+			test.IDP.Handler().ServeHTTP(w, r)
+			assert.Check(t, is.Equal(http.StatusOK, w.Code))
+
+			doc := etree.NewDocument()
+			assert.NilError(t, doc.ReadFromBytes(w.Body.Bytes()))
+			root := doc.Root()
+			assert.Check(t, is.Equal("EntityDescriptor", root.Tag))
+			assert.Check(t, root.SelectAttrValue("ID", "") != "")
+
+			// the schema requires ds:Signature to be the first child
+			first := root.ChildElements()[0]
+			assert.Check(t, is.Equal("Signature", first.Tag))
+			assert.Check(t, is.Equal("http://www.w3.org/2000/09/xmldsig#", first.NamespaceURI()))
+
+			validationContext := dsig.NewDefaultValidationContext(&dsig.MemoryX509CertificateStore{
+				Roots: []*x509.Certificate{test.Certificate},
+			})
+			validationContext.Clock = dsig.NewFakeClockAt(test.Certificate.NotBefore)
+			_, err := validationContext.Validate(root)
+			assert.NilError(t, err)
+
+			// tampering with the metadata invalidates the signature
+			tampered := root.Copy()
+			tampered.CreateAttr("entityID", "https://evil.example.com/")
+			_, err = validationContext.Validate(tampered)
+			assert.Check(t, err != nil)
+
+			// the signed document is still ordinary, parseable metadata
+			var ed EntityDescriptor
+			assert.NilError(t, xml.Unmarshal(w.Body.Bytes(), &ed))
+			assert.Check(t, is.Equal(test.IDP.MetadataURL.String(), ed.EntityID))
+			assert.Check(t, is.Len(ed.IDPSSODescriptors, 1))
+		})
+	}
+}
+
 func TestIDPCanHandleRequestWithNewSession(t *testing.T) {
 	test := NewIdentityProviderTest(t, applyKey)
 	test.IDP.SessionProvider = &mockSessionProvider{

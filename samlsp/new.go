@@ -56,6 +56,10 @@ type Options struct {
 	// signing certificate outside its validity period. See
 	// saml.ServiceProvider.IgnoreCertificateExpiry.
 	IgnoreCertificateExpiry bool
+
+	// SignMetadata, if true, makes the metadata endpoint serve metadata
+	// signed with Key. See saml.ServiceProvider.SignMetadata.
+	SignMetadata bool
 }
 
 func getDefaultSigningMethod(signer crypto.Signer) jwt.SigningMethod {
@@ -180,6 +184,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 
 		AssertionConsumerServiceBindings: opts.AssertionConsumerServiceBindings,
 		IgnoreCertificateExpiry:          opts.IgnoreCertificateExpiry,
+		SignMetadata:                     opts.SignMetadata,
 	}
 }
 
