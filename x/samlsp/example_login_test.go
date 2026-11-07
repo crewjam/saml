@@ -7,7 +7,9 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
+	"time"
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/x/samlsp"
@@ -274,4 +276,36 @@ func ExampleAttributes_Get() {
 	// alice@example.com
 	// [admins users]
 	// ""
+}
+
+// DecodeAttributes parses values into the type of each field, following the
+// lexical rules of XML Schema. A pointer field stays nil when its attribute
+// is absent.
+func ExampleAssertion_DecodeAttributes_types() {
+	assertion := &samlsp.Assertion{ // as returned by ParseResponse
+		Attributes: samlsp.Attributes{
+			{Name: "https://example.com/claims/email_verified", Values: []string{"true"}},
+			{Name: "https://example.com/claims/seats", Values: []string{"25"}},
+			{Name: "https://example.com/claims/hired", Values: []string{"2024-06-01T09:00:00-04:00"}},
+			{Name: "https://example.com/claims/session_max", Values: []string{"PT8H"}},
+			{Name: "https://example.com/claims/office_ips", Values: []string{"192.0.2.10", "192.0.2.11"}},
+		},
+	}
+
+	var user struct {
+		EmailVerified bool          `saml:"https://example.com/claims/email_verified"`
+		Seats         int           `saml:"https://example.com/claims/seats"`
+		Hired         time.Time     `saml:"https://example.com/claims/hired"`
+		SessionMax    time.Duration `saml:"https://example.com/claims/session_max"`
+		OfficeIPs     []netip.Addr  `saml:"https://example.com/claims/office_ips"`
+		Admin         *bool         `saml:"https://example.com/claims/admin"`
+	}
+	if err := assertion.DecodeAttributes(&user); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(user.EmailVerified, user.Seats, user.Hired.UTC(), user.SessionMax)
+	fmt.Println(user.OfficeIPs, user.Admin == nil)
+	// Output:
+	// true 25 2024-06-01 13:00:00 +0000 UTC 8h0m0s
+	// [192.0.2.10 192.0.2.11] true
 }
