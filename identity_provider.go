@@ -686,7 +686,11 @@ func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	} else {
-		buf, _ = xml.MarshalIndent(idp.Metadata(), "", "  ")
+		var err error
+		if buf, err = xml.MarshalIndent(idp.Metadata(), "", "  "); err != nil {
+			idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to serialize metadata: %w", err))
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "application/samlmetadata+xml")
 	if _, err := w.Write(buf); err != nil {
@@ -887,7 +891,7 @@ func (idp *IdentityProvider) NewIdpInitiatedRequest(r *http.Request, serviceProv
 	// request without ServiceProviderMetadata.
 	var err error
 	req.ServiceProviderMetadata, err = idp.ServiceProviderProvider.GetServiceProvider(r, serviceProviderID)
-	if err == os.ErrNotExist {
+	if errors.Is(err, os.ErrNotExist) {
 		return nil, classify(fmt.Errorf("cannot find service provider: %s", serviceProviderID), ErrUnknownServiceProvider, os.ErrNotExist)
 	} else if err != nil {
 		return nil, fmt.Errorf("cannot find service provider %s: %w", serviceProviderID, err)
@@ -1139,7 +1143,7 @@ func (req *IdpAuthnRequest) resolveServiceProvider() error {
 	}
 	serviceProviderID := req.Request.Issuer.Value
 	serviceProvider, err := req.IDP.ServiceProviderProvider.GetServiceProvider(req.HTTPRequest, serviceProviderID)
-	if err == os.ErrNotExist {
+	if errors.Is(err, os.ErrNotExist) {
 		return classify(fmt.Errorf("cannot handle request from unknown service provider %s", serviceProviderID), ErrUnknownServiceProvider, os.ErrNotExist)
 	} else if err != nil {
 		return fmt.Errorf("cannot find service provider %s: %w", serviceProviderID, err)
@@ -1634,7 +1638,7 @@ func (req *IdpAuthnRequest) MakeAssertionEl() error {
 	signedAssertionEl = req.Assertion.Element()
 
 	certBuf, err := req.getSPEncryptionCert()
-	if err == os.ErrNotExist {
+	if errors.Is(err, os.ErrNotExist) {
 		req.AssertionEl = signedAssertionEl
 		return nil
 	} else if err != nil {
