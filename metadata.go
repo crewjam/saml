@@ -1,12 +1,15 @@
 package saml
 
 import (
+	"crypto"
+	"crypto/ecdsa"
 	"encoding/xml"
 	"fmt"
 	"net/url"
 	"time"
 
 	"github.com/beevik/etree"
+	dsig "github.com/russellhaering/goxmldsig"
 )
 
 // HTTPPostBinding is the official URN for the HTTP-POST binding (transport)
@@ -175,6 +178,52 @@ func (m *EntityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 	m.ValidUntil = time.Time(aux.ValidUntil)
 	m.CacheDuration = time.Duration(aux.CacheDuration)
 	return nil
+}
+
+// signMetadata returns ed as an XML element carrying an enveloped signature
+// made with signingContext (saml-metadata-2.0-os §3).
+//
+// The signature references the EntityDescriptor by its ID attribute; one is
+// generated if ed does not have one. ed itself is not modified. The returned
+// element must be serialized as-is: re-indenting it changes the signed
+// content.
+func signMetadata(ed *EntityDescriptor, signingContext *dsig.SigningContext) (*etree.Element, error) {
+	unsigned := *ed
+	unsigned.Signature = nil
+	if unsigned.ID == "" {
+		unsigned.ID = fmt.Sprintf("id-%x", randomBytes(20))
+	}
+
+	buf, err := xml.Marshal(unsigned)
+	if err != nil {
+		return nil, err
+	}
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(buf); err != nil {
+		return nil, err
+	}
+
+	el := doc.Root()
+	sigEl, err := signingContext.ConstructSignature(el, true)
+	if err != nil {
+		return nil, err
+	}
+
+	// The metadata schema requires ds:Signature to be the first child of
+	// EntityDescriptor. The enveloped-signature transform removes it before
+	// the digest is computed, so its position does not affect validity.
+	el.InsertChildAt(0, sigEl)
+	return el, nil
+}
+
+// defaultSignatureMethod returns the signature method used when none is
+// configured: SHA-256 with ECDSA for an ECDSA key, and with RSA otherwise.
+// SHA-1 based methods are deprecated for XML signatures.
+func defaultSignatureMethod(publicKey crypto.PublicKey) string {
+	if _, ok := publicKey.(*ecdsa.PublicKey); ok {
+		return dsig.ECDSASHA256SignatureMethod
+	}
+	return dsig.RSASHA256SignatureMethod
 }
 
 // Organization represents the SAML Organization object.

@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"encoding/xml"
 	"errors"
+	"log"
 	"net/http"
+
+	"github.com/beevik/etree"
 
 	"github.com/crewjam/saml"
 )
@@ -67,9 +70,27 @@ func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.NotFoundHandler().ServeHTTP(w, r)
 }
 
-// ServeMetadata handles requests for the SAML metadata endpoint.
+// ServeMetadata handles requests for the SAML metadata endpoint. If
+// ServiceProvider.SignMetadata is set, the metadata is signed.
 func (m *Middleware) ServeMetadata(w http.ResponseWriter, _ *http.Request) {
-	buf, _ := xml.MarshalIndent(m.ServiceProvider.Metadata(), "", "  ")
+	var buf []byte
+	if m.ServiceProvider.SignMetadata {
+		el, err := m.ServiceProvider.SignedMetadata()
+		if err != nil {
+			log.Printf("ERROR: failed to sign metadata: %s", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+		doc := etree.NewDocument()
+		doc.SetRoot(el)
+		if buf, err = doc.WriteToBytes(); err != nil {
+			log.Printf("ERROR: %s", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		buf, _ = xml.MarshalIndent(m.ServiceProvider.Metadata(), "", "  ")
+	}
 	w.Header().Set("Content-Type", "application/samlmetadata+xml")
 	if _, err := w.Write(buf); err != nil { //nolint:gosec // buf is our own XML metadata, served as application/samlmetadata+xml
 		http.Error(w, err.Error(), http.StatusInternalServerError)

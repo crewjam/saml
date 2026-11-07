@@ -3,7 +3,6 @@ package saml
 import (
 	"bytes"
 	"crypto"
-	"crypto/ecdsa"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -239,35 +238,11 @@ func (idp *IdentityProvider) Handler() http.Handler {
 // generated if the metadata does not have one. The returned element must be
 // serialized as-is: re-indenting it changes the signed content.
 func (idp *IdentityProvider) SignedMetadata() (*etree.Element, error) {
-	ed := idp.Metadata()
-	if ed.ID == "" {
-		ed.ID = fmt.Sprintf("id-%x", randomBytes(20))
-	}
-
-	buf, err := xml.Marshal(ed)
-	if err != nil {
-		return nil, err
-	}
-	doc := etree.NewDocument()
-	if err := doc.ReadFromBytes(buf); err != nil {
-		return nil, err
-	}
-
 	signingContext, err := idp.signingContext()
 	if err != nil {
 		return nil, err
 	}
-	el := doc.Root()
-	sigEl, err := signingContext.ConstructSignature(el, true)
-	if err != nil {
-		return nil, err
-	}
-
-	// The metadata schema requires ds:Signature to be the first child of
-	// EntityDescriptor. The enveloped-signature transform removes it before
-	// the digest is computed, so its position does not affect validity.
-	el.InsertChildAt(0, sigEl)
-	return el, nil
+	return signMetadata(idp.Metadata(), signingContext)
 }
 
 // ServeMetadata is an http.HandlerFunc that serves the IDP metadata. If
@@ -1234,10 +1209,7 @@ func (idp *IdentityProvider) signingContext() (*dsig.SigningContext, error) {
 		if useSigner {
 			publicKey = idp.Signer.Public()
 		}
-		signatureMethod = dsig.RSASHA256SignatureMethod
-		if _, ok := publicKey.(*ecdsa.PublicKey); ok {
-			signatureMethod = dsig.ECDSASHA256SignatureMethod
-		}
+		signatureMethod = defaultSignatureMethod(publicKey)
 	}
 
 	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
