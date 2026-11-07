@@ -325,11 +325,6 @@ func deflateAndEncode(el *etree.Element) (string, error) {
 	return rv.String(), nil
 }
 
-// redirectBindingURL returns destination with the HTTP-Redirect binding
-// parameters for encodedMessage appended. If sp.SignatureMethod is set the
-// query is signed as described in saml-bindings-2.0-os section 3.4.4.1. The
-// signature covers only the SAML parameters, not any query parameters already
-// present in destination.
 // MaxRelayStateLength is the longest RelayState, in bytes, that a SAML
 // message may carry with the HTTP-Redirect, HTTP-POST and
 // HTTP-POST-SimpleSign bindings: "The value MUST NOT exceed 80 bytes in
@@ -347,6 +342,11 @@ func checkRelayState(relayState string) error {
 	return nil
 }
 
+// redirectBindingURL returns destination with the HTTP-Redirect binding
+// parameters for encodedMessage appended. If sp.SignatureMethod is set the
+// query is signed as described in saml-bindings-2.0-os section 3.4.4.1. The
+// signature covers only the SAML parameters, not any query parameters already
+// present in destination.
 func (sp *ServiceProvider) redirectBindingURL(destination, messageParam, encodedMessage, relayState string) (*url.URL, error) {
 	if sp.SignatureMethod == "" {
 		return signedRedirectBindingURL(destination, messageParam, encodedMessage, relayState, "", nil)
