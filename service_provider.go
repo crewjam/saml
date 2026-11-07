@@ -1058,7 +1058,10 @@ type AssertionAttributes []AssertionAttribute
 //
 // FriendlyName "MUST NOT be used as a basis for formally identifying SAML
 // attributes" (saml-core §2.7.3.1): an attribute's FriendlyName can equal
-// another attribute's Name. Use GetByName to match the Name only.
+// another attribute's Name.
+//
+// Deprecated: Get can return an attribute whose FriendlyName equals the
+// Name asked for, in place of the attribute with that Name. Use GetByName.
 func (aa AssertionAttributes) Get(name string) *AssertionAttribute {
 	for _, attr := range aa {
 		if attr.Name == name {
