@@ -1,6 +1,7 @@
 package samlidp
 
 import (
+	"bytes"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -17,6 +18,91 @@ type Service struct {
 
 	// Metdata is the XML metadata of the service provider.
 	Metadata saml.EntityDescriptor
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+//
+// An XML signature (an *etree.Element) cannot be decoded from JSON, so
+// HandlePutService drops the signatures from metadata before storing it.
+// Services stored before that was done may still hold JSON-encoded
+// signatures; they are decoded without them.
+func (s *Service) UnmarshalJSON(data []byte) error {
+	type alias Service
+	err := json.Unmarshal(data, (*alias)(s))
+	if err == nil {
+		return nil
+	}
+	stripped, stripErr := stripJSONSignatures(data)
+	if stripErr != nil || stripped == nil {
+		return err
+	}
+	*s = Service{}
+	return json.Unmarshal(stripped, (*alias)(s))
+}
+
+// stripJSONSignatures removes the non-null "Signature" members from the
+// JSON-encoded Metadata of a Service. It returns nil if there were none.
+func stripJSONSignatures(data []byte) ([]byte, error) {
+	var v map[string]interface{}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+	if err := d.Decode(&v); err != nil {
+		return nil, err
+	}
+	if !deleteSignatures(v["Metadata"]) {
+		return nil, nil
+	}
+	return json.Marshal(v)
+}
+
+// deleteSignatures removes, from v and everything in it, the "Signature"
+// members whose value is an object. It reports whether it removed any.
+func deleteSignatures(v interface{}) bool {
+	removed := false
+	switch v := v.(type) {
+	case map[string]interface{}:
+		if _, ok := v["Signature"].(map[string]interface{}); ok {
+			delete(v, "Signature")
+			removed = true
+		}
+		for _, child := range v {
+			removed = deleteSignatures(child) || removed
+		}
+	case []interface{}:
+		for _, child := range v {
+			removed = deleteSignatures(child) || removed
+		}
+	}
+	return removed
+}
+
+// clearSignatures removes the XML signatures from md. They cannot be stored
+// as JSON, and they are of no use once the metadata has been accepted: they
+// were checked then, if SPMetadataCertificates was set, and they do not
+// verify against metadata that has been decoded and encoded again.
+func clearSignatures(md *saml.EntityDescriptor) {
+	md.Signature = nil
+	for i := range md.RoleDescriptors {
+		md.RoleDescriptors[i].Signature = nil
+	}
+	for i := range md.IDPSSODescriptors {
+		md.IDPSSODescriptors[i].Signature = nil
+	}
+	for i := range md.SPSSODescriptors {
+		md.SPSSODescriptors[i].Signature = nil
+	}
+	for i := range md.AuthnAuthorityDescriptors {
+		md.AuthnAuthorityDescriptors[i].Signature = nil
+	}
+	for i := range md.AttributeAuthorityDescriptors {
+		md.AttributeAuthorityDescriptors[i].Signature = nil
+	}
+	for i := range md.PDPDescriptors {
+		md.PDPDescriptors[i].Signature = nil
+	}
+	if md.AffiliationDescriptor != nil {
+		md.AffiliationDescriptor.Signature = nil
+	}
 }
 
 // GetServiceProvider returns the Service Provider metadata for the
@@ -76,6 +162,8 @@ func (s *Server) HandleGetService(w http.ResponseWriter, r *http.Request) {
 // them, and only the content the signature covers is stored; unsigned
 // metadata, or metadata whose signature does not verify, is refused with
 // 400 Bad Request.
+//
+// XML signatures in the metadata are not stored.
 func (s *Server) HandlePutService(w http.ResponseWriter, r *http.Request) {
 	service := Service{}
 
@@ -87,6 +175,7 @@ func (s *Server) HandlePutService(w http.ResponseWriter, r *http.Request) {
 	}
 
 	service.Metadata = *metadata
+	clearSignatures(&service.Metadata)
 
 	err = s.Store.Put(fmt.Sprintf("/services/%s", r.PathValue("id")), &service)
 	if err != nil {
