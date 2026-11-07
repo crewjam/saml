@@ -39,6 +39,69 @@ var (
 	ErrCertificateNotValidNow = errors.New("saml: signing certificate is expired or not yet valid")
 )
 
+// Errors that the ServiceProvider attaches to the other reasons it rejects a
+// Response, Assertion, ArtifactResponse, LogoutResponse or LogoutRequest.
+// Like the signature errors above, they are matched with errors.Is, through
+// *InvalidResponseError where one is returned, and leave the message of the
+// error unchanged.
+//
+// A rejected logout response whose status is not success also matches
+// ErrBadStatus with errors.As, as a rejected Response already does.
+var (
+	// ErrMalformedMessage is attached when a message cannot be decoded or
+	// parsed: bad base64 or form encoding, invalid XML, a missing root
+	// element, an element that cannot be unmarshalled, or more instances of
+	// an element than allowed.
+	ErrMalformedMessage = errors.New("saml: malformed message")
+
+	// ErrMissingElement is attached when a required element or value is
+	// absent: no Assertion, an Assertion with no Subject, Conditions, ID,
+	// SubjectConfirmationData or bearer SubjectConfirmation, a LogoutRequest
+	// with no NameID, or another required child element.
+	ErrMissingElement = errors.New("saml: required element is missing")
+
+	// ErrExpired is attached when a message or assertion is no longer valid:
+	// its IssueInstant is older than MaxIssueDelay, or a NotOnOrAfter
+	// (allowing MaxClockSkew) has passed. Check the clocks of the IdP and
+	// SP if this happens for fresh logins.
+	ErrExpired = errors.New("saml: expired")
+
+	// ErrNotYetValid is attached when a message or assertion is not valid
+	// yet: a Conditions NotBefore (allowing MaxClockSkew) or a LogoutRequest
+	// IssueInstant in the future. This usually means the IdP and SP clocks
+	// disagree.
+	ErrNotYetValid = errors.New("saml: not yet valid")
+
+	// ErrIssuerMismatch is attached when the Issuer of a message or
+	// assertion is not the EntityID in the IdP metadata.
+	ErrIssuerMismatch = errors.New("saml: issuer does not match the IdP metadata")
+
+	// ErrDestinationMismatch is attached when a message was not addressed to
+	// this SP: a Destination that is neither the requested URL nor AcsURL
+	// (or SloURL, for logout messages), or a SubjectConfirmationData
+	// Recipient that is not AcsURL.
+	ErrDestinationMismatch = errors.New("saml: destination does not match this service provider")
+
+	// ErrRequestIDMismatch is attached when an InResponseTo does not name
+	// one of the requests this SP made (possibleRequestIDs), or the artifact
+	// request ID for an ArtifactResponse.
+	ErrRequestIDMismatch = errors.New("saml: InResponseTo does not match a request ID")
+
+	// ErrAudienceMismatch is attached when the assertion is not restricted
+	// to this SP's audience, or ServiceProvider.ValidateAudienceRestriction
+	// rejects it.
+	ErrAudienceMismatch = errors.New("saml: audience restriction does not match this service provider")
+
+	// ErrDecryptionFailed is attached when an EncryptedAssertion cannot be
+	// decrypted with the SP's keys.
+	ErrDecryptionFailed = errors.New("saml: cannot decrypt")
+
+	// ErrArtifactResolution is attached when resolving an artifact with the
+	// IdP fails: building the request, the HTTP exchange, or a non-200
+	// status.
+	ErrArtifactResolution = errors.New("saml: artifact resolution failed")
+)
+
 // Unwrap returns PrivateErr, so that errors.Is and errors.As can inspect the
 // reason a response was rejected.
 func (ivr *InvalidResponseError) Unwrap() error {
