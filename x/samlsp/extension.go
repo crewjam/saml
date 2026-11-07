@@ -1,11 +1,17 @@
 package samlsp
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"html/template"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 
 	"github.com/beevik/etree"
 
@@ -72,6 +78,59 @@ func (m *OutboundMessage) Element() (*etree.Element, error) { return m.element()
 func (m *OutboundMessage) Redirect(u *url.URL) *Message {
 	return &Message{ID: m.ID, Binding: m.Binding, Destination: m.Destination, RelayState: m.RelayState, redirectURL: u}
 }
+
+// PostForm returns a Message that posts fields to m.Destination from the
+// browser, with a page holding an HTML form that submits itself, as the
+// POST bindings do: the fields are escaped, the page's
+// Content-Security-Policy allows only the form's script (and that script
+// carries m.ScriptNonce, if set), and it is not cached. Browsers without
+// JavaScript show a button that submits it. Add RelayState to fields
+// yourself if the binding sends it.
+func (m *OutboundMessage) PostForm(fields url.Values) (*Message, error) {
+	var buf bytes.Buffer
+	err := postFormTemplate.Execute(&buf, struct {
+		Action string
+		Fields []formField
+		Nonce  string
+	}{m.Destination, sortedFields(fields), m.ScriptNonce})
+	if err != nil {
+		return nil, err
+	}
+	return &Message{
+		ID: m.ID, Binding: m.Binding, Destination: m.Destination, RelayState: m.RelayState,
+		form: buf.Bytes(), scriptHash: postFormScriptHash,
+	}, nil
+}
+
+type formField struct{ Name, Value string }
+
+func sortedFields(fields url.Values) []formField {
+	names := slices.Sorted(maps.Keys(fields))
+	var out []formField
+	for _, name := range names {
+		for _, value := range fields[name] {
+			out = append(out, formField{name, value})
+		}
+	}
+	return out
+}
+
+// postFormScript submits the form of PostForm, and hides its button.
+const postFormScript = `document.getElementById('SAMLSubmitButton').style.visibility='hidden';` +
+	`document.getElementById('SAMLForm').submit();`
+
+// postFormScriptHash is the CSP source of postFormScript.
+var postFormScriptHash = func() string {
+	sum := sha256.Sum256([]byte(postFormScript))
+	return "sha256-" + base64.StdEncoding.EncodeToString(sum[:])
+}()
+
+var postFormTemplate = template.Must(template.New("form").Parse(`` +
+	`<form method="post" action="{{.Action}}" id="SAMLForm">` +
+	`{{range .Fields}}<input type="hidden" name="{{.Name}}" value="{{.Value}}" />{{end}}` +
+	`<input id="SAMLSubmitButton" type="submit" value="Continue" />` +
+	`</form>` +
+	`<script{{with .Nonce}} nonce="{{.}}"{{end}}>` + postFormScript + `</script>`))
 
 // Respond returns a Message whose Write calls write.
 func (m *OutboundMessage) Respond(write func(w http.ResponseWriter)) *Message {

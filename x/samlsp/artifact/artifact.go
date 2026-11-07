@@ -16,8 +16,10 @@
 //	msg, err := config.AuthnRequest(ctx, relayState, samlsp.WithCustomBinding(binding))
 //	msg.Write(w)
 //
-// The IdP must list an HTTP-Artifact endpoint for the message in its
-// metadata, and must sign its ArtifactResolve requests.
+// The browser takes the artifact to the IdP with a redirect, or, with
+// Binding.Form, with a form it posts. The IdP must list an HTTP-Artifact
+// endpoint for the message in its metadata, and must sign its
+// ArtifactResolve requests.
 package artifact
 
 import (
@@ -57,6 +59,12 @@ type Binding struct {
 	// Lifetime is how long a message waits for its artifact to be
 	// resolved. If zero, DefaultLifetime is used.
 	Lifetime time.Duration
+
+	// Form makes Encode send the artifact to the IdP with an HTML form
+	// that the browser posts, instead of a redirect (saml-bindings
+	// §3.6.3). A form keeps the artifact and RelayState out of the URL,
+	// and so out of logs and the Referer header.
+	Form bool
 }
 
 var (
@@ -87,8 +95,9 @@ func ResolutionService(location string, index uint16) samlsp.Option {
 func (b *Binding) URI() string { return saml.HTTPArtifactBinding }
 
 // Encode implements samlsp.Binding. It keeps the message under a new
-// artifact, for the IdP only, and returns a Message that redirects the
-// browser to the IdP with the artifact.
+// artifact, for the IdP only, and returns a Message that sends the browser
+// to the IdP with the artifact: a redirect, or, with Form, a form that
+// the browser posts.
 func (b *Binding) Encode(ctx context.Context, m *samlsp.OutboundMessage) (*samlsp.Message, error) {
 	sp, err := b.config.ServiceProvider(ctx)
 	if err != nil {
@@ -114,14 +123,20 @@ func (b *Binding) Encode(ctx context.Context, m *samlsp.OutboundMessage) (*samls
 		return nil, fmt.Errorf("artifact: cannot store the message: %w", err)
 	}
 
+	fields := url.Values{"SAMLart": {art}}
+	if m.RelayState != "" {
+		fields.Set("RelayState", m.RelayState)
+	}
+	if b.Form {
+		return m.PostForm(fields)
+	}
 	u, err := url.Parse(m.Destination)
 	if err != nil {
 		return nil, err
 	}
 	q := u.Query()
-	q.Set("SAMLart", art)
-	if m.RelayState != "" {
-		q.Set("RelayState", m.RelayState)
+	for name, values := range fields {
+		q[name] = values
 	}
 	u.RawQuery = q.Encode()
 	return m.Redirect(u), nil
