@@ -151,6 +151,14 @@ type ServiceProvider struct {
 	// authentication requests
 	AuthnNameIDFormat NameIDFormat
 
+	// SendUnspecifiedNameIDFormat, when true and AuthnNameIDFormat is
+	// UnspecifiedNameIDFormat, sends the full unspecified URI as the Format
+	// of the AuthnRequest NameIDPolicy and the LogoutRequest NameID. By
+	// default the Format is left off, which the spec reads as unspecified
+	// (SAML Core §2.2.2, §3.4.1.1), but some IdPs (e.g. Keycloak) reject a
+	// request without it.
+	SendUnspecifiedNameIDFormat bool
+
 	// Scoping, when set, is sent in authentication requests. Proxying identity
 	// providers (gateways) use its IDPList to choose which identity provider to
 	// delegate authentication to.
@@ -2310,7 +2318,11 @@ func (sp *ServiceProvider) nameIDFormat() string {
 		// To maintain library back-compat, use "transient" if unset.
 		nameIDFormat = string(TransientNameIDFormat)
 	case UnspecifiedNameIDFormat:
-		// Spec defines an empty value as "unspecified" so don't set one.
+		// Spec defines an empty value as "unspecified" so don't set one,
+		// unless the IdP needs it spelled out.
+		if sp.SendUnspecifiedNameIDFormat {
+			nameIDFormat = string(UnspecifiedNameIDFormat)
+		}
 	default:
 		nameIDFormat = string(sp.AuthnNameIDFormat)
 	}

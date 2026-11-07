@@ -99,6 +99,13 @@ func TestSPCanSetAuthenticationNameIDFormat(t *testing.T) {
 	assert.Check(t, err)
 	assert.Check(t, is.Equal("", *req.NameIDPolicy.Format))
 
+	// "unspecified" sent explicitly when opted in
+	s.SendUnspecifiedNameIDFormat = true
+	req, err = s.MakeAuthenticationRequest("", HTTPRedirectBinding, HTTPPostBinding)
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(string(UnspecifiedNameIDFormat), *req.NameIDPolicy.Format))
+	s.SendUnspecifiedNameIDFormat = false
+
 	// explicitly set to "emailAddress"
 	s.AuthnNameIDFormat = EmailAddressNameIDFormat
 	req, err = s.MakeAuthenticationRequest("", HTTPRedirectBinding, HTTPPostBinding)
@@ -480,6 +487,33 @@ func TestSPCanProducePostLogoutRequest(t *testing.T) {
 	form, err := s.MakePostLogoutRequest("ros@octolabs.io", "relayState")
 	assert.Check(t, err)
 	golden.Assert(t, string(form), t.Name()+"_form")
+}
+
+func TestSPLogoutRequestUnspecifiedNameIDFormat(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	s := ServiceProvider{
+		Key:               test.Key,
+		Certificate:       test.Certificate,
+		MetadataURL:       mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:            mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+		IDPMetadata:       &EntityDescriptor{},
+		AuthnNameIDFormat: UnspecifiedNameIDFormat,
+	}
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	// left off by default
+	req, err := s.MakeLogoutRequest("", "ros@octolabs.io")
+	assert.Check(t, err)
+	assert.Check(t, is.Equal("", req.NameID.Format))
+	assert.Check(t, req.Element().FindElement("./NameID[@Format]") == nil)
+
+	// sent when opted in
+	s.SendUnspecifiedNameIDFormat = true
+	req, err = s.MakeLogoutRequest("", "ros@octolabs.io")
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(string(UnspecifiedNameIDFormat), req.NameID.Format))
+	assert.Check(t, req.Element().FindElement("./NameID[@Format]") != nil)
 }
 
 func TestSPCanProduceRedirectLogoutRequest(t *testing.T) {
