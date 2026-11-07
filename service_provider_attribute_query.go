@@ -281,6 +281,7 @@ func (sp *ServiceProvider) parseAttributeQueryResponse(soapResponseXML []byte, q
 		return nil, err
 	}
 
+	receivedResponseEl := responseEl
 	signedResponseEl, responseSigned, err := sp.attributeQuerySignature(responseEl)
 	if err != nil {
 		return nil, err
@@ -298,7 +299,7 @@ func (sp *ServiceProvider) parseAttributeQueryResponse(soapResponseXML []byte, q
 		return nil, err
 	}
 
-	assertions, err := sp.attributeQueryAssertions(responseEl, query, now, !responseSigned)
+	assertions, err := sp.attributeQueryAssertions(responseEl, receivedResponseEl, query, now, !responseSigned)
 	if err != nil {
 		return nil, err
 	}
@@ -404,15 +405,17 @@ func statusError(status Status) error {
 
 // attributeQueryAssertions returns the assertions of responseEl, decrypting
 // the encrypted ones. Each must be valid for query; if signatureRequired,
-// each must also be signed by the attribute authority.
-func (sp *ServiceProvider) attributeQueryAssertions(responseEl *etree.Element, query *AttributeQuery, now time.Time, signatureRequired bool) ([]Assertion, error) {
+// each must also be signed by the attribute authority. receivedEl is the
+// Response as received (see receivedChildren), on whose plaintext
+// assertions their signatures are checked.
+func (sp *ServiceProvider) attributeQueryAssertions(responseEl, receivedEl *etree.Element, query *AttributeQuery, now time.Time, signatureRequired bool) ([]Assertion, error) {
 	var assertionEls []*etree.Element
 
 	encryptedAssertionEls, err := findChildren(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "EncryptedAssertion")
 	if err != nil {
 		return nil, err
 	}
-	plaintextAssertionEls, err := findChildren(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "Assertion")
+	plaintextAssertionEls, receivedAssertionEls, err := receivedChildren(responseEl, receivedEl, "urn:oasis:names:tc:SAML:2.0:assertion", "Assertion")
 	if err != nil {
 		return nil, err
 	}
@@ -436,12 +439,13 @@ func (sp *ServiceProvider) attributeQueryAssertions(responseEl *etree.Element, q
 		}
 		assertionEls = append(assertionEls, assertionEl)
 	}
-
+	// A decrypted assertion is its own received form.
+	receivedEls := append(append([]*etree.Element{}, assertionEls...), receivedAssertionEls...)
 	assertionEls = append(assertionEls, plaintextAssertionEls...)
 
 	assertions := make([]Assertion, 0, len(assertionEls))
-	for _, assertionEl := range assertionEls {
-		assertion, err := sp.attributeQueryAssertion(assertionEl, query, now, signatureRequired)
+	for i, assertionEl := range assertionEls {
+		assertion, err := sp.attributeQueryAssertion(assertionEl, receivedEls[i], query, now, signatureRequired)
 		if err != nil {
 			return nil, err
 		}
@@ -450,10 +454,13 @@ func (sp *ServiceProvider) attributeQueryAssertions(responseEl *etree.Element, q
 	return assertions, nil
 }
 
-func (sp *ServiceProvider) attributeQueryAssertion(assertionEl *etree.Element, query *AttributeQuery, now time.Time, signatureRequired bool) (*Assertion, error) {
+// attributeQueryAssertion parses and validates assertionEl. receivedEl is
+// the assertion as received (see receivedChildren), on which its signature
+// is checked.
+func (sp *ServiceProvider) attributeQueryAssertion(assertionEl, receivedEl *etree.Element, query *AttributeQuery, now time.Time, signatureRequired bool) (*Assertion, error) {
 	// A signature that is present must be valid even when the Response is
 	// signed (saml-core §2.3.3).
-	signed, err := sp.verifySignedElement(assertionEl, sp.attributeAuthoritySigningCerts)
+	signed, err := sp.verifySignedElement(receivedEl, sp.attributeAuthoritySigningCerts)
 	switch err {
 	case nil:
 		// Read the assertion from what the signature covers.

@@ -1328,6 +1328,7 @@ func (sp *ServiceProvider) parseArtifactResponse(artifactResponseEl *etree.Eleme
 	}
 
 	var signatureRequirement signatureRequirement
+	receivedArtifactResponseEl := artifactResponseEl
 	signedArtifactResponseEl, sigErr := sp.validatedElement(artifactResponseEl)
 	switch sigErr {
 	case nil:
@@ -1341,13 +1342,19 @@ func (sp *ServiceProvider) parseArtifactResponse(artifactResponseEl *etree.Eleme
 		return nil, retErr
 	}
 
-	responseEl, err := findOneChild(artifactResponseEl, "urn:oasis:names:tc:SAML:2.0:protocol", "Response")
+	if _, err := findOneChild(artifactResponseEl, "urn:oasis:names:tc:SAML:2.0:protocol", "Response"); err != nil {
+		retErr.PrivateErr = err
+		return nil, retErr
+	}
+	// The Response's own signature, if any, is checked on the Response as
+	// received.
+	responseEls, receivedResponseEls, err := receivedChildren(artifactResponseEl, receivedArtifactResponseEl, "urn:oasis:names:tc:SAML:2.0:protocol", "Response")
 	if err != nil {
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
 
-	assertion, err := sp.parseResponse(responseEl, possibleRequestIDs, now, signatureRequirement, currentURL)
+	assertion, err := sp.parseReceivedResponse(responseEls[0], receivedResponseEls[0], possibleRequestIDs, now, signatureRequirement, currentURL)
 	if err != nil {
 		retErr.PrivateErr = err
 		return nil, retErr
@@ -1444,6 +1451,14 @@ const (
 // signature on the assertion, and verifying that the specified conditions
 // and properties are met.
 func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequestIDs []string, now time.Time, signatureRequirement signatureRequirement, currentURL url.URL) (*Assertion, error) {
+	return sp.parseReceivedResponse(responseEl, responseEl, possibleRequestIDs, now, signatureRequirement, currentURL)
+}
+
+// parseReceivedResponse is parseResponse, where receivedEl is responseEl as
+// received: responseEl itself, or, inside a signed ArtifactResponse, its
+// counterpart in the ArtifactResponse as received (see receivedChildren).
+// Its signature, and those of its assertions, are checked there.
+func (sp *ServiceProvider) parseReceivedResponse(responseEl, receivedEl *etree.Element, possibleRequestIDs []string, now time.Time, signatureRequirement signatureRequirement, currentURL url.URL) (*Assertion, error) {
 	var responseSignatureErr error
 	var responseHasSignature bool
 	switch signatureRequirement {
@@ -1472,7 +1487,7 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 	case signatureNotRequired:
 		// The enclosing ArtifactResponse is signed, but a signature the
 		// Response carries must still be valid.
-		signed, err := sp.validatedElement(responseEl)
+		signed, err := sp.validatedElement(receivedEl)
 		switch err {
 		case nil:
 			responseEl = signed
@@ -1526,7 +1541,7 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 	if err != nil {
 		return nil, err
 	}
-	assertionEls, err := findChildren(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "Assertion")
+	assertionEls, receivedAssertionEls, err := receivedChildren(responseEl, receivedEl, "urn:oasis:names:tc:SAML:2.0:assertion", "Assertion")
 	if err != nil {
 		return nil, err
 	}
@@ -1560,8 +1575,8 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 
 	// look for plaintext assertions
 	{
-		for _, assertionEl := range assertionEls {
-			assertion, err := sp.parseAssertion(assertionEl, possibleRequestIDs, now, signatureRequirement)
+		for i, assertionEl := range assertionEls {
+			assertion, err := sp.parseReceivedAssertion(assertionEl, receivedAssertionEls[i], possibleRequestIDs, now, signatureRequirement)
 			if err != nil {
 				errs = append(errs, err)
 				continue
@@ -1674,10 +1689,17 @@ func decryptWithKey(decryptionKey interface{}, encryptedEl, encryptedDataEl *etr
 }
 
 func (sp *ServiceProvider) parseAssertion(assertionEl *etree.Element, possibleRequestIDs []string, now time.Time, signatureRequirement signatureRequirement) (*Assertion, error) {
+	return sp.parseReceivedAssertion(assertionEl, assertionEl, possibleRequestIDs, now, signatureRequirement)
+}
+
+// parseReceivedAssertion is parseAssertion, where receivedEl is the
+// assertion as received (see receivedChildren), on which its signature is
+// checked.
+func (sp *ServiceProvider) parseReceivedAssertion(assertionEl, receivedEl *etree.Element, possibleRequestIDs []string, now time.Time, signatureRequirement signatureRequirement) (*Assertion, error) {
 	// A signature that is present must be valid even when the enclosing
 	// Response is signed (saml-core §2.3.3, saml-profiles §4.1.4.3); only
 	// its absence is allowed then.
-	signed, sigErr := sp.validatedElement(assertionEl)
+	signed, sigErr := sp.validatedElement(receivedEl)
 	switch {
 	case sigErr == nil:
 		// Read the assertion from what the signature covers.
@@ -3275,6 +3297,33 @@ func findOneChild(parentEl *etree.Element, childNS string, childTag string) (*et
 	default:
 		return nil, classify(fmt.Errorf("expected exactly one %s:%s element", childNS, childTag), ErrMalformedMessage)
 	}
+}
+
+// receivedChildren returns the childNS/childTag children of read, and the
+// children of received they correspond to, one for one. read is received
+// itself, or received as rebuilt from what a signature on it covers (see
+// validatedElement), which can lack namespace declarations received has,
+// so that a signature on a child must be checked on its counterpart in
+// received. Children are matched by position and must carry the same ID;
+// if they cannot be matched, it is an error.
+func receivedChildren(read, received *etree.Element, childNS, childTag string) ([]*etree.Element, []*etree.Element, error) {
+	readEls, err := findChildren(read, childNS, childTag)
+	if err != nil || read == received {
+		return readEls, readEls, err
+	}
+	receivedEls, err := findChildren(received, childNS, childTag)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(readEls) != len(receivedEls) {
+		return nil, nil, classify(fmt.Errorf("the signed %s has %d %s:%s elements, but %d were received", read.Tag, len(readEls), childNS, childTag, len(receivedEls)), ErrMalformedMessage)
+	}
+	for i := range readEls {
+		if readEls[i].SelectAttrValue("ID", "") != receivedEls[i].SelectAttrValue("ID", "") {
+			return nil, nil, classify(fmt.Errorf("the signed %s does not match the %s as received", childTag, childTag), ErrMalformedMessage)
+		}
+	}
+	return readEls, receivedEls, nil
 }
 
 // findChild finds the specified child element. Returns (nil, nil) of the element doesn't exist.
