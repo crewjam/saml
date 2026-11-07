@@ -1269,3 +1269,31 @@ func TestIDPMakeAssertionElCustomEncrypter(t *testing.T) {
 		})
 	}
 }
+
+// An AuthnRequest without an Issuer in the assertion namespace is refused
+// with an error rather than a nil-pointer panic.
+func TestIDPValidateRejectsMissingIssuer(t *testing.T) {
+	test := NewIdentityProviderTest(t, applyKey)
+
+	for name, issuer := range map[string]string{
+		"missing": "",
+		"wrong namespace": "<Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\">" +
+			"https://sp.example.com/saml2/metadata</Issuer>",
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := IdpAuthnRequest{
+				Now: TimeNow(),
+				IDP: &test.IDP,
+				RequestBuffer: []byte("" +
+					"<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
+					"  AssertionConsumerServiceURL=\"https://sp.example.com/saml2/acs\" " +
+					"  Destination=\"https://idp.example.com/saml/sso\" " +
+					"  ID=\"id-00020406080a0c0e10121416181a1c1e\" " +
+					"  IssueInstant=\"2015-12-01T01:57:09Z\" ProtocolBinding=\"\" " +
+					"  Version=\"2.0\">" + issuer +
+					"</AuthnRequest>"),
+			}
+			assert.Check(t, is.Error(req.Validate(), "authn request is missing an issuer"))
+		})
+	}
+}

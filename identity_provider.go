@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -22,6 +23,7 @@ import (
 	xrv "github.com/mattermost/xml-roundtrip-validator"
 	dsig "github.com/russellhaering/goxmldsig"
 
+	"github.com/crewjam/saml/internal/signerutil"
 	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/xmlenc"
 )
@@ -531,6 +533,9 @@ func (req *IdpAuthnRequest) Validate() error {
 	}
 
 	// find the service provider
+	if req.Request.Issuer == nil {
+		return fmt.Errorf("authn request is missing an issuer")
+	}
 	serviceProviderID := req.Request.Issuer.Value
 	serviceProvider, err := req.IDP.ServiceProviderProvider.GetServiceProvider(req.HTTPRequest, serviceProviderID)
 	if err == os.ErrNotExist {
@@ -1182,6 +1187,19 @@ func (req *IdpAuthnRequest) signingContext() (*dsig.SigningContext, error) {
 
 // signingContext returns a signing context for the IdP's key and certificate.
 func (idp *IdentityProvider) signingContext() (*dsig.SigningContext, error) {
+	// A typed-nil key (for example the *rsa.PrivateKey returned by a failed
+	// x509.ParsePKCS1PrivateKey call) is not == nil but panics when used to
+	// sign, so check for that explicitly and return an error instead.
+	useSigner := !signerutil.IsNil(idp.Signer)
+	if !useSigner {
+		if key, _ := idp.Key.(crypto.Signer); signerutil.IsNil(key) {
+			return nil, errors.New("cannot sign: IdentityProvider.Key and IdentityProvider.Signer are both nil or invalid")
+		}
+	}
+	if idp.Certificate == nil {
+		return nil, errors.New("cannot sign: IdentityProvider.Certificate is nil")
+	}
+
 	// Create a cert chain based off of the IDP cert and its intermediates.
 	certificates := make([][]byte, 0, 1+len(idp.Intermediates))
 	certificates = append(certificates, idp.Certificate.Raw)
@@ -1192,7 +1210,7 @@ func (idp *IdentityProvider) signingContext() (*dsig.SigningContext, error) {
 	var signingContext *dsig.SigningContext
 	var err error
 	// If signer is set, use it instead of the private key.
-	if idp.Signer != nil {
+	if useSigner {
 		signingContext, err = dsig.NewSigningContext(idp.Signer, certificates)
 		if err != nil {
 			return nil, err
@@ -1213,7 +1231,7 @@ func (idp *IdentityProvider) signingContext() (*dsig.SigningContext, error) {
 	signatureMethod := idp.SignatureMethod
 	if signatureMethod == "" {
 		publicKey := idp.Certificate.PublicKey
-		if idp.Signer != nil {
+		if useSigner {
 			publicKey = idp.Signer.Public()
 		}
 		signatureMethod = dsig.RSASHA256SignatureMethod

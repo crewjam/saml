@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
@@ -530,4 +531,24 @@ func TestIDPDefaultSignatureMethod(t *testing.T) {
 		assert.NilError(t, err)
 		assert.Check(t, is.Equal(dsig.RSASHA512SignatureMethod, ctx.GetSignatureMethodIdentifier()))
 	})
+}
+
+// TestIDPSigningWithNilKey is a regression test for
+// https://github.com/crewjam/saml/issues/405: a nil or typed-nil key used to
+// panic deep inside the XML signature code instead of returning an error.
+func TestIDPSigningWithNilKey(t *testing.T) {
+	cases := map[string]func(idp *IdentityProvider){
+		"NilKey":       func(idp *IdentityProvider) { idp.Key = nil },
+		"TypedNilKey":  func(idp *IdentityProvider) { idp.Key = (*rsa.PrivateKey)(nil) },
+		"TypedNilBoth": func(idp *IdentityProvider) { idp.Key = nil; idp.Signer = (*rsa.PrivateKey)(nil) },
+		"NilCert":      func(idp *IdentityProvider) { idp.Certificate = nil },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			test := idpcovNewTest(t)
+			req := idpcovMadeAssertion(t, test)
+			mutate(&test.IDP)
+			assert.Check(t, is.ErrorContains(req.MakeResponse(), "cannot sign"))
+		})
+	}
 }
