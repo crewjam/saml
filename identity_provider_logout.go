@@ -54,7 +54,8 @@ type IdpLogoutRequest struct {
 	HTTPRequest *http.Request
 
 	// Binding is the binding the request was received with,
-	// HTTPRedirectBinding, HTTPPostBinding or SOAPBinding. A request
+	// HTTPRedirectBinding, HTTPPostBinding, HTTPPostSimpleSignBinding or
+	// SOAPBinding. A request
 	// received with SOAPBinding comes from the service provider's server,
 	// not through the browser: HTTPRequest carries no cookie of the user.
 	Binding string
@@ -78,6 +79,10 @@ type IdpLogoutRequest struct {
 	// HTTP-Redirect binding. Its signature is checked by Validate.
 	redirectMessage *redirectBindingMessage
 
+	// simpleSign is the message of a request received with the
+	// HTTP-POST-SimpleSign binding. Its signature is checked by Validate.
+	simpleSign *simpleSignMessage
+
 	// authenticated is set by Validate once the signature of the request
 	// has been verified, so that the service provider that issued it is
 	// known even if Validate then fails.
@@ -87,7 +92,8 @@ type IdpLogoutRequest struct {
 // NewIdpLogoutRequest returns a new IdpLogoutRequest for the given HTTP
 // request to the single logout service. A GET request is decoded as an
 // HTTP-Redirect binding message, a POST request as an HTTP-POST binding
-// message, and a POST request whose Content-Type is text/xml as a SOAP
+// message, or as an HTTP-POST-SimpleSign binding message when the form has
+// a SigAlg or Signature field, and a POST request whose Content-Type is text/xml as a SOAP
 // binding message (a SOAP 1.1 envelope whose Body holds the LogoutRequest)
 // if LogoutBindings includes SOAPBinding. The request is not validated; call
 // Validate for that.
@@ -129,7 +135,17 @@ func NewIdpLogoutRequest(idp *IdentityProvider, r *http.Request) (*IdpLogoutRequ
 		if err := r.ParseForm(); err != nil {
 			return nil, fmt.Errorf("cannot parse form: %w", err)
 		}
-		var err error
+		simpleSign, err := parseSimpleSignRequest(r, redirectParamSAMLRequest)
+		if err != nil {
+			return nil, err
+		}
+		if simpleSign != nil {
+			req.RequestBuffer = simpleSign.XML
+			req.Binding = HTTPPostSimpleSignBinding
+			req.RelayState = simpleSign.RelayState
+			req.simpleSign = simpleSign
+			break
+		}
 		req.RequestBuffer, err = base64.StdEncoding.DecodeString(r.PostForm.Get(redirectParamSAMLRequest))
 		if err != nil {
 			return nil, fmt.Errorf("cannot decode request: %w", err)
@@ -156,7 +172,8 @@ func NewIdpLogoutRequest(idp *IdentityProvider, r *http.Request) (*IdpLogoutRequ
 //
 // The request must be signed: with the HTTP-Redirect binding, with a query
 // string signature (SigAlg and Signature) or an enveloped XML signature;
-// with the HTTP-POST binding, with an enveloped XML signature. The signature
+// with the HTTP-POST binding, with an enveloped XML signature; with the
+// HTTP-POST-SimpleSign binding, with its SimpleSign signature. The signature
 // is checked against the signing certificates in the service provider's
 // metadata (saml-profiles-2.0-os §4.4.4.1). As is usual for keys distributed
 // in metadata, the certificates' validity periods are not checked.
@@ -260,6 +277,10 @@ func (req *IdpLogoutRequest) verifySignature(root *etree.Element) (*etree.Elemen
 		return nil, err
 	}
 
+	if req.simpleSign != nil {
+		// The signature covers the whole message, as received.
+		return nil, checkSPSimpleSignSignature(req.IDP.RejectSHA1Signatures, req.simpleSign, req.ServiceProviderMetadata, req.Now)
+	}
 	if req.redirectMessage != nil && req.redirectMessage.SignedContent != nil {
 		if err := checkSigAlgNotSHA1(req.IDP.RejectSHA1Signatures, req.redirectMessage.SigAlg); err != nil {
 			return nil, err
@@ -331,6 +352,12 @@ func (req *IdpLogoutRequest) sloEndpoint() (*Endpoint, error) {
 	if req.Binding == SOAPBinding {
 		return &Endpoint{Binding: SOAPBinding}, nil
 	}
+	// The IdP cannot send a SimpleSign LogoutResponse; a request that came
+	// with that binding is answered with HTTP-POST if it can be.
+	preferred := req.Binding
+	if preferred == HTTPPostSimpleSignBinding {
+		preferred = HTTPPostBinding
+	}
 	var fallback *Endpoint
 	for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
 		for _, endpoint := range spssoDescriptor.SingleLogoutServices {
@@ -340,7 +367,7 @@ func (req *IdpLogoutRequest) sloEndpoint() (*Endpoint, error) {
 			if location, err := checkEndpointLocation(endpoint.Binding, logoutResponseLocation(endpoint)); err != nil || location == "" {
 				continue
 			}
-			if endpoint.Binding == req.Binding {
+			if endpoint.Binding == preferred {
 				return &endpoint, nil
 			}
 			if fallback == nil {
@@ -503,7 +530,9 @@ func (req *IdpLogoutRequest) writePostLogoutResponse(w http.ResponseWriter, resp
 
 // ServeSLO handles SAML LogoutRequests sent by service providers
 // (SP-initiated single logout, saml-profiles-2.0-os §4.4) with the
-// HTTP-Redirect or the HTTP-POST binding. Serve it at LogoutURL. It also
+// HTTP-Redirect, HTTP-POST or HTTP-POST-SimpleSign binding. Serve it at
+// LogoutURL. A SimpleSign request is answered with HTTP-POST (or
+// HTTP-Redirect), as the IdP does not send SimpleSign logout messages. It also
 // handles the LogoutResponses of service providers to the LogoutRequests the
 // IdP sends while it propagates a logout (see StartLogout and
 // SessionParticipantTracker).

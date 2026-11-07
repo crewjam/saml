@@ -287,8 +287,9 @@ type IdentityProvider struct {
 
 	// LogoutBindings are the bindings advertised in the IdP metadata for the
 	// SingleLogoutService at LogoutURL. When empty, only HTTP-Redirect is
-	// advertised, as before. ServeSLO accepts LogoutRequests with both the
-	// HTTP-Redirect and the HTTP-POST binding, so set it to
+	// advertised, as before. ServeSLO accepts LogoutRequests and
+	// LogoutResponses with the HTTP-Redirect, HTTP-POST and
+	// HTTP-POST-SimpleSign bindings, so set it to
 	// []string{HTTPRedirectBinding, HTTPPostBinding} when LogoutURL is served
 	// by ServeSLO.
 	//

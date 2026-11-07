@@ -9,6 +9,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/beevik/etree"
 )
@@ -24,14 +25,22 @@ func (req *IdpAuthnRequest) verifySimpleSignSignature() error {
 	m.RelayState = req.RelayState
 	m.HasRelayState = m.HasRelayState || req.RelayState != ""
 
-	if err := checkSigAlgNotSHA1(req.IDP.RejectSHA1Signatures, m.SigAlg); err != nil {
+	return checkSPSimpleSignSignature(req.IDP.RejectSHA1Signatures, &m, req.ServiceProviderMetadata, req.Now)
+}
+
+// checkSPSimpleSignSignature checks the HTTP-POST-SimpleSign signature of m,
+// a message from the service provider whose metadata is metadata, against
+// the signing certificates in that metadata. If rejectSHA1 is set, a SHA-1
+// based SigAlg is refused.
+func checkSPSimpleSignSignature(rejectSHA1 bool, m *simpleSignMessage, metadata *EntityDescriptor, now time.Time) error {
+	if err := checkSigAlgNotSHA1(rejectSHA1, m.SigAlg); err != nil {
 		return err
 	}
 	algorithm, signature, err := decodeDetachedSignature(m.SigAlg, m.Signature, simpleSignBase64)
 	if err != nil {
 		return err
 	}
-	certs, err := spSigningCerts(req.ServiceProviderMetadata)
+	certs, err := spSigningCerts(metadata)
 	if err != nil {
 		return fmt.Errorf("cannot validate signature: %w", err)
 	}
@@ -39,7 +48,7 @@ func (req *IdpAuthnRequest) verifySimpleSignSignature() error {
 	// metadata is the trust anchor and its certificates are only containers
 	// for the key (SAML V2.0 Metadata Interoperability Profile), and the IdP
 	// has no setting to opt out of such a check.
-	return checkDetachedSignature(algorithm, m.signedContent(), signature, certs, req.Now, true)
+	return checkDetachedSignature(algorithm, m.signedContent(), signature, certs, now, true)
 }
 
 // spSigningCerts returns the signing certificates in the SPSSODescriptors of

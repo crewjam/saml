@@ -598,7 +598,7 @@ func (idp *IdentityProvider) validateLogoutResponse(r *http.Request, state *logo
 	if state.Current == nil || state.RequestID == "" {
 		return nil, errors.New("no logout request is outstanding")
 	}
-	buf, redirectMessage, err := readLogoutResponseMessage(r)
+	buf, redirectMessage, simpleSign, err := readLogoutResponseMessage(r)
 	if err != nil {
 		return nil, err
 	}
@@ -629,18 +629,24 @@ func (idp *IdentityProvider) validateLogoutResponse(r *http.Request, state *logo
 	if err != nil {
 		return nil, err
 	}
-	if redirectMessage != nil && redirectMessage.SignedContent != nil {
+	switch {
+	case simpleSign != nil:
+		err = checkSigAlgNotSHA1(idp.RejectSHA1Signatures, simpleSign.SigAlg)
+	case redirectMessage != nil && redirectMessage.SignedContent != nil:
 		err = checkSigAlgNotSHA1(idp.RejectSHA1Signatures, redirectMessage.SigAlg)
-	} else {
+	default:
 		err = checkEnvelopedSignatureNotSHA1(idp.RejectSHA1Signatures, doc.Root())
 	}
 	if err != nil {
 		return nil, fmt.Errorf("logout response from %s: %w", serviceProviderID, err)
 	}
 	var signed *etree.Element
-	if redirectMessage != nil && redirectMessage.SignedContent != nil {
+	switch {
+	case simpleSign != nil:
+		err = checkSPSimpleSignSignature(idp.RejectSHA1Signatures, simpleSign, metadata, idp.now())
+	case redirectMessage != nil && redirectMessage.SignedContent != nil:
 		err = checkRedirectBindingSignature(redirectMessage, func() ([]*x509.Certificate, error) { return certs, nil }, idp.now(), true)
-	} else {
+	default:
 		signed, err = verifiedEnvelopedElement(doc.Root(), certs, idp.dsigClock())
 	}
 	if err != nil {
@@ -692,28 +698,37 @@ func validateLogoutResponseAnswer(resp *LogoutResponse, requestID string, now ti
 
 // readLogoutResponseMessage returns the XML of the LogoutResponse r carries,
 // with the HTTP-Redirect binding (and then also the parsed query, whose
-// signature the caller checks) or the HTTP-POST binding.
-func readLogoutResponseMessage(r *http.Request) ([]byte, *redirectBindingMessage, error) {
+// signature the caller checks), the HTTP-POST-SimpleSign binding (and then
+// also the SimpleSign message, whose signature the caller checks) or the
+// HTTP-POST binding.
+func readLogoutResponseMessage(r *http.Request) ([]byte, *redirectBindingMessage, *simpleSignMessage, error) {
 	if r.Method == http.MethodGet {
 		m, err := parseRedirectBindingQuery(r.URL.RawQuery, redirectParamSAMLResponse)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		compressed, err := base64.StdEncoding.DecodeString(m.Message)
 		if err != nil {
-			return nil, nil, fmt.Errorf("cannot decode response: %w", err)
+			return nil, nil, nil, fmt.Errorf("cannot decode response: %w", err)
 		}
 		buf, err := io.ReadAll(newSaferFlateReader(bytes.NewReader(compressed)))
 		if err != nil {
-			return nil, nil, fmt.Errorf("cannot decompress response: %w", err)
+			return nil, nil, nil, fmt.Errorf("cannot decompress response: %w", err)
 		}
-		return buf, m, nil
+		return buf, m, nil, nil
+	}
+	simpleSign, err := parseSimpleSignRequest(r, redirectParamSAMLResponse)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if simpleSign != nil {
+		return simpleSign.XML, nil, simpleSign, nil
 	}
 	buf, err := base64.StdEncoding.DecodeString(r.PostForm.Get(redirectParamSAMLResponse))
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot decode response: %w", err)
+		return nil, nil, nil, fmt.Errorf("cannot decode response: %w", err)
 	}
-	return buf, nil, nil
+	return buf, nil, nil, nil
 }
 
 // logoutStateSignaturePrefix is prepended to the encoded state before it is
