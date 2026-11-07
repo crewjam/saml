@@ -200,8 +200,9 @@ var defaultHTTPClient = &http.Client{Timeout: 2 * time.Minute}
 
 // Fetch returns the body of a GET of metadataURL, refusing a response that
 // is not 2xx or is larger than limit bytes (a *TooLargeError). If
-// httpClient is nil, a client with a two-minute timeout is used.
-func Fetch(ctx context.Context, httpClient *http.Client, metadataURL url.URL, limit int64) ([]byte, error) {
+// httpClient is nil, a client with a two-minute timeout is used. If accept
+// is not empty, it is sent as the Accept header.
+func Fetch(ctx context.Context, httpClient *http.Client, metadataURL url.URL, limit int64, accept string) ([]byte, error) {
 	if httpClient == nil {
 		httpClient = defaultHTTPClient
 	}
@@ -210,6 +211,9 @@ func Fetch(ctx context.Context, httpClient *http.Client, metadataURL url.URL, li
 		return nil, err
 	}
 	req = req.WithContext(ctx)
+	if accept != "" {
+		req.Header.Set("Accept", accept)
+	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
