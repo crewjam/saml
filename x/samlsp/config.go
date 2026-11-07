@@ -47,6 +47,7 @@ type Config struct {
 
 	spOptions     []ServiceProviderOption
 	spMetadata    spMetadataOptions
+	checks        []func(*saml.ServiceProvider) error
 	metadataHooks []func(*saml.EntityDescriptor)
 }
 
@@ -123,6 +124,14 @@ func New(identityProvider MetadataFunc, entityID string, opts ...Option) (*Confi
 	if c.signatureMethod != "" {
 		if err := checkSignatureMethod(c.signatureMethod, c.key); err != nil {
 			return nil, err
+		}
+	}
+	if len(c.checks) > 0 {
+		sp := c.spForMetadata(nil)
+		for _, check := range c.checks {
+			if err := check(sp); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if c.signRequests && signatureMethod(c.key) == "" {
@@ -374,6 +383,7 @@ func (f ServiceProviderOption) applyConfig(c *Config, _ *configOptions) {
 	c.spOptions = append(c.spOptions, f)
 }
 func (f ServiceProviderOption) applyAuthn(o *authnOptions)       { o.sp = append(o.sp, f) }
+func (f ServiceProviderOption) applyMessage(o *messageOptions)   { o.sp = append(o.sp, f) }
 func (f ServiceProviderOption) applyLogout(o *logoutOptions)     { o.sp = append(o.sp, f) }
 func (f ServiceProviderOption) applyResponse(o *responseOptions) { o.sp = append(o.sp, f) }
 

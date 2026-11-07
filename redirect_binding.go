@@ -402,3 +402,31 @@ func signedRedirectBindingURL(destination, messageParam, encodedMessage, relaySt
 	}
 	return rv, nil
 }
+
+// RedirectBindingURL returns the URL that sends el to destination with the
+// HTTP-Redirect binding, as the query parameter messageParam
+// ("SAMLRequest" or "SAMLResponse"), with relayState. It works for any
+// protocol message, as RedirectLogoutRequestURL does for a LogoutRequest.
+//
+// Any Signature child of el is left out of the message. If signatureMethod
+// is not empty, the URL carries a query string signature made with it and
+// Key (saml-bindings-2.0-os section 3.4.4.1). The length of relayState is
+// not checked.
+func (sp *ServiceProvider) RedirectBindingURL(destination, messageParam string, el *etree.Element, relayState, signatureMethod string) (*url.URL, error) {
+	encoded, err := deflateAndEncode(withoutSignature(el))
+	if err != nil {
+		return nil, err
+	}
+	return sp.redirectBindingURL(destination, messageParam, encoded, relayState, signatureMethod)
+}
+
+// withoutSignature returns a copy of el without its Signature children.
+func withoutSignature(el *etree.Element) *etree.Element {
+	unsigned := el.Copy()
+	for _, child := range unsigned.ChildElements() {
+		if child.Tag == "Signature" {
+			unsigned.RemoveChild(child)
+		}
+	}
+	return unsigned
+}

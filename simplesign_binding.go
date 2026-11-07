@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 
 	"github.com/beevik/etree"
 	dsig "github.com/russellhaering/goxmldsig"
@@ -472,4 +473,38 @@ func (r *LogoutResponse) SimpleSign(relayState string, sp *ServiceProvider) ([]b
 // set as the nonce attribute of the form's auto-submit <script> element.
 func (r *LogoutResponse) SimpleSignWithNonce(relayState, nonce string, sp *ServiceProvider) ([]byte, error) {
 	return sp.simpleSignForm(r.Destination, redirectParamSAMLResponse, r.Element(), relayState, nonce, sp.logoutSignatureMethod())
+}
+
+// SimpleSignValues returns the form fields that send el with the
+// HTTP-POST-SimpleSign binding: messageParam ("SAMLRequest" or
+// "SAMLResponse") holding el, RelayState if relayState is not empty, and
+// the SigAlg and Signature of the SimpleSign signature made with
+// signatureMethod and Key (sstc-saml-binding-simplesign-cs-01 section
+// 2.10). Any Signature child of el is left out, since the SimpleSign
+// signature replaces it. It works for any protocol message; post the
+// fields from the browser to the message's Destination.
+func (sp *ServiceProvider) SimpleSignValues(messageParam string, el *etree.Element, relayState, signatureMethod string) (url.Values, error) {
+	signingContext, err := sp.simpleSignSigningContext(signatureMethod)
+	if err != nil {
+		return nil, err
+	}
+	doc := etree.NewDocument()
+	doc.SetRoot(withoutSignature(el))
+	message, err := doc.WriteToBytes()
+	if err != nil {
+		return nil, err
+	}
+	sigAlg, signature, err := signSimpleSign(signingContext, messageParam, message, relayState)
+	if err != nil {
+		return nil, err
+	}
+	values := url.Values{
+		messageParam: {base64.StdEncoding.EncodeToString(message)},
+		"SigAlg":     {sigAlg},
+		"Signature":  {signature},
+	}
+	if relayState != "" {
+		values.Set("RelayState", relayState)
+	}
+	return values, nil
 }
