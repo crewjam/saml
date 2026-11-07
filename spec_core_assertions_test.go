@@ -64,6 +64,102 @@ func specCoreIDPRequest(t *testing.T) *IdpAuthnRequest {
 	return req
 }
 
+// saml-core §2.4.1.2 (lines 756-757): the SubjectConfirmationData
+// NotBefore/NotOnOrAfter period "SHOULD fall within the overall assertion
+// validity period as specified by the <Conditions> element's NotBefore and
+// NotOnOrAfter attributes." The IdP's confirmation window ends no later
+// than its Conditions, however the AuthnRequest's IssueInstant compares
+// with the IdP clock.
+func TestSpecCore_2_4_1_2_ConfirmationWithinConditions(t *testing.T) {
+	for name, offset := range map[string]time.Duration{
+		"request issued 5s ago":             -5 * time.Second,
+		"request issued now":                0,
+		"request issued long ago":           -MaxClockSkew - time.Minute,
+		"request issued ahead of IdP clock": 30 * time.Second,
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := specCoreIDPRequest(t)
+			req.Request.IssueInstant = req.Now.Add(offset)
+			assert.NilError(t, DefaultAssertionMaker{}.MakeAssertion(req, &Session{ID: "x", NameID: "n"}))
+			conditions := req.Assertion.Conditions
+			data := req.Assertion.Subject.SubjectConfirmations[0].SubjectConfirmationData
+			assert.Check(t, !data.NotOnOrAfter.After(conditions.NotOnOrAfter),
+				"confirmation NotOnOrAfter %s is after Conditions NotOnOrAfter %s", data.NotOnOrAfter, conditions.NotOnOrAfter)
+			assert.Check(t, data.NotOnOrAfter.After(req.Now), "confirmation already expired at issue")
+			assert.Check(t, data.NotOnOrAfter.After(conditions.NotBefore))
+		})
+	}
+}
+
+// saml-core §1.3.3 (lines 311-312): SAML time values "MUST be expressed in
+// UTC form, with no time zone component". Every time a message or assertion
+// writes is converted to UTC, whatever the zone of the time.Time it holds:
+// one taken from a request (Conditions NotBefore is the AuthnRequest's
+// IssueInstant) or from the application (AuthnInstant is
+// Session.CreateTime).
+func TestSpecCore_1_3_3_TimesInOtherZonesWrittenAsUTC(t *testing.T) {
+	east := time.FixedZone("UTC+5", 5*3600)
+	west := time.FixedZone("UTC-7", -7*3600)
+	at := time.Date(2015, 12, 1, 1, 57, 9, 0, time.UTC)
+	inEast, inWest := at.In(east), at.In(west)
+	const want = "2015-12-01T01:57:09Z"
+
+	checkTimes := func(t *testing.T, el *etree.Element) {
+		t.Helper()
+		seen := 0
+		var walk func(el *etree.Element)
+		walk = func(el *etree.Element) {
+			for _, attr := range el.Attr {
+				switch attr.Key {
+				case "IssueInstant", "NotBefore", "NotOnOrAfter", "AuthnInstant", "SessionNotOnOrAfter":
+					seen++
+					assert.Check(t, strings.HasSuffix(attr.Value, "Z"), "%s/@%s = %s", el.Tag, attr.Key, attr.Value)
+				}
+			}
+			for _, child := range el.ChildElements() {
+				walk(child)
+			}
+		}
+		walk(el)
+		assert.Check(t, seen > 0)
+	}
+
+	t.Run("every message type", func(t *testing.T) {
+		for name, el := range map[string]*etree.Element{
+			"AuthnRequest":    (&AuthnRequest{IssueInstant: inEast}).Element(),
+			"LogoutRequest":   (&LogoutRequest{IssueInstant: inEast, NotOnOrAfter: &inWest}).Element(),
+			"LogoutResponse":  (&LogoutResponse{IssueInstant: inWest}).Element(),
+			"ArtifactResolve": (&ArtifactResolve{IssueInstant: inEast}).Element(),
+			"ArtifactResponse": (&ArtifactResponse{IssueInstant: inWest,
+				Response: Response{IssueInstant: inEast}}).Element(),
+			"AttributeQuery": (&AttributeQuery{IssueInstant: inEast,
+				Subject: &Subject{NameID: &NameID{Value: "alice"}}}).Element(),
+			"Assertion": (&Assertion{IssueInstant: inEast,
+				Subject: &Subject{SubjectConfirmations: []SubjectConfirmation{{
+					SubjectConfirmationData: &SubjectConfirmationData{NotBefore: inWest, NotOnOrAfter: inEast},
+				}}},
+				Conditions:      &Conditions{NotBefore: inWest, NotOnOrAfter: inEast},
+				AuthnStatements: []AuthnStatement{{AuthnInstant: inWest, SessionNotOnOrAfter: &inEast}},
+			}).Element(),
+		} {
+			t.Run(name, func(t *testing.T) {
+				checkTimes(t, el)
+				assert.Check(t, is.Equal(want, el.SelectAttrValue("IssueInstant", "")))
+			})
+		}
+	})
+
+	t.Run("IdP assertion from a request and session in other zones", func(t *testing.T) {
+		req := specCoreIDPRequest(t)
+		req.Request.IssueInstant = req.Request.IssueInstant.In(east)
+		session := &Session{ID: "x", NameID: "n", CreateTime: TimeNow().In(west)}
+		assert.NilError(t, DefaultAssertionMaker{}.MakeAssertion(req, session))
+		el := req.Assertion.Element()
+		checkTimes(t, el)
+		assert.Check(t, is.Equal("2015-12-01T01:57:09Z", el.FindElement("./Conditions").SelectAttrValue("NotBefore", "")))
+	})
+}
+
 // saml-core §1.3.1 (lines 280-283): "all elements in SAML documents that have
 // the XML Schema xs:string type ... MUST be compared using an exact binary
 // comparison. In particular, SAML implementations ... MUST NOT depend on
@@ -259,6 +355,73 @@ func TestSpecCore_2_3_4_EncryptedAssertionValidatedAfterDecryption(t *testing.T)
 	assert.Check(t, errors.Is(err, ErrExpired), "%v", err)
 }
 
+// saml-core §2.4.1 (lines 654-656): "If more than one subject confirmation
+// is provided, then satisfying any one of them is sufficient to confirm the
+// subject for the purpose of applying the assertion." saml-profiles
+// §4.1.4.2 (line 561): "Other statements and confirmation methods MAY be
+// included in the assertion(s)." The SP accepts an assertion with one valid
+// bearer confirmation whatever else it carries, and refuses one with no
+// valid bearer confirmation.
+func TestSpecCore_2_4_1_AnyBearerSubjectConfirmationSuffices(t *testing.T) {
+	now := TimeNow()
+	sp := requiredConditionsSP()
+	const holderOfKey = "urn:oasis:names:tc:SAML:2.0:cm:holder-of-key"
+	const senderVouches = "urn:oasis:names:tc:SAML:2.0:cm:sender-vouches"
+	bearer := func(edit func(d *SubjectConfirmationData)) SubjectConfirmation {
+		c := validAssertion(now).Subject.SubjectConfirmations[0]
+		if edit != nil {
+			edit(c.SubjectConfirmationData)
+		}
+		return c
+	}
+	wrongRecipient := func(d *SubjectConfirmationData) { d.Recipient = "https://other-sp.example.com/acs" }
+	expired := func(d *SubjectConfirmationData) { d.NotOnOrAfter = now.Add(-MaxClockSkew - time.Minute) }
+
+	for _, tc := range []struct {
+		name          string
+		confirmations []SubjectConfirmation
+		wantErr       error
+	}{
+		{"non-bearer without data before a valid bearer",
+			[]SubjectConfirmation{{Method: holderOfKey}, bearer(nil)}, nil},
+		{"non-bearer with foreign data beside a valid bearer",
+			[]SubjectConfirmation{bearer(nil), {Method: senderVouches, SubjectConfirmationData: &SubjectConfirmationData{Recipient: "https://elsewhere.example.com/"}}}, nil},
+		{"bearer for another SP before a valid bearer",
+			[]SubjectConfirmation{bearer(wrongRecipient), bearer(nil)}, nil},
+		{"expired bearer after a valid bearer",
+			[]SubjectConfirmation{bearer(nil), bearer(expired)}, nil},
+		{"only invalid bearers: the first one's error",
+			[]SubjectConfirmation{bearer(wrongRecipient), bearer(expired)}, ErrDestinationMismatch},
+		{"bearer without data",
+			[]SubjectConfirmation{{Method: bearerSubjectConfirmationMethod}}, ErrMissingElement},
+		{"only non-bearer",
+			[]SubjectConfirmation{{Method: holderOfKey, SubjectConfirmationData: bearer(nil).SubjectConfirmationData}}, ErrMissingElement},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := validAssertion(now)
+			a.Subject.SubjectConfirmations = tc.confirmations
+			err := sp.validateAssertion(a, []string{"id-1"}, now)
+			if tc.wantErr == nil {
+				assert.Check(t, err)
+			} else {
+				assert.Check(t, errors.Is(err, tc.wantErr), "%v", err)
+			}
+		})
+	}
+
+	// The replay cache keeps the assertion until the latest bearer
+	// confirmation expires; a non-bearer confirmation sets no deadline.
+	a := validAssertion(now)
+	a.Conditions.NotOnOrAfter = time.Time{}
+	a.IssueInstant = now.Add(time.Hour)
+	a.Subject.SubjectConfirmations = []SubjectConfirmation{
+		{Method: holderOfKey, SubjectConfirmationData: &SubjectConfirmationData{NotOnOrAfter: now}},
+		bearer(func(d *SubjectConfirmationData) { d.NotOnOrAfter = now.Add(time.Minute) }),
+		bearer(func(d *SubjectConfirmationData) { d.NotOnOrAfter = now.Add(2 * time.Minute) }),
+	}
+	assert.Check(t, is.DeepEqual(now.Add(2*time.Minute+MaxClockSkew), acceptableUntil(a)))
+}
+
 // saml-core §2.4.1.2 (lines 719-732): NotBefore is "A time instant before
 // which the subject cannot be confirmed", NotOnOrAfter "A time instant at
 // which the subject can no longer be confirmed", Recipient the location the
@@ -314,6 +477,67 @@ func TestSpecCore_2_5_1_2_UnspecifiedNotBeforeIsOpen(t *testing.T) {
 	})
 	_, err := e.sp.ParseXMLResponse(buf, []string{spcovRequestID}, e.sp.AcsURL)
 	assert.Check(t, err)
+}
+
+// saml-core §2.5.1.2 (lines 891-893): "If the NotOnOrAfter attribute is
+// unspecified (and if all other conditions that are supplied evaluate to
+// Valid), the assertion is Valid with respect to conditions from the time
+// instant specified by the NotBefore attribute with no expiry." The
+// assertion stays bounded by MaxIssueDelay and by the bearer
+// SubjectConfirmationData NotOnOrAfter, and the replay cache is told the
+// earlier of those.
+func TestSpecCore_2_5_1_2_UnspecifiedNotOnOrAfterHasNoExpiry(t *testing.T) {
+	now := TimeNow()
+	sp := requiredConditionsSP()
+
+	a := validAssertion(now)
+	a.Conditions.NotOnOrAfter = time.Time{}
+	assert.Check(t, sp.validateAssertion(a, []string{"id-1"}, now))
+	// Here the issue deadline is the earliest one left.
+	assert.Check(t, is.DeepEqual(now.Add(MaxIssueDelay), acceptableUntil(a)))
+
+	// The SubjectConfirmationData NotOnOrAfter still applies.
+	a.Subject.SubjectConfirmations[0].SubjectConfirmationData.NotOnOrAfter = now.Add(-MaxClockSkew - time.Minute)
+	assert.Check(t, errors.Is(sp.validateAssertion(a, []string{"id-1"}, now), ErrExpired))
+
+	// Through the parser: the attribute is simply absent.
+	e := spcovSetup(t)
+	buf := specCoreSignedResponse(t, e, e.assertion(), func(el *etree.Element) {
+		el.FindElement("./Conditions").RemoveAttr("NotOnOrAfter")
+	})
+	_, err := e.sp.ParseXMLResponse(buf, []string{spcovRequestID}, e.sp.AcsURL)
+	assert.Check(t, err)
+}
+
+// saml-core §2.5.1.2 (lines 886-887): NotOnOrAfter "specifies the time
+// instant at which the validity interval has ended", and §2.4.1.2 (lines
+// 722-723): "A time instant at which the subject can no longer be
+// confirmed." The instant itself is outside the interval, so with no clock
+// skew an assertion is refused exactly at NotOnOrAfter and accepted just
+// before it.
+func TestSpecCore_2_5_1_2_NotOnOrAfterIsExclusive(t *testing.T) {
+	oldSkew := MaxClockSkew
+	MaxClockSkew = 0
+	t.Cleanup(func() { MaxClockSkew = oldSkew })
+
+	now := TimeNow()
+	sp := requiredConditionsSP()
+	for name, edit := range map[string]func(a *Assertion, at time.Time){
+		"Conditions": func(a *Assertion, at time.Time) { a.Conditions.NotOnOrAfter = at },
+		"SubjectConfirmationData": func(a *Assertion, at time.Time) {
+			a.Subject.SubjectConfirmations[0].SubjectConfirmationData.NotOnOrAfter = at
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := validAssertion(now)
+			edit(a, now)
+			assert.Check(t, errors.Is(sp.validateAssertion(a, []string{"id-1"}, now), ErrExpired))
+
+			a = validAssertion(now)
+			edit(a, now.Add(time.Nanosecond))
+			assert.Check(t, sp.validateAssertion(a, []string{"id-1"}, now))
+		})
+	}
 }
 
 // saml-core §2.5.1.2 (lines 886-887) and §2.5.1.1 rule 2 (lines 870-871,
@@ -420,6 +644,90 @@ func TestSpecCore_2_7_3_1_1_EmptyValueSerializedAsEmptyElement(t *testing.T) {
 	el := (&AttributeValue{Type: "xs:string", Value: ""}).Element()
 	assert.Check(t, is.Len(el.Child, 0))
 	assert.Check(t, is.Equal("", el.Text()))
+}
+
+// saml-core §4.1.2 (lines 2774-2775): "A SAML relying party MUST NOT process
+// any assertion with a major assertion version number not supported by the
+// relying party." §4.1.3.3 (lines 2824-2830) ties the response version to
+// the assertion version, and §3.2.2 makes Version required. The SP refuses
+// an assertion or Response whose Version is not 2.0, or that has none.
+func TestSpecCore_4_1_2_AssertionAndResponseVersion(t *testing.T) {
+	e := spcovSetup(t)
+	parse := func(t *testing.T, buf []byte) error {
+		t.Helper()
+		_, err := e.sp.ParseXMLResponse(buf, []string{spcovRequestID}, e.sp.AcsURL)
+		return err
+	}
+	for _, version := range []string{"3.0", "1.1", ""} {
+		t.Run("assertion Version "+version, func(t *testing.T) {
+			buf := specCoreSignedResponse(t, e, e.assertion(), func(el *etree.Element) {
+				el.RemoveAttr("Version")
+				if version != "" {
+					el.CreateAttr("Version", version)
+				}
+			})
+			err := parse(t, buf)
+			assert.Check(t, errors.Is(err, ErrUnsupported), "%v", err)
+			assert.Check(t, is.ErrorContains(spcovPrivateErr(t, err), "assertion Version"))
+		})
+		t.Run("response Version "+version, func(t *testing.T) {
+			r := e.response()
+			r.Assertion = e.assertion()
+			el := r.Element()
+			el.RemoveAttr("Version")
+			if version != "" {
+				el.CreateAttr("Version", version)
+			}
+			err := parse(t, spcovSerialize(t, e.idpSign(t, el)))
+			assert.Check(t, errors.Is(err, ErrUnsupported), "%v", err)
+			assert.Check(t, is.ErrorContains(spcovPrivateErr(t, err), "response Version"))
+		})
+	}
+
+	t.Run("ArtifactResponse Version", func(t *testing.T) {
+		const artifactReqID = "id-artifact-request"
+		el := e.artifactResponseEl(t, artifactReqID, false, nil)
+		el.CreateAttr("Version", "3.0")
+		_, err := e.sp.ParseXMLArtifactResponse(spcovSerialize(t, spcovSOAPEnvelope(e.idpSign(t, el))),
+			[]string{spcovRequestID}, artifactReqID, e.sp.AcsURL)
+		assert.Check(t, errors.Is(err, ErrUnsupported), "%v", err)
+	})
+
+	t.Run("2.0 accepted", func(t *testing.T) {
+		assert.Check(t, parse(t, specCoreSignedResponse(t, e, e.assertion(), nil)))
+	})
+}
+
+// saml-core §4.1.3.1 (line 2802): "A SAML responder MUST reject any request
+// with a major request version number not supported by the responder", and
+// §3.2.1 (lines 1467-1470): ID is required and the response's InResponseTo
+// must match it. The SP refuses an IdP LogoutRequest with another Version or
+// no ID, and a LogoutResponse with another Version.
+func TestSpecCore_4_1_3_1_LogoutMessageVersionAndID(t *testing.T) {
+	e := spcovSetup(t)
+	request := func() *LogoutRequest {
+		return &LogoutRequest{
+			ID: "id-logout-request", Version: "2.0", IssueInstant: spcovNow,
+			Destination: e.sp.SloURL.String(),
+			Issuer:      &Issuer{Value: spcovIDPEntityID}, NameID: &NameID{Value: "alice@example.com"},
+		}
+	}
+	assert.Check(t, e.sp.validateLogoutRequest(request()))
+
+	for _, version := range []string{"3.0", "1.1", ""} {
+		r := request()
+		r.Version = version
+		assert.Check(t, errors.Is(e.sp.validateLogoutRequest(r), ErrUnsupported), "LogoutRequest Version %q", version)
+
+		resp := e.logoutResponse()
+		resp.Version = version
+		assert.Check(t, errors.Is(e.sp.validateLogoutResponse(resp), ErrUnsupported), "LogoutResponse Version %q", version)
+	}
+
+	r := request()
+	r.ID = ""
+	err := e.sp.validateLogoutRequest(r)
+	assert.Check(t, errors.Is(err, ErrMissingElement), "%v", err)
 }
 
 // saml-core §4.1.3.1 (lines 2800-2803): "A SAML requester MUST NOT issue a

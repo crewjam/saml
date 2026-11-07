@@ -342,6 +342,33 @@ func TestSpecProfile_4_1_5_UnsolicitedResponses(t *testing.T) {
 	assert.Check(t, errors.Is(err, ErrRequestIDMismatch), "unsolicited response without AllowIDPInitiated: got %v", err)
 }
 
+// saml-profiles §4.1.4.2 (lines 547-550): "The set of one or more assertions
+// MUST contain at least one <AuthnStatement> that reflects the
+// authentication of the principal to the identity provider." An assertion
+// without one, such as an attribute-only assertion, does not establish a
+// login.
+func TestSpecProfile_4_1_4_2_AuthnStatementRequired(t *testing.T) {
+	e := spcovSetup(t)
+	parse := func(a *Assertion) (*Assertion, error) {
+		r := e.response()
+		r.Assertion = a
+		return e.sp.ParseXMLResponse(spcovSerialize(t, e.idpSign(t, r.Element())), []string{spcovRequestID}, e.sp.AcsURL)
+	}
+
+	got, err := parse(e.assertion())
+	assert.NilError(t, err)
+	assert.Check(t, is.Len(got.AuthnStatements, 1))
+
+	attributeOnly := e.assertion()
+	attributeOnly.AuthnStatements = nil
+	attributeOnly.AttributeStatements = []AttributeStatement{{Attributes: []Attribute{{
+		Name: "urn:oid:0.9.2342.19200300.100.1.3", Values: []AttributeValue{{Value: "alice@example.com"}},
+	}}}}
+	_, err = parse(attributeOnly)
+	assert.Check(t, errors.Is(err, ErrMissingElement), "%v", err)
+	assert.Check(t, is.ErrorContains(spcovPrivateErr(t, err), "assertion has no AuthnStatement"))
+}
+
 // saml-profiles §4.1.4.2: "The <Issuer> element MAY be omitted, but if
 // present it MUST contain the unique identifier of the issuing identity
 // provider" and "Each assertion's <Issuer> element MUST contain the unique

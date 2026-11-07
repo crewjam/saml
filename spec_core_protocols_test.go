@@ -124,6 +124,32 @@ func TestSpecProtocol_3_2_1_DestinationMismatchDiscarded(t *testing.T) {
 	assert.Check(t, !strings.Contains(w.Body.String(), "SAMLResponse"))
 }
 
+// saml-core-2.0-os §3.2.1 (lines 1467-1470): ID is "[Required]", and "the
+// values of the ID attribute in a request and the InResponseTo attribute in
+// the corresponding response MUST match". An AuthnRequest without an ID is
+// refused, so the IdP never sends a Response with no InResponseTo that would
+// look unsolicited.
+func TestSpecProtocol_3_2_1_AuthnRequestIDRequired(t *testing.T) {
+	test := idpcovNewTest(t)
+	authnRequest, err := test.SP.MakeAuthenticationRequest(test.IDP.SSOURL.String(), HTTPRedirectBinding, HTTPPostBinding)
+	assert.NilError(t, err)
+
+	authnRequest.ID = ""
+	u, err := authnRequest.Redirect("relay", &test.SP)
+	assert.NilError(t, err)
+	r := httptest.NewRequest(http.MethodGet, test.IDP.SSOURL.String()+"?"+u.RawQuery, nil)
+	req, err := NewIdpAuthnRequest(&test.IDP, r)
+	assert.NilError(t, err)
+	err = req.Validate()
+	assert.Check(t, errors.Is(err, ErrMissingElement), "%v", err)
+	assert.Check(t, is.ErrorContains(err, "missing an ID"))
+
+	w := httptest.NewRecorder()
+	test.IDP.ServeSSO(w, r)
+	assert.Check(t, is.Equal(http.StatusBadRequest, w.Code))
+	assert.Check(t, !strings.Contains(w.Body.String(), "SAMLResponse"))
+}
+
 // saml-core-2.0-os §3.4.1.4: the returned assertion "MUST contain a
 // <saml:Subject> element that represents the presenter", at least one
 // statement "MUST be a <saml:AuthnStatement>", and the assertion "MUST

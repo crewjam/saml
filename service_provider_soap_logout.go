@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"mime"
 	"net/http"
 	"time"
@@ -20,12 +19,6 @@ import (
 // the service provider: answering the IdP's back-channel LogoutRequests, and
 // sending the IdP a LogoutRequest without involving the browser.
 
-// MaxSOAPLogoutMessageSize is the largest SOAP message body, in bytes, that
-// the service provider reads in back-channel single logout: a LogoutRequest
-// the IdP sends with ValidateSOAPLogoutRequest, and the IdP's answer to
-// SendSOAPLogoutRequest. A larger body is rejected without being parsed.
-var MaxSOAPLogoutMessageSize int64 = 1 << 20
-
 // ErrNoSOAPSingleLogoutService is returned by MakeSOAPLogoutRequest when the
 // IdP metadata publishes no SingleLogoutService with the SAML SOAP binding.
 var ErrNoSOAPSingleLogoutService = errors.New("the IdP metadata has no SingleLogoutService with the SOAP binding")
@@ -39,18 +32,6 @@ func IsSOAPRequest(r *http.Request) bool {
 	}
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	return err == nil && mediaType == "text/xml"
-}
-
-// readLimited reads r to the end, failing if it holds more than limit bytes.
-func readLimited(r io.Reader, limit int64) ([]byte, error) {
-	buf, err := io.ReadAll(io.LimitReader(r, limit+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(buf)) > limit {
-		return nil, fmt.Errorf("body is larger than %d bytes", limit)
-	}
-	return buf, nil
 }
 
 // ValidateSOAPLogoutRequest validates a LogoutRequest the IdP sent to the
@@ -234,7 +215,7 @@ func writeSOAP(w http.ResponseWriter, status int, envelope *etree.Element) error
 	if err != nil {
 		return err
 	}
-	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
+	w.Header().Set("Content-Type", soapContentType)
 	// saml-bindings §3.2.3.3: the response should not be cached.
 	w.Header().Set("Cache-Control", "no-cache, no-store")
 	w.Header().Set("Pragma", "no-cache")

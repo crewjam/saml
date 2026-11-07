@@ -57,9 +57,9 @@ var (
 
 	// ErrMissingElement is attached when a required element or value is
 	// absent: no Assertion, an Assertion with no Subject, Conditions, ID,
-	// SubjectConfirmationData or bearer SubjectConfirmation, a LogoutRequest
-	// with no NameID, an AuthnRequest with no Issuer, or another required
-	// child element.
+	// AuthnStatement, SubjectConfirmationData or bearer SubjectConfirmation,
+	// a LogoutRequest with no NameID, an AuthnRequest with no Issuer or ID,
+	// or another required child element.
 	ErrMissingElement = errors.New("saml: required element is missing")
 
 	// ErrExpired is attached when a message or assertion is no longer valid:
@@ -128,7 +128,9 @@ var (
 	// implemented. At the IdP: an HTTP method other than GET or POST, a SAML
 	// version other than 2.0, signed AuthnRequests (WantAuthnRequestsSigned),
 	// or an assertion consumer service binding other than HTTP-POST. At the
-	// SP: a RequestedAuthnContext Comparison other than "exact" when
+	// SP: a Response, ArtifactResponse, assertion, LogoutRequest or
+	// LogoutResponse whose Version is not 2.0, or a RequestedAuthnContext
+	// Comparison other than "exact" when
 	// ValidateAuthnContextClassRef is set and AuthnContextClassRefComparator
 	// is not.
 	ErrUnsupported = errors.New("saml: not supported")

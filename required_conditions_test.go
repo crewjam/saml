@@ -13,6 +13,7 @@ import (
 // requiredConditionsSP, so each test removes exactly one part of it.
 func validAssertion(now time.Time) *Assertion {
 	return &Assertion{
+		Version:      "2.0",
 		IssueInstant: now,
 		Issuer:       Issuer{Value: "https://idp.example.com/"},
 		Subject: &Subject{SubjectConfirmations: []SubjectConfirmation{{
@@ -26,6 +27,7 @@ func validAssertion(now time.Time) *Assertion {
 			NotOnOrAfter:         now.Add(time.Minute),
 			AudienceRestrictions: []AudienceRestriction{{Audience: Audience{Value: "https://sp.example.com/metadata"}}},
 		},
+		AuthnStatements: []AuthnStatement{{AuthnInstant: now}},
 	}
 }
 
