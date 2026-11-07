@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/samlsp"
 )
 
@@ -21,25 +20,6 @@ var samlMiddleware *samlsp.Middleware
 
 func hello(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Hello, %s!", samlsp.AttributeFromContext(r.Context(), "displayName"))
-}
-
-func logout(w http.ResponseWriter, r *http.Request) {
-	nameID := samlsp.AttributeFromContext(r.Context(), "urn:oasis:names:tc:SAML:attribute:subject-id")
-	// The JWT session keeps the IDP's SessionIndex; some IDPs need it for
-	// single logout.
-	sessionIndex := samlsp.AttributeFromContext(r.Context(), "SessionIndex")
-	url, err := samlMiddleware.ServiceProvider.MakeRedirectLogoutRequest(nameID, "", saml.WithSessionIndex(sessionIndex))
-	if err != nil {
-		panic(err) // TODO handle error
-	}
-
-	err = samlMiddleware.Session.DeleteSession(w, r)
-	if err != nil {
-		panic(err) // TODO handle error
-	}
-
-	w.Header().Add("Location", url.String())
-	w.WriteHeader(http.StatusFound)
 }
 
 func main() {
@@ -82,11 +62,14 @@ func main() {
 		SignRequest: true, // some IdP require the SLO request to be signed
 	})
 	app := http.HandlerFunc(hello)
-	slo := http.HandlerFunc(logout)
 
 	http.Handle("/hello", samlMiddleware.RequireAccount(app))
+	// samlMiddleware serves /saml/metadata, /saml/acs and the single logout
+	// endpoint /saml/slo.
 	http.Handle("/saml/", samlMiddleware)
-	http.Handle("/logout", slo)
+	// Visiting /logout ends the local session and sends the user to the IDP
+	// to log out there too (SP initiated single logout).
+	http.HandleFunc("/logout", samlMiddleware.HandleStartLogout)
 
 	server := &http.Server{
 		Addr:              ":8000",
