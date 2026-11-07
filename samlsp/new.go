@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	dsig "github.com/russellhaering/goxmldsig"
@@ -43,6 +44,17 @@ type Options struct {
 	// send a SameSite=Lax cookie with the IDP's cross-site POST to the ACS URL.
 	// See CookieRequestTracker.
 	CookieSameSite http.SameSite
+
+	// TrackedRequestMaxAge is how long a pending authentication or logout
+	// request is remembered: the lifetime of the request tracking cookie and
+	// of the token in it. It bounds the time the user may spend at the IdP
+	// (entering a password, completing MFA, resetting a password) before the
+	// response arrives. If zero, DefaultTrackedRequestMaxAge is used.
+	//
+	// It is not the freshness limit of the response: the response's
+	// IssueInstant is still checked against saml.MaxIssueDelay.
+	TrackedRequestMaxAge time.Duration
+
 	CookieName     string
 	RelayStateFunc func(w http.ResponseWriter, r *http.Request) string
 
@@ -311,6 +323,18 @@ func legacySessionCookieDomain(opts Options) string {
 	return host
 }
 
+// DefaultTrackedRequestMaxAge is how long a pending request is remembered
+// when Options.TrackedRequestMaxAge is zero.
+const DefaultTrackedRequestMaxAge = 10 * time.Minute
+
+// trackedRequestMaxAge returns the lifetime of tracked requests for opts.
+func trackedRequestMaxAge(opts Options) time.Duration {
+	if opts.TrackedRequestMaxAge > 0 {
+		return opts.TrackedRequestMaxAge
+	}
+	return DefaultTrackedRequestMaxAge
+}
+
 // DefaultTrackedRequestCodec returns a new TrackedRequestCodec for the provided
 // options, a JWTTrackedRequestCodec that uses a JWT to encode TrackedRequests.
 func DefaultTrackedRequestCodec(opts Options) JWTTrackedRequestCodec {
@@ -319,7 +343,7 @@ func DefaultTrackedRequestCodec(opts Options) JWTTrackedRequestCodec {
 		SigningMethod: getDefaultSigningMethod(key),
 		Audience:      opts.URL.String(),
 		Issuer:        opts.URL.String(),
-		MaxAge:        saml.MaxIssueDelay,
+		MaxAge:        trackedRequestMaxAge(opts),
 		Key:           key,
 		Clock:         opts.Clock,
 	}
@@ -332,7 +356,7 @@ func DefaultRequestTracker(opts Options, serviceProvider *saml.ServiceProvider) 
 		ServiceProvider: serviceProvider,
 		NamePrefix:      "saml_",
 		Codec:           DefaultTrackedRequestCodec(opts),
-		MaxAge:          saml.MaxIssueDelay,
+		MaxAge:          trackedRequestMaxAge(opts),
 		RelayStateFunc:  opts.RelayStateFunc,
 		SameSite:        opts.CookieSameSite,
 	}
@@ -348,7 +372,7 @@ func DefaultLogoutRequestTracker(opts Options, serviceProvider *saml.ServiceProv
 		ServiceProvider: serviceProvider,
 		NamePrefix:      "samlslo_",
 		Codec:           DefaultTrackedRequestCodec(opts),
-		MaxAge:          saml.MaxIssueDelay,
+		MaxAge:          trackedRequestMaxAge(opts),
 		SameSite:        opts.CookieSameSite,
 		Path:            serviceProvider.SloURL.Path,
 	}
