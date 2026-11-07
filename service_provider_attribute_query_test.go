@@ -617,7 +617,7 @@ type aqServer struct {
 func newAQServer(t *testing.T, e *spcovEnv) *aqServer {
 	t.Helper()
 	s := &aqServer{status: http.StatusOK}
-	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.Server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		s.requests = append(s.requests, body)
 		s.headers = append(s.headers, r.Header.Clone())

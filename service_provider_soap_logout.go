@@ -227,7 +227,8 @@ func writeSOAP(w http.ResponseWriter, status int, envelope *etree.Element) error
 // MakeSOAPLogoutRequest returns a LogoutRequest for the principal nameID,
 // addressed to the IdP's SingleLogoutService with the SAML SOAP binding, to
 // send with SendSOAPLogoutRequest. It returns ErrNoSOAPSingleLogoutService if
-// the IdP metadata has none.
+// the IdP metadata has none, and an error matching ErrInsecureSOAPEndpoint if
+// its Location is not https and AllowInsecureSOAPEndpoints is not set.
 //
 // nameID is sent as is: pass the NameID the IdP issued, with its Format and
 // qualifiers (for example from samlsp's SessionWithSAMLNameID). opts can add
@@ -246,6 +247,9 @@ func (sp *ServiceProvider) MakeSOAPLogoutRequest(nameID NameID, opts ...LogoutRe
 	location := sp.GetSLOBindingLocation(SOAPBinding)
 	if location == "" {
 		return nil, ErrNoSOAPSingleLogoutService
+	}
+	if err := checkSOAPEndpoint(location, sp.AllowInsecureSOAPEndpoints); err != nil {
+		return nil, fmt.Errorf("cannot make a logout request: %w", err)
 	}
 	if nameID.Value == "" {
 		return nil, errors.New("cannot make a logout request: the NameID is empty")
@@ -275,7 +279,8 @@ func (sp *ServiceProvider) MakeSOAPLogoutRequest(nameID NameID, opts ...LogoutRe
 // Destination with the SAML SOAP binding, using HTTPClient (or
 // http.DefaultClient) and ctx, and returns the IdP's LogoutResponse once
 // ParseXMLSOAPLogoutResponse has validated it. The response body is limited
-// to MaxSOAPLogoutMessageSize bytes.
+// to MaxSOAPLogoutMessageSize bytes. The Destination must be https unless
+// AllowInsecureSOAPEndpoints is set (see ErrInsecureSOAPEndpoint).
 //
 // This is SP initiated single logout without the browser. It does not end
 // any session at this service provider: do that whatever the outcome.
