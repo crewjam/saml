@@ -358,6 +358,15 @@ type IdentityProvider struct {
 	// under the key "LogoutRequest:" followed by the ID, until the last
 	// moment the request would be accepted. If nil, LogoutRequests are not
 	// checked for replay.
+	//
+	// It also records the ID of each signed AuthnRequest that ServeSSO
+	// answers with an assertion, under the key "AuthnRequest:" followed by
+	// the service provider's entity ID, a space and the ID, and refuses a
+	// signed AuthnRequest it has already answered. The ID is recorded once
+	// the SessionProvider has returned a session, so a request that is sent
+	// again after a login form is still accepted. Unsigned AuthnRequests are
+	// not recorded: anyone can make a new one, so refusing a repeated one
+	// would protect nothing.
 	ReplayCache AssertionReplayCache
 
 	// HTTPClient is the client the IdP sends back-channel messages with:
@@ -752,11 +761,15 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO(ross): we must check that the request ID has not been previously
-	//   issued.
-
 	session := idp.SessionProvider.GetSession(w, r, req)
 	if session == nil {
+		return
+	}
+
+	// Only now is the request used up: GetSession may have shown a login
+	// form that sends the same request again.
+	if err := req.consume(); err != nil {
+		idp.onError(w, r, http.StatusBadRequest, fmt.Errorf("failed to validate request: %w", err))
 		return
 	}
 
@@ -984,6 +997,28 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 	}
 
 	return req, nil
+}
+
+// authnRequestReplayKeyPrefix is the prefix of the ReplayCache keys under
+// which the IDs of signed AuthnRequests are recorded.
+const authnRequestReplayKeyPrefix = "AuthnRequest:"
+
+// consume records the ID of the validated request in the IdP's ReplayCache,
+// if it is set and the request is signed, and returns an error if it was
+// already recorded.
+func (req *IdpAuthnRequest) consume() error {
+	if req.IDP.ReplayCache == nil || !req.isSigned() {
+		return nil
+	}
+	issuer := ""
+	if req.Request.Issuer != nil {
+		issuer = req.Request.Issuer.Value
+	}
+	key := authnRequestReplayKeyPrefix + issuer + " " + req.Request.ID
+	if err := req.IDP.ReplayCache.Consume(key, req.Request.IssueInstant.Add(MaxIssueDelay)); err != nil {
+		return fmt.Errorf("authn request %q: %w", req.Request.ID, err)
+	}
+	return nil
 }
 
 // isSigned reports whether the request carries a signature: an enveloped
