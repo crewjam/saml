@@ -1661,6 +1661,9 @@ func (sp *ServiceProvider) parseReceivedResponse(responseEl, receivedEl *etree.E
 		return nil, err
 	}
 
+	// assertionRequestIDs are the request IDs an assertion may answer.
+	assertionRequestIDs := possibleRequestIDs
+
 	// validate request attributes
 	{
 		var response Response
@@ -1683,6 +1686,14 @@ func (sp *ServiceProvider) parseReceivedResponse(responseEl, receivedEl *etree.E
 
 		if err := sp.validateRequestID(response, possibleRequestIDs); err != nil {
 			return nil, err
+		}
+		// A Response to an AuthnRequest carries assertions issued for that
+		// same request (saml-profiles §4.1.4.2), so an assertion issued for
+		// another pending request cannot be rewrapped in it. An assertion
+		// without InResponseTo is still accepted with AllowIDPInitiated:
+		// it would be accepted on its own anyway.
+		if response.InResponseTo != "" {
+			assertionRequestIDs = []string{response.InResponseTo}
 		}
 
 		if err := checkIssueInstant("response IssueInstant", response.IssueInstant, now); err != nil {
@@ -1728,7 +1739,7 @@ func (sp *ServiceProvider) parseReceivedResponse(responseEl, receivedEl *etree.E
 	// look for encrypted assertions
 	{
 		for _, encryptedAssertionEl := range encryptedAssertionEls {
-			assertion, err := sp.parseEncryptedAssertion(encryptedAssertionEl, possibleRequestIDs, now, signatureRequirement)
+			assertion, err := sp.parseEncryptedAssertion(encryptedAssertionEl, assertionRequestIDs, now, signatureRequirement)
 			if err != nil {
 				errs = append(errs, err)
 				continue
@@ -1740,7 +1751,7 @@ func (sp *ServiceProvider) parseReceivedResponse(responseEl, receivedEl *etree.E
 	// look for plaintext assertions
 	{
 		for i, assertionEl := range assertionEls {
-			assertion, err := sp.parseReceivedAssertion(assertionEl, receivedAssertionEls[i], possibleRequestIDs, now, signatureRequirement)
+			assertion, err := sp.parseReceivedAssertion(assertionEl, receivedAssertionEls[i], assertionRequestIDs, now, signatureRequirement)
 			if err != nil {
 				errs = append(errs, err)
 				continue
