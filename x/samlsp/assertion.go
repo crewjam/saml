@@ -92,28 +92,35 @@ func newAssertion(a *saml.Assertion) *Assertion {
 		}
 	}
 	for _, st := range a.AttributeStatements {
-		for _, attr := range st.Attributes {
-			values := make([]string, 0, len(attr.Values))
-			types := make([]string, 0, len(attr.Values))
-			for _, v := range attr.Values {
-				switch {
-				case v.Nil:
-					continue
-				case v.NameID != nil:
-					values = append(values, v.NameID.Value)
-				default:
-					values = append(values, v.Value)
-				}
-				types = append(types, v.Type)
+		out.Attributes = append(out.Attributes, convertAttributes(st.Attributes)...)
+	}
+	return out
+}
+
+// convertAttributes returns attrs as Attributes.
+func convertAttributes(attrs []saml.Attribute) Attributes {
+	out := make(Attributes, 0, len(attrs))
+	for _, attr := range attrs {
+		values := make([]string, 0, len(attr.Values))
+		types := make([]string, 0, len(attr.Values))
+		for _, v := range attr.Values {
+			switch {
+			case v.Nil:
+				continue
+			case v.NameID != nil:
+				values = append(values, v.NameID.Value)
+			default:
+				values = append(values, v.Value)
 			}
-			out.Attributes = append(out.Attributes, Attribute{
-				Name:         attr.Name,
-				FriendlyName: attr.FriendlyName,
-				NameFormat:   attr.NameFormat,
-				Values:       values,
-				Types:        types,
-			})
+			types = append(types, v.Type)
 		}
+		out = append(out, Attribute{
+			Name:         attr.Name,
+			FriendlyName: attr.FriendlyName,
+			NameFormat:   attr.NameFormat,
+			Values:       values,
+			Types:        types,
+		})
 	}
 	return out
 }
