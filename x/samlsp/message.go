@@ -12,9 +12,9 @@ import (
 // provider through the user's browser. Depending on Binding, it is either a
 // redirect or an HTML form that submits itself.
 type Message struct {
-	// ID is the ID of a request. For an AuthnRequest, pass it to
-	// ParseResponse with WithRequestID. For a LogoutRequest, pass it to
-	// ParseLogoutResponse. It is empty for a LogoutResponse.
+	// ID is the ID of the message. For an AuthnRequest, pass it to
+	// ParseResponse with WithRequestID, and for a LogoutRequest to
+	// ParseLogoutResponse. For a LogoutResponse it is only for logging.
 	ID string
 
 	// Binding is the SAML binding that carries the message:

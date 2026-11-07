@@ -3152,11 +3152,27 @@ func (sp *ServiceProvider) MakeRedirectLogoutResponse(logoutRequestID, relayStat
 func (sp *ServiceProvider) MakeRedirectLogoutResponseWithStatus(logoutRequestID, relayState string, status Status) (*url.URL, error) {
 	resp := sp.makeUnsignedLogoutResponse(sp.GetSLOBindingLocation(HTTPRedirectBinding), logoutRequestID)
 	resp.Status = status
-	encoded, err := deflateAndEncode(resp.Element())
+	return sp.RedirectLogoutResponseURL(resp, relayState)
+}
+
+// RedirectLogoutResponseURL returns the URL that sends resp to its
+// Destination with the HTTP-Redirect binding, as RedirectLogoutRequestURL
+// does for a LogoutRequest. Use it for a response made with
+// MakeLogoutResponseWithStatus, whose ID the caller then knows.
+//
+// Any enveloped XML signature on resp is left out of the message. If
+// LogoutSignatureMethod or SignatureMethod is set, the URL carries a query
+// string signature instead (saml-bindings-2.0-os section 3.4.4.1). The
+// RelayState is the one of the request being answered, so its length is
+// not checked.
+func (sp *ServiceProvider) RedirectLogoutResponseURL(resp *LogoutResponse, relayState string) (*url.URL, error) {
+	unsigned := *resp
+	unsigned.Signature = nil
+	encoded, err := deflateAndEncode(unsigned.Element())
 	if err != nil {
 		return nil, err
 	}
-	return sp.redirectBindingURL(resp.Destination, redirectParamSAMLResponse, encoded, relayState, sp.logoutSignatureMethod())
+	return sp.redirectBindingURL(unsigned.Destination, redirectParamSAMLResponse, encoded, relayState, sp.logoutSignatureMethod())
 }
 
 // Redirect returns a URL suitable for using the redirect binding with the
