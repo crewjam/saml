@@ -96,16 +96,19 @@
 //			panic(err) // TODO handle error
 //		}
 //
-//		samlSP, _ := samlsp.New(samlsp.Options{
-//			URL:            *rootURL,
-//			Key:            keyPair.PrivateKey.(*rsa.PrivateKey),
-//			Certificate:    keyPair.Leaf,
+//		samlSP, err := samlsp.New(samlsp.Options{
+//			URL:         *rootURL,
+//			Key:         keyPair.PrivateKey.(*rsa.PrivateKey),
+//			Certificate: keyPair.Leaf,
 //			IDPMetadata: idpMetadata,
 //		})
+//		if err != nil {
+//			panic(err) // TODO handle error
+//		}
 //		app := http.HandlerFunc(hello)
 //		http.Handle("/hello", samlSP.RequireAccount(app))
 //		http.Handle("/saml/", samlSP)
-//		http.ListenAndServe(":8000", nil)
+//		panic(http.ListenAndServe(":8000", nil))
 //	}
 //
 // ```
@@ -280,7 +283,7 @@
 //
 // The SAML standard is huge and complex with many dark corners and strange, unused features. This package implements the most commonly used subset of these features required to provide a single sign on experience. The package supports at least the subset of SAML known as [interoperable SAML](https://kantarainitiative.github.io/SAMLprofiles/saml2int.html).
 //
-// This package supports the Web SSO profile. Message flows from the service provider to the IDP are supported using the HTTP Redirect binding and the HTTP POST binding. Message flows from the IDP to the service provider are supported via the HTTP POST binding.
+// This package supports the Web SSO profile. Message flows from the service provider to the IDP are supported using the HTTP Redirect binding and the HTTP POST binding. Message flows from the IDP to the service provider are supported via the HTTP POST binding and, on the service provider side, the HTTP Artifact binding (`samlsp.Options.UseArtifactResponse`; the artifact is resolved with the IDP's ArtifactResolutionService over SOAP). The identity provider in this package answers with HTTP POST, or HTTP POST SimpleSign (below); it does not issue artifacts.
 //
 // The Single Logout profile is supported with the HTTP Redirect and HTTP POST bindings: SP initiated and IDP initiated logout on the service provider side (see [Logging out](#logging-out)), and SP initiated logout on the identity provider side (see [Single logout](#single-logout)).
 //
@@ -318,7 +321,12 @@
 // sessionProvider.MaxAge = sessionMaxAge
 // sessionProvider.Codec = codec
 //
-// samlSP, _ := samlsp.New(opts)
+// samlSP, err := samlsp.New(opts)
+//
+//	if err != nil {
+//		return err
+//	}
+//
 // samlSP.Session = sessionProvider
 // ```
 //
