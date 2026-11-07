@@ -6,6 +6,11 @@
 //	go run ./example/idp
 //	go run ./example
 //
+// The identity provider signs its metadata and writes the certificate it
+// signs with to idp-cert.pem. The service trusts the metadata only if that
+// certificate signed it: the metadata names the certificates trusted to sign
+// assertions, so it must not be taken from the network unchecked.
+//
 // Then browse to http://localhost:8000/ and log in as alice / hunter2.
 package main
 
@@ -17,12 +22,15 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/pem"
 	"encoding/xml"
+	"errors"
 	"flag"
 	"fmt"
 	"math/big"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -98,6 +106,19 @@ func ServeWhoami(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// readCertificate reads a PEM encoded certificate from path.
+func readCertificate(path string) (*x509.Certificate, error) {
+	buf, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(buf)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return nil, errors.New("no PEM certificate in " + path)
+	}
+	return x509.ParseCertificate(block.Bytes)
+}
+
 // newKeyPair returns a freshly generated RSA key and a matching self-signed
 // certificate. The example uses a throwaway key so that it never ships a
 // private key or a certificate that can expire.
@@ -127,6 +148,7 @@ func newKeyPair() (*rsa.PrivateKey, *x509.Certificate, error) {
 func main() {
 	rootURLstr := flag.String("url", "http://localhost:8000", "The base URL of this service")
 	idpMetadataURLstr := flag.String("idp", "http://localhost:8080/metadata", "The metadata URL for the IDP")
+	idpCertPath := flag.String("idp-cert", "idp-cert.pem", "The certificate the IDP signs its metadata with")
 	listenAddr := flag.String("listen", ":8000", "The address to listen on")
 	flag.Parse()
 
@@ -140,8 +162,12 @@ func main() {
 		panic(err) // TODO handle error
 	}
 
-	idpMetadata, err := samlsp.FetchMetadata(context.Background(), http.DefaultClient,
-		*idpMetadataURL)
+	idpCert, err := readCertificate(*idpCertPath)
+	if err != nil {
+		panic(err) // TODO handle error
+	}
+	idpMetadata, err := samlsp.FetchSignedMetadata(context.Background(), http.DefaultClient,
+		*idpMetadataURL, []*x509.Certificate{idpCert})
 	if err != nil {
 		panic(err) // TODO handle error
 	}

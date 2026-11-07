@@ -20,8 +20,9 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
-	xrv "github.com/mattermost/xml-roundtrip-validator"
 	dsig "github.com/russellhaering/goxmldsig"
+
+	"github.com/crewjam/saml/internal/xmlroundtrip"
 
 	"github.com/crewjam/saml/internal/signerutil"
 	"github.com/crewjam/saml/logger"
@@ -649,11 +650,11 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 // the service provider's metadata (its validity period is not checked), and
 // a Destination equal to SSOURL; it is rejected otherwise.
 func (req *IdpAuthnRequest) Validate() error {
-	if err := xrv.Validate(bytes.NewReader(req.RequestBuffer)); err != nil {
+	if err := xmlroundtrip.Validate(req.RequestBuffer); err != nil {
 		return classify(err, ErrMalformedMessage)
 	}
 
-	if err := xml.Unmarshal(req.RequestBuffer, &req.Request); err != nil { //nolint:gosec // parsing the untrusted request is the point; it was validated by xrv above
+	if err := xml.Unmarshal(req.RequestBuffer, &req.Request); err != nil { //nolint:gosec // parsing the untrusted request is the point; it was checked by xmlroundtrip.Validate above
 		return classify(err, ErrMalformedMessage)
 	}
 
