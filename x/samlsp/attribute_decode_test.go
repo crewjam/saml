@@ -193,9 +193,6 @@ func TestDecodeAttributesErrors(t *testing.T) {
 		{"1", new(struct {
 			X map[string]int `saml:"x"`
 		}), "unsupported field type"},
-		{"1", new(struct {
-			X any `saml:"x"`
-		}), "unsupported field type"},
 	} {
 		err := assertionWith(attr("x", tt.value)).DecodeAttributes(tt.field)
 		if err == nil || !strings.Contains(err.Error(), tt.want) {
@@ -326,5 +323,91 @@ func TestDecodeAttributesAttributeUnmarshaler(t *testing.T) {
 	err := a.DecodeAttributes(&strict)
 	if err == nil || !strings.Contains(err.Error(), `attribute "y" into field Y`) || !strings.Contains(err.Error(), "not declared xs:boolean") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+type Contact struct {
+	Email string `saml:"mail"`
+}
+
+type Extra struct {
+	Phone string `saml:"phone"`
+}
+
+func TestDecodeAttributesStructure(t *testing.T) {
+	a := &samlsp.Assertion{Attributes: samlsp.Attributes{
+		{Name: "mail", Values: []string{"alice@example.com"}},
+		{Name: "groups", Values: []string{"a", "b"}},
+		{Name: "one", Values: []string{"x"}},
+		{Name: "role", NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:basic", Values: []string{"basic-role"}},
+		{Name: "role", NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:uri", Values: []string{"uri-role"}},
+		{Name: "plain", Values: []string{"no format"}},
+	}}
+
+	var got struct {
+		Contact            // embedded: flattened
+		*Extra             // embedded pointer: allocated only if set
+		Groups   [3]string `saml:"groups"`
+		AnyMany  any       `saml:"groups"`
+		AnyOne   any       `saml:"one"`
+		Basic    string    `saml:"role,format=basic"`
+		URI      string    `saml:"role,format=uri"`
+		Full     string    `saml:"role,format=urn:oasis:names:tc:SAML:2.0:attrname-format:uri"`
+		Plain    string    `saml:"plain,format=unspecified"`
+		AnyRole  []string  `saml:"role"`
+		WrongFmt string    `saml:"plain,format=uri"`
+	}
+	if err := a.DecodeAttributes(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Email != "alice@example.com" {
+		t.Errorf("embedded Email = %q", got.Email)
+	}
+	if got.Extra != nil {
+		t.Errorf("embedded pointer allocated without any field: %+v", got.Extra)
+	}
+	if got.Groups != [3]string{"a", "b", ""} {
+		t.Errorf("Groups = %q", got.Groups)
+	}
+	if many, ok := got.AnyMany.([]string); !ok || len(many) != 2 {
+		t.Errorf("AnyMany = %#v", got.AnyMany)
+	}
+	if got.AnyOne != "x" {
+		t.Errorf("AnyOne = %#v", got.AnyOne)
+	}
+	if got.Basic != "basic-role" || got.URI != "uri-role" || got.Full != "uri-role" {
+		t.Errorf("by format: %q %q %q", got.Basic, got.URI, got.Full)
+	}
+	if got.Plain != "no format" || got.WrongFmt != "" {
+		t.Errorf("unspecified format: %q, %q", got.Plain, got.WrongFmt)
+	}
+	if len(got.AnyRole) != 2 {
+		t.Errorf("without a format, any NameFormat: %q", got.AnyRole)
+	}
+
+	// An embedded pointer whose field is present is allocated.
+	var withExtra struct {
+		*Extra
+	}
+	b := &samlsp.Assertion{Attributes: samlsp.Attributes{{Name: "phone", Values: []string{"555"}}}}
+	if err := b.DecodeAttributes(&withExtra); err != nil {
+		t.Fatal(err)
+	}
+	if withExtra.Extra == nil || withExtra.Phone != "555" {
+		t.Errorf("embedded pointer = %+v", withExtra.Extra)
+	}
+
+	// Errors.
+	var small struct {
+		G [1]string `saml:"groups"`
+	}
+	if err := a.DecodeAttributes(&small); err == nil || !strings.Contains(err.Error(), "do not fit") {
+		t.Errorf("array too small: %v", err)
+	}
+	var badTag struct {
+		X string `saml:"mail,omitempty"`
+	}
+	if err := a.DecodeAttributes(&badTag); err == nil || !strings.Contains(err.Error(), "unknown tag option") {
+		t.Errorf("bad tag: %v", err)
 	}
 }

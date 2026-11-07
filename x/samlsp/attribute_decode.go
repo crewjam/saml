@@ -51,8 +51,20 @@ import (
 // every value as an untyped string.
 //
 // A field that is a slice of one of these types (other than []byte, which
-// is one value) receives all the values of its attribute; any other field
-// receives the first. A pointer field is allocated, so a *bool or a
+// is one value) receives all the values of its attribute, and an array as
+// many as there are, or an error if there are more; any other field
+// receives the first. A field of type any receives a string, or a []string
+// if the attribute has several values.
+//
+// A tag may restrict the attribute to a NameFormat, after a comma:
+// `saml:"mail,format=basic"` matches an attribute named mail only if its
+// NameFormat is basic. The format is "uri", "basic", "unspecified" or a
+// full URI; an attribute without a NameFormat has the unspecified one.
+// Without the option, any NameFormat matches.
+//
+// The fields of an embedded struct without a saml tag are decoded as if
+// they were fields of the outer struct, as encoding/json does; an embedded
+// pointer to a struct is allocated only if one of its fields is set. A pointer field is allocated, so a *bool or a
 // *time.Time tells an absent attribute from a zero value. A field whose
 // attribute is absent, or has only null values, is left unchanged.
 //
@@ -71,23 +83,105 @@ func (as Attributes) Decode(v any) error {
 	if rv.Kind() != reflect.Pointer || rv.IsNil() || rv.Elem().Kind() != reflect.Struct {
 		return fmt.Errorf("samlsp: DecodeAttributes needs a non-nil pointer to a struct, not %T", v)
 	}
-	rv = rv.Elem()
+	_, err := as.decodeStruct(rv.Elem())
+	return err
+}
+
+// decodeStruct decodes into the fields of rv, a struct, and reports whether
+// it set any.
+func (as Attributes) decodeStruct(rv reflect.Value) (bool, error) {
+	set := false
 	rt := rv.Type()
 	for i := range rt.NumField() {
 		f := rt.Field(i)
-		name, ok := f.Tag.Lookup("saml")
-		if !ok || name == "" || name == "-" || !f.IsExported() {
+		tag, tagged := f.Tag.Lookup("saml")
+		if tag == "-" {
 			continue
 		}
-		attr, ok := as.lookup(name)
+		if f.Anonymous && !tagged {
+			ok, err := as.decodeEmbedded(rv.Field(i))
+			if err != nil {
+				return set, err
+			}
+			set = set || ok
+			continue
+		}
+		if !tagged || !f.IsExported() {
+			continue
+		}
+		name, format, err := parseTag(tag)
+		if err != nil {
+			return set, fmt.Errorf("samlsp: DecodeAttributes: field %s: %w", f.Name, err)
+		}
+		if name == "" {
+			continue
+		}
+		attr, ok := as.lookup(name, format)
 		if !ok {
 			continue
 		}
 		if err := decodeField(rv.Field(i), attr); err != nil {
-			return fmt.Errorf("samlsp: DecodeAttributes: attribute %q into field %s (%s): %w", name, f.Name, f.Type, err)
+			return set, fmt.Errorf("samlsp: DecodeAttributes: attribute %q into field %s (%s): %w", name, f.Name, f.Type, err)
+		}
+		set = true
+	}
+	return set, nil
+}
+
+// decodeEmbedded decodes into the fields of an embedded struct, or of the
+// struct an embedded pointer points to, which is allocated only if one of
+// its fields is set. Other embedded types are skipped.
+func (as Attributes) decodeEmbedded(field reflect.Value) (bool, error) {
+	switch {
+	case field.Kind() == reflect.Struct:
+		return as.decodeStruct(field)
+	case field.Kind() == reflect.Pointer && field.Type().Elem().Kind() == reflect.Struct:
+		if !field.CanSet() && field.IsNil() {
+			return false, nil // an unexported embedded pointer cannot be allocated
+		}
+		target := field
+		if field.IsNil() {
+			target = reflect.New(field.Type().Elem())
+		}
+		set, err := as.decodeStruct(target.Elem())
+		if set && field.IsNil() {
+			field.Set(target)
+		}
+		return set, err
+	}
+	return false, nil
+}
+
+// Attribute name formats (saml-core §8.2), and their short names in tags.
+const (
+	unspecifiedNameFormat = "urn:oasis:names:tc:SAML:2.0:attrname-format:unspecified"
+	basicNameFormat       = "urn:oasis:names:tc:SAML:2.0:attrname-format:basic"
+)
+
+// parseTag splits a saml struct tag into the attribute name and, if a
+// format option is given, its NameFormat.
+func parseTag(tag string) (name, format string, err error) {
+	name, opts, _ := strings.Cut(tag, ",")
+	for opt := range strings.SplitSeq(opts, ",") {
+		if opt == "" {
+			continue
+		}
+		key, value, _ := strings.Cut(opt, "=")
+		if key != "format" || value == "" {
+			return "", "", fmt.Errorf("unknown tag option %q", opt)
+		}
+		switch value {
+		case "uri":
+			format = uriNameFormat
+		case "basic":
+			format = basicNameFormat
+		case "unspecified":
+			format = unspecifiedNameFormat
+		default:
+			format = value
 		}
 	}
-	return nil
+	return name, format, nil
 }
 
 // AttributeUnmarshaler is implemented by types that decode themselves from
@@ -112,12 +206,25 @@ func (a *Attribute) UnmarshalSAMLAttribute(attr Attribute) error {
 
 // lookup returns the attribute whose Name is name, with the values of every
 // such attribute in the assertion, or false if there are none.
-func (as Attributes) lookup(name string) (Attribute, bool) {
+// lookup returns the attribute whose Name is name, and whose NameFormat is
+// format unless format is "" (an attribute without a NameFormat has the
+// unspecified one), with the values of every such attribute in the
+// assertion, or false if there are none.
+func (as Attributes) lookup(name, format string) (Attribute, bool) {
 	var out Attribute
 	found := false
 	for _, a := range as {
 		if a.Name != name {
 			continue
+		}
+		if format != "" {
+			nameFormat := a.NameFormat
+			if nameFormat == "" {
+				nameFormat = unspecifiedNameFormat
+			}
+			if nameFormat != format {
+				continue
+			}
 		}
 		if !found {
 			out = Attribute{Name: a.Name, NameFormat: a.NameFormat, FriendlyName: a.FriendlyName}
@@ -163,21 +270,49 @@ func decodeField(field reflect.Value, attr Attribute) error {
 	if unmarshalsAttribute(t) {
 		return decodeValue(field, attr)
 	}
-	if t.Kind() == reflect.Slice && !isScalar(t) {
-		n := len(attr.Values)
+	n := len(attr.Values)
+	switch {
+	case t.Kind() == reflect.Slice && !isScalar(t):
 		s := reflect.MakeSlice(t, n, n)
-		for i := range n {
-			if err := decodeValue(s.Index(i), attr.one(i)); err != nil {
-				if n > 1 {
-					return fmt.Errorf("value %d: %w", i+1, err)
-				}
-				return err
-			}
+		if err := decodeElements(s, attr); err != nil {
+			return err
 		}
 		field.Set(s)
 		return nil
+	case t.Kind() == reflect.Array:
+		if n > t.Len() {
+			return fmt.Errorf("%d values do not fit in an array of %d", n, t.Len())
+		}
+		a := reflect.New(t).Elem()
+		if err := decodeElements(a, attr); err != nil {
+			return err
+		}
+		field.Set(a)
+		return nil
+	case t.Kind() == reflect.Interface && t.NumMethod() == 0:
+		if n == 1 {
+			field.Set(reflect.ValueOf(attr.Values[0]))
+		} else {
+			field.Set(reflect.ValueOf(append([]string(nil), attr.Values...)))
+		}
+		return nil
 	}
 	return decodeValue(field, attr.one(0))
+}
+
+// decodeElements decodes the values of attr into the first elements of s,
+// a slice or an array at least as long.
+func decodeElements(s reflect.Value, attr Attribute) error {
+	n := len(attr.Values)
+	for i := range n {
+		if err := decodeValue(s.Index(i), attr.one(i)); err != nil {
+			if n > 1 {
+				return fmt.Errorf("value %d: %w", i+1, err)
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 // unmarshalsAttribute reports whether a value of type t, or what it points

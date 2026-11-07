@@ -3,6 +3,8 @@ package samlsp
 import (
 	"time"
 
+	"github.com/beevik/etree"
+
 	"github.com/crewjam/saml"
 )
 
@@ -20,6 +22,11 @@ type Assertion struct {
 	// qualifiers, to pass to Config.LogoutRequest. It is zero if the
 	// assertion identifies the user with a BaseID (see Raw).
 	NameID saml.NameID
+
+	// BaseID is the saml:BaseID element that identifies the user instead
+	// of a NameID, with AcceptBaseID; its meaning depends on its xsi:type.
+	// It is nil otherwise.
+	BaseID *etree.Element
 
 	// Subject is NameID.Value. Its meaning depends on NameID.Format: a
 	// transient NameID changes with every login.
@@ -67,6 +74,7 @@ func newAssertion(a *saml.Assertion) *Assertion {
 			out.NameID = *a.Subject.NameID
 			out.Subject = a.Subject.NameID.Value
 		}
+		out.BaseID = a.Subject.BaseID
 		for _, sc := range a.Subject.SubjectConfirmations {
 			if sc.SubjectConfirmationData != nil && sc.SubjectConfirmationData.InResponseTo != "" {
 				out.InResponseTo = sc.SubjectConfirmationData.InResponseTo

@@ -37,6 +37,7 @@ type Config struct {
 	signRequests           bool
 	backChannel            bool
 	encryptLogoutNameID    bool
+	acceptBaseID           bool
 	nameIDFormat           saml.NameIDFormat
 	replayState            saml.AssertionReplayCache
 	authnContextComparator func(comparison string, requested []string, got string) bool
@@ -190,6 +191,14 @@ func WithACSURL(acsURL string) Option {
 func WithSLOURL(sloURL string) Option {
 	return optionFunc(func(_ *Config, o *configOptions) { o.sloURL = sloURL })
 }
+
+// AcceptBaseID makes ParseResponse accept an assertion, and
+// ParseLogoutRequest a LogoutRequest, that identifies the user with a
+// saml:BaseID instead of a NameID (saml-core §2.2.3). A BaseID's content is
+// defined by its xsi:type, which this package does not interpret: it is
+// given as Assertion.BaseID or LogoutRequest.BaseID, and NameID is zero.
+// Without it, such messages are refused.
+var AcceptBaseID Option = optionFunc(func(c *Config, _ *configOptions) { c.acceptBaseID = true })
 
 // EncryptLogoutNameID makes LogoutRequest and SendLogoutRequest identify the
 // user with an EncryptedID, encrypted to the IdP's encryption certificate,
@@ -428,6 +437,8 @@ func (c *Config) localServiceProvider() *saml.ServiceProvider {
 
 		AuthnContextClassRefComparator: c.authnContextComparator,
 		EncryptLogoutNameID:            c.encryptLogoutNameID,
+		AcceptAssertionBaseID:          c.acceptBaseID,
+		AcceptLogoutRequestBaseID:      c.acceptBaseID,
 	}
 	harden(sp)
 	if c.sloURL.String() != "" {
