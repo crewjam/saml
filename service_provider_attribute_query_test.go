@@ -720,3 +720,29 @@ func TestGetAttributeServiceLocation(t *testing.T) {
 	e.sp.IDPMetadata = nil
 	assert.Check(t, is.Equal(e.sp.GetAttributeServiceLocation(SOAPBinding), ""))
 }
+
+// An assertion answering an attribute query follows the same NotOnOrAfter
+// rules as a login assertion (saml-core §2.5.1.2): an omitted Conditions
+// NotOnOrAfter means no expiry, and NotOnOrAfter itself is already outside
+// the validity interval.
+func TestValidateAttributeQueryAssertionNotOnOrAfter(t *testing.T) {
+	oldSkew := MaxClockSkew
+	MaxClockSkew = 0
+	t.Cleanup(func() { MaxClockSkew = oldSkew })
+
+	e := aqSetup(t)
+	query := e.aqQuery(t)
+	now := TimeNow()
+
+	a := e.aqAssertion(query)
+	a.Conditions.NotOnOrAfter = time.Time{}
+	assert.Check(t, e.sp.validateAttributeQueryAssertion(a, query, now))
+
+	a = e.aqAssertion(query)
+	a.Conditions.NotOnOrAfter = now
+	assert.Check(t, is.ErrorContains(e.sp.validateAttributeQueryAssertion(a, query, now), "Conditions is expired"))
+
+	a = e.aqAssertion(query)
+	a.Subject.SubjectConfirmations[0].SubjectConfirmationData = &SubjectConfirmationData{NotOnOrAfter: now}
+	assert.Check(t, is.ErrorContains(e.sp.validateAttributeQueryAssertion(a, query, now), "SubjectConfirmationData is expired"))
+}

@@ -551,7 +551,7 @@ func (sp *ServiceProvider) validateAttributeQueryAssertion(assertion *Assertion,
 	if assertion.Conditions.NotBefore.Add(-MaxClockSkew).After(now) {
 		return errors.New("assertion Conditions is not yet valid")
 	}
-	if skewedDeadline(assertion.Conditions.NotOnOrAfter).Before(now) {
+	if !assertion.Conditions.NotOnOrAfter.IsZero() && pastDeadline(assertion.Conditions.NotOnOrAfter, now) {
 		return errors.New("assertion Conditions is expired")
 	}
 	return sp.validateAudienceRestriction(assertion)
@@ -571,7 +571,7 @@ func validateQuerySubjectConfirmations(subject *Subject, queryID string, now tim
 		if data.NotBefore.Add(-MaxClockSkew).After(now) {
 			return errors.New("assertion SubjectConfirmationData is not yet valid")
 		}
-		if !data.NotOnOrAfter.IsZero() && skewedDeadline(data.NotOnOrAfter).Before(now) {
+		if !data.NotOnOrAfter.IsZero() && pastDeadline(data.NotOnOrAfter, now) {
 			return errors.New("assertion SubjectConfirmationData is expired")
 		}
 	}
