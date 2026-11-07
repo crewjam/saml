@@ -253,11 +253,17 @@ func (sp *ServiceProvider) readSimpleSignMessage(m *simpleSignMessage, retErr *I
 		return nil, retErr
 	}
 
-	if err := sp.validateSignature(doc.Root()); err != nil && !errors.Is(err, errSignatureElementNotPresent) {
+	signed, err := sp.validatedElement(doc.Root())
+	switch {
+	case err == nil:
+		// Read the message from what the enveloped signature covers.
+		return signed, nil
+	case errors.Is(err, errSignatureElementNotPresent):
+		return doc.Root(), nil
+	default:
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
-	return doc.Root(), nil
 }
 
 // The auto-submitting forms for the HTTP-POST-SimpleSign binding. Their

@@ -307,9 +307,13 @@ func (sp *ServiceProvider) parseAttributeQueryResponse(soapResponseXML []byte, q
 		return nil, err
 	}
 
-	responseSigned, err := sp.attributeQuerySignature(responseEl)
+	signedResponseEl, responseSigned, err := sp.attributeQuerySignature(responseEl)
 	if err != nil {
 		return nil, err
+	}
+	if responseSigned {
+		// Read the Response, and its assertions, from what the signature covers.
+		responseEl = signedResponseEl
 	}
 
 	var response Response
@@ -393,16 +397,18 @@ func (sp *ServiceProvider) attributeAuthoritySigningCerts() ([]*x509.Certificate
 }
 
 // attributeQuerySignature reports whether el carries a valid signature by
-// the attribute authority. A signature that is present but not valid is an
+// the attribute authority and, if so, returns what the signature covers
+// (see validatedElement). A signature that is present but not valid is an
 // error.
-func (sp *ServiceProvider) attributeQuerySignature(el *etree.Element) (bool, error) {
-	switch err := sp.validateSignatureWith(el, sp.attributeAuthoritySigningCerts); err {
+func (sp *ServiceProvider) attributeQuerySignature(el *etree.Element) (*etree.Element, bool, error) {
+	signed, err := sp.verifySignedElement(el, sp.attributeAuthoritySigningCerts)
+	switch err {
 	case nil:
-		return true, nil
+		return signed, true, nil
 	case errSignatureElementNotPresent:
-		return false, nil
+		return nil, false, nil
 	default:
-		return false, err
+		return nil, false, err
 	}
 }
 
@@ -484,8 +490,11 @@ func (sp *ServiceProvider) attributeQueryAssertions(responseEl *etree.Element, q
 
 func (sp *ServiceProvider) attributeQueryAssertion(assertionEl *etree.Element, query *AttributeQuery, now time.Time, signatureRequired bool) (*Assertion, error) {
 	if signatureRequired {
-		switch err := sp.validateSignatureWith(assertionEl, sp.attributeAuthoritySigningCerts); err {
+		signed, err := sp.verifySignedElement(assertionEl, sp.attributeAuthoritySigningCerts)
+		switch err {
 		case nil:
+			// Read the assertion from what the signature covers.
+			assertionEl = signed
 		case errSignatureElementNotPresent:
 			return nil, errors.New("neither the Response nor its Assertion is signed")
 		default:

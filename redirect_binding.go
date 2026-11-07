@@ -284,17 +284,19 @@ func (sp *ServiceProvider) readRedirectBindingMessage(rawQuery, messageParam str
 		return nil, retErr
 	}
 
+	root := doc.Root()
 	if m.SignedContent != nil {
 		err = sp.verifyRedirectBindingSignature(m)
 	} else {
-		err = sp.validateSignature(doc.Root())
+		// Read the message from what the enveloped signature covers.
+		root, err = sp.validatedElement(root)
 	}
 	if err != nil {
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
 
-	return doc.Root(), nil
+	return root, nil
 }
 
 // deflateAndEncode serializes el, deflates it and base64 encodes the result,
