@@ -78,6 +78,10 @@ type Options struct {
 	// saml.ServiceProvider.IgnoreCertificateExpiry.
 	IgnoreCertificateExpiry bool
 
+	// SignMetadata, if true, makes the metadata endpoint serve metadata
+	// signed with Key. See saml.ServiceProvider.SignMetadata.
+	SignMetadata bool
+
 	// MetadataPath, AcsPath and SloPath set the paths of the SAML metadata,
 	// AssertionConsumerService and SingleLogoutService endpoints. Each is
 	// resolved as a URL reference against URL, so a relative path (such as
@@ -230,6 +234,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 
 		AssertionConsumerServiceBindings: opts.AssertionConsumerServiceBindings,
 		IgnoreCertificateExpiry:          opts.IgnoreCertificateExpiry,
+		SignMetadata:                     opts.SignMetadata,
 	}
 }
 

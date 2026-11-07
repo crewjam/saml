@@ -69,9 +69,15 @@ func TestSpcovMetadataValidDurationAndIntermediates(t *testing.T) {
 	assert.Equal(t, spcovNow.Add(time.Hour), *spsso.ValidUntil)
 	assert.Equal(t, 2, len(spsso.KeyDescriptors))
 
-	wantChain := base64.StdEncoding.EncodeToString(append(append([]byte{}, e.sp.Certificate.Raw...), e.idpCert.Raw...))
+	// Metadata publishes only the SP's own certificate, never the
+	// intermediates, and each certificate must parse on its own.
 	for _, kd := range spsso.KeyDescriptors {
-		assert.Equal(t, wantChain, kd.KeyInfo.X509Data.X509Certificates[0].Data)
+		assert.Equal(t, 1, len(kd.KeyInfo.X509Data.X509Certificates), kd.Use)
+		der, err := base64.StdEncoding.DecodeString(kd.KeyInfo.X509Data.X509Certificates[0].Data)
+		assert.NilError(t, err)
+		cert, err := x509.ParseCertificate(der)
+		assert.NilError(t, err, kd.Use)
+		assert.Check(t, cert.Equal(e.sp.Certificate), kd.Use)
 	}
 }
 
