@@ -62,8 +62,8 @@ type Middleware struct {
 }
 
 // ServeHTTP implements http.Handler and serves the SAML-specific HTTP endpoints
-// on the URIs specified by m.ServiceProvider.MetadataURL and
-// m.ServiceProvider.AcsURL.
+// on the URIs specified by m.ServiceProvider.MetadataURL,
+// m.ServiceProvider.AcsURL and m.ServiceProvider.SloURL.
 func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == m.ServiceProvider.MetadataURL.Path {
 		m.ServeMetadata(w, r)
@@ -72,6 +72,11 @@ func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if r.URL.Path == m.ServiceProvider.AcsURL.Path {
 		m.ServeACS(w, r)
+		return
+	}
+
+	if m.ServiceProvider.SloURL.Path != "" && r.URL.Path == m.ServiceProvider.SloURL.Path {
+		m.ServeSLO(w, r)
 		return
 	}
 
@@ -222,26 +227,43 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if binding == saml.HTTPPostBinding {
-		w.Header().Add("Content-Security-Policy", ""+
-			"default-src; "+
-			"script-src 'sha256-AjPdJSbZmeWHnEc5ykvJFay8FTWeTeRbs9dutfZ0HqE='; "+
-			"reflected-xss block; referrer no-referrer;")
-		w.Header().Add("Content-type", "text/html")
-		var buf bytes.Buffer
-		buf.WriteString(`<!DOCTYPE html><html><body>`)
-		var nonce string
-		if m.ScriptNonce != nil {
-			nonce = m.ScriptNonce(r)
-		}
-		buf.Write(authReq.PostWithNonce(relayState, nonce))
-		buf.WriteString(`</body></html>`)
-		if _, err := w.Write(buf.Bytes()); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+		m.writePostForm(w, postRequestScriptHash, authReq.PostWithNonce(relayState, m.scriptNonce(r)))
 		return
 	}
 	panic("not reached")
+}
+
+// The SHA-256 hashes of the auto-submit scripts of the HTTP-POST binding
+// forms, for the Content-Security-Policy of the pages that carry them. The
+// form of an AuthnRequest and of a LogoutRequest share the same script.
+const (
+	postRequestScriptHash  = "sha256-AjPdJSbZmeWHnEc5ykvJFay8FTWeTeRbs9dutfZ0HqE="
+	postResponseScriptHash = "sha256-ae3F9sw3MnGNUqmT+7gdyojm/I6ukOUOr9mHRkJJvCU="
+)
+
+func (m *Middleware) scriptNonce(r *http.Request) string {
+	if m.ScriptNonce == nil {
+		return ""
+	}
+	return m.ScriptNonce(r)
+}
+
+// writePostForm writes an HTML page holding form, the auto-submitting form of
+// the HTTP-POST binding whose script has the hash scriptHash.
+func (m *Middleware) writePostForm(w http.ResponseWriter, scriptHash string, form []byte) {
+	w.Header().Add("Content-Security-Policy", ""+
+		"default-src; "+
+		"script-src '"+scriptHash+"'; "+
+		"reflected-xss block; referrer no-referrer;")
+	w.Header().Add("Content-type", "text/html")
+	var buf bytes.Buffer
+	buf.WriteString(`<!DOCTYPE html><html><body>`)
+	buf.Write(form)
+	buf.WriteString(`</body></html>`)
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
 
 // CreateSessionFromAssertion is invoked by ServeHTTP when we have a new, valid SAML assertion.
