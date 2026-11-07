@@ -1650,10 +1650,6 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 	// look for encrypted assertions
 	{
 		for _, encryptedAssertionEl := range encryptedAssertionEls {
-			if err := sp.checkCBCIntegrity(encryptedAssertionEl, signatureRequirement != signatureRequired); err != nil {
-				errs = append(errs, err)
-				continue
-			}
 			assertion, err := sp.parseEncryptedAssertion(encryptedAssertionEl, possibleRequestIDs, now, signatureRequirement)
 			if err != nil {
 				errs = append(errs, err)
@@ -1755,6 +1751,9 @@ func (sp *ServiceProvider) checkCBCIntegrity(encryptedEl *etree.Element, respons
 }
 
 func (sp *ServiceProvider) parseEncryptedAssertion(encryptedAssertionEl *etree.Element, possibleRequestIDs []string, now time.Time, signatureRequirement signatureRequirement) (*Assertion, error) {
+	if err := sp.checkCBCIntegrity(encryptedAssertionEl, signatureRequirement != signatureRequired); err != nil {
+		return nil, err
+	}
 	assertionEl, err := sp.decryptElement(encryptedAssertionEl)
 	if err != nil {
 		return nil, classify(fmt.Errorf("failed to decrypt EncryptedAssertion: %w", err), ErrDecryptionFailed)
