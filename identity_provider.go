@@ -272,9 +272,18 @@ type IdentityProvider struct {
 	// HTTP-Redirect or HTTP-POST-SimpleSign signature whose SigAlg is. It
 	// applies to the signatures the IdP verifies: those of LogoutRequests
 	// and of LogoutResponses to the IdP's own LogoutRequests (ServeSLO),
-	// and of AuthnRequests sent with the HTTP-POST-SimpleSign binding. The error matches ErrUnsupported. If false, SHA-1 is
-	// accepted.
+	// and of AuthnRequests. The error matches ErrUnsupported. If false,
+	// SHA-1 is accepted.
 	RejectSHA1Signatures bool
+
+	// WantAuthnRequestsSigned, if true, makes the IdP refuse AuthnRequests
+	// that are not signed, with an error matching ErrInvalidSignature, and
+	// publishes WantAuthnRequestsSigned="true" in its metadata
+	// (saml-metadata-2.0-os §2.4.3). Whether or not it is set, a request
+	// from a service provider whose metadata says AuthnRequestsSigned="true"
+	// must be signed, and the signature of any signed request is verified
+	// (see IdpAuthnRequest.Validate).
+	WantAuthnRequestsSigned bool
 
 	// LogoutBindings are the bindings advertised in the IdP metadata for the
 	// SingleLogoutService at LogoutURL. When empty, only HTTP-Redirect is
@@ -349,6 +358,15 @@ type IdentityProvider struct {
 	// under the key "LogoutRequest:" followed by the ID, until the last
 	// moment the request would be accepted. If nil, LogoutRequests are not
 	// checked for replay.
+	//
+	// It also records the ID of each signed AuthnRequest that ServeSSO
+	// answers with an assertion, under the key "AuthnRequest:" followed by
+	// the service provider's entity ID, a space and the ID, and refuses a
+	// signed AuthnRequest it has already answered. The ID is recorded once
+	// the SessionProvider has returned a session, so a request that is sent
+	// again after a login form is still accepted. Unsigned AuthnRequests are
+	// not recorded: anyone can make a new one, so refusing a repeated one
+	// would protect nothing.
 	ReplayCache AssertionReplayCache
 
 	// HTTPClient is the client the IdP sends back-channel messages with:
@@ -569,6 +587,11 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 		},
 	}
 
+	if idp.WantAuthnRequestsSigned {
+		want := true
+		ed.IDPSSODescriptors[0].WantAuthnRequestsSigned = &want
+	}
+
 	if idp.AdvertiseSimpleSignSSO {
 		ed.IDPSSODescriptors[0].SingleSignOnServices = append(ed.IDPSSODescriptors[0].SingleSignOnServices, Endpoint{
 			Binding:  HTTPPostSimpleSignBinding,
@@ -738,11 +761,15 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO(ross): we must check that the request ID has not been previously
-	//   issued.
-
 	session := idp.SessionProvider.GetSession(w, r, req)
 	if session == nil {
+		return
+	}
+
+	// Only now is the request used up: GetSession may have shown a login
+	// form that sends the same request again.
+	if err := req.consume(); err != nil {
+		idp.onError(w, r, http.StatusBadRequest, fmt.Errorf("failed to validate request: %w", err))
 		return
 	}
 
@@ -905,6 +932,11 @@ type IdpAuthnRequest struct {
 	// in, or nil if it arrived with another binding. Validate checks its
 	// signature once it knows the service provider.
 	simpleSign *simpleSignMessage
+
+	// redirectMessage is the parsed query of a request received with the
+	// HTTP-Redirect binding, or nil. Validate checks its query string
+	// signature, if it has one, once it knows the service provider.
+	redirectMessage *redirectBindingMessage
 }
 
 // NewIdpAuthnRequest returns a new IdpAuthnRequest for the given HTTP request to the authorization
@@ -924,7 +956,14 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 
 	switch r.Method {
 	case "GET":
-		compressedRequest, err := base64.StdEncoding.DecodeString(r.URL.Query().Get("SAMLRequest"))
+		// The query is parsed once, so that the message, the relay state and
+		// the content a query string signature covers all come from the same
+		// parse (see parseRedirectBindingQuery).
+		m, err := parseRedirectBindingQuery(r.URL.RawQuery, redirectParamSAMLRequest)
+		if err != nil {
+			return nil, classify(err, ErrMalformedMessage)
+		}
+		compressedRequest, err := base64.StdEncoding.DecodeString(m.Message)
 		if err != nil {
 			return nil, classify(fmt.Errorf("cannot decode request: %w", err), ErrMalformedMessage)
 		}
@@ -932,7 +971,8 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 		if err != nil {
 			return nil, classify(fmt.Errorf("cannot decompress request: %w", err), ErrMalformedMessage)
 		}
-		req.RelayState = r.URL.Query().Get("RelayState")
+		req.RelayState = m.RelayState
+		req.redirectMessage = m
 	case "POST":
 		if err := r.ParseForm(); err != nil {
 			return nil, classify(err, ErrMalformedMessage)
@@ -959,6 +999,28 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 	return req, nil
 }
 
+// authnRequestReplayKeyPrefix is the prefix of the ReplayCache keys under
+// which the IDs of signed AuthnRequests are recorded.
+const authnRequestReplayKeyPrefix = "AuthnRequest:"
+
+// consume records the ID of the validated request in the IdP's ReplayCache,
+// if it is set and the request is signed, and returns an error if it was
+// already recorded.
+func (req *IdpAuthnRequest) consume() error {
+	if req.IDP.ReplayCache == nil || !req.isSigned() {
+		return nil
+	}
+	issuer := ""
+	if req.Request.Issuer != nil {
+		issuer = req.Request.Issuer.Value
+	}
+	key := authnRequestReplayKeyPrefix + issuer + " " + req.Request.ID
+	if err := req.IDP.ReplayCache.Consume(key, req.Request.IssueInstant.Add(MaxIssueDelay)); err != nil {
+		return fmt.Errorf("authn request %q: %w", req.Request.ID, err)
+	}
+	return nil
+}
+
 // isSigned reports whether the request carries a signature: an enveloped
 // ds:Signature element, the SigAlg or Signature query parameter of the
 // HTTP-Redirect binding, or the signature of the HTTP-POST-SimpleSign
@@ -966,6 +1028,9 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 func (req *IdpAuthnRequest) isSigned() bool {
 	if req.simpleSign != nil || req.Request.Signature != nil {
 		return true
+	}
+	if req.redirectMessage != nil {
+		return req.redirectMessage.SignedContent != nil
 	}
 	if req.HTTPRequest != nil && req.HTTPRequest.Method == http.MethodGet && req.HTTPRequest.URL != nil {
 		query := req.HTTPRequest.URL.Query()
@@ -980,14 +1045,25 @@ func (req *IdpAuthnRequest) isSigned() bool {
 // the AuthnRequest and Metadata properties. Returns a non-nil error if the
 // request is not valid.
 //
-// Signatures on requests sent with the HTTP-Redirect or HTTP-POST binding
-// are not checked. A request sent with the HTTP-POST-SimpleSign binding must
-// carry a valid SimpleSign signature made with a signing certificate from
-// the service provider's metadata (its validity period is not checked), and
-// a Destination equal to SSOURL; it is rejected otherwise. Any other request
-// that carries a signature, enveloped or in the SigAlg and Signature query
-// parameters, must also have a Destination equal to SSOURL, as
-// saml-bindings-2.0-os §3.4.5.2 and §3.5.5.2 require of signed messages.
+// A signed request must carry a valid signature made with a signing
+// certificate from the service provider's metadata (their validity periods
+// are not checked, as is usual for keys distributed in metadata): a query
+// string signature (SigAlg and Signature) or an enveloped XML signature with
+// the HTTP-Redirect binding, an enveloped XML signature with the HTTP-POST
+// binding, and the SimpleSign signature with the HTTP-POST-SimpleSign
+// binding. A request whose signature cannot be verified is rejected with an
+// error matching ErrInvalidSignature. When the request has an enveloped
+// signature, it is read again from what the signature covers.
+//
+// An unsigned request is rejected, with an error matching
+// ErrInvalidSignature, when the service provider's metadata says it signs
+// its AuthnRequests (AuthnRequestsSigned="true") or the IdP's
+// WantAuthnRequestsSigned is set. Otherwise it is accepted.
+//
+// A signed request, and any request when WantAuthnRequestsSigned is set,
+// must have a Destination equal to SSOURL, as saml-bindings-2.0-os §3.4.5.2
+// and §3.5.5.2 require of signed messages; so must any request that has a
+// Destination.
 func (req *IdpAuthnRequest) Validate() error {
 	if err := xmlroundtrip.Validate(req.RequestBuffer); err != nil {
 		return classify(err, ErrMalformedMessage)
@@ -997,19 +1073,16 @@ func (req *IdpAuthnRequest) Validate() error {
 		return classify(err, ErrMalformedMessage)
 	}
 
-	// We always have exactly one IDP SSO descriptor
-	if len(req.IDP.Metadata().IDPSSODescriptors) != 1 {
-		panic("expected exactly one IDP SSO descriptor in IDP metadata")
-	}
-	idpSsoDescriptor := req.IDP.Metadata().IDPSSODescriptors[0]
-
-	// TODO(ross): support signed authn requests
-	// For now we do the safe thing and fail in the case where we think
-	// requests might be signed.
-	if idpSsoDescriptor.WantAuthnRequestsSigned != nil && *idpSsoDescriptor.WantAuthnRequestsSigned {
-		return classify(fmt.Errorf("authn request signature checking is not currently supported"), ErrUnsupported)
+	if err := req.validateFields(); err != nil {
+		return err
 	}
 
+	return req.resolveServiceProvider()
+}
+
+// validateFields checks the Destination, IssueInstant, Version and ID of
+// the request.
+func (req *IdpAuthnRequest) validateFields() error {
 	// In http://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf §3.4.5.2
 	// we get a description of the Destination attribute:
 	//
@@ -1020,13 +1093,12 @@ func (req *IdpAuthnRequest) Validate() error {
 	//   been received.
 	//
 	// (and §3.5.5.2 for HTTP-POST). We require the destination be correct
-	// (a) if signing is enabled, (b) if it was provided, or (c) if the
-	// request is signed, even though that signature is not checked.
+	// (a) if the IdP wants signed requests, (b) if it was provided, or (c)
+	// if the request is signed.
 	//
 	// A request sent with the HTTP-POST-SimpleSign binding is signed, so it
 	// must carry a Destination (sstc-saml-binding-simplesign-cs-01 §2.4).
-	mustHaveDestination := idpSsoDescriptor.WantAuthnRequestsSigned != nil && *idpSsoDescriptor.WantAuthnRequestsSigned
-	mustHaveDestination = mustHaveDestination || req.Request.Destination != "" || req.isSigned()
+	mustHaveDestination := req.IDP.WantAuthnRequestsSigned || req.Request.Destination != "" || req.isSigned()
 	if mustHaveDestination {
 		if req.Request.Destination != req.IDP.SSOURL.String() {
 			return classify(fmt.Errorf("expected destination to be %q, not %q", req.IDP.SSOURL.String(), req.Request.Destination), ErrDestinationMismatch)
@@ -1037,6 +1109,11 @@ func (req *IdpAuthnRequest) Validate() error {
 		return classify(fmt.Errorf("request expired at %s",
 			req.Request.IssueInstant.Add(MaxIssueDelay)), ErrExpired)
 	}
+	// As for LogoutRequests, an IssueInstant later than the clock skew
+	// allows is refused rather than trusted.
+	if req.Request.IssueInstant.Add(-MaxClockSkew).After(req.Now) {
+		return classify(fmt.Errorf("request IssueInstant %s is in the future", req.Request.IssueInstant), ErrNotYetValid)
+	}
 	if req.Request.Version != "2.0" {
 		return classify(fmt.Errorf("expected SAML request version 2.0 got %v", req.Request.Version), ErrUnsupported, errVersionMismatch)
 	}
@@ -1046,13 +1123,12 @@ func (req *IdpAuthnRequest) Validate() error {
 	if req.Request.ID == "" {
 		return classify(errors.New("authn request is missing an ID"), ErrMissingElement)
 	}
-
-	return req.resolveServiceProvider()
+	return nil
 }
 
 // resolveServiceProvider is the part of Validate that looks up the service
-// provider that issued the request, checks its HTTP-POST-SimpleSign
-// signature if there is one, and selects the assertion consumer service the
+// provider that issued the request, checks its signature (see
+// verifySignature), and selects the assertion consumer service the
 // Response goes to. It sets ServiceProviderMetadata, SPSSODescriptor and
 // ACSEndpoint.
 func (req *IdpAuthnRequest) resolveServiceProvider() error {
@@ -1067,12 +1143,13 @@ func (req *IdpAuthnRequest) resolveServiceProvider() error {
 	} else if err != nil {
 		return fmt.Errorf("cannot find service provider %s: %w", serviceProviderID, err)
 	}
+	if serviceProvider == nil {
+		return classify(fmt.Errorf("cannot find service provider %s", serviceProviderID), ErrUnknownServiceProvider)
+	}
 	req.ServiceProviderMetadata = serviceProvider
 
-	if req.simpleSign != nil {
-		if err := req.verifySimpleSignSignature(); err != nil {
-			return fmt.Errorf("cannot verify HTTP-POST-SimpleSign signature: %w", err)
-		}
+	if err := req.verifySignature(); err != nil {
+		return err
 	}
 
 	// Check that the ACS URL matches an ACS endpoint in the SP metadata.
@@ -1452,11 +1529,16 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 	}
 
 	// allow for some clock skew in the validity period using the
-	// issuer's apparent clock.
+	// issuer's apparent clock, but never start the validity period after
+	// now: the request's IssueInstant comes from the service provider, and
+	// a later one would postdate the assertion.
 	notBefore := req.Now.Add(-1 * MaxClockSkew)
 	notOnOrAfterAfter := req.Now.Add(MaxIssueDelay)
 	if notBefore.Before(req.Request.IssueInstant) {
 		notBefore = req.Request.IssueInstant
+		if notBefore.After(req.Now) {
+			notBefore = req.Now
+		}
 		notOnOrAfterAfter = notBefore.Add(MaxIssueDelay)
 	}
 	// The subject confirmation window SHOULD fall within the assertion's

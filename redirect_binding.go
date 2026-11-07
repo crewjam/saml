@@ -54,6 +54,13 @@ type redirectBindingMessage struct {
 	SigAlg    string
 	Signature string
 
+	// RelayState is the URL-decoded RelayState parameter, and HasRelayState
+	// reports whether the query carried one. They come from the same parse as
+	// SignedContent, so the relay state that is echoed back is the one the
+	// signature covers.
+	RelayState    string
+	HasRelayState bool
+
 	// SignedContent is the octet string the signature covers. Per
 	// saml-bindings-2.0-os section 3.4.4.1 it is built from the parameter
 	// values exactly as they appeared in the URL, without re-encoding, so that
@@ -121,6 +128,7 @@ func parseRedirectBindingQuery(rawQuery, messageParam string) (*redirectBindingM
 		SigAlg:    decoded[redirectParamSigAlg],
 		Signature: decoded[redirectParamSignature],
 	}
+	rv.RelayState, rv.HasRelayState = decoded[redirectParamRelayState]
 
 	_, hasSigAlg := rawValues[redirectParamSigAlg]
 	_, hasSignature := rawValues[redirectParamSignature]
