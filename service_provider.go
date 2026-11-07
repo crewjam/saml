@@ -1688,6 +1688,14 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if err := sp.validateBearerSubjectConfirmations(assertion.Subject, possibleRequestIDs, now); err != nil {
 		return err
 	}
+	// The assertion establishes a login, so it must say how the principal
+	// authenticated: "the set of one or more assertions MUST contain at
+	// least one <AuthnStatement>", in an assertion with a bearer
+	// SubjectConfirmation (saml-profiles §4.1.4.2). An attribute-only
+	// assertion is not a login.
+	if len(assertion.AuthnStatements) == 0 {
+		return classify(fmt.Errorf("assertion has no AuthnStatement"), ErrMissingElement)
+	}
 	if assertion.Conditions.NotBefore.Add(-MaxClockSkew).After(now) {
 		return classify(fmt.Errorf("assertion Conditions is not yet valid"), ErrNotYetValid)
 	}

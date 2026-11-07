@@ -68,6 +68,7 @@ func TestValidateAssertionMissingElements(t *testing.T) {
 				NotBefore: now.Add(-time.Minute), NotOnOrAfter: now.Add(time.Minute),
 				AudienceRestrictions: []AudienceRestriction{{Audience: Audience{Value: "https://sp.example.com/metadata"}}},
 			},
+			AuthnStatements: []AuthnStatement{{AuthnInstant: now}},
 		}
 	}
 	assert.Check(t, sp.validateAssertion(full(), []string{"id-1"}, now))
