@@ -51,7 +51,10 @@ func (idp *IdentityProvider) logoutParticipantSOAP(ctx context.Context, metadata
 	if endpoint == nil {
 		return errNoSOAPLogoutEndpoint
 	}
-	logoutRequest := idp.participantLogoutRequest(participant, endpoint.Location)
+	logoutRequest, err := idp.participantLogoutRequest(participant, endpoint.Location, metadata)
+	if err != nil {
+		return err
+	}
 	signingContext, err := idp.signingContext()
 	if err != nil {
 		return err

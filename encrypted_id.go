@@ -3,8 +3,11 @@ package saml
 import (
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"os"
+	"regexp"
 
 	"github.com/beevik/etree"
 
@@ -88,9 +91,8 @@ func resolveLogoutRequestNameID(req *LogoutRequest, decrypt func(*etree.Element)
 }
 
 // encryptIdentifier returns a saml:EncryptedID holding identifier, a
-// saml:NameID or saml:BaseID element, encrypted to cert with encrypter, or
-// with RSA-OAEP-MGF1P, SHA-1 and AES-128-CBC if encrypter is nil. identifier
-// is not modified.
+// saml:NameID or saml:BaseID element, encrypted to cert with encrypter.
+// identifier is not modified.
 func encryptIdentifier(identifier *etree.Element, cert *x509.Certificate, encrypter xmlenc.Encrypter) (*etree.Element, error) {
 	// The plaintext is parsed on its own, so it must declare the namespace
 	// of its prefix.
@@ -105,12 +107,6 @@ func encryptIdentifier(identifier *etree.Element, cert *x509.Certificate, encryp
 		return nil, err
 	}
 
-	if encrypter == nil {
-		rsaEncrypter := xmlenc.OAEP()
-		rsaEncrypter.BlockCipher = xmlenc.AES128CBC
-		rsaEncrypter.DigestMethod = &xmlenc.SHA1
-		encrypter = rsaEncrypter
-	}
 	encryptedData, err := encrypter.Encrypt(cert, plaintext, nil)
 	if err != nil {
 		return nil, err
@@ -121,6 +117,74 @@ func encryptIdentifier(identifier *etree.Element, cert *x509.Certificate, encryp
 	encryptedID.AddChild(encryptedData)
 	return encryptedID, nil
 }
+
+// identifierBlockCiphers are the block ciphers identifierEncrypter may
+// choose, in order of preference. AES-GCM comes first: CBC has no integrity
+// check, so a sender of modified ciphertexts can learn about the plaintext
+// from whether it decrypts to valid XML.
+var identifierBlockCiphers = []xmlenc.BlockCipher{
+	xmlenc.AES256GCM, xmlenc.AES128GCM, xmlenc.AES192GCM,
+	xmlenc.AES256CBC, xmlenc.AES128CBC, xmlenc.AES192CBC,
+}
+
+// identifierEncrypter returns the Encrypter for an EncryptedID: configured,
+// if it is set, and otherwise RSA-OAEP-MGF1P (with a SHA-1 digest, which all
+// implementations support) and a block cipher chosen from methods, the
+// EncryptionMethods the recipient's metadata lists for its encryption key.
+// The block cipher is the first of identifierBlockCiphers that methods
+// lists, or AES-256-GCM if methods lists none of them.
+func identifierEncrypter(configured xmlenc.Encrypter, methods []EncryptionMethod) xmlenc.Encrypter {
+	if configured != nil {
+		return configured
+	}
+	encrypter := xmlenc.OAEP()
+	encrypter.DigestMethod = xmlenc.SHA1
+	encrypter.BlockCipher = xmlenc.AES256GCM
+	listed := make(map[string]bool, len(methods))
+	for _, method := range methods {
+		listed[method.Algorithm] = true
+	}
+	for _, blockCipher := range identifierBlockCiphers {
+		if listed[blockCipher.Algorithm()] {
+			encrypter.BlockCipher = blockCipher
+			break
+		}
+	}
+	return encrypter
+}
+
+// encryptionKey returns the certificate to encrypt to from the
+// KeyDescriptors of an entity's metadata, and the EncryptionMethods listed
+// with it: the first certificate whose KeyDescriptor has use="encryption",
+// or else the first one whose KeyDescriptor has no use. It returns
+// os.ErrNotExist if there is none.
+func encryptionKey(keyDescriptors []KeyDescriptor) (*x509.Certificate, []EncryptionMethod, error) {
+	for _, use := range []string{"encryption", ""} {
+		for _, keyDescriptor := range keyDescriptors {
+			if keyDescriptor.Use != use {
+				continue
+			}
+			for _, certificate := range keyDescriptor.KeyInfo.X509Data.X509Certificates {
+				certStr := whitespaceRegexp.ReplaceAllString(certificate.Data, "")
+				if certStr == "" {
+					continue
+				}
+				certBytes, err := base64.StdEncoding.DecodeString(certStr)
+				if err != nil {
+					return nil, nil, classify(fmt.Errorf("cannot decode certificate base64: %w", err), ErrInvalidCertificate)
+				}
+				cert, err := x509.ParseCertificate(certBytes)
+				if err != nil {
+					return nil, nil, classify(fmt.Errorf("cannot parse certificate: %w", err), ErrInvalidCertificate)
+				}
+				return cert, keyDescriptor.EncryptionMethods, nil
+			}
+		}
+	}
+	return nil, nil, os.ErrNotExist
+}
+
+var whitespaceRegexp = regexp.MustCompile(`\s+`)
 
 // namedDecryptionKey is a decryption key and the name of the field it comes
 // from, for error messages.
