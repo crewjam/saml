@@ -72,7 +72,7 @@ func Example() {
 		}
 
 		var user struct {
-			Email  string   `saml:"mail"`
+			Email  string   `saml:"urn:oid:0.9.2342.19200300.100.1.3"`
 			Groups []string `saml:"memberOf"`
 		}
 		if err := assertion.DecodeAttributes(&user); err != nil {

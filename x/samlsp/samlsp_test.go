@@ -224,14 +224,15 @@ func TestLogin(t *testing.T) {
 			}
 
 			var user struct {
-				UID    string   `saml:"uid"`
-				Groups []string `saml:"eduPersonAffiliation"`
-				Absent string   `saml:"nope"`
+				UID            string   `saml:"urn:oid:0.9.2342.19200300.100.1.1"`
+				Groups         []string `saml:"urn:oid:1.3.6.1.4.1.5923.1.1.1.1"`
+				ByFriendlyName string   `saml:"uid"` // FriendlyName does not identify an attribute
+				Absent         string   `saml:"nope"`
 			}
 			if err := a.DecodeAttributes(&user); err != nil {
 				t.Fatal(err)
 			}
-			if user.UID != "alice" || len(user.Groups) != 2 || user.Absent != "" {
+			if user.UID != "alice" || len(user.Groups) != 2 || user.ByFriendlyName != "" || user.Absent != "" {
 				t.Errorf("decoded attributes = %+v (from %+v)", user, a.Attributes)
 			}
 		})
