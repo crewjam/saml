@@ -58,6 +58,23 @@ type Session struct {
 // SessionProvider is an interface used by IdentityProvider to determine the
 // Session associated with a request. For an example implementation, see
 // GetSession in the samlidp package.
+//
+// IdentityProvider does not act on the ForceAuthn and IsPassive attributes
+// of the AuthnRequest (req.Request.ForceAuthn and req.Request.IsPassive):
+// implementations are responsible for honouring them (saml-core §3.4.1,
+// saml-profiles §4.1.3.4).
+//
+//   - ForceAuthn="true": the user must be authenticated directly, so an
+//     existing session must not be returned. Authenticate the user again
+//     and return a session whose CreateTime, which becomes the assertion's
+//     AuthnInstant, is the time of that new authentication.
+//   - IsPassive="true": the identity provider must not visibly interact with
+//     the user. If a usable session exists, return it as usual. Otherwise do
+//     not prompt the user; answer with a SAML error Response with the status
+//     StatusResponder and the second-level status StatusNoPassive, by calling
+//     IdentityProvider.SendErrorResponse with a *StatusError, and return nil.
+//     This also applies when ForceAuthn is "true" as well and the user cannot
+//     be authenticated again without interaction.
 type SessionProvider interface {
 	// GetSession returns the remote user session associated with the http.Request.
 	//
