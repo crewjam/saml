@@ -189,7 +189,7 @@ func TestCovDefaultSigningMethodForKey(t *testing.T) {
 	assert.Check(t, is.Equal("", defaultSigningMethodForKey(nil)))
 	_, edKey, err := ed25519.GenerateKey(rand.Reader)
 	assert.Assert(t, err)
-	assert.Check(t, is.Panics(func() { defaultSigningMethodForKey(edKey) }))
+	assert.Check(t, is.Equal("", defaultSigningMethodForKey(edKey)))
 }
 
 func TestCovDefaultServiceProvider(t *testing.T) {

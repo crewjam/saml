@@ -458,6 +458,9 @@ func pathOrDefault(path, defaultPath string) string {
 // for XML signatures, so SHA-256 is used for both RSA and ECDSA keys. Callers
 // that need a different method can set ServiceProvider.SignatureMethod on the
 // returned Middleware.
+//
+// It returns "" for a nil key and for a key type XML signatures cannot use,
+// such as Ed25519; New refuses such a key when signing is requested.
 func defaultSigningMethodForKey(key crypto.Signer) string {
 	if signerutil.IsNil(key) {
 		return ""
@@ -470,8 +473,23 @@ func defaultSigningMethodForKey(key crypto.Signer) string {
 	case *ecdsa.PublicKey:
 		return dsig.ECDSASHA256SignatureMethod
 	default:
-		panic(fmt.Sprintf("programming error: unsupported public key type %T", key.Public()))
+		return ""
 	}
+}
+
+// checkSigningKey returns an error if opts asks for signed requests or
+// logout messages but opts.Key cannot make XML signatures.
+func checkSigningKey(opts Options) error {
+	if !opts.SignRequest && !opts.SignLogout {
+		return nil
+	}
+	if signerutil.IsNil(opts.Key) {
+		return nil // reported where the signature is made
+	}
+	if defaultSigningMethodForKey(opts.Key) == "" {
+		return fmt.Errorf("samlsp: SignRequest and SignLogout need an RSA or ECDSA Key, not %T", opts.Key.Public())
+	}
+	return nil
 }
 
 // applyBindingOptions sets the request, response and logout bindings of m
@@ -531,6 +549,9 @@ func DefaultAssertionHandler(_ Options) NopAssertionHandler {
 // replacing and/or changing Session, RequestTracker, LogoutRequestTracker
 // and ServiceProvider in the returned Middleware.
 func New(opts Options) (*Middleware, error) {
+	if err := checkSigningKey(opts); err != nil {
+		return nil, err
+	}
 	m := &Middleware{
 		ServiceProvider:  DefaultServiceProvider(opts),
 		Binding:          "",
