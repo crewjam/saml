@@ -954,6 +954,76 @@ func TestIDPIDPInitiatedBadServiceProvider(t *testing.T) {
 	assert.Check(t, is.Equal(http.StatusNotFound, w.Code))
 }
 
+func TestIDPIDPInitiatedResolvesServiceProviderBeforeSession(t *testing.T) {
+	t.Run("unknown service provider", func(t *testing.T) {
+		test := NewIdentityProviderTest(t, applyKey)
+		getSessionCalled := false
+		test.IDP.SessionProvider = &mockSessionProvider{
+			GetSessionFunc: func(w http.ResponseWriter, _ *http.Request, _ *IdpAuthnRequest) *Session {
+				getSessionCalled = true
+				_, _ = fmt.Fprint(w, "login form")
+				return nil
+			},
+		}
+
+		w := httptest.NewRecorder()
+		r, _ := http.NewRequest("GET", "https://idp.example.com/services/sp/whoami", nil)
+		test.IDP.ServeIDPInitiated(w, r, "https://wrong.url/metadata", "ThisIsTheRelayState")
+		assert.Check(t, is.Equal(http.StatusNotFound, w.Code))
+		assert.Check(t, !getSessionCalled, "GetSession must not be called for an unknown service provider")
+	})
+
+	t.Run("service provider without a POST ACS endpoint", func(t *testing.T) {
+		test := NewIdentityProviderTest(t, applyKey)
+		getSessionCalled := false
+		test.IDP.SessionProvider = &mockSessionProvider{
+			GetSessionFunc: func(w http.ResponseWriter, _ *http.Request, _ *IdpAuthnRequest) *Session {
+				getSessionCalled = true
+				_, _ = fmt.Fprint(w, "login form")
+				return nil
+			},
+		}
+		test.IDP.ServiceProviderProvider = &mockServiceProviderProvider{
+			GetServiceProviderFunc: func(*http.Request, string) (*EntityDescriptor, error) {
+				return &EntityDescriptor{
+					EntityID: "https://sp.example.com/saml2/metadata",
+					SPSSODescriptors: []SPSSODescriptor{{AssertionConsumerServices: []IndexedEndpoint{
+						{Binding: HTTPArtifactBinding, Location: "https://sp.example.com/acs"},
+					}}},
+				}, nil
+			},
+		}
+
+		w := httptest.NewRecorder()
+		r, _ := http.NewRequest("GET", "https://idp.example.com/services/sp/whoami", nil)
+		test.IDP.ServeIDPInitiated(w, r, "https://sp.example.com/saml2/metadata", "ThisIsTheRelayState")
+		assert.Check(t, is.Equal(http.StatusInternalServerError, w.Code))
+		assert.Check(t, !getSessionCalled, "GetSession must not be called when there is no usable ACS endpoint")
+	})
+
+	t.Run("session provider sees the service provider", func(t *testing.T) {
+		test := NewIdentityProviderTest(t, applyKey)
+		getSessionCalled := false
+		test.IDP.SessionProvider = &mockSessionProvider{
+			GetSessionFunc: func(_ http.ResponseWriter, _ *http.Request, req *IdpAuthnRequest) *Session {
+				getSessionCalled = true
+				assert.Assert(t, req.ServiceProviderMetadata != nil)
+				assert.Check(t, is.Equal(req.ServiceProviderMetadata.EntityID, test.SP.MetadataURL.String()))
+				assert.Assert(t, req.ACSEndpoint != nil)
+				assert.Check(t, is.Equal(req.ACSEndpoint.Location, test.SP.AcsURL.String()))
+				assert.Check(t, req.SPSSODescriptor != nil)
+				return &Session{ID: "f00df00df00d", UserName: "alice"}
+			},
+		}
+
+		w := httptest.NewRecorder()
+		r, _ := http.NewRequest("GET", "https://idp.example.com/services/sp/whoami", nil)
+		test.IDP.ServeIDPInitiated(w, r, test.SP.MetadataURL.String(), "ThisIsTheRelayState")
+		assert.Check(t, is.Equal(http.StatusOK, w.Code))
+		assert.Check(t, getSessionCalled)
+	})
+}
+
 func TestIDPCanHandleUnencryptedResponse(t *testing.T) {
 	test := NewIdentityProviderTest(t, applyKey)
 	test.IDP.SessionProvider = &mockSessionProvider{
