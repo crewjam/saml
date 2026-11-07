@@ -96,8 +96,9 @@ func newLogoutTest(t *testing.T, sloBindings ...string) *logoutTest {
 	return &logoutTest{m: m, idpKey: idpKey, idpCert: idpCert}
 }
 
-// sessionCookie returns a session cookie for alice, with the given SessionIndex.
-func (lt *logoutTest) sessionCookie(t *testing.T, sessionIndex string) *http.Cookie {
+// sessionCookie returns a session cookie for alice, with the given
+// SessionIndexes.
+func (lt *logoutTest) sessionCookie(t *testing.T, sessionIndexes ...string) *http.Cookie {
 	t.Helper()
 	provider := lt.m.Session.(CookieSessionProvider)
 	codec := provider.Codec.(JWTSessionCodec)
@@ -110,7 +111,7 @@ func (lt *logoutTest) sessionCookie(t *testing.T, sessionIndex string) *http.Coo
 			ExpiresAt: jwt.NewNumericDate(logoutTestNow.Add(time.Hour)),
 			NotBefore: jwt.NewNumericDate(logoutTestNow),
 		},
-		Attributes:  Attributes{claimNameSessionIndex: {sessionIndex}},
+		Attributes:  Attributes{claimNameSessionIndex: sessionIndexes},
 		SAMLSession: true,
 	}
 	value, err := codec.Encode(claims)
@@ -239,6 +240,27 @@ func TestHandleStartLogoutRedirectBinding(t *testing.T) {
 	tracked := lt.m.LogoutRequestTracker.GetTrackedRequests(sloReq)
 	assert.Assert(t, is.Len(tracked, 1))
 	assert.Check(t, is.Equal(logoutRequest.ID, tracked[0].SAMLRequestID))
+}
+
+// A session made from an assertion with several AuthnStatements keeps the
+// SessionIndex of each, and the LogoutRequest lists them all.
+func TestHandleStartLogoutSeveralSessionIndexes(t *testing.T) {
+	lt := newLogoutTest(t, saml.HTTPRedirectBinding)
+
+	req := httptest.NewRequest(http.MethodGet, "https://sp.example.com/logout", nil)
+	req.AddCookie(lt.sessionCookie(t, "session-index-1", "", "session-index-2"))
+	resp := httptest.NewRecorder()
+	lt.m.HandleStartLogout(resp, req)
+	assert.Assert(t, is.Equal(http.StatusFound, resp.Code))
+
+	location, err := url.Parse(resp.Header().Get("Location"))
+	assert.NilError(t, err)
+	buf, err := testsaml.ParseRedirectRequest(location)
+	assert.NilError(t, err)
+	var logoutRequest saml.LogoutRequest
+	assert.NilError(t, xml.Unmarshal(buf, &logoutRequest))
+	assert.Check(t, is.DeepEqual([]saml.SessionIndex{{Value: "session-index-1"}, {Value: "session-index-2"}},
+		logoutRequest.AllSessionIndexes()))
 }
 
 func TestHandleStartLogoutPostBinding(t *testing.T) {

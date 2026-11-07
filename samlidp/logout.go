@@ -29,7 +29,15 @@ var _ saml.SessionInvalidator = (*Server)(nil)
 //     can only end sessions it took part in this way.
 //
 // Without a SessionIndex, only the browser's own session is ended.
+//
+// Sessions are stored by NameID, so a request that identifies the principal
+// with a BaseID (accepted only if the IdP's AcceptLogoutRequestBaseID is set)
+// ends no session and returns an error matching saml.ErrUnsupported, and
+// ServeSLO answers it with StatusResponder.
 func (s *Server) InvalidateSession(w http.ResponseWriter, r *http.Request, req *saml.IdpLogoutRequest) error {
+	if req.Request.NameID == nil {
+		return fmt.Errorf("%w: cannot end the sessions of a principal identified by a BaseID", saml.ErrUnsupported)
+	}
 	if cookie, err := r.Cookie(sessionCookieName); err == nil {
 		session := &saml.Session{}
 		err := s.Store.Get(sessionKey(cookie.Value), session)
