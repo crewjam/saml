@@ -8,6 +8,14 @@ type RelaxedTime time.Time
 
 const timeFormat = "2006-01-02T15:04:05.999Z07:00"
 
+// formatTime formats t for a SAML message. saml-core §1.3.3 says SAML time
+// values "MUST be expressed in UTC form, with no time zone component", so t
+// is converted to UTC first; a time in another zone would otherwise keep
+// its offset. Fractions finer than a millisecond are dropped.
+func formatTime(t time.Time) string {
+	return t.UTC().Format(timeFormat)
+}
+
 // MarshalText implements encoding.TextMarshaler
 func (m RelaxedTime) MarshalText() ([]byte, error) {
 	// According to section 1.2.2 of the OASIS SAML 1.1 spec, we can't trust

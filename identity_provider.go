@@ -276,6 +276,23 @@ type IdentityProvider struct {
 	// an error matching ErrUnsupported.
 	AcceptLogoutRequestBaseID bool
 
+	// EncryptLogoutNameID, if true, makes the LogoutRequests the IdP sends
+	// to service providers (see StartLogout and SessionParticipantTracker)
+	// identify the principal with a saml:EncryptedID instead of a NameID,
+	// encrypted to the service provider's encryption certificate. As with
+	// assertions, a service provider whose metadata publishes no encryption
+	// certificate cannot decrypt, so it is sent the NameID in the clear.
+	EncryptLogoutNameID bool
+
+	// LogoutNameIDEncrypter, if set, encrypts the NameID of the
+	// LogoutRequests the IdP sends (see EncryptLogoutNameID). It is passed
+	// the service provider's *x509.Certificate as the key. When nil,
+	// RSA-OAEP-MGF1P with a SHA-1 digest is used with the strongest block
+	// cipher that the service provider's metadata lists in the
+	// EncryptionMethods of its encryption key: AES-GCM (256, 128 then 192
+	// bit keys) before AES-CBC, or AES-256-GCM if it lists none of them.
+	LogoutNameIDEncrypter xmlenc.Encrypter
+
 	// ReplayCache, if set, records the ID of each LogoutRequest that
 	// IdpLogoutRequest.Validate (and so ServeSLO) accepts, and refuses a
 	// LogoutRequest whose ID it has already recorded, so that a captured
@@ -342,7 +359,13 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 										},
 									},
 								},
+								// In order of preference: AES-GCM first, as
+								// for the SP metadata. The IdP decrypts all of
+								// them (see DecryptionKeys).
 								EncryptionMethods: []EncryptionMethod{
+									{Algorithm: xmlenc.AES256GCM.Algorithm()},
+									{Algorithm: xmlenc.AES128GCM.Algorithm()},
+									{Algorithm: xmlenc.AES192GCM.Algorithm()},
 									{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
 									{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
 									{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
@@ -1353,43 +1376,11 @@ func (req *IdpAuthnRequest) WriteResponse(w http.ResponseWriter) error {
 	return nil
 }
 
-// getSPEncryptionCert returns the certificate which we can use to encrypt things
-// to the SP in PEM format, or nil if no such certificate is found.
+// getSPEncryptionCert returns the certificate which we can use to encrypt
+// things to the SP, or os.ErrNotExist if no such certificate is found.
 func (req *IdpAuthnRequest) getSPEncryptionCert() (*x509.Certificate, error) {
-	certStr := ""
-	for _, keyDescriptor := range req.SPSSODescriptor.KeyDescriptors {
-		if keyDescriptor.Use == "encryption" && len(keyDescriptor.KeyInfo.X509Data.X509Certificates) != 0 {
-			certStr = keyDescriptor.KeyInfo.X509Data.X509Certificates[0].Data
-			break
-		}
-	}
-
-	// If there are no certs explicitly labeled for encryption, return the first
-	// non-empty cert we find.
-	if certStr == "" {
-		for _, keyDescriptor := range req.SPSSODescriptor.KeyDescriptors {
-			if keyDescriptor.Use == "" && len(keyDescriptor.KeyInfo.X509Data.X509Certificates) != 0 && keyDescriptor.KeyInfo.X509Data.X509Certificates[0].Data != "" {
-				certStr = keyDescriptor.KeyInfo.X509Data.X509Certificates[0].Data
-				break
-			}
-		}
-	}
-
-	if certStr == "" {
-		return nil, os.ErrNotExist
-	}
-
-	// cleanup whitespace and re-encode a PEM
-	certStr = regexp.MustCompile(`\s+`).ReplaceAllString(certStr, "")
-	certBytes, err := base64.StdEncoding.DecodeString(certStr)
-	if err != nil {
-		return nil, classify(fmt.Errorf("cannot decode certificate base64: %w", err), ErrInvalidCertificate)
-	}
-	cert, err := x509.ParseCertificate(certBytes)
-	if err != nil {
-		return nil, classify(fmt.Errorf("cannot parse certificate: %w", err), ErrInvalidCertificate)
-	}
-	return cert, nil
+	cert, _, err := encryptionKey(req.SPSSODescriptor.KeyDescriptors)
+	return cert, err
 }
 
 // unmarshalEtreeHack parses `el` and sets values in the structure `v`.

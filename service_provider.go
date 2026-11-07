@@ -20,6 +20,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -349,8 +350,12 @@ type ServiceProvider struct {
 	//	enc.BlockCipher = xmlenc.AES256GCM
 	//	sp.LogoutNameIDEncrypter = enc
 	//
-	// When nil, RSA-OAEP-MGF1P with a SHA-1 digest and AES-128-CBC are used,
-	// as the IdentityProvider does for assertions by default.
+	// When nil, RSA-OAEP-MGF1P with a SHA-1 digest is used with the
+	// strongest block cipher that the IDP metadata lists in the
+	// EncryptionMethods of its encryption key: AES-GCM (256, 128 then 192
+	// bit keys) before AES-CBC. If the metadata lists none of them,
+	// AES-256-GCM is used; set LogoutNameIDEncrypter for an IDP that cannot
+	// decrypt AES-GCM and does not say so in its metadata.
 	LogoutNameIDEncrypter xmlenc.Encrypter
 
 	// AcceptLogoutRequestBaseID, if true, lets ValidateLogoutRequest accept
@@ -371,9 +376,9 @@ type ServiceProvider struct {
 // the IDs of accepted LogoutRequests in it, under keys prefixed with
 // "LogoutRequest:".
 type AssertionReplayCache interface {
-	// Consume atomically records assertionID as used until expiresAt, the
-	// last moment the ServiceProvider would accept the assertion; after
-	// that the record may be dropped. It returns ErrAssertionReplayed if
+	// Consume atomically records assertionID as used until expiresAt, after
+	// which the ServiceProvider no longer accepts the assertion; then the
+	// record may be dropped. It returns ErrAssertionReplayed if
 	// assertionID is already recorded, and any other error if it cannot
 	// record it. Any error refuses the assertion.
 	Consume(assertionID string, expiresAt time.Time) error
@@ -1680,34 +1685,16 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if assertion.Conditions == nil {
 		return classify(fmt.Errorf("assertion has no Conditions"), ErrMissingElement)
 	}
-	for _, subjectConfirmation := range assertion.Subject.SubjectConfirmations {
-		if subjectConfirmation.SubjectConfirmationData == nil {
-			return classify(fmt.Errorf("assertion SubjectConfirmation has no SubjectConfirmationData"), ErrMissingElement)
-		}
-		if err := sp.validateAssertionInResponseTo(subjectConfirmation.SubjectConfirmationData.InResponseTo, possibleRequestIDs); err != nil {
-			return err
-		}
-		if subjectConfirmation.SubjectConfirmationData.Recipient != sp.AcsURL.String() {
-			return classify(fmt.Errorf("assertion SubjectConfirmation Recipient is not %s", sp.AcsURL.String()), ErrDestinationMismatch)
-		}
-		// saml-profiles §4.1.4.2 says a bearer SubjectConfirmationData MUST
-		// NOT carry NotBefore, but some IdPs send one anyway; accept it as
-		// long as it is not in the future (saml-core §2.4.1.2). An omitted
-		// NotBefore is the zero time, which always passes.
-		if subjectConfirmation.SubjectConfirmationData.NotBefore.Add(-MaxClockSkew).After(now) {
-			return classify(fmt.Errorf("assertion SubjectConfirmationData is not yet valid"), ErrNotYetValid)
-		}
-		if skewedDeadline(subjectConfirmation.SubjectConfirmationData.NotOnOrAfter).Before(now) {
-			return classify(fmt.Errorf("assertion SubjectConfirmationData is expired"), ErrExpired)
-		}
-	}
-	if !hasBearerSubjectConfirmation(assertion.Subject) {
-		return classify(fmt.Errorf("assertion has no bearer SubjectConfirmation"), ErrMissingElement)
+	if err := sp.validateBearerSubjectConfirmations(assertion.Subject, possibleRequestIDs, now); err != nil {
+		return err
 	}
 	if assertion.Conditions.NotBefore.Add(-MaxClockSkew).After(now) {
 		return classify(fmt.Errorf("assertion Conditions is not yet valid"), ErrNotYetValid)
 	}
-	if skewedDeadline(assertion.Conditions.NotOnOrAfter).Before(now) {
+	// An omitted Conditions NotOnOrAfter means no expiry (saml-core
+	// §2.5.1.2); the assertion is still bounded by MaxIssueDelay and the
+	// SubjectConfirmationData NotOnOrAfter.
+	if !assertion.Conditions.NotOnOrAfter.IsZero() && pastDeadline(assertion.Conditions.NotOnOrAfter, now) {
 		return classify(fmt.Errorf("assertion Conditions is expired"), ErrExpired)
 	}
 
@@ -1793,25 +1780,46 @@ func issueDeadline(assertion *Assertion) time.Time {
 	return assertion.IssueInstant.Add(MaxIssueDelay)
 }
 
-// skewedDeadline is the last moment validateAssertion accepts a NotOnOrAfter
-// time, allowing for clock skew.
+// skewedDeadline is a NotOnOrAfter time moved later by the allowed clock
+// skew: the moment from which validateAssertion refuses it.
 func skewedDeadline(notOnOrAfter time.Time) time.Time {
 	return notOnOrAfter.Add(MaxClockSkew)
 }
 
-// acceptableUntil returns the last moment validateAssertion accepts
-// assertion: the earliest of the deadlines its expiry checks apply.
+// pastDeadline reports whether now is at or after notOnOrAfter, allowing for
+// clock skew. NotOnOrAfter is exclusive: it is "the time instant at which the
+// validity interval has ended" (saml-core §2.5.1.2), so a message is no
+// longer valid at that instant itself.
+func pastDeadline(notOnOrAfter, now time.Time) bool {
+	return !now.Before(skewedDeadline(notOnOrAfter))
+}
+
+// acceptableUntil returns the moment after which validateAssertion refuses
+// assertion: the earliest of the deadlines its expiry checks apply. A
+// NotOnOrAfter deadline is exclusive (the assertion is already refused at
+// it); the MaxIssueDelay deadline is inclusive. An omitted Conditions
+// NotOnOrAfter sets no deadline.
 func acceptableUntil(assertion *Assertion) time.Time {
 	deadline := issueDeadline(assertion)
-	if assertion.Conditions != nil {
+	if assertion.Conditions != nil && !assertion.Conditions.NotOnOrAfter.IsZero() {
 		deadline = earliest(deadline, skewedDeadline(assertion.Conditions.NotOnOrAfter))
 	}
+	// One valid bearer confirmation is enough, so the assertion stays
+	// acceptable until the latest bearer NotOnOrAfter. Confirmations with
+	// another Method are not checked and set no deadline.
+	var confirmationDeadline time.Time
 	if assertion.Subject != nil {
 		for _, confirmation := range assertion.Subject.SubjectConfirmations {
-			if confirmation.SubjectConfirmationData != nil {
-				deadline = earliest(deadline, skewedDeadline(confirmation.SubjectConfirmationData.NotOnOrAfter))
+			if confirmation.Method != bearerSubjectConfirmationMethod || confirmation.SubjectConfirmationData == nil {
+				continue
+			}
+			if d := skewedDeadline(confirmation.SubjectConfirmationData.NotOnOrAfter); d.After(confirmationDeadline) {
+				confirmationDeadline = d
 			}
 		}
+	}
+	if !confirmationDeadline.IsZero() {
+		deadline = earliest(deadline, confirmationDeadline)
 	}
 	return deadline
 }
@@ -1844,8 +1852,8 @@ func (sp *ServiceProvider) consumeAssertion(assertion *Assertion) error {
 // being xs:ID values, cannot contain a colon.
 const logoutRequestReplayKeyPrefix = "LogoutRequest:"
 
-// logoutRequestAcceptableUntil returns the last moment a LogoutRequest is
-// accepted: IssueInstant plus MaxIssueDelay or, if it is earlier, the
+// logoutRequestAcceptableUntil returns the moment after which a LogoutRequest
+// is refused: IssueInstant plus MaxIssueDelay or, if it is earlier, the
 // NotOnOrAfter time allowing for clock skew.
 func logoutRequestAcceptableUntil(req *LogoutRequest) time.Time {
 	deadline := req.IssueInstant.Add(MaxIssueDelay)
@@ -1874,20 +1882,62 @@ func consumeLogoutRequest(cache AssertionReplayCache, req *LogoutRequest) error 
 // SAML web browser SSO profile.
 const bearerSubjectConfirmationMethod = "urn:oasis:names:tc:SAML:2.0:cm:bearer" //nolint:gosec // not a credential
 
-// hasBearerSubjectConfirmation reports whether subject has the bearer
-// SubjectConfirmation the web browser SSO profile requires (saml-profiles
-// §4.1.4.2). Without one, the Recipient, InResponseTo and expiry checks on
-// SubjectConfirmationData never run.
-func hasBearerSubjectConfirmation(subject *Subject) bool {
-	if subject == nil {
-		return false
-	}
+// validateBearerSubjectConfirmations checks the bearer SubjectConfirmations
+// of subject. The Web Browser SSO profile requires one (saml-profiles
+// §4.1.4.2), and "satisfying any one of them is sufficient to confirm the
+// subject" (saml-core §2.4.1), so the assertion is accepted if one bearer
+// confirmation has SubjectConfirmationData that names this SP's ACS as
+// Recipient, answers one of possibleRequestIDs (or none, if IdP-initiated
+// responses are allowed), and is valid at now. Confirmations with another
+// Method ("Other ... confirmation methods MAY be included", §4.1.4.2) are
+// not checked. If none passes, the error of the first bearer confirmation is
+// returned.
+func (sp *ServiceProvider) validateBearerSubjectConfirmations(subject *Subject, possibleRequestIDs []string, now time.Time) error {
+	var firstErr error
 	for _, subjectConfirmation := range subject.SubjectConfirmations {
-		if subjectConfirmation.Method == bearerSubjectConfirmationMethod {
-			return true
+		if subjectConfirmation.Method != bearerSubjectConfirmationMethod {
+			continue
+		}
+		err := sp.validateBearerSubjectConfirmationData(subjectConfirmation.SubjectConfirmationData, possibleRequestIDs, now)
+		if err == nil {
+			return nil
+		}
+		if firstErr == nil {
+			firstErr = err
 		}
 	}
-	return false
+	if firstErr == nil {
+		return classify(fmt.Errorf("assertion has no bearer SubjectConfirmation"), ErrMissingElement)
+	}
+	return firstErr
+}
+
+// validateBearerSubjectConfirmationData checks the SubjectConfirmationData of
+// one bearer SubjectConfirmation (saml-profiles §4.1.4.3).
+func (sp *ServiceProvider) validateBearerSubjectConfirmationData(data *SubjectConfirmationData, possibleRequestIDs []string, now time.Time) error {
+	if data == nil {
+		return classify(fmt.Errorf("assertion SubjectConfirmation has no SubjectConfirmationData"), ErrMissingElement)
+	}
+	if err := sp.validateAssertionInResponseTo(data.InResponseTo, possibleRequestIDs); err != nil {
+		return err
+	}
+	if data.Recipient != sp.AcsURL.String() {
+		return classify(fmt.Errorf("assertion SubjectConfirmation Recipient is not %s", sp.AcsURL.String()), ErrDestinationMismatch)
+	}
+	// saml-profiles §4.1.4.2 says a bearer SubjectConfirmationData MUST
+	// NOT carry NotBefore, but some IdPs send one anyway; accept it as
+	// long as it is not in the future (saml-core §2.4.1.2). An omitted
+	// NotBefore is the zero time, which always passes.
+	if data.NotBefore.Add(-MaxClockSkew).After(now) {
+		return classify(fmt.Errorf("assertion SubjectConfirmationData is not yet valid"), ErrNotYetValid)
+	}
+	// A bearer SubjectConfirmationData MUST carry NotOnOrAfter
+	// (saml-profiles §4.1.4.2): an omitted one is the zero time, which
+	// has always passed.
+	if pastDeadline(data.NotOnOrAfter, now) {
+		return classify(fmt.Errorf("assertion SubjectConfirmationData is expired"), ErrExpired)
+	}
+	return nil
 }
 
 func (sp *ServiceProvider) validateAudienceRestriction(assertion *Assertion) error {
@@ -2300,11 +2350,11 @@ func (sp *ServiceProvider) EncryptLogoutRequestNameID(req *LogoutRequest) error 
 	if req.NameID == nil {
 		return classify(errors.New("cannot encrypt the NameID of a LogoutRequest that has none"), ErrMissingElement)
 	}
-	cert, err := sp.getIDPEncryptionCert()
+	cert, methods, err := sp.getIDPEncryptionCert()
 	if err != nil {
 		return err
 	}
-	encryptedID, err := encryptIdentifier(req.NameID.Element(), cert, sp.LogoutNameIDEncrypter)
+	encryptedID, err := encryptIdentifier(req.NameID.Element(), cert, identifierEncrypter(sp.LogoutNameIDEncrypter, methods))
 	if err != nil {
 		return fmt.Errorf("cannot encrypt NameID: %w", err)
 	}
@@ -2313,38 +2363,25 @@ func (sp *ServiceProvider) EncryptLogoutRequestNameID(req *LogoutRequest) error 
 	return nil
 }
 
-// getIDPEncryptionCert returns the IDP certificate to encrypt to: the first
-// one in the IDP SSO descriptors whose use is "encryption", or else the
-// first one whose use is unspecified.
-func (sp *ServiceProvider) getIDPEncryptionCert() (*x509.Certificate, error) {
+// getIDPEncryptionCert returns the IDP certificate to encrypt to, and the
+// EncryptionMethods listed with it: the first one in the IDP SSO descriptors
+// whose use is "encryption", or else the first one whose use is unspecified.
+func (sp *ServiceProvider) getIDPEncryptionCert() (*x509.Certificate, []EncryptionMethod, error) {
 	if sp.IDPMetadata == nil {
-		return nil, classify(errors.New("no IDP metadata"), ErrMissingElement)
+		return nil, nil, classify(errors.New("no IDP metadata"), ErrMissingElement)
 	}
-	for _, use := range []string{"encryption", ""} {
-		for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
-			for _, keyDescriptor := range idpSSODescriptor.KeyDescriptors {
-				if keyDescriptor.Use != use {
-					continue
-				}
-				for _, certificate := range keyDescriptor.KeyInfo.X509Data.X509Certificates {
-					certStr := regexp.MustCompile(`\s+`).ReplaceAllString(certificate.Data, "")
-					if certStr == "" {
-						continue
-					}
-					certBytes, err := base64.StdEncoding.DecodeString(certStr)
-					if err != nil {
-						return nil, classify(fmt.Errorf("cannot decode IDP encryption certificate: %w", err), ErrInvalidCertificate)
-					}
-					cert, err := x509.ParseCertificate(certBytes)
-					if err != nil {
-						return nil, classify(fmt.Errorf("cannot parse IDP encryption certificate: %w", err), ErrInvalidCertificate)
-					}
-					return cert, nil
-				}
-			}
-		}
+	var keyDescriptors []KeyDescriptor
+	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
+		keyDescriptors = append(keyDescriptors, idpSSODescriptor.KeyDescriptors...)
 	}
-	return nil, classify(errors.New("cannot find an encryption certificate in the IDP SSO descriptor"), ErrMissingElement)
+	cert, methods, err := encryptionKey(keyDescriptors)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil, classify(errors.New("cannot find an encryption certificate in the IDP SSO descriptor"), ErrMissingElement)
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("IDP encryption certificate: %w", err)
+	}
+	return cert, methods, nil
 }
 
 // MakeRedirectLogoutRequest creates a SAML LogoutRequest using the
