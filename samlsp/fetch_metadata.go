@@ -1,22 +1,15 @@
 package samlsp
 
 import (
-	"bytes"
 	"context"
 	"crypto/x509"
-	"encoding/xml"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"time"
-
-	"github.com/crewjam/saml/internal/xmlroundtrip"
-
-	"github.com/crewjam/saml/logger"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/internal/idpmetadata"
 )
 
 // ParseMetadata parses arbitrary SAML IDP metadata.
@@ -45,39 +38,12 @@ import (
 // metadata must come from a source the caller trusts. See
 // ParseSignedMetadata.
 func ParseMetadata(data []byte) (*saml.EntityDescriptor, error) {
-	if err := xmlroundtrip.Validate(data); err != nil {
-		return nil, err
+	entity, err := idpmetadata.Parse(data)
+	var multiple *idpmetadata.MultipleIDPsError
+	if errors.As(err, &multiple) {
+		return nil, fmt.Errorf("%s; use ParseMetadataByEntityID to choose one", multiple)
 	}
-
-	root, err := metadataRootElement(data)
-	if err != nil {
-		return nil, err
-	}
-
-	if root.Local != "EntitiesDescriptor" {
-		entity := &saml.EntityDescriptor{}
-		if err := xml.Unmarshal(data, entity); err != nil {
-			return nil, err
-		}
-		return entity, nil
-	}
-
-	// Unmarshal the whole aggregate, so that malformed metadata is rejected
-	// wherever the error is.
-	entities := &saml.EntitiesDescriptor{}
-	if err := xml.Unmarshal(data, entities); err != nil {
-		return nil, err
-	}
-	if n := countIDPEntities(entities); n > 1 {
-		return nil, fmt.Errorf("metadata holds %d entities with an IDPSSODescriptor; use ParseMetadataByEntityID to choose one", n)
-	}
-	// There is at most one IDP entity, so document order does not matter
-	// and it can be found in the parsed aggregate.
-	entity := findIDPEntity(entities, metadataValidity{})
-	if entity == nil {
-		return nil, errors.New("no entity found with IDPSSODescriptor")
-	}
-	return entity, nil
+	return entity, err
 }
 
 // ParseMetadataByEntityID parses SAML metadata and returns the
@@ -94,48 +60,7 @@ func ParseMetadata(data []byte) (*saml.EntityDescriptor, error) {
 //
 // It returns an error if no entity with that entityID is found.
 func ParseMetadataByEntityID(data []byte, entityID string) (*saml.EntityDescriptor, error) {
-	if err := xmlroundtrip.Validate(data); err != nil {
-		return nil, err
-	}
-
-	root, err := metadataRootElement(data)
-	if err != nil {
-		return nil, err
-	}
-
-	if root.Local == "EntitiesDescriptor" {
-		entities := &saml.EntitiesDescriptor{}
-		if err := xml.Unmarshal(data, entities); err != nil {
-			return nil, err
-		}
-		if entity := findEntityByID(entities, entityID, metadataValidity{}); entity != nil {
-			return entity, nil
-		}
-	} else {
-		entity := &saml.EntityDescriptor{}
-		if err := xml.Unmarshal(data, entity); err != nil {
-			return nil, err
-		}
-		if entity.EntityID == entityID {
-			return entity, nil
-		}
-	}
-	return nil, fmt.Errorf("no entity found with entityID %q", entityID)
-}
-
-// countIDPEntities returns the number of entities with an IDPSSODescriptor
-// in entities and in any EntitiesDescriptor nested in it.
-func countIDPEntities(entities *saml.EntitiesDescriptor) int {
-	n := 0
-	for _, e := range entities.EntityDescriptors {
-		if len(e.IDPSSODescriptors) > 0 {
-			n++
-		}
-	}
-	for i := range entities.EntitiesDescriptors {
-		n += countIDPEntities(&entities.EntitiesDescriptors[i])
-	}
-	return n
+	return idpmetadata.ParseByEntityID(data, entityID)
 }
 
 // ParseSignedMetadata is ParseMetadata for metadata whose root element must
@@ -160,97 +85,6 @@ func ParseSignedMetadataByEntityID(data []byte, entityID string, certs []*x509.C
 		return nil, err
 	}
 	return ParseMetadataByEntityID(signed, entityID)
-}
-
-// metadataRootElement returns the name of the root element of data.
-func metadataRootElement(data []byte) (xml.Name, error) {
-	decoder := xml.NewDecoder(bytes.NewReader(data))
-	for {
-		token, err := decoder.Token()
-		if err != nil {
-			return xml.Name{}, err
-		}
-		if start, ok := token.(xml.StartElement); ok {
-			return start.Name, nil
-		}
-	}
-}
-
-// findEntityByID returns the first EntityDescriptor in entities, or in any
-// EntitiesDescriptor nested in it, whose entityID is entityID, with the
-// validity of entities and of the aggregates enclosing it (outer) applied.
-func findEntityByID(entities *saml.EntitiesDescriptor, entityID string, outer metadataValidity) *saml.EntityDescriptor {
-	validity := outer.narrow(entities.ValidUntil, entities.CacheDuration)
-	for i := range entities.EntityDescriptors {
-		if entities.EntityDescriptors[i].EntityID == entityID {
-			// Copy the entity, so that it does not keep the rest of the
-			// aggregate in memory.
-			entity := entities.EntityDescriptors[i]
-			validity.applyTo(&entity)
-			return &entity
-		}
-	}
-	for i := range entities.EntitiesDescriptors {
-		if entity := findEntityByID(&entities.EntitiesDescriptors[i], entityID, validity); entity != nil {
-			return entity
-		}
-	}
-	return nil
-}
-
-// findIDPEntity returns an EntityDescriptor with an IDPSSODescriptor in
-// entities, or in any EntitiesDescriptor nested in it, with the validity of
-// entities and of the aggregates enclosing it (outer) applied, or nil if
-// there is none.
-func findIDPEntity(entities *saml.EntitiesDescriptor, outer metadataValidity) *saml.EntityDescriptor {
-	validity := outer.narrow(entities.ValidUntil, entities.CacheDuration)
-	for i := range entities.EntityDescriptors {
-		if len(entities.EntityDescriptors[i].IDPSSODescriptors) > 0 {
-			// Copy the entity, so that it does not keep the rest of the
-			// aggregate in memory.
-			entity := entities.EntityDescriptors[i]
-			validity.applyTo(&entity)
-			return &entity
-		}
-	}
-	for i := range entities.EntitiesDescriptors {
-		if entity := findIDPEntity(&entities.EntitiesDescriptors[i], validity); entity != nil {
-			return entity
-		}
-	}
-	return nil
-}
-
-// metadataValidity is the caching policy that enclosing EntitiesDescriptor
-// elements impose on the entities in them: the earliest validUntil and the
-// shortest cacheDuration among them, nil where none sets one.
-type metadataValidity struct {
-	validUntil    *time.Time
-	cacheDuration *time.Duration
-}
-
-// narrow returns v further restricted by an EntitiesDescriptor's
-// validUntil and cacheDuration, either of which may be nil.
-func (v metadataValidity) narrow(validUntil *time.Time, cacheDuration *time.Duration) metadataValidity {
-	if validUntil != nil && !validUntil.IsZero() && (v.validUntil == nil || validUntil.Before(*v.validUntil)) {
-		v.validUntil = validUntil
-	}
-	if cacheDuration != nil && *cacheDuration > 0 && (v.cacheDuration == nil || *cacheDuration < *v.cacheDuration) {
-		v.cacheDuration = cacheDuration
-	}
-	return v
-}
-
-// applyTo sets entity's ValidUntil and CacheDuration to the earliest and
-// shortest of its own and v's, so that the parent's policy takes
-// precedence (saml-metadata-2.0-os §4.3.1).
-func (v metadataValidity) applyTo(entity *saml.EntityDescriptor) {
-	if v.validUntil != nil && (entity.ValidUntil.IsZero() || v.validUntil.Before(entity.ValidUntil)) {
-		entity.ValidUntil = *v.validUntil
-	}
-	if v.cacheDuration != nil && (entity.CacheDuration <= 0 || *v.cacheDuration < entity.CacheDuration) {
-		entity.CacheDuration = *v.cacheDuration
-	}
 }
 
 // FetchMetadata returns metadata from an IDP metadata URL.
@@ -309,43 +143,11 @@ func FetchSignedMetadataByEntityID(ctx context.Context, httpClient *http.Client,
 // fetching a single IDP's metadata.
 var MaxMetadataSize int64 = 256 << 20
 
-// defaultMetadataHTTPClient fetches metadata when the caller passes no
-// client. Unlike http.DefaultClient it gives up on a server that stops
-// responding.
-var defaultMetadataHTTPClient = &http.Client{Timeout: 2 * time.Minute}
-
 func fetchMetadataBytes(ctx context.Context, httpClient *http.Client, metadataURL url.URL) ([]byte, error) {
-	if httpClient == nil {
-		httpClient = defaultMetadataHTTPClient
+	data, err := idpmetadata.Fetch(ctx, httpClient, metadataURL, MaxMetadataSize)
+	var tooLarge *idpmetadata.TooLargeError
+	if errors.As(err, &tooLarge) {
+		return nil, fmt.Errorf("%s (MaxMetadataSize)", tooLarge)
 	}
-	req, err := http.NewRequest("GET", metadataURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			logger.DefaultLogger.Printf("Error while closing response body during fetch metadata: %v", err)
-		}
-	}()
-	// Only a successful response holds the metadata: the body of a redirect
-	// the client did not follow (or of any other status) is not it.
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("failed to fetch metadata: unexpected status code %d", resp.StatusCode)
-	}
-
-	limit := MaxMetadataSize
-	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > limit {
-		return nil, fmt.Errorf("failed to fetch metadata: response is larger than %d bytes (MaxMetadataSize)", limit)
-	}
-	return data, nil
+	return data, err
 }
