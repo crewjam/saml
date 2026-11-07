@@ -37,9 +37,9 @@ func specCoreSignedResponse(t *testing.T, e *spcovEnv, a *Assertion, mutate func
 }
 
 // specCoreIDPRequest returns a validated IdpAuthnRequest from
-// NewIdentityProviderTest, issued at issueInstant. It restores the globals
+// NewIdentityProviderTest, issued at 2015-12-01T01:57:09Z. It restores the globals
 // NewIdentityProviderTest changes.
-func specCoreIDPRequest(t *testing.T, issueInstant string) *IdpAuthnRequest {
+func specCoreIDPRequest(t *testing.T) *IdpAuthnRequest {
 	t.Helper()
 	oldTimeNow, oldRandReader, oldXMLEncRandReader := TimeNow, RandReader, xmlenc.RandReader
 	t.Cleanup(func() {
@@ -53,7 +53,7 @@ func specCoreIDPRequest(t *testing.T, issueInstant string) *IdpAuthnRequest {
 			` AssertionConsumerServiceURL="https://sp.example.com/saml2/acs"` +
 			` Destination="https://idp.example.com/saml/sso"` +
 			` ID="id-00020406080a0c0e10121416181a1c1e"` +
-			` IssueInstant="` + issueInstant + `" Version="2.0">` +
+			` IssueInstant="2015-12-01T01:57:09Z" Version="2.0">` +
 			`<Issuer xmlns="urn:oasis:names:tc:SAML:2.0:assertion">https://sp.example.com/saml2/metadata</Issuer>` +
 			`</AuthnRequest>`),
 	}
@@ -112,7 +112,7 @@ func TestSpecCore_1_3_1_AudienceAndRecipientExactComparison(t *testing.T) {
 // and the SP's AuthnRequest (with the default UTC clock) carry only
 // "Z"-suffixed times.
 func TestSpecCore_1_3_3_GeneratedTimesAreUTC(t *testing.T) {
-	req := specCoreIDPRequest(t, "2015-12-01T01:57:09Z")
+	req := specCoreIDPRequest(t)
 	assert.NilError(t, DefaultAssertionMaker{}.MakeAssertion(req, &Session{
 		ID: "f00d", NameID: "n", CreateTime: TimeNow(), Index: "1",
 	}))
@@ -156,7 +156,7 @@ func TestSpecCore_1_3_4_GeneratedIDsAreRandomNCNames(t *testing.T) {
 	}
 
 	for i := 0; i < 3; i++ {
-		req := specCoreIDPRequest(t, "2015-12-01T01:57:09Z")
+		req := specCoreIDPRequest(t)
 		RandReader = crand.Reader
 		assert.NilError(t, DefaultAssertionMaker{}.MakeAssertion(req, &Session{ID: "f00d", NameID: "n"}))
 		check(req.Assertion.ID)
@@ -203,7 +203,7 @@ func TestSpecCore_2_3_3_GeneratedAssertionRequiredAttributes(t *testing.T) {
 	el := (&Assertion{ID: "id-x", IssueInstant: TimeNow(), Issuer: Issuer{Value: "https://idp.example.com/"}}).Element()
 	assert.Check(t, is.Equal("2.0", el.SelectAttrValue("Version", "")))
 
-	req := specCoreIDPRequest(t, "2015-12-01T01:57:09Z")
+	req := specCoreIDPRequest(t)
 	assert.NilError(t, DefaultAssertionMaker{}.MakeAssertion(req, &Session{ID: "f00d", NameID: "n"}))
 	assert.Check(t, is.Equal("2.0", req.Assertion.Version))
 	el = req.Assertion.Element()
@@ -439,7 +439,7 @@ func TestSpecCore_4_1_3_1_RequestVersion(t *testing.T) {
 	assert.Check(t, is.Equal("2.0", logoutReq.Version))
 
 	for _, version := range []string{"1.1", "3.0", ""} {
-		req := specCoreIDPRequest(t, "2015-12-01T01:57:09Z")
+		req := specCoreIDPRequest(t)
 		req.RequestBuffer = []byte(strings.Replace(string(req.RequestBuffer), `Version="2.0"`, `Version="`+version+`"`, 1))
 		err := req.Validate()
 		assert.Check(t, errors.Is(err, ErrUnsupported), "Version=%q: %v", version, err)
@@ -460,7 +460,7 @@ func TestSpecCore_8_3_NameIDFormatIdentifiers(t *testing.T) {
 // and SPProvidedID attributes MUST be omitted." The Issuer of the IdP's
 // assertions uses the entity format with none of them.
 func TestSpecCore_8_3_6_IssuerEntityFormatOmitsQualifiers(t *testing.T) {
-	req := specCoreIDPRequest(t, "2015-12-01T01:57:09Z")
+	req := specCoreIDPRequest(t)
 	assert.NilError(t, DefaultAssertionMaker{}.MakeAssertion(req, &Session{ID: "f00d", NameID: "n"}))
 	issuer := req.Assertion.Element().FindElement("./Issuer")
 	assert.Assert(t, issuer != nil)
@@ -475,7 +475,7 @@ func TestSpecCore_8_3_6_IssuerEntityFormatOmitsQualifiers(t *testing.T) {
 // reference. The attributes the IdP generates in that format have absolute
 // URI names (§1.3.2: URI values "are REQUIRED to be absolute").
 func TestSpecCore_8_2_GeneratedURIAttributeNamesAreAbsolute(t *testing.T) {
-	req := specCoreIDPRequest(t, "2015-12-01T01:57:09Z")
+	req := specCoreIDPRequest(t)
 	assert.NilError(t, DefaultAssertionMaker{}.MakeAssertion(req, &Session{
 		ID: "f00d", NameID: "n", UserName: "alice", UserEmail: "alice@example.com",
 		UserSurname: "Smith", UserGivenName: "Alice", UserCommonName: "Alice Smith",

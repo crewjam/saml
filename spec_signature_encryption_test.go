@@ -469,9 +469,11 @@ func TestSpecSig_5_4_2_SignatureWrappingRejected(t *testing.T) {
 	}
 
 	t.Run("forged assertion with duplicate ID beside the signed one", func(t *testing.T) {
-		assertion, err := e.specSigParse(t, e.specSigResponse(forgedAssertion(), legit.Copy()))
-		assert.NilError(t, err)
-		assert.Check(t, is.Equal("alice@example.com", assertion.Subject.NameID.Value))
+		// The forged assertion must never be consumed. An unsigned Response
+		// carrying more than one assertion is refused outright, before any
+		// signature is examined.
+		_, err := e.specSigParse(t, e.specSigResponse(forgedAssertion(), legit.Copy()))
+		assert.Check(t, errors.Is(err, ErrMalformedMessage))
 	})
 
 	t.Run("forged assertion alone", func(t *testing.T) {

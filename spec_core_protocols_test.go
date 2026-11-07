@@ -141,7 +141,7 @@ func TestSpecProtocol_3_4_1_4_AssertionContents(t *testing.T) {
 	assert.Check(t, is.Equal("index-1", a.AuthnStatements[0].SessionIndex))
 
 	assert.Assert(t, a.Conditions != nil)
-	var audiences []string
+	audiences := make([]string, 0, len(a.Conditions.AudienceRestrictions))
 	for _, ar := range a.Conditions.AudienceRestrictions {
 		audiences = append(audiences, ar.Audience.Value)
 	}
@@ -362,7 +362,7 @@ func TestSpecProtocol_3_7_1_SPLogoutRequestShape(t *testing.T) {
 	assert.Check(t, el.SelectAttrValue("IssueInstant", "") != "")
 	assert.Check(t, is.Equal(test.IDP.LogoutURL.String(), el.SelectAttrValue("Destination", "")))
 
-	var tags []string
+	tags := make([]string, 0, len(el.ChildElements()))
 	for _, child := range el.ChildElements() {
 		tags = append(tags, child.Tag)
 	}
