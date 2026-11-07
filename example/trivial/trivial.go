@@ -89,7 +89,7 @@ func main() {
 	http.Handle("/logout", slo)
 
 	server := &http.Server{
-		Addr:              ":8080",
+		Addr:              ":8000",
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	log.Fatal(server.ListenAndServe())
