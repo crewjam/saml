@@ -447,7 +447,7 @@ func TestIDPCanParse(t *testing.T) {
 
 	r, _ = http.NewRequest("GET", "https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState", nil)
 	_, err = NewIdpAuthnRequest(&test.IDP, r)
-	assert.Check(t, is.Error(err, "cannot decompress request: unexpected EOF"))
+	assert.Check(t, is.Error(err, "query does not contain SAMLRequest"))
 
 	r, _ = http.NewRequest("GET", "https://idp.example.com/saml/sso?RelayState=ThisIsTheRelayState&SAMLRequest=NotValidBase64", nil)
 	_, err = NewIdpAuthnRequest(&test.IDP, r)
