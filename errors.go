@@ -103,8 +103,8 @@ var (
 	// did not authenticate the way the SP asked.
 	ErrAuthnContextMismatch = errors.New("saml: authentication context does not match the requested one")
 
-	// ErrDecryptionFailed is attached when an EncryptedAssertion cannot be
-	// decrypted with the SP's keys.
+	// ErrDecryptionFailed is attached when an EncryptedAssertion or
+	// EncryptedID cannot be decrypted with the SP's keys.
 	ErrDecryptionFailed = errors.New("saml: cannot decrypt")
 
 	// ErrArtifactResolution is attached when resolving an artifact with the
