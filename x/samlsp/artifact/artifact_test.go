@@ -5,13 +5,16 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha1" //nolint:gosec // to check the artifact's SourceID
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/binary"
+	"html"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -313,5 +316,63 @@ func TestMemoryStoreExpires(t *testing.T) {
 	}
 	if m, err := s.Take(ctx, "a"); m != nil || err != nil {
 		t.Errorf("Take = %v, %v", m, err)
+	}
+}
+
+var (
+	formInput = regexp.MustCompile(`name="([A-Za-z]+)" value="([^"]*)"`)
+	formTag   = regexp.MustCompile(`<form method="post" action="([^"]*)"`)
+	scriptTag = regexp.MustCompile(`(?s)<script( nonce="[^"]*")?>(.*?)</script>`)
+	cspHash   = regexp.MustCompile(`'(sha256-[^']+)'`)
+)
+
+func TestAuthnRequestByArtifactForm(t *testing.T) {
+	idp, cfg, b, _, spCert := setup(t)
+	b.Form = true
+
+	msg, err := cfg.AuthnRequest(t.Context(), `relay "<1>"`, samlsp.WithCustomBinding(b), samlsp.WithScriptNonce("n0nce"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.RedirectURL() != nil {
+		t.Fatal("a form message has a redirect URL")
+	}
+	w := httptest.NewRecorder()
+	msg.Write(w)
+	body := w.Body.String()
+
+	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "text/html; charset=utf-8" ||
+		w.Header().Get("Cache-Control") != "no-cache, no-store" {
+		t.Fatalf("%d %v", w.Code, w.Header())
+	}
+	if m := formTag.FindStringSubmatch(body); m == nil || m[1] != "https://idp.example.com/sso-artifact" {
+		t.Errorf("form action: %s", body)
+	}
+	fields := map[string]string{}
+	for _, m := range formInput.FindAllStringSubmatch(body, -1) {
+		fields[m[1]] = html.UnescapeString(m[2])
+	}
+	if fields["RelayState"] != `relay "<1>"` {
+		t.Errorf("RelayState %q, escaped wrongly in %s", fields["RelayState"], body)
+	}
+	if strings.Contains(body, `"<1>"`) {
+		t.Error("the RelayState is not escaped")
+	}
+
+	// The CSP allows the script, by hash, and the script has the nonce.
+	script := scriptTag.FindStringSubmatch(body)
+	if script == nil || script[1] != ` nonce="n0nce"` {
+		t.Fatalf("script: %s", body)
+	}
+	sum := sha256.Sum256([]byte(script[2]))
+	want := "sha256-" + base64.StdEncoding.EncodeToString(sum[:])
+	if got := cspHash.FindStringSubmatch(w.Header().Get("Content-Security-Policy")); got == nil || got[1] != want {
+		t.Errorf("CSP %q does not allow the script %s", w.Header().Get("Content-Security-Policy"), want)
+	}
+
+	// The posted artifact resolves to the AuthnRequest.
+	got := artifactResponse(t, idp.resolve(t, b, fields["SAMLart"], idpEntityID, idp.key, idp.cert), spCert)
+	if got == nil || got.SelectAttrValue("ID", "") != msg.ID {
+		t.Fatalf("resolved %v", got)
 	}
 }
