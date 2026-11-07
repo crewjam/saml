@@ -123,6 +123,15 @@ type ServiceProvider struct {
 	// queries (QueryAttributes). If nil, http.DefaultClient is used.
 	HTTPClient *http.Client
 
+	// AllowInsecureSOAPEndpoints lets the service provider send SOAP
+	// messages (ArtifactResolve, AttributeQuery and SOAP LogoutRequest) to
+	// http endpoints of the IdP. By default they are sent only to https
+	// endpoints, and an http one fails with an error matching
+	// ErrInsecureSOAPEndpoint, so that the user's NameID, attributes and
+	// assertions never cross the network in the clear. Set it only for
+	// tests and development setups.
+	AllowInsecureSOAPEndpoints bool
+
 	// MetadataURL is the full URL to the metadata endpoint on this host,
 	// i.e. https://example.com/saml/metadata
 	MetadataURL url.URL
@@ -1153,8 +1162,12 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 		return nil, retErr
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", sp.GetArtifactBindingLocation(SOAPBinding),
-		bytes.NewReader(requestBody))
+	location := sp.GetArtifactBindingLocation(SOAPBinding)
+	if err := checkSOAPEndpoint(location, sp.AllowInsecureSOAPEndpoints); err != nil {
+		retErr.PrivateErr = classify(fmt.Errorf("cannot resolve artifact: %w", err), ErrArtifactResolution)
+		return nil, retErr
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", location, bytes.NewReader(requestBody))
 	if err != nil {
 		retErr.PrivateErr = classify(err, ErrArtifactResolution)
 		return nil, retErr

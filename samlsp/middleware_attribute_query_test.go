@@ -142,7 +142,7 @@ type aqTestAuthority struct {
 func newAQTestAuthority(t *testing.T, lt *logoutTest) *aqTestAuthority {
 	t.Helper()
 	a := &aqTestAuthority{}
-	a.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	a.Server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query := readAttributeQuery(t, r)
 		if query == nil || query.Subject == nil || query.Subject.NameID == nil {
 			w.WriteHeader(http.StatusBadRequest)

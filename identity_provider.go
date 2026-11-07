@@ -316,6 +316,15 @@ type IdentityProvider struct {
 	// StartLogout and ServeSLO). If nil, a client that gives up after 10
 	// seconds and does not follow redirects is used.
 	HTTPClient *http.Client
+
+	// AllowInsecureSOAPEndpoints lets the IdP send SOAP messages to http
+	// endpoints. By default a SOAP SingleLogoutService whose Location is not
+	// https is ignored, as if the service provider metadata did not list it
+	// (see ErrInsecureSOAPEndpoint), so that a LogoutRequest carrying the
+	// user's NameID never crosses the network in the clear; the participant
+	// is then logged out through the browser if it can be. Set it only for
+	// tests and development setups.
+	AllowInsecureSOAPEndpoints bool
 }
 
 // Metadata returns the metadata structure for this identity provider.

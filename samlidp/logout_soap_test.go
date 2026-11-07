@@ -36,8 +36,11 @@ type soapSP struct {
 
 func (pt *propagationServerTest) addSOAPSP(t *testing.T) *soapSP {
 	p := &soapSP{}
-	p.server = httptest.NewServer(http.HandlerFunc(p.serveSOAP))
+	p.server = httptest.NewTLSServer(http.HandlerFunc(p.serveSOAP))
 	t.Cleanup(p.server.Close)
+	// Every httptest TLS server has the same certificate, so the client of
+	// one trusts them all.
+	pt.Server.IDP.HTTPClient = p.server.Client()
 	p.sp = pt.SP
 	p.sp.MetadataURL = mustParseURL(p.server.URL + "/saml2/metadata")
 	p.sp.AcsURL = mustParseURL(p.server.URL + "/saml2/acs")
