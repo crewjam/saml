@@ -2,7 +2,6 @@ package saml
 
 import (
 	"bytes"
-	"crypto"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/xml"
@@ -110,34 +109,34 @@ func TestParseXMLResponseErrorKinds(t *testing.T) {
 		mutate func(r *Response, a *Assertion)
 		want   error
 	}{
-		{"response Destination", func(r *Response, a *Assertion) { r.Destination = "https://elsewhere.example.com/acs" }, ErrDestinationMismatch},
-		{"response IssueInstant", func(r *Response, a *Assertion) { r.IssueInstant = old }, ErrExpired},
-		{"response Issuer", func(r *Response, a *Assertion) { r.Issuer.Value = "https://other-idp.example.com" }, ErrIssuerMismatch},
-		{"response InResponseTo", func(r *Response, a *Assertion) { r.InResponseTo = "id-other" }, ErrRequestIDMismatch},
-		{"no Assertion", func(r *Response, a *Assertion) { r.Assertion = nil }, ErrMissingElement},
-		{"assertion Subject", func(r *Response, a *Assertion) { a.Subject = nil }, ErrMissingElement},
-		{"assertion Conditions", func(r *Response, a *Assertion) { a.Conditions = nil }, ErrMissingElement},
-		{"assertion bearer", func(r *Response, a *Assertion) { a.Subject.SubjectConfirmations[0].Method = "urn:other" }, ErrMissingElement},
-		{"assertion IssueInstant", func(r *Response, a *Assertion) { a.IssueInstant = old }, ErrExpired},
-		{"assertion SubjectConfirmationData NotOnOrAfter", func(r *Response, a *Assertion) {
+		{"response Destination", func(r *Response, _ *Assertion) { r.Destination = "https://elsewhere.example.com/acs" }, ErrDestinationMismatch},
+		{"response IssueInstant", func(r *Response, _ *Assertion) { r.IssueInstant = old }, ErrExpired},
+		{"response Issuer", func(r *Response, _ *Assertion) { r.Issuer.Value = "https://other-idp.example.com" }, ErrIssuerMismatch},
+		{"response InResponseTo", func(r *Response, _ *Assertion) { r.InResponseTo = "id-other" }, ErrRequestIDMismatch},
+		{"no Assertion", func(r *Response, _ *Assertion) { r.Assertion = nil }, ErrMissingElement},
+		{"assertion Subject", func(_ *Response, a *Assertion) { a.Subject = nil }, ErrMissingElement},
+		{"assertion Conditions", func(_ *Response, a *Assertion) { a.Conditions = nil }, ErrMissingElement},
+		{"assertion bearer", func(_ *Response, a *Assertion) { a.Subject.SubjectConfirmations[0].Method = "urn:other" }, ErrMissingElement},
+		{"assertion IssueInstant", func(_ *Response, a *Assertion) { a.IssueInstant = old }, ErrExpired},
+		{"assertion SubjectConfirmationData NotOnOrAfter", func(_ *Response, a *Assertion) {
 			a.Subject.SubjectConfirmations[0].SubjectConfirmationData.NotOnOrAfter = old
 		}, ErrExpired},
-		{"assertion Conditions NotOnOrAfter", func(r *Response, a *Assertion) { a.Conditions.NotOnOrAfter = old }, ErrExpired},
-		{"assertion Conditions NotBefore", func(r *Response, a *Assertion) { a.Conditions.NotBefore = future }, ErrNotYetValid},
-		{"assertion SubjectConfirmationData NotBefore", func(r *Response, a *Assertion) {
+		{"assertion Conditions NotOnOrAfter", func(_ *Response, a *Assertion) { a.Conditions.NotOnOrAfter = old }, ErrExpired},
+		{"assertion Conditions NotBefore", func(_ *Response, a *Assertion) { a.Conditions.NotBefore = future }, ErrNotYetValid},
+		{"assertion SubjectConfirmationData NotBefore", func(_ *Response, a *Assertion) {
 			a.Subject.SubjectConfirmations[0].SubjectConfirmationData.NotBefore = future
 		}, ErrNotYetValid},
-		{"assertion Issuer", func(r *Response, a *Assertion) { a.Issuer.Value = "https://other-idp.example.com" }, ErrIssuerMismatch},
-		{"assertion Recipient", func(r *Response, a *Assertion) {
+		{"assertion Issuer", func(_ *Response, a *Assertion) { a.Issuer.Value = "https://other-idp.example.com" }, ErrIssuerMismatch},
+		{"assertion Recipient", func(_ *Response, a *Assertion) {
 			a.Subject.SubjectConfirmations[0].SubjectConfirmationData.Recipient = "https://elsewhere.example.com/acs"
 		}, ErrDestinationMismatch},
-		{"assertion InResponseTo", func(r *Response, a *Assertion) {
+		{"assertion InResponseTo", func(_ *Response, a *Assertion) {
 			a.Subject.SubjectConfirmations[0].SubjectConfirmationData.InResponseTo = "id-other"
 		}, ErrRequestIDMismatch},
-		{"assertion audience", func(r *Response, a *Assertion) {
+		{"assertion audience", func(_ *Response, a *Assertion) {
 			a.Conditions.AudienceRestrictions[0].Audience.Value = "https://other-sp.example.com"
 		}, ErrAudienceMismatch},
-		{"assertion no AudienceRestriction", func(r *Response, a *Assertion) { a.Conditions.AudienceRestrictions = nil }, ErrAudienceMismatch},
+		{"assertion no AudienceRestriction", func(_ *Response, a *Assertion) { a.Conditions.AudienceRestrictions = nil }, ErrAudienceMismatch},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -153,7 +152,7 @@ func TestParseXMLResponseErrorKinds(t *testing.T) {
 	}
 
 	t.Run("AuthnContextClassRef", func(t *testing.T) {
-		password := "urn:oasis:names:tc:SAML:2.0:ac:classes:Password"
+		password := "urn:oasis:names:tc:SAML:2.0:ac:classes:Password" //nolint:gosec // an AuthnContextClassRef URI, not a credential
 		mfa := "https://refeds.org/profile/mfa"
 		r := e.response()
 		r.Assertion = e.assertion()
@@ -570,7 +569,7 @@ func TestIdentityProviderOnError(t *testing.T) {
 	t.Run("ServeMetadata signing error", func(t *testing.T) {
 		test, calls := setup(t)
 		test.IDP.SignMetadata = true
-		test.IDP.Signer = idpcovFailingSigner{Signer: mustParsePrivateKey(golden.Get(t, "idp_key.pem")).(crypto.Signer)}
+		test.IDP.Signer = idpcovFailingSigner{Signer: mustParsePrivateKey(golden.Get(t, "idp_key.pem"))}
 		w := httptest.NewRecorder()
 		test.IDP.ServeMetadata(w, httptest.NewRequest("GET", "https://idp.example.com/saml/metadata", nil))
 		assert.Equal(t, http.StatusTeapot, w.Code)
