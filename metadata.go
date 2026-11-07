@@ -42,6 +42,18 @@ const SOAPBinding = "urn:oasis:names:tc:SAML:2.0:bindings:SOAP"
 // SOAPBindingV1 is the URN for the SOAP binding in SAML 1.0
 const SOAPBindingV1 = "urn:oasis:names:tc:SAML:1.0:bindings:SOAP-binding"
 
+// metadataCacheDurationXML preserves an explicit zero cacheDuration as PT0S.
+// Duration.MarshalText omits zero because most optional duration attributes
+// should be omitted.
+type metadataCacheDurationXML Duration
+
+func (d metadataCacheDurationXML) MarshalText() ([]byte, error) {
+	if d == 0 {
+		return []byte("PT0S"), nil
+	}
+	return Duration(d).MarshalText()
+}
+
 // EntitiesDescriptor represents the SAML object of the same name.
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-metadata-2.0-os.pdf §2.3.1
@@ -60,20 +72,20 @@ type EntitiesDescriptor struct {
 // MarshalXML implements xml.Marshaler
 func (m EntitiesDescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	var validUntil *RelaxedTime
-	var cacheDuration *Duration
+	var cacheDuration *metadataCacheDurationXML
 	if m.ValidUntil != nil {
 		vu := RelaxedTime(*m.ValidUntil)
 		validUntil = &vu
 	}
 	if m.CacheDuration != nil {
-		cd := Duration(*m.CacheDuration)
+		cd := metadataCacheDurationXML(*m.CacheDuration)
 		cacheDuration = &cd
 	}
 	type Alias EntitiesDescriptor
 	aux := &struct {
-		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
-		CacheDuration *Duration        `xml:"cacheDuration,attr,omitempty"`
-		Signature     *etreeElementXML `xml:"Signature"`
+		ValidUntil    *RelaxedTime                `xml:"validUntil,attr,omitempty"`
+		CacheDuration *metadataCacheDurationXML `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML            `xml:"Signature"`
 		*Alias
 	}{
 		ValidUntil:    validUntil,
@@ -138,6 +150,12 @@ type EntityDescriptor struct {
 	ID                            string        `xml:",attr,omitempty"`
 	ValidUntil                    time.Time     `xml:"validUntil,attr,omitempty"`
 	CacheDuration                 time.Duration `xml:"cacheDuration,attr,omitempty"`
+	// MetadataCacheDurationSet records an explicit PT0S cacheDuration, which a
+	// time.Duration alone cannot distinguish from an omitted attribute.
+	MetadataCacheDurationSet bool `xml:"-"`
+	// MetadataRetrievedAt is when the metadata document was retrieved. It is
+	// populated by parsers and providers so cacheDuration can schedule refresh.
+	MetadataRetrievedAt            time.Time `xml:"-"`
 	Signature                     *etree.Element
 	Extensions                    *Extensions                    `xml:"urn:oasis:names:tc:SAML:2.0:metadata Extensions,omitempty"`
 	RoleDescriptors               []RoleDescriptor               `xml:"RoleDescriptor"`
@@ -204,6 +222,11 @@ func (m EntityDescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 		vu := RelaxedTime(m.ValidUntil)
 		validUntil = &vu
 	}
+	var cacheDuration *metadataCacheDurationXML
+	if m.MetadataCacheDurationSet || m.CacheDuration != 0 {
+		cd := metadataCacheDurationXML(m.CacheDuration)
+		cacheDuration = &cd
+	}
 	roleDescriptors := make([]roleDescriptorXML, len(m.RoleDescriptors))
 	for i := range m.RoleDescriptors {
 		roleDescriptors[i] = roleDescriptorXML(m.RoleDescriptors[i])
@@ -233,15 +256,15 @@ func (m EntityDescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	// before those of Alias.
 	type Alias EntityDescriptor
 	aux := &struct {
-		ValidUntil      *RelaxedTime        `xml:"validUntil,attr,omitempty"`
-		CacheDuration   Duration            `xml:"cacheDuration,attr,omitempty"`
-		Signature       *etreeElementXML    `xml:"Signature"`
-		Extensions      *Extensions         `xml:"urn:oasis:names:tc:SAML:2.0:metadata Extensions,omitempty"`
-		RoleDescriptors []roleDescriptorXML `xml:"RoleDescriptor"`
+		ValidUntil      *RelaxedTime                `xml:"validUntil,attr,omitempty"`
+		CacheDuration   *metadataCacheDurationXML `xml:"cacheDuration,attr,omitempty"`
+		Signature       *etreeElementXML            `xml:"Signature"`
+		Extensions      *Extensions                 `xml:"urn:oasis:names:tc:SAML:2.0:metadata Extensions,omitempty"`
+		RoleDescriptors []roleDescriptorXML         `xml:"RoleDescriptor"`
 		*Alias
 	}{
 		ValidUntil:      validUntil,
-		CacheDuration:   Duration(m.CacheDuration),
+		CacheDuration:   cacheDuration,
 		Signature:       (*etreeElementXML)(m.Signature),
 		Extensions:      m.Extensions,
 		RoleDescriptors: roleDescriptors,
@@ -252,10 +275,13 @@ func (m EntityDescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 
 // UnmarshalXML implements xml.Unmarshaler
 func (m *EntityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	m.MetadataCacheDurationSet = false
+	m.MetadataRetrievedAt = time.Time{}
+	m.CacheDuration = 0
 	type Alias EntityDescriptor
 	aux := &struct {
 		ValidUntil      RelaxedTime         `xml:"validUntil,attr,omitempty"`
-		CacheDuration   Duration            `xml:"cacheDuration,attr,omitempty"`
+		CacheDuration   *Duration           `xml:"cacheDuration,attr,omitempty"`
 		Signature       *etreeElementXML    `xml:"Signature"`
 		RoleDescriptors []roleDescriptorXML `xml:"RoleDescriptor"`
 		*Alias
@@ -271,7 +297,10 @@ func (m *EntityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 	}
 	resolveRoleDescriptorTypes(m, start.Attr)
 	m.ValidUntil = time.Time(aux.ValidUntil)
-	m.CacheDuration = time.Duration(aux.CacheDuration)
+	if aux.CacheDuration != nil {
+		m.CacheDuration = time.Duration(*aux.CacheDuration)
+		m.MetadataCacheDurationSet = m.CacheDuration == 0
+	}
 	m.ContactPerson = nil
 	if len(m.ContactPersons) > 0 {
 		m.ContactPerson = &m.ContactPersons[0]
@@ -373,6 +402,9 @@ type RoleDescriptor struct {
 	ID                         string        `xml:",attr,omitempty"`
 	ValidUntil                 *time.Time    `xml:"validUntil,attr,omitempty"`
 	CacheDuration              time.Duration `xml:"cacheDuration,attr,omitempty"`
+	// MetadataCacheDurationSet records an explicit PT0S cacheDuration, which a
+	// time.Duration alone cannot distinguish from an omitted attribute.
+	MetadataCacheDurationSet   bool          `xml:"-"`
 	ProtocolSupportEnumeration string        `xml:"protocolSupportEnumeration,attr"`
 	ErrorURL                   string        `xml:"errorURL,attr,omitempty"`
 	Signature                  *etree.Element
@@ -409,21 +441,33 @@ type RoleDescriptor struct {
 // RoleDescriptor.CacheDuration. RoleDescriptor itself cannot implement
 // xml.Marshaler or xml.Unmarshaler, because those methods would be promoted to
 // every type that embeds it.
-func marshalRoleDescriptorAttrs(m *RoleDescriptor) (*RelaxedTime, Duration) {
+func marshalRoleDescriptorAttrs(m *RoleDescriptor) (*RelaxedTime, *metadataCacheDurationXML) {
 	var validUntil *RelaxedTime
 	if m.ValidUntil != nil {
 		vu := RelaxedTime(*m.ValidUntil)
 		validUntil = &vu
 	}
-	return validUntil, Duration(m.CacheDuration)
+	var cacheDuration *metadataCacheDurationXML
+	if m.MetadataCacheDurationSet || m.CacheDuration != 0 {
+		cd := metadataCacheDurationXML(m.CacheDuration)
+		cacheDuration = &cd
+	}
+	return validUntil, cacheDuration
 }
 
-func unmarshalRoleDescriptorAttrs(m *RoleDescriptor, validUntil *RelaxedTime, cacheDuration Duration) {
+
+func unmarshalRoleDescriptorAttrs(m *RoleDescriptor, validUntil *RelaxedTime, cacheDuration *Duration) {
+	m.ValidUntil = nil
+	m.CacheDuration = 0
+	m.MetadataCacheDurationSet = false
 	if validUntil != nil {
 		t := time.Time(*validUntil)
 		m.ValidUntil = &t
 	}
-	m.CacheDuration = time.Duration(cacheDuration)
+	if cacheDuration != nil {
+		m.CacheDuration = time.Duration(*cacheDuration)
+		m.MetadataCacheDurationSet = m.CacheDuration == 0
+	}
 }
 
 // KeyDescriptor represents the XMLSEC object of the same name
@@ -767,9 +811,9 @@ func (m IDPSSODescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	}
 	validUntil, cacheDuration := marshalRoleDescriptorAttrs(&m.RoleDescriptor)
 	aux := &struct {
-		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
-		Signature     *etreeElementXML `xml:"Signature"`
+		ValidUntil    *RelaxedTime                `xml:"validUntil,attr,omitempty"`
+		CacheDuration *metadataCacheDurationXML `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML            `xml:"Signature"`
 		*Alias
 	}{
 		ValidUntil:    validUntil,
@@ -789,7 +833,7 @@ func (m *IDPSSODescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 	aux := &struct {
 		XMLName       xml.Name         `xml:"urn:oasis:names:tc:SAML:2.0:metadata IDPSSODescriptor"`
 		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
+		CacheDuration *Duration        `xml:"cacheDuration,attr,omitempty"`
 		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
@@ -829,9 +873,9 @@ func (m SPSSODescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias SPSSODescriptor
 	validUntil, cacheDuration := marshalRoleDescriptorAttrs(&m.RoleDescriptor)
 	aux := &struct {
-		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
-		Signature     *etreeElementXML `xml:"Signature"`
+		ValidUntil    *RelaxedTime                `xml:"validUntil,attr,omitempty"`
+		CacheDuration *metadataCacheDurationXML `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML            `xml:"Signature"`
 		*Alias
 	}{
 		ValidUntil:    validUntil,
@@ -851,7 +895,7 @@ func (m *SPSSODescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) e
 	aux := &struct {
 		XMLName       xml.Name         `xml:"urn:oasis:names:tc:SAML:2.0:metadata SPSSODescriptor"`
 		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
+		CacheDuration *Duration        `xml:"cacheDuration,attr,omitempty"`
 		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
@@ -900,9 +944,9 @@ func (m AuthnAuthorityDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElem
 	type Alias AuthnAuthorityDescriptor
 	validUntil, cacheDuration := marshalRoleDescriptorAttrs(&m.RoleDescriptor)
 	aux := &struct {
-		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
-		Signature     *etreeElementXML `xml:"Signature"`
+		ValidUntil    *RelaxedTime                `xml:"validUntil,attr,omitempty"`
+		CacheDuration *metadataCacheDurationXML `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML            `xml:"Signature"`
 		*Alias
 	}{
 		ValidUntil:    validUntil,
@@ -918,7 +962,7 @@ func (m *AuthnAuthorityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartE
 	type Alias AuthnAuthorityDescriptor
 	aux := &struct {
 		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
+		CacheDuration *Duration        `xml:"cacheDuration,attr,omitempty"`
 		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
@@ -947,9 +991,9 @@ func (m PDPDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElement) error 
 	type Alias PDPDescriptor
 	validUntil, cacheDuration := marshalRoleDescriptorAttrs(&m.RoleDescriptor)
 	aux := &struct {
-		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
-		Signature     *etreeElementXML `xml:"Signature"`
+		ValidUntil    *RelaxedTime                `xml:"validUntil,attr,omitempty"`
+		CacheDuration *metadataCacheDurationXML `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML            `xml:"Signature"`
 		*Alias
 	}{
 		ValidUntil:    validUntil,
@@ -965,7 +1009,7 @@ func (m *PDPDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) err
 	type Alias PDPDescriptor
 	aux := &struct {
 		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
+		CacheDuration *Duration        `xml:"cacheDuration,attr,omitempty"`
 		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
@@ -996,9 +1040,9 @@ func (m AttributeAuthorityDescriptor) MarshalXML(e *xml.Encoder, start xml.Start
 	type Alias AttributeAuthorityDescriptor
 	validUntil, cacheDuration := marshalRoleDescriptorAttrs(&m.RoleDescriptor)
 	aux := &struct {
-		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
-		Signature     *etreeElementXML `xml:"Signature"`
+		ValidUntil    *RelaxedTime                `xml:"validUntil,attr,omitempty"`
+		CacheDuration *metadataCacheDurationXML `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML            `xml:"Signature"`
 		*Alias
 	}{
 		ValidUntil:    validUntil,
@@ -1014,7 +1058,7 @@ func (m *AttributeAuthorityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.St
 	type Alias AttributeAuthorityDescriptor
 	aux := &struct {
 		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
+		CacheDuration *Duration        `xml:"cacheDuration,attr,omitempty"`
 		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
@@ -1065,9 +1109,9 @@ func (m roleDescriptorXML) MarshalXML(e *xml.Encoder, start xml.StartElement) er
 	}
 	validUntil, cacheDuration := marshalRoleDescriptorAttrs((*RoleDescriptor)(&m))
 	aux := &struct {
-		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
-		Signature     *etreeElementXML `xml:"Signature"`
+		ValidUntil    *RelaxedTime                `xml:"validUntil,attr,omitempty"`
+		CacheDuration *metadataCacheDurationXML `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML            `xml:"Signature"`
 		*Alias
 	}{
 		ValidUntil:    validUntil,
@@ -1084,7 +1128,7 @@ func (m *roleDescriptorXML) UnmarshalXML(d *xml.Decoder, start xml.StartElement)
 	type Alias roleDescriptorXML
 	aux := &struct {
 		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
+		CacheDuration *Duration        `xml:"cacheDuration,attr,omitempty"`
 		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{

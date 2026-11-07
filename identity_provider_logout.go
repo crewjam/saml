@@ -203,6 +203,11 @@ func (req *IdpLogoutRequest) Validate() error {
 	if serviceProvider == nil {
 		return fmt.Errorf("cannot find service provider %s", serviceProviderID)
 	}
+	if req.IDP.RejectExpiredSPMetadata {
+		if err := serviceProvider.ValidateMetadataAt(req.Now); err != nil {
+			return fmt.Errorf("service provider %s metadata is not current: %w", serviceProviderID, err)
+		}
+	}
 	req.ServiceProviderMetadata = serviceProvider
 
 	signed, err := req.verifySignature(root)

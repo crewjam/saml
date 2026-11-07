@@ -395,27 +395,12 @@ type ServiceProvider struct {
 	// them.
 	IgnoreCertificateExpiry bool
 
-	// RejectExpiredIDPMetadata, if true, refuses to rely on IDPMetadata once
-	// it has expired: when the signing certificates for a Response,
-	// Assertion, ArtifactResponse, LogoutRequest, LogoutResponse or attribute
-	// query response are taken from IDPMetadata, and the validUntil of the
-	// EntityDescriptor, or of an IDPSSODescriptor (or, for attribute query
-	// responses, AttributeAuthorityDescriptor) they are taken from, has
-	// passed, the message is refused with an error matching ErrExpired (and
-	// ErrInvalidSignature, for XML signatures). saml-metadata-2.0-os §4.3.1
-	// says expired metadata must not be relied on and a fresh copy must be
-	// retrieved. When IDPCertificate or IDPCertificateFingerprint is set the
-	// certificates do not come from IDPMetadata, and it is not checked.
-	//
-	// Only validUntil is checked; cacheDuration is not, since the
-	// ServiceProvider does not know when IDPMetadata was retrieved. The
-	// samlsp Parse and Fetch metadata functions set the ValidUntil of the
-	// returned EntityDescriptor to the earliest validUntil of the entity and
-	// of the EntitiesDescriptor elements that enclose it.
-	//
-	// It is off by default, because metadata whose validUntil has passed is
-	// commonly kept in use, and enabling this rejects every login until the
-	// metadata is refreshed.
+	// RejectExpiredIDPMetadata, if true, refuses to rely on IDPMetadata after
+	// its effective validUntil has passed. This applies to authentication,
+	// artifact, logout and attribute-query operations that use the metadata.
+	// It is off by default because many deployments keep using metadata after
+	// its validUntil date. cacheDuration is a refresh deadline, not a hard
+	// expiry; use samlsp.MetadataProvider to refresh metadata automatically.
 	RejectExpiredIDPMetadata bool
 
 	// RejectSHA1Signatures, if true, refuses messages from the IDP that are
@@ -846,13 +831,8 @@ func (sp *ServiceProvider) GetSLOBindingLocation(binding string) string {
 // getIDPSigningCerts returns the certificates which we can use to verify things
 // signed by the IDP in PEM format, or nil if no such certificate is found.
 func (sp *ServiceProvider) getIDPSigningCerts() ([]*x509.Certificate, error) {
-	if err := sp.checkIDPMetadataNotExpired(); err != nil {
+	if err := sp.validateIDPMetadata(); err != nil {
 		return nil, err
-	}
-	for i := range sp.IDPMetadata.IDPSSODescriptors {
-		if err := sp.checkRoleNotExpired(&sp.IDPMetadata.IDPSSODescriptors[i].RoleDescriptor, "IDPSSODescriptor"); err != nil {
-			return nil, err
-		}
 	}
 	var keyDescriptors []KeyDescriptor
 	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
@@ -872,11 +852,23 @@ func (sp *ServiceProvider) getIDPSigningCerts() ([]*x509.Certificate, error) {
 // RejectExpiredIDPMetadata is set and the validUntil of the IDPMetadata
 // EntityDescriptor has passed.
 func (sp *ServiceProvider) checkIDPMetadataNotExpired() error {
-	if !sp.RejectExpiredIDPMetadata || sp.IDPMetadata.ValidUntil.IsZero() {
+	if !sp.RejectExpiredIDPMetadata || sp.IDPMetadata == nil || sp.IDPMetadata.ValidUntil.IsZero() {
 		return nil
 	}
 	if now := sp.now(); !now.Before(sp.IDPMetadata.ValidUntil) {
 		return classify(fmt.Errorf("IDP metadata expired at %s", sp.IDPMetadata.ValidUntil.UTC().Format(time.RFC3339)), ErrExpired)
+	}
+	return nil
+}
+
+// validateIDPMetadata rejects expired metadata when the compatibility option
+// is enabled. Metadata validity is separate from certificate validity.
+func (sp *ServiceProvider) validateIDPMetadata() error {
+	if !sp.RejectExpiredIDPMetadata || sp.IDPMetadata == nil {
+		return nil
+	}
+	if err := sp.IDPMetadata.ValidateMetadataAt(sp.now()); err != nil {
+		return classify(fmt.Errorf("IDP metadata is not current: %w", err), ErrExpired)
 	}
 	return nil
 }
@@ -1012,6 +1004,9 @@ func fingerprintFormat(fp []byte) (string, error) {
 
 // MakeArtifactResolveRequest produces a new ArtifactResolve object to send to the idp's Artifact resolver
 func (sp *ServiceProvider) MakeArtifactResolveRequest(artifactID string) (*ArtifactResolve, error) {
+	if err := sp.validateIDPMetadata(); err != nil {
+		return nil, err
+	}
 	req := ArtifactResolve{
 		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
 		IssueInstant: sp.now(),
@@ -1035,6 +1030,9 @@ func (sp *ServiceProvider) MakeArtifactResolveRequest(artifactID string) (*Artif
 // MakeAuthenticationRequest produces a new AuthnRequest object to send to the idpURL
 // that uses the specified binding (HTTPRedirectBinding or HTTPPostBinding)
 func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding string, resultBinding string) (*AuthnRequest, error) {
+	if err := sp.validateIDPMetadata(); err != nil {
+		return nil, err
+	}
 
 	allowCreate := true
 	nameIDFormat := sp.nameIDFormat()
@@ -1427,6 +1425,9 @@ func (e ErrBadStatus) Is(target error) bool {
 // conditions, decryption, ReplayCache) applies as for HTTP-POST. A form
 // without SigAlg and Signature is handled as HTTP-POST, as before.
 func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs []string) (*Assertion, error) {
+	if err := sp.validateIDPMetadata(); err != nil {
+		return nil, &InvalidResponseError{Now: sp.now(), PrivateErr: err}
+	}
 	if artifactID := req.Form.Get("SAMLart"); artifactID != "" {
 		return sp.handleArtifactRequest(req.Context(), artifactID, possibleRequestIDs)
 	}
@@ -1557,6 +1558,10 @@ func (sp *ServiceProvider) ParseXMLArtifactResponse(soapResponseXML []byte, poss
 	retErr := &InvalidResponseError{
 		Response: string(soapResponseXML),
 		Now:      now,
+	}
+	if err := sp.validateIDPMetadata(); err != nil {
+		retErr.PrivateErr = err
+		return nil, retErr
 	}
 
 	// ensure that the response XML is well-formed before we parse it
@@ -1705,6 +1710,10 @@ func (sp *ServiceProvider) parseXMLResponse(decodedResponseXML []byte, possibleR
 	retErr := &InvalidResponseError{
 		Now:      now,
 		Response: string(decodedResponseXML),
+	}
+	if err := sp.validateIDPMetadata(); err != nil {
+		retErr.PrivateErr = err
+		return nil, retErr
 	}
 
 	// ensure that the response XML is well-formed before we parse it
@@ -2915,6 +2924,9 @@ func (sp *ServiceProvider) signatureVerificationCerts(el *etree.Element, metadat
 
 // SignLogoutRequest adds the `Signature` element to the `LogoutRequest`.
 func (sp *ServiceProvider) SignLogoutRequest(req *LogoutRequest) error {
+	if err := sp.validateIDPMetadata(); err != nil {
+		return err
+	}
 	signingContext, err := sp.signingContext(sp.logoutSignatureMethod())
 	if err != nil {
 		return err
@@ -3010,6 +3022,9 @@ func (sp *ServiceProvider) makeUnsignedLogoutRequest(idpURL, nameID string, opts
 // makeLogoutRequest returns an unsigned LogoutRequest, whose NameID is
 // encrypted if sp.EncryptLogoutNameID is set.
 func (sp *ServiceProvider) makeLogoutRequest(idpURL, nameID string, opts ...LogoutRequestOption) (*LogoutRequest, error) {
+	if err := sp.validateIDPMetadata(); err != nil {
+		return nil, err
+	}
 	req := sp.makeUnsignedLogoutRequest(idpURL, nameID, opts...)
 	if sp.EncryptLogoutNameID {
 		if err := sp.EncryptLogoutRequestNameID(req); err != nil {
@@ -3049,6 +3064,9 @@ func (sp *ServiceProvider) EncryptLogoutRequestNameID(req *LogoutRequest) error 
 func (sp *ServiceProvider) getIDPEncryptionCert() (*x509.Certificate, []EncryptionMethod, error) {
 	if sp.IDPMetadata == nil {
 		return nil, nil, classify(errors.New("no IDP metadata"), ErrMissingElement)
+	}
+	if err := sp.validateIDPMetadata(); err != nil {
+		return nil, nil, err
 	}
 	var keyDescriptors []KeyDescriptor
 	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
@@ -3383,6 +3401,9 @@ func (r *LogoutResponse) PostWithNonce(relayState, nonce string) []byte {
 
 // SignLogoutResponse adds the `Signature` element to the `LogoutResponse`.
 func (sp *ServiceProvider) SignLogoutResponse(resp *LogoutResponse) error {
+	if err := sp.validateIDPMetadata(); err != nil {
+		return err
+	}
 	signingContext, err := sp.signingContext(sp.logoutSignatureMethod())
 	if err != nil {
 		return err
@@ -3624,6 +3645,9 @@ func (sp *ServiceProvider) validateLogoutResponseRedirectQuery(rawQuery string) 
 
 // validateLogoutResponse validates the LogoutResponse fields. Returns a nil error if the LogoutResponse is valid.
 func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
+	if err := sp.validateIDPMetadata(); err != nil {
+		return err
+	}
 	if err := checkVersion("LogoutResponse", resp.Version); err != nil {
 		return err
 	}
@@ -3795,6 +3819,9 @@ func (sp *ServiceProvider) validateLogoutRequest(req *LogoutRequest) error {
 // validateLogoutRequestFields validates the LogoutRequest fields other than
 // Destination.
 func (sp *ServiceProvider) validateLogoutRequestFields(req *LogoutRequest) error {
+	if err := sp.validateIDPMetadata(); err != nil {
+		return err
+	}
 	now := sp.now()
 	if err := sp.limits().checkIssueInstant("issueInstant", req.IssueInstant, now); err != nil {
 		return err

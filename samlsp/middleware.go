@@ -2,8 +2,10 @@ package samlsp
 
 import (
 	"bytes"
+	"context"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -46,13 +48,18 @@ import (
 // SAML service provider already has a private key, we borrow that key
 // to sign the JWTs as well.
 type Middleware struct {
-	ServiceProvider  saml.ServiceProvider
-	OnError          func(w http.ResponseWriter, r *http.Request, err error)
-	Binding          string // saml.HTTPRedirectBinding, saml.HTTPPostBinding or saml.HTTPPostSimpleSignBinding
-	ResponseBinding  string // saml.HTTPPostBinding, saml.HTTPArtifactBinding or saml.HTTPPostSimpleSignBinding
-	RequestTracker   RequestTracker
-	Session          SessionProvider
-	AssertionHandler AssertionHandler
+	ServiceProvider saml.ServiceProvider
+	// IDPMetadataProvider, when set, supplies the current IdP metadata for
+	// each authentication, ACS and SLO operation. The metadata is installed
+	// on a request-local ServiceProvider copy, so refreshes do not mutate
+	// configuration shared by concurrent requests.
+	IDPMetadataProvider IDPMetadataProvider
+	OnError             func(w http.ResponseWriter, r *http.Request, err error)
+	Binding             string // saml.HTTPRedirectBinding, saml.HTTPPostBinding or saml.HTTPPostSimpleSignBinding
+	ResponseBinding     string // saml.HTTPPostBinding, saml.HTTPArtifactBinding or saml.HTTPPostSimpleSignBinding
+	RequestTracker      RequestTracker
+	Session             SessionProvider
+	AssertionHandler    AssertionHandler
 
 	// LogoutRequestTracker tracks the LogoutRequests sent by
 	// HandleStartLogout, so that ServeSLO accepts only a LogoutResponse to
@@ -131,6 +138,26 @@ func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.NotFoundHandler().ServeHTTP(w, r)
 }
 
+func (m *Middleware) withCurrentIDPMetadata(ctx context.Context) (*Middleware, error) {
+	if m.IDPMetadataProvider == nil {
+		return m, nil
+	}
+	metadata, err := m.IDPMetadataProvider.Metadata(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("samlsp: cannot refresh IdP metadata: %w", err)
+	}
+	if metadata == nil {
+		return nil, errors.New("samlsp: metadata provider returned nil IdP metadata")
+	}
+	if err := metadata.ValidateMetadataAt(saml.TimeNow()); err != nil {
+		return nil, fmt.Errorf("samlsp: IdP metadata is not current: %w", err)
+	}
+	current := *m
+	current.ServiceProvider = m.ServiceProvider
+	current.ServiceProvider.IDPMetadata = metadata
+	return &current, nil
+}
+
 // ServeMetadata handles requests for the SAML metadata endpoint. If
 // ServiceProvider.SignMetadata is set, the metadata is signed.
 func (m *Middleware) ServeMetadata(w http.ResponseWriter, _ *http.Request) {
@@ -161,7 +188,14 @@ func (m *Middleware) ServeMetadata(w http.ResponseWriter, _ *http.Request) {
 
 // ServeACS handles requests for the SAML ACS endpoint.
 func (m *Middleware) ServeACS(w http.ResponseWriter, r *http.Request) {
-	err := r.ParseForm()
+	current, err := m.withCurrentIDPMetadata(r.Context())
+	if err != nil {
+		m.OnError(w, r, err)
+		return
+	}
+	m = current
+
+	err = r.ParseForm()
 	if err != nil {
 		m.OnError(w, r, err)
 		return
@@ -227,6 +261,13 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 
 // HandleStartAuthFlow is called to start the SAML authentication process.
 func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request) {
+	current, err := m.withCurrentIDPMetadata(r.Context())
+	if err != nil {
+		m.OnError(w, r, err)
+		return
+	}
+	m = current
+
 	// If we try to redirect when the original request is the ACS URL we'll
 	// end up in a loop. This is a programming error, so we panic here. In
 	// general this means a 500 to the user, which is preferable to a

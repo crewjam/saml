@@ -38,6 +38,9 @@ type Options struct {
 	AllowIDPInitiated     bool
 	DefaultRedirectURI    string
 	IDPMetadata           *saml.EntityDescriptor
+	// IDPMetadataProvider supplies metadata on demand and can refresh it over
+	// time. When set, its value takes precedence over IDPMetadata.
+	IDPMetadataProvider   IDPMetadataProvider
 	SignRequest           bool
 	UseArtifactResponse   bool
 	ForceAuthn            bool // TODO(ross): this should be *bool
@@ -557,12 +560,13 @@ func New(opts Options) (*Middleware, error) {
 		return nil, err
 	}
 	m := &Middleware{
-		ServiceProvider:  DefaultServiceProvider(opts),
-		Binding:          "",
-		ResponseBinding:  saml.HTTPPostBinding,
-		OnError:          DefaultOnError,
-		Session:          DefaultSessionProvider(opts),
-		AssertionHandler: DefaultAssertionHandler(opts),
+		ServiceProvider:     DefaultServiceProvider(opts),
+		IDPMetadataProvider: opts.IDPMetadataProvider,
+		Binding:             "",
+		ResponseBinding:     saml.HTTPPostBinding,
+		OnError:             DefaultOnError,
+		Session:             DefaultSessionProvider(opts),
+		AssertionHandler:    DefaultAssertionHandler(opts),
 	}
 	m.RequestTracker = DefaultRequestTracker(opts, &m.ServiceProvider)
 	m.LogoutRequestTracker = DefaultLogoutRequestTracker(opts, &m.ServiceProvider)
