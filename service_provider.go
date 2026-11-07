@@ -2315,6 +2315,10 @@ func (sp *ServiceProvider) metadataNameIDFormat() NameIDFormat {
 //
 // It does not check the response's InResponseTo against the LogoutRequest
 // this service provider sent; use ParseLogoutResponse for that.
+//
+// Deprecated: use ParseLogoutResponse, which also checks that the response
+// answers a LogoutRequest this service provider sent, so that a
+// LogoutResponse cannot be replayed or delivered unsolicited.
 func (sp *ServiceProvider) ValidateLogoutResponseRequest(req *http.Request) error {
 	_, err := sp.parseLogoutResponseRequest(req)
 	return err
@@ -2386,6 +2390,9 @@ func (sp *ServiceProvider) parseLogoutResponseSimpleSign(req *http.Request) (*Lo
 // ValidateLogoutResponseForm returns a nil error if the logout response is valid.
 //
 // It does not check the response's InResponseTo; see ParseLogoutResponse.
+//
+// Deprecated: use ParseLogoutResponse, which reads the form from the request
+// and also checks the response's InResponseTo.
 func (sp *ServiceProvider) ValidateLogoutResponseForm(postFormData string) error {
 	_, err := sp.parseLogoutResponseForm(postFormData)
 	return err
@@ -2445,6 +2452,9 @@ func (sp *ServiceProvider) parseLogoutResponseForm(postFormData string) (*Logout
 // requires); use ValidateLogoutResponseRequest to accept those.
 //
 // It does not check the response's InResponseTo; see ParseLogoutResponse.
+//
+// Deprecated: use ParseLogoutResponse, which also accepts query string
+// signatures and checks the response's InResponseTo.
 //
 // URL Binding appears to be gzip / flate encoded
 // See https://www.oasis-open.org/committees/download.php/20645/sstc-saml-tech-overview-2%200-draft-10.pdf  6.6
