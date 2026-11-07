@@ -1,12 +1,11 @@
 package samlidp
 
 import (
-	"bytes"
 	"encoding/xml"
 	"errors"
 	"io"
 
-	xrv "github.com/mattermost/xml-roundtrip-validator"
+	"github.com/crewjam/saml/internal/xmlroundtrip"
 
 	"github.com/crewjam/saml"
 )
@@ -26,7 +25,7 @@ func getSPMetadata(r io.Reader) (spMetadata *saml.EntityDescriptor, err error) {
 	}
 
 	spMetadata = &saml.EntityDescriptor{}
-	if err := xrv.Validate(bytes.NewBuffer(data)); err != nil {
+	if err := xmlroundtrip.Validate(data); err != nil {
 		return nil, err
 	}
 
