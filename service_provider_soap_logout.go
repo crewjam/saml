@@ -124,9 +124,6 @@ func (sp *ServiceProvider) parseSOAPLogoutRequest(soapRequestXML []byte) (*Logou
 	return &req, nil
 }
 
-// requireIDPSignature verifies the enveloped signature of el, which must
-// have one, against the IdP's signing certificates, and returns what the
-// signature covers.
 // ValidateIDPSignedElement checks that el carries a valid enveloped XML
 // signature by the IdP, made with one of the signing certificates of
 // IDPMetadata (or IDPCertificate, or the configured fingerprint), and that
@@ -147,6 +144,9 @@ func (sp *ServiceProvider) ValidateIDPSignedElement(el *etree.Element) (*etree.E
 	return sp.requireIDPSignature(el)
 }
 
+// requireIDPSignature verifies the enveloped signature of el, which must
+// have one, against the IdP's signing certificates, and returns what the
+// signature covers.
 func (sp *ServiceProvider) requireIDPSignature(el *etree.Element) (*etree.Element, error) {
 	signed, err := sp.verifySignedElement(el, sp.getIDPSigningCerts)
 	if err == errSignatureElementNotPresent {
