@@ -58,7 +58,7 @@ var (
 	// ErrMissingElement is attached when a required element or value is
 	// absent: no Assertion, an Assertion with no Subject, Conditions, ID,
 	// SubjectConfirmationData or bearer SubjectConfirmation, a LogoutRequest
-	// with no NameID, an AuthnRequest with no Issuer, or another required
+	// with no NameID, an AuthnRequest with no Issuer or ID, or another required
 	// child element.
 	ErrMissingElement = errors.New("saml: required element is missing")
 
