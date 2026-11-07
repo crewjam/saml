@@ -259,6 +259,73 @@ func TestSpecCore_2_3_4_EncryptedAssertionValidatedAfterDecryption(t *testing.T)
 	assert.Check(t, errors.Is(err, ErrExpired), "%v", err)
 }
 
+// saml-core §2.4.1 (lines 654-656): "If more than one subject confirmation
+// is provided, then satisfying any one of them is sufficient to confirm the
+// subject for the purpose of applying the assertion." saml-profiles
+// §4.1.4.2 (line 561): "Other statements and confirmation methods MAY be
+// included in the assertion(s)." The SP accepts an assertion with one valid
+// bearer confirmation whatever else it carries, and refuses one with no
+// valid bearer confirmation.
+func TestSpecCore_2_4_1_AnyBearerSubjectConfirmationSuffices(t *testing.T) {
+	now := TimeNow()
+	sp := requiredConditionsSP()
+	const holderOfKey = "urn:oasis:names:tc:SAML:2.0:cm:holder-of-key"
+	const senderVouches = "urn:oasis:names:tc:SAML:2.0:cm:sender-vouches"
+	bearer := func(edit func(d *SubjectConfirmationData)) SubjectConfirmation {
+		c := validAssertion(now).Subject.SubjectConfirmations[0]
+		if edit != nil {
+			edit(c.SubjectConfirmationData)
+		}
+		return c
+	}
+	wrongRecipient := func(d *SubjectConfirmationData) { d.Recipient = "https://other-sp.example.com/acs" }
+	expired := func(d *SubjectConfirmationData) { d.NotOnOrAfter = now.Add(-MaxClockSkew - time.Minute) }
+
+	for _, tc := range []struct {
+		name          string
+		confirmations []SubjectConfirmation
+		wantErr       error
+	}{
+		{"non-bearer without data before a valid bearer",
+			[]SubjectConfirmation{{Method: holderOfKey}, bearer(nil)}, nil},
+		{"non-bearer with foreign data beside a valid bearer",
+			[]SubjectConfirmation{bearer(nil), {Method: senderVouches, SubjectConfirmationData: &SubjectConfirmationData{Recipient: "https://elsewhere.example.com/"}}}, nil},
+		{"bearer for another SP before a valid bearer",
+			[]SubjectConfirmation{bearer(wrongRecipient), bearer(nil)}, nil},
+		{"expired bearer after a valid bearer",
+			[]SubjectConfirmation{bearer(nil), bearer(expired)}, nil},
+		{"only invalid bearers: the first one's error",
+			[]SubjectConfirmation{bearer(wrongRecipient), bearer(expired)}, ErrDestinationMismatch},
+		{"bearer without data",
+			[]SubjectConfirmation{{Method: bearerSubjectConfirmationMethod}}, ErrMissingElement},
+		{"only non-bearer",
+			[]SubjectConfirmation{{Method: holderOfKey, SubjectConfirmationData: bearer(nil).SubjectConfirmationData}}, ErrMissingElement},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := validAssertion(now)
+			a.Subject.SubjectConfirmations = tc.confirmations
+			err := sp.validateAssertion(a, []string{"id-1"}, now)
+			if tc.wantErr == nil {
+				assert.Check(t, err)
+			} else {
+				assert.Check(t, errors.Is(err, tc.wantErr), "%v", err)
+			}
+		})
+	}
+
+	// The replay cache keeps the assertion until the latest bearer
+	// confirmation expires; a non-bearer confirmation sets no deadline.
+	a := validAssertion(now)
+	a.Conditions.NotOnOrAfter = time.Time{}
+	a.IssueInstant = now.Add(time.Hour)
+	a.Subject.SubjectConfirmations = []SubjectConfirmation{
+		{Method: holderOfKey, SubjectConfirmationData: &SubjectConfirmationData{NotOnOrAfter: now}},
+		bearer(func(d *SubjectConfirmationData) { d.NotOnOrAfter = now.Add(time.Minute) }),
+		bearer(func(d *SubjectConfirmationData) { d.NotOnOrAfter = now.Add(2 * time.Minute) }),
+	}
+	assert.Check(t, is.DeepEqual(now.Add(2*time.Minute+MaxClockSkew), acceptableUntil(a)))
+}
+
 // saml-core §2.4.1.2 (lines 719-732): NotBefore is "A time instant before
 // which the subject cannot be confirmed", NotOnOrAfter "A time instant at
 // which the subject can no longer be confirmed", Recipient the location the
