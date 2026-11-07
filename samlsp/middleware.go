@@ -65,6 +65,17 @@ type Middleware struct {
 	// is set as the nonce attribute of the form's <script> element, for
 	// applications whose own Content-Security-Policy allows scripts by nonce.
 	ScriptNonce func(r *http.Request) string
+
+	// LogoutBinding is the binding preferred for sending logout messages to
+	// the IDP (LogoutRequests from HandleStartLogout, and LogoutResponses to
+	// IDP initiated logout): saml.HTTPRedirectBinding,
+	// saml.HTTPPostBinding or saml.HTTPPostSimpleSignBinding. It is used
+	// when the IDP metadata has a SingleLogoutService endpoint for it.
+	// Otherwise, and when it is empty, HTTP-Redirect is used if the IDP
+	// supports it, HTTP-POST otherwise. The HTTP-POST-SimpleSign binding
+	// signs messages with ServiceProvider.Key and SignatureMethod, which
+	// must be set.
+	LogoutBinding string
 }
 
 // ServeHTTP implements http.Handler and serves the SAML-specific HTTP endpoints
@@ -253,7 +264,8 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 // The SHA-256 hashes of the auto-submit scripts of the HTTP-POST binding
 // forms, for the Content-Security-Policy of the pages that carry them. The
 // form of an AuthnRequest and of a LogoutRequest share the same script, as
-// does the HTTP-POST-SimpleSign AuthnRequest form.
+// do the HTTP-POST-SimpleSign AuthnRequest and LogoutRequest forms; the
+// HTTP-POST and HTTP-POST-SimpleSign LogoutResponse forms share the other.
 const (
 	postRequestScriptHash  = "sha256-AjPdJSbZmeWHnEc5ykvJFay8FTWeTeRbs9dutfZ0HqE="
 	postResponseScriptHash = "sha256-ae3F9sw3MnGNUqmT+7gdyojm/I6ukOUOr9mHRkJJvCU="
