@@ -37,12 +37,21 @@ var _ SessionCodec = JWTSessionCodec{}
 // The returned Session is a JWTSessionClaims.
 func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
 	now := saml.TimeNow()
+	expiresAt := now.Add(c.MaxAge)
+	if end, ok := sessionEnd(assertion); ok {
+		if !now.Before(end) {
+			return nil, fmt.Errorf("%w: the IdP session ended at %s (SessionNotOnOrAfter)", ErrSessionEnded, end)
+		}
+		if end.Before(expiresAt) {
+			expiresAt = end
+		}
+	}
 	claims := JWTSessionClaims{}
 	claims.SAMLSession = true
 	claims.Audience = jwt.ClaimStrings{c.Audience}
 	claims.Issuer = c.Issuer
 	claims.IssuedAt = jwt.NewNumericDate(now)
-	claims.ExpiresAt = jwt.NewNumericDate(now.Add(c.MaxAge))
+	claims.ExpiresAt = jwt.NewNumericDate(expiresAt)
 	claims.NotBefore = jwt.NewNumericDate(now)
 
 	if sub := assertion.Subject; sub != nil {
@@ -73,6 +82,30 @@ func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
 	}
 
 	return claims, nil
+}
+
+// ErrSessionEnded is returned when a session would be created from an
+// assertion whose AuthnStatement SessionNotOnOrAfter has already passed.
+var ErrSessionEnded = errors.New("samlsp: the IdP session has already ended")
+
+// sessionEnd returns the moment the security context established by
+// assertion must end: the earliest SessionNotOnOrAfter of its
+// AuthnStatements, allowing for saml.MaxClockSkew. saml-profiles §4.1.4.3:
+// "If an <AuthnStatement> used to establish a security context for the
+// principal contains a SessionNotOnOrAfter attribute, the security context
+// SHOULD be discarded once this time is reached". It reports false if no
+// AuthnStatement has one.
+func sessionEnd(assertion *saml.Assertion) (time.Time, bool) {
+	var end time.Time
+	for _, statement := range assertion.AuthnStatements {
+		if statement.SessionNotOnOrAfter == nil {
+			continue
+		}
+		if t := statement.SessionNotOnOrAfter.Add(saml.MaxClockSkew); end.IsZero() || t.Before(end) {
+			end = t
+		}
+	}
+	return end, !end.IsZero()
 }
 
 // setNameIDClaims records the Format, NameQualifier and SPNameQualifier of

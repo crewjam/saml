@@ -75,6 +75,18 @@ func (c CookieSessionProvider) CreateSession(w http.ResponseWriter, r *http.Requ
 		return err
 	}
 
+	// The cookie lasts no longer than the IdP session (SessionNotOnOrAfter).
+	maxAge := c.MaxAge
+	if end, ok := sessionEnd(assertion); ok {
+		remaining := end.Sub(saml.TimeNow())
+		if remaining < time.Second {
+			return fmt.Errorf("%w: the IdP session ends at %s (SessionNotOnOrAfter)", ErrSessionEnded, end)
+		}
+		if remaining < maxAge {
+			maxAge = remaining
+		}
+	}
+
 	value, err := c.Codec.Encode(session)
 	if err != nil {
 		return err
@@ -97,7 +109,7 @@ func (c CookieSessionProvider) CreateSession(w http.ResponseWriter, r *http.Requ
 		Name:     c.Name,
 		Domain:   c.Domain,
 		Value:    value,
-		MaxAge:   int(c.MaxAge.Seconds()),
+		MaxAge:   int(maxAge.Seconds()),
 		HttpOnly: c.HTTPOnly,
 		Secure:   c.Secure || r.URL.Scheme == "https",
 		SameSite: c.SameSite,
