@@ -53,7 +53,7 @@ func oaepDocument(t *testing.T, pub *rsa.PublicKey, algorithm string, opts *rsa.
 	sessionKey := make([]byte, 32)
 	_, err := rand.Read(sessionKey)
 	assert.NilError(t, err)
-	wrapped, err := rsa.EncryptOAEPWithOptions(rand.Reader, pub, sessionKey, opts)
+	wrapped, err := rsaEncryptOAEP(rand.Reader, pub, sessionKey, opts)
 	assert.NilError(t, err)
 
 	el, err := AES256CBC.Encrypt(sessionKey, []byte("hello"), nil)
