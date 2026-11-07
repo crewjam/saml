@@ -2419,6 +2419,139 @@ func TestSPValidateAuthnContextClassRef(t *testing.T) {
 	}
 }
 
+func TestSPAuthnContextClassRefComparator(t *testing.T) {
+	const (
+		password  = "urn:oasis:names:tc:SAML:2.0:ac:classes:Password" //nolint:gosec // an AuthnContextClassRef URI, not a credential
+		protected = "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport"
+		x509      = "urn:oasis:names:tc:SAML:2.0:ac:classes:X509"
+		unknown   = "urn:example:unknown"
+	)
+	// A deployment's ordering: weakest first.
+	strength := map[string]int{password: 1, protected: 2, x509: 3}
+	type call struct {
+		comparison string
+		requested  []string
+		got        string
+	}
+	var calls []call
+	comparator := func(comparison string, requested []string, got string) bool {
+		calls = append(calls, call{comparison, requested, got})
+		g, ok := strength[got]
+		if !ok {
+			return false
+		}
+		for _, r := range requested {
+			switch comparison {
+			case "minimum":
+				if g >= strength[r] {
+					return true
+				}
+			case "better":
+				if g > strength[r] {
+					return true
+				}
+			case "maximum":
+				if g <= strength[r] {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	assertionWith := func(classRefs ...string) *Assertion {
+		a := &Assertion{}
+		for _, ref := range classRefs {
+			a.AuthnStatements = append(a.AuthnStatements, AuthnStatement{
+				AuthnContext: AuthnContext{AuthnContextClassRef: &AuthnContextClassRef{Value: ref}},
+			})
+		}
+		return a
+	}
+
+	for _, tc := range []struct {
+		name       string
+		comparison string
+		requested  []string
+		assertion  *Assertion
+		wantErr    string
+		wantCalls  int
+	}{
+		{name: "minimum, equal", comparison: "minimum", requested: []string{protected}, assertion: assertionWith(protected), wantCalls: 1},
+		{name: "minimum, stronger", comparison: "minimum", requested: []string{protected}, assertion: assertionWith(x509), wantCalls: 1},
+		{
+			name: "minimum, weaker", comparison: "minimum", requested: []string{protected}, assertion: assertionWith(password), wantCalls: 1,
+			wantErr: `assertion AuthnContextClassRef ["urn:oasis:names:tc:SAML:2.0:ac:classes:Password"] does not satisfy the requested ["urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport"] with Comparison "minimum"`,
+		},
+		{
+			name: "better, equal", comparison: "better", requested: []string{protected}, assertion: assertionWith(protected), wantCalls: 1,
+			wantErr: `assertion AuthnContextClassRef ["urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport"] does not satisfy the requested ["urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport"] with Comparison "better"`,
+		},
+		{name: "better, stronger", comparison: "better", requested: []string{protected}, assertion: assertionWith(x509), wantCalls: 1},
+		{name: "maximum, weaker", comparison: "maximum", requested: []string{protected}, assertion: assertionWith(password), wantCalls: 1},
+		{
+			name: "maximum, stronger", comparison: "maximum", requested: []string{protected}, assertion: assertionWith(x509), wantCalls: 1,
+			wantErr: `assertion AuthnContextClassRef ["urn:oasis:names:tc:SAML:2.0:ac:classes:X509"] does not satisfy the requested ["urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport"] with Comparison "maximum"`,
+		},
+		{name: "any statement", comparison: "minimum", requested: []string{x509}, assertion: assertionWith(unknown, password, x509), wantCalls: 3},
+		{
+			name: "no AuthnStatement", comparison: "minimum", requested: []string{password}, assertion: assertionWith(), wantCalls: 0,
+			wantErr: `assertion AuthnContextClassRef [] does not satisfy the requested ["urn:oasis:names:tc:SAML:2.0:ac:classes:Password"] with Comparison "minimum"`,
+		},
+		{
+			name: "unknown comparison", comparison: "sideways", requested: []string{password}, assertion: assertionWith(password), wantCalls: 1,
+			wantErr: `assertion AuthnContextClassRef ["urn:oasis:names:tc:SAML:2.0:ac:classes:Password"] does not satisfy the requested ["urn:oasis:names:tc:SAML:2.0:ac:classes:Password"] with Comparison "sideways"`,
+		},
+		// "exact" never reaches the comparator.
+		{name: "exact", comparison: "exact", requested: []string{password}, assertion: assertionWith(password), wantCalls: 0},
+		{
+			name: "exact, stronger", comparison: "exact", requested: []string{password}, assertion: assertionWith(x509), wantCalls: 0,
+			wantErr: `assertion AuthnContextClassRef ["urn:oasis:names:tc:SAML:2.0:ac:classes:X509"] is not one of the requested ["urn:oasis:names:tc:SAML:2.0:ac:classes:Password"]`,
+		},
+		{name: "empty means exact", requested: []string{password}, assertion: assertionWith(password), wantCalls: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls = nil
+			sp := ServiceProvider{
+				RequestedAuthnContext:          &RequestedAuthnContext{Comparison: tc.comparison, AuthnContextClassRefs: tc.requested},
+				ValidateAuthnContextClassRef:   true,
+				AuthnContextClassRefComparator: comparator,
+			}
+			err := sp.validateAuthnContextClassRef(tc.assertion)
+			if tc.wantErr == "" {
+				assert.Check(t, err)
+			} else {
+				assert.Check(t, is.Error(err, tc.wantErr))
+				assert.Check(t, errors.Is(err, ErrAuthnContextMismatch))
+			}
+			assert.Check(t, is.Len(calls, tc.wantCalls))
+			for _, c := range calls {
+				assert.Check(t, is.Equal(c.comparison, tc.comparison))
+				assert.Check(t, is.DeepEqual(c.requested, tc.requested))
+			}
+		})
+	}
+
+	t.Run("not used unless ValidateAuthnContextClassRef", func(t *testing.T) {
+		calls = nil
+		sp := ServiceProvider{
+			RequestedAuthnContext:          &RequestedAuthnContext{Comparison: "minimum", AuthnContextClassRefs: []string{x509}},
+			AuthnContextClassRefComparator: comparator,
+		}
+		assert.Check(t, sp.validateAuthnContextClassRef(assertionWith(password)))
+		assert.Check(t, is.Len(calls, 0))
+	})
+
+	t.Run("without a comparator, minimum is still unsupported", func(t *testing.T) {
+		sp := ServiceProvider{
+			RequestedAuthnContext:        &RequestedAuthnContext{Comparison: "minimum", AuthnContextClassRefs: []string{password}},
+			ValidateAuthnContextClassRef: true,
+		}
+		err := sp.validateAuthnContextClassRef(assertionWith(x509))
+		assert.Check(t, is.Error(err, `cannot validate AuthnContextClassRef for RequestedAuthnContext Comparison "minimum": only "exact" is supported`))
+		assert.Check(t, errors.Is(err, ErrUnsupported))
+	})
+}
+
 func TestSPValidateAuthnContextClassRefParseResponse(t *testing.T) {
 	test := NewServiceProviderTest(t)
 	// An actual response from google, whose AuthnStatement has the

@@ -38,6 +38,17 @@ type Options struct {
 	// providers.
 	// If nil, the administrative endpoints are unauthenticated.
 	AdminMiddleware func(http.Handler) http.Handler
+
+	// ExtraCertificates are additional signing certificates published in
+	// the metadata, for example to announce a new certificate before a key
+	// rollover. They are never used to sign anything. See
+	// saml.IdentityProvider.ExtraCertificates.
+	ExtraCertificates []*x509.Certificate
+
+	// MetadataScopes are published in the metadata as Shibboleth
+	// shibmd:Scope extension elements. See
+	// saml.IdentityProvider.MetadataScopes.
+	MetadataScopes []saml.ShibbolethScope
 }
 
 // Server represents an IDP server. The server provides the following URLs:
@@ -103,6 +114,8 @@ func New(opts Options) (*Server, error) {
 				saml.HTTPRedirectBinding,
 				saml.HTTPPostBinding,
 			},
+			ExtraCertificates: opts.ExtraCertificates,
+			MetadataScopes:    opts.MetadataScopes,
 		},
 		logger:            logr,
 		Store:             opts.Store,

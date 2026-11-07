@@ -332,6 +332,62 @@ func TestRoleDescriptorOmitsUnsetDurations(t *testing.T) {
 	assert.Check(t, is.Equal(ed2.IDPSSODescriptors[0].CacheDuration, time.Duration(0)))
 }
 
+func TestAffiliationDescriptorDurationsRoundTrip(t *testing.T) {
+	// cacheDuration on an AffiliationDescriptor is an xsd:duration and
+	// validUntil an xsd:dateTime, as on the role descriptors
+	// (saml-metadata-2.0-os §2.5).
+	validUntil := time.Date(2030, time.January, 2, 3, 4, 5, 678000000, time.UTC)
+
+	// Unmarshal, including a validUntil without a time zone, which only
+	// RelaxedTime accepts.
+	input := `<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://example.com/metadata">` +
+		`<AffiliationDescriptor affiliationOwnerID="https://example.com/owner" cacheDuration="PT1H" validUntil="2030-01-02T03:04:05.678">` +
+		`<Extensions><x:Thing xmlns:x="urn:example:x">kept</x:Thing></Extensions>` +
+		`<AffiliateMember>https://member.example.com/</AffiliateMember>` +
+		`</AffiliationDescriptor></EntityDescriptor>`
+	var ed EntityDescriptor
+	assert.NilError(t, xml.Unmarshal([]byte(input), &ed))
+	ad := ed.AffiliationDescriptor
+	assert.Assert(t, ad != nil)
+	assert.Check(t, is.Equal(ad.CacheDuration, time.Hour))
+	assert.Check(t, ad.ValidUntil.Equal(validUntil))
+	assert.Check(t, is.Equal(ad.AffiliationOwnerID, "https://example.com/owner"))
+	assert.Check(t, is.DeepEqual(ad.AffiliateMembers, []string{"https://member.example.com/"}))
+	assert.Assert(t, ad.Extensions != nil)
+	assert.Assert(t, is.Len(ad.Extensions.Other, 1))
+	assert.Check(t, is.Equal(ad.Extensions.Other[0].CharData, "kept"))
+
+	// Marshal
+	buf, err := xml.Marshal(ed)
+	assert.NilError(t, err)
+	assert.Check(t, is.Contains(string(buf), ` cacheDuration="PT1H"`))
+	assert.Check(t, is.Contains(string(buf), ` validUntil="2030-01-02T03:04:05.678Z"`))
+	assert.Check(t, is.Contains(string(buf), `kept</Thing></Extensions>`))
+
+	// Round trip
+	var ed2 EntityDescriptor
+	assert.NilError(t, xml.Unmarshal(buf, &ed2))
+	assert.Assert(t, ed2.AffiliationDescriptor != nil)
+	assert.Check(t, is.Equal(ed2.AffiliationDescriptor.CacheDuration, time.Hour))
+	assert.Check(t, ed2.AffiliationDescriptor.ValidUntil.Equal(validUntil))
+	assert.Check(t, is.DeepEqual(ed2.AffiliationDescriptor.AffiliateMembers, ad.AffiliateMembers))
+	assert.Assert(t, ed2.AffiliationDescriptor.Extensions != nil)
+	assert.Check(t, is.Len(ed2.AffiliationDescriptor.Extensions.Other, 1))
+}
+
+func TestAffiliationDescriptorOmitsUnsetDurations(t *testing.T) {
+	ad := AffiliationDescriptor{AffiliationOwnerID: "https://example.com/owner"}
+	buf, err := xml.Marshal(ad)
+	assert.NilError(t, err)
+	assert.Check(t, is.Equal(string(buf),
+		`<AffiliationDescriptor affiliationOwnerID="https://example.com/owner" ID=""></AffiliationDescriptor>`))
+
+	var ad2 AffiliationDescriptor
+	assert.NilError(t, xml.Unmarshal(buf, &ad2))
+	assert.Check(t, ad2.ValidUntil.IsZero())
+	assert.Check(t, is.Equal(ad2.CacheDuration, time.Duration(0)))
+}
+
 func TestCanParseIDPMetadataWithRoleDescriptorCacheDuration(t *testing.T) {
 	// IdP metadata in the wild sets cacheDuration (and sometimes validUntil,
 	// without a time zone) on the IDPSSODescriptor rather than on the

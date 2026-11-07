@@ -144,3 +144,98 @@ func TestFetchMetadataByEntityID(t *testing.T) {
 		mustParseURL(testServer.URL+"/missing"), "https://idp2.example.org/idp")
 	assert.Check(t, is.Error(err, "failed to fetch metadata: unexpected status code 404"))
 }
+
+// nestedAggregate wraps children in an <EntitiesDescriptor>.
+func nestedAggregate(children ...string) string {
+	return `<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata">` + strings.Join(children, "") + `</EntitiesDescriptor>`
+}
+
+func testSPEntity(entityID string) string {
+	return `<EntityDescriptor entityID="` + entityID + `"><SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">` +
+		`<AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="` + entityID + `/acs" index="0"/>` +
+		`</SPSSODescriptor></EntityDescriptor>`
+}
+
+func testIDPEntity(entityID string) string {
+	return `<EntityDescriptor entityID="` + entityID + `"><IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">` +
+		`<SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="` + entityID + `/sso"/>` +
+		`</IDPSSODescriptor></EntityDescriptor>`
+}
+
+// ParseMetadata searches nested <EntitiesDescriptor> aggregates for an IDP,
+// and returns the first one in document order.
+func TestParseMetadataNestedAggregates(t *testing.T) {
+	const sp = "https://sp.example.org"
+	const idp1 = "https://idp1.example.org"
+	const idp2 = "https://idp2.example.org"
+
+	cases := []struct {
+		name     string
+		metadata string
+		want     string
+		err      string
+	}{
+		{
+			name:     "IDP only in a nested aggregate",
+			metadata: nestedAggregate(testSPEntity(sp), nestedAggregate(testIDPEntity(idp1))),
+			want:     idp1,
+		},
+		{
+			name:     "IDP only in a deeply nested aggregate",
+			metadata: nestedAggregate(nestedAggregate(testSPEntity(sp), nestedAggregate(nestedAggregate(testIDPEntity(idp1)))), testSPEntity(sp+"/2")),
+			want:     idp1,
+		},
+		{
+			name:     "nested IDP before a top-level IDP",
+			metadata: nestedAggregate(testSPEntity(sp), nestedAggregate(testIDPEntity(idp1)), testIDPEntity(idp2)),
+			want:     idp1,
+		},
+		{
+			name:     "top-level IDP before a nested IDP",
+			metadata: nestedAggregate(testIDPEntity(idp2), nestedAggregate(testIDPEntity(idp1))),
+			want:     idp2,
+		},
+		{
+			name: "entities outside the metadata namespace are ignored",
+			metadata: nestedAggregate(
+				`<Extensions><x:EntityDescriptor xmlns:x="urn:example:foreign" entityID="`+idp2+`"><x:IDPSSODescriptor/></x:EntityDescriptor></Extensions>`,
+				nestedAggregate(testIDPEntity(idp1))),
+			want: idp1,
+		},
+		{
+			name:     "no IDP",
+			metadata: nestedAggregate(testSPEntity(sp), nestedAggregate(testSPEntity(sp+"/2"))),
+			err:      "no entity found with IDPSSODescriptor",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			md, err := ParseMetadata([]byte(c.metadata))
+			if c.err != "" {
+				assert.Check(t, is.Error(err, c.err))
+				assert.Check(t, is.Nil(md))
+				return
+			}
+			assert.Assert(t, err)
+			assert.Check(t, is.Equal(c.want, md.EntityID))
+			assert.Assert(t, is.Len(md.IDPSSODescriptors, 1))
+			assert.Check(t, is.Equal(c.want+"/sso", md.IDPSSODescriptors[0].SingleSignOnServices[0].Location))
+		})
+	}
+
+	t.Run("rejects invalid nested metadata", func(t *testing.T) {
+		data := nestedAggregate(nestedAggregate(
+			`<EntityDescriptor ::foo="bar" entityID="` + idp1 + `">]]</EntityDescriptor>`))
+		md, err := ParseMetadata([]byte(data))
+		assert.Check(t, err != nil)
+		assert.Check(t, is.Nil(md))
+	})
+
+	t.Run("malformed entity after the IDP is still rejected", func(t *testing.T) {
+		data := nestedAggregate(testIDPEntity(idp1), nestedAggregate(
+			`<EntityDescriptor entityID="`+idp2+`" validUntil="not a time"/>`))
+		md, err := ParseMetadata([]byte(data))
+		assert.Check(t, err != nil)
+		assert.Check(t, is.Nil(md))
+	})
+}
