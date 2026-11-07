@@ -28,14 +28,15 @@ type Config struct {
 	acsURL           url.URL
 	sloURL           url.URL
 
-	key            crypto.Signer
-	certificate    *x509.Certificate
-	intermediates  []*x509.Certificate
-	decryptionKeys []*rsa.PrivateKey
-	signRequests   bool
-	nameIDFormat   saml.NameIDFormat
-	replayState    saml.AssertionReplayCache
-	clock          *dsig.Clock
+	key                    crypto.Signer
+	certificate            *x509.Certificate
+	intermediates          []*x509.Certificate
+	decryptionKeys         []*rsa.PrivateKey
+	signRequests           bool
+	nameIDFormat           saml.NameIDFormat
+	replayState            saml.AssertionReplayCache
+	authnContextComparator func(comparison string, requested []string, got string) bool
+	clock                  *dsig.Clock
 
 	spOptions []ServiceProviderOption
 }
@@ -48,15 +49,14 @@ type Config struct {
 //
 // The entity ID is conventionally the URL where the SP serves its metadata
 // (see ServeMetadata), such as "https://sp.example.com/saml/metadata". The
-// SP's other URLs are resolved against it as URL references. The assertion
-// consumer service (ACS), where the IdP sends its Responses, is at "acs" by
-// default: "https://sp.example.com/saml/acs" in that example. Serve
-// ParseResponse there, or choose another URL with WithACSURL. If the entity
-// ID is not an absolute URL, such as a URN, WithACSURL must give an
-// absolute one.
+// assertion consumer service (ACS), where the IdP sends its Responses, is
+// then beside it by default, at "acs": "https://sp.example.com/saml/acs"
+// in that example. Serve ParseResponse there, or choose another URL with
+// WithACSURL. If the entity ID is not a URL, such as a URN, WithACSURL is
+// required.
 //
-// New returns an error if an argument is missing or a URL cannot be
-// resolved. It does not call identityProvider.
+// New returns an error if an argument is missing or a URL is not
+// absolute. It does not call identityProvider.
 func New(identityProvider MetadataFunc, entityID string, opts ...Option) (*Config, error) {
 	if identityProvider == nil {
 		return nil, errors.New("samlsp: the identity provider is nil")
@@ -65,23 +65,27 @@ func New(identityProvider MetadataFunc, entityID string, opts ...Option) (*Confi
 		return nil, errors.New("samlsp: the entity ID is empty")
 	}
 	c := &Config{identityProvider: identityProvider, entityID: entityID}
-	o := configOptions{acsURL: "acs"}
+	var o configOptions
 	for _, opt := range opts {
 		if opt != nil {
 			opt.applyConfig(c, &o)
 		}
 	}
 
-	var base *url.URL
-	if u, err := url.Parse(entityID); err == nil && u.IsAbs() && u.Host != "" {
-		base = u
-	}
 	var err error
-	if c.acsURL, err = resolveURL(base, "ACS URL", o.acsURL); err != nil {
-		return nil, err
+	if o.acsURL != "" {
+		if c.acsURL, err = absoluteURL("ACS URL", o.acsURL); err != nil {
+			return nil, err
+		}
+	} else {
+		u, err := url.Parse(entityID)
+		if err != nil || !u.IsAbs() || u.Host == "" {
+			return nil, fmt.Errorf("samlsp: the entity ID %q is not a URL to put the ACS beside; use WithACSURL", entityID)
+		}
+		c.acsURL = *u.ResolveReference(&url.URL{Path: "acs"})
 	}
 	if o.sloURL != "" {
-		if c.sloURL, err = resolveURL(base, "SLO URL", o.sloURL); err != nil {
+		if c.sloURL, err = absoluteURL("SLO URL", o.sloURL); err != nil {
 			return nil, err
 		}
 	}
@@ -91,24 +95,35 @@ func New(identityProvider MetadataFunc, entityID string, opts ...Option) (*Confi
 	return c, nil
 }
 
-// resolveURL returns ref resolved against base, the entity ID as a URL, or
-// nil if the entity ID is not one. The result must be absolute.
-func resolveURL(base *url.URL, what, ref string) (url.URL, error) {
-	if ref == "" {
-		return url.URL{}, fmt.Errorf("samlsp: the %s is empty", what)
-	}
-	u, err := url.Parse(ref)
+// harden turns on every check that package saml leaves off by default only
+// for compatibility. A ServiceProviderOption can turn one off again.
+func harden(sp *saml.ServiceProvider) {
+	// Check the AuthnContextClassRef against WithAuthnContext.
+	sp.ValidateAuthnContextClassRef = true
+	// Refuse assertions with conditions that are not understood
+	// (saml-core §2.5.1.1).
+	sp.RejectUnknownConditions = true
+	// Decrypt AES-CBC only inside a signed Response: CBC does not
+	// authenticate the ciphertext (saml-core errata E93).
+	sp.RequireSignedResponseForCBC = true
+	// Refuse signatures made with SHA-1.
+	sp.RejectSHA1Signatures = true
+	// Refuse messages once the IdP metadata's validUntil has passed.
+	sp.RejectExpiredIDPMetadata = true
+	// Resolve only type 0x0004 artifacts issued by this IdP.
+	sp.RequireStandardArtifacts = true
+	// Keep RelayState within 80 bytes (saml-bindings §3.4.3, §3.5.3).
+	sp.LimitRelayStateLength = true
+}
+
+// absoluteURL parses s, which must be an absolute URL with a host.
+func absoluteURL(what, s string) (url.URL, error) {
+	u, err := url.Parse(s)
 	if err != nil {
 		return url.URL{}, fmt.Errorf("samlsp: invalid %s: %w", what, err)
 	}
-	if !u.IsAbs() {
-		if base == nil {
-			return url.URL{}, fmt.Errorf("samlsp: the %s %q is relative, and the entity ID is not a URL to resolve it against", what, ref)
-		}
-		u = base.ResolveReference(u)
-	}
-	if u.Host == "" {
-		return url.URL{}, fmt.Errorf("samlsp: the %s %q has no host", what, u)
+	if !u.IsAbs() || u.Host == "" {
+		return url.URL{}, fmt.Errorf("samlsp: the %s must be an absolute URL, not %q", what, s)
 	}
 	return *u, nil
 }
@@ -128,17 +143,16 @@ type optionFunc func(c *Config, o *configOptions)
 
 func (f optionFunc) applyConfig(c *Config, o *configOptions) { f(c, o) }
 
-// WithACSURL sets the URL of the SP's assertion consumer service, where the
-// IdP sends its Responses. The handler at this URL calls ParseResponse. A
-// relative URL is resolved against the entity ID. The default is "acs".
+// WithACSURL sets the absolute URL of the SP's assertion consumer service,
+// where the IdP sends its Responses. The handler at this URL calls
+// ParseResponse. The default is "acs" beside the entity ID (see New).
 func WithACSURL(acsURL string) Option {
 	return optionFunc(func(_ *Config, o *configOptions) { o.acsURL = acsURL })
 }
 
-// WithSLOURL sets the URL of the SP's single logout service. The handler at
-// this URL calls ParseLogoutRequest and ParseLogoutResponse. A relative URL
-// is resolved against the entity ID: WithSLOURL("slo") puts it beside the
-// ACS. Without it, the SP metadata advertises no single logout service.
+// WithSLOURL sets the absolute URL of the SP's single logout service. The
+// handler at this URL calls ParseLogoutRequest and ParseLogoutResponse.
+// Without it, the SP metadata advertises no single logout service.
 func WithSLOURL(sloURL string) Option {
 	return optionFunc(func(_ *Config, o *configOptions) { o.sloURL = sloURL })
 }
@@ -189,6 +203,23 @@ func WithReplayState(state saml.AssertionReplayCache) Option {
 	return optionFunc(func(c *Config, _ *configOptions) { c.replayState = state })
 }
 
+// WithAuthnContextComparator sets how ParseResponse decides whether the
+// authentication context class the IdP used satisfies a WithAuthnContext
+// whose comparison is not ComparisonExact. satisfies reports whether got
+// is acceptable when classes were requested with comparison. The SAML
+// specification leaves the order of the classes to each deployment.
+func WithAuthnContextComparator(satisfies func(comparison AuthnContextComparison, requested []AuthnContextClass, got AuthnContextClass) bool) Option {
+	return optionFunc(func(c *Config, _ *configOptions) {
+		c.authnContextComparator = func(comparison string, requested []string, got string) bool {
+			classes := make([]AuthnContextClass, len(requested))
+			for i, r := range requested {
+				classes[i] = AuthnContextClass(r)
+			}
+			return satisfies(AuthnContextComparison(comparison), classes, AuthnContextClass(got))
+		}
+	})
+}
+
 // WithClock sets the time source used to check validity periods. It is
 // mainly useful in tests.
 func WithClock(clock *dsig.Clock) Option {
@@ -220,11 +251,6 @@ func WithServiceProvider(fn func(sp *saml.ServiceProvider)) ServiceProviderOptio
 // SignMetadata makes ServeMetadata and Metadata sign the SP metadata with
 // the key of WithKey. Pass it to New.
 var SignMetadata ServiceProviderOption = func(sp *saml.ServiceProvider) { sp.SignMetadata = true }
-
-// RejectUnknownConditions makes ParseResponse refuse an assertion whose
-// Conditions hold a condition this package does not understand, as
-// saml-core §2.5.1.1 requires.
-var RejectUnknownConditions ServiceProviderOption = func(sp *saml.ServiceProvider) { sp.RejectUnknownConditions = true }
 
 // applyServiceProviderOptions applies the options of c, then extra, to sp.
 func (c *Config) applyServiceProviderOptions(sp *saml.ServiceProvider, extra []ServiceProviderOption) {
@@ -273,7 +299,10 @@ func (c *Config) localServiceProvider(ctx context.Context) *saml.ServiceProvider
 		AuthnNameIDFormat: c.nameIDFormat,
 		ReplayCache:       c.replayState,
 		Clock:             c.clock,
+
+		AuthnContextClassRefComparator: c.authnContextComparator,
 	}
+	harden(sp)
 	if c.sloURL.String() != "" {
 		sp.LogoutBindings = []string{saml.HTTPRedirectBinding, saml.HTTPPostBinding}
 	}

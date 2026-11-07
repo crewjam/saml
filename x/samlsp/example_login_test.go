@@ -66,19 +66,20 @@ func ExampleConfig_AuthnRequest_post() {
 }
 
 // ForceAuthn makes the IdP authenticate the user again, for example before
-// a sensitive operation. WithAuthnContext asks for a way to authenticate.
+// a sensitive operation. WithAuthnContext asks for a way to authenticate;
+// passed to ParseResponse too, it refuses an assertion that does not
+// satisfy it.
 func ExampleWithAuthnContext() {
 	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata")
 	if err != nil {
 		log.Fatal(err)
 	}
+	stepUp := samlsp.WithAuthnContext(samlsp.ComparisonExact,
+		samlsp.AuthnContextMobileTwoFactorContract,
+		samlsp.AuthnContextSmartcardPKI)
 
 	http.HandleFunc("/settings/delete-account", func(w http.ResponseWriter, r *http.Request) {
-		msg, err := config.AuthnRequest(r.Context(), rand.Text(),
-			samlsp.ForceAuthn,
-			samlsp.WithAuthnContext(samlsp.ComparisonMinimum,
-				samlsp.AuthnContextMobileTwoFactorContract,
-				samlsp.AuthnContextSmartcardPKI))
+		msg, err := config.AuthnRequest(r.Context(), rand.Text(), samlsp.ForceAuthn, stepUp)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -87,20 +88,47 @@ func ExampleWithAuthnContext() {
 		msg.Write(w)
 	})
 
-	http.HandleFunc("/saml/acs", func(w http.ResponseWriter, r *http.Request) {
-		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(takePendingRequest(r)))
+	http.HandleFunc("/saml/acs/step-up", func(w http.ResponseWriter, r *http.Request) {
+		assertion, err := config.ParseResponse(r.Context(), r,
+			samlsp.WithRequestID(takePendingRequest(r)), stepUp)
+		if errors.Is(err, saml.ErrAuthnContextMismatch) {
+			http.Error(w, "a second factor is required", http.StatusForbidden)
+			return
+		}
 		if err != nil {
 			http.Error(w, "login failed", http.StatusForbidden)
 			return
 		}
-		// ParseResponse does not check the class the IdP used; do it here.
-		switch assertion.AuthnContextClassRef {
-		case samlsp.AuthnContextMobileTwoFactorContract, samlsp.AuthnContextSmartcardPKI:
-			startSession(w, assertion)
-		default:
-			http.Error(w, "a second factor is required", http.StatusForbidden)
-		}
+		startSession(w, assertion)
 	})
+}
+
+// A comparison other than ComparisonExact needs an order of the classes,
+// which WithAuthnContextComparator gives.
+func ExampleWithAuthnContextComparator() {
+	strength := map[samlsp.AuthnContextClass]int{
+		samlsp.AuthnContextPassword:                   1,
+		samlsp.AuthnContextPasswordProtectedTransport: 2,
+		samlsp.AuthnContextMobileTwoFactorContract:    3,
+		samlsp.AuthnContextSmartcardPKI:               4,
+	}
+	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
+		samlsp.WithAuthnContextComparator(func(comparison samlsp.AuthnContextComparison, requested []samlsp.AuthnContextClass, got samlsp.AuthnContextClass) bool {
+			if comparison != samlsp.ComparisonMinimum {
+				return false
+			}
+			for _, r := range requested {
+				if strength[got] >= strength[r] && strength[got] > 0 {
+					return true
+				}
+			}
+			return false
+		}))
+	if err != nil {
+		log.Fatal(err)
+	}
+	atLeastTwoFactor := samlsp.WithAuthnContext(samlsp.ComparisonMinimum, samlsp.AuthnContextMobileTwoFactorContract)
+	_, _ = config, atLeastTwoFactor // pass to AuthnRequest and ParseResponse
 }
 
 // ParseResponse verifies the Response at the ACS. Its errors come from

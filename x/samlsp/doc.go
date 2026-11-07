@@ -18,17 +18,15 @@
 //		samlsp.RemoteMetadata("https://idp.example.com/metadata"),
 //		"https://sp.example.com/saml/metadata", // the SP's entity ID
 //		samlsp.WithKey(key, cert),
-//		samlsp.WithSLOURL("slo"),
+//		samlsp.WithSLOURL("https://sp.example.com/saml/slo"),
 //	)
 //	http.HandleFunc("/saml/metadata", config.ServeMetadata)
 //	http.HandleFunc("/saml/acs", acs)       // config.ACSURL()
 //	http.HandleFunc("/saml/slo", slo)       // config.SLOURL()
 //
-// The entity ID is conventionally the URL of the SP metadata. The SP's
-// other URLs are resolved against it: the ACS is at "acs" unless
-// WithACSURL says otherwise, so here it is https://sp.example.com/saml/acs,
-// and WithSLOURL("slo") puts single logout at
-// https://sp.example.com/saml/slo.
+// The entity ID is conventionally the URL of the SP metadata. Unless
+// WithACSURL says otherwise, the ACS is beside it, at "acs": here,
+// https://sp.example.com/saml/acs.
 //
 // The first argument is a MetadataFunc that supplies the identity
 // provider's metadata. Every method calls it with its context.
@@ -44,7 +42,23 @@
 // alongside its other options:
 //
 //	config, err := samlsp.New(idp, entityID, samlsp.SignMetadata)
-//	config.ParseResponse(ctx, r, samlsp.WithRequestID(id), samlsp.RejectUnknownConditions)
+//	config.ParseResponse(ctx, r, samlsp.WithRequestID(id), samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
+//		sp.AcceptAssertionBaseID = true
+//	}))
+//
+// # Hardening
+//
+// The saml.ServiceProvider that each method builds has every check on that
+// package saml leaves off by default for compatibility: authentication
+// context validation, refusal of unknown conditions, of AES-CBC encrypted
+// assertions in unsigned Responses, of SHA-1 signatures, of expired IdP
+// metadata and of non-standard artifacts, and a limit of 80 bytes on
+// RelayState. A ServiceProviderOption can turn one off for an IdP that
+// needs it:
+//
+//	samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
+//		sp.RequireSignedResponseForCBC = false // this IdP signs only assertions
+//	})
 //
 // # Web Browser SSO
 //

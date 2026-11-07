@@ -51,21 +51,32 @@ var (
 // WithAuthnContext asks the IdP to authenticate the user with one of
 // classes, compared as comparison says.
 //
-// ParseResponse does not check the class the IdP actually used. To check it,
-// read Assertion.AuthnContextClassRef, or pass a ServiceProviderOption that
-// sets saml.ServiceProvider.ValidateAuthnContextClassRef.
-func WithAuthnContext(comparison AuthnContextComparison, classes ...AuthnContextClass) AuthnOption {
-	return authnOptionFunc(func(o *authnOptions) {
-		refs := make([]string, len(classes))
-		for i, c := range classes {
-			refs[i] = string(c)
-		}
-		o.authnContext = &saml.RequestedAuthnContext{
-			Comparison:            string(comparison),
-			AuthnContextClassRefs: refs,
-		}
-	})
+// Pass the same option to ParseResponse, which then refuses an assertion
+// whose AuthnContextClassRef does not satisfy it, with an error matching
+// saml.ErrAuthnContextMismatch. A comparison other than ComparisonExact
+// needs WithAuthnContextComparator, since the order of the classes is
+// up to each deployment; without it, ParseResponse refuses every
+// assertion.
+func WithAuthnContext(comparison AuthnContextComparison, classes ...AuthnContextClass) AuthnContextOption {
+	refs := make([]string, len(classes))
+	for i, c := range classes {
+		refs[i] = string(c)
+	}
+	return AuthnContextOption{rac: &saml.RequestedAuthnContext{
+		Comparison:            string(comparison),
+		AuthnContextClassRefs: refs,
+	}}
 }
+
+// AuthnContextOption is the option that WithAuthnContext returns. It is an
+// AuthnOption, which puts it in the AuthnRequest, and a ResponseOption,
+// which checks the assertion against it.
+type AuthnContextOption struct {
+	rac *saml.RequestedAuthnContext
+}
+
+func (a AuthnContextOption) applyAuthn(o *authnOptions)       { o.authnContext = a.rac }
+func (a AuthnContextOption) applyResponse(o *responseOptions) { o.authnContext = a.rac }
 
 // WithResponseBinding asks the IdP to send its response with binding:
 // saml.HTTPPostBinding (the default), saml.HTTPArtifactBinding or
@@ -209,9 +220,10 @@ type ResponseOption interface {
 }
 
 type responseOptions struct {
-	requestIDs  []string
-	unsolicited bool
-	sp          []ServiceProviderOption
+	requestIDs   []string
+	unsolicited  bool
+	authnContext *saml.RequestedAuthnContext
+	sp           []ServiceProviderOption
 }
 
 type responseOptionFunc func(*responseOptions)
@@ -262,6 +274,7 @@ func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...Res
 		return nil, err
 	}
 	sp.AllowIDPInitiated = o.unsolicited
+	sp.RequestedAuthnContext = o.authnContext
 
 	if err := r.ParseForm(); err != nil {
 		return nil, err
