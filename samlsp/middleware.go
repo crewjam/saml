@@ -5,6 +5,8 @@ import (
 	"encoding/xml"
 	"errors"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/crewjam/saml"
 )
@@ -227,7 +229,10 @@ func (m *Middleware) CreateSessionFromAssertion(w http.ResponseWriter, r *http.R
 		trackedRequest, err := m.RequestTracker.GetTrackedRequest(r, trackedRequestIndex)
 		if err != nil {
 			if err == http.ErrNoCookie && m.ServiceProvider.AllowIDPInitiated {
-				if uri := r.Form.Get("RelayState"); uri != "" {
+				// The RelayState of an unsolicited response comes from the
+				// IdP, or from whoever posted the form, so only follow it
+				// to a path on this site.
+				if uri := r.Form.Get("RelayState"); isLocalRedirect(uri) {
 					redirectURI = uri
 				}
 			} else {
@@ -249,7 +254,32 @@ func (m *Middleware) CreateSessionFromAssertion(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	http.Redirect(w, r, redirectURI, http.StatusFound) //nolint:gosec // TODO: with AllowIDPInitiated, redirectURI may come from an unchecked RelayState
+	http.Redirect(w, r, redirectURI, http.StatusFound) //nolint:gosec // redirectURI is the tracked request URI, a local RelayState path, or the caller's default
+}
+
+// isLocalRedirect reports whether uri is an absolute path on this site, and
+// so safe to redirect to. It refuses anything a browser could resolve to
+// another origin: URLs with a scheme or host, protocol-relative URLs
+// ("//evil.example"), backslashes, which browsers treat as slashes
+// ("/\\evil.example"), and control characters, which browsers strip
+// ("/\t/evil.example").
+func isLocalRedirect(uri string) bool {
+	if !strings.HasPrefix(uri, "/") {
+		return false
+	}
+	for _, c := range uri {
+		if c < 0x20 || c == 0x7f || c == '\\' {
+			return false
+		}
+	}
+	if strings.HasPrefix(uri, "//") {
+		return false
+	}
+	u, err := url.Parse(uri)
+	if err != nil {
+		return false
+	}
+	return u.Scheme == "" && u.Host == "" && u.User == nil
 }
 
 // RequireAttribute returns a middleware function that requires that the
