@@ -337,11 +337,6 @@ func TestSpcovParseCert(t *testing.T) {
 	assert.Error(t, err, "parse cert, cannot parse certificate: x509: malformed certificate")
 }
 
-func TestSpcovHasBearerSubjectConfirmationNilSubject(t *testing.T) {
-	assert.Assert(t, !hasBearerSubjectConfirmation(nil))
-	assert.Assert(t, !hasBearerSubjectConfirmation(&Subject{}))
-}
-
 func TestSpcovValidateRequestID(t *testing.T) {
 	e := spcovSetup(t)
 	resp := Response{InResponseTo: "id-x"}

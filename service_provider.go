@@ -1680,32 +1680,8 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if assertion.Conditions == nil {
 		return classify(fmt.Errorf("assertion has no Conditions"), ErrMissingElement)
 	}
-	for _, subjectConfirmation := range assertion.Subject.SubjectConfirmations {
-		if subjectConfirmation.SubjectConfirmationData == nil {
-			return classify(fmt.Errorf("assertion SubjectConfirmation has no SubjectConfirmationData"), ErrMissingElement)
-		}
-		if err := sp.validateAssertionInResponseTo(subjectConfirmation.SubjectConfirmationData.InResponseTo, possibleRequestIDs); err != nil {
-			return err
-		}
-		if subjectConfirmation.SubjectConfirmationData.Recipient != sp.AcsURL.String() {
-			return classify(fmt.Errorf("assertion SubjectConfirmation Recipient is not %s", sp.AcsURL.String()), ErrDestinationMismatch)
-		}
-		// saml-profiles §4.1.4.2 says a bearer SubjectConfirmationData MUST
-		// NOT carry NotBefore, but some IdPs send one anyway; accept it as
-		// long as it is not in the future (saml-core §2.4.1.2). An omitted
-		// NotBefore is the zero time, which always passes.
-		if subjectConfirmation.SubjectConfirmationData.NotBefore.Add(-MaxClockSkew).After(now) {
-			return classify(fmt.Errorf("assertion SubjectConfirmationData is not yet valid"), ErrNotYetValid)
-		}
-		// A bearer SubjectConfirmationData MUST carry NotOnOrAfter
-		// (saml-profiles §4.1.4.2): an omitted one is the zero time, which
-		// has always passed.
-		if pastDeadline(subjectConfirmation.SubjectConfirmationData.NotOnOrAfter, now) {
-			return classify(fmt.Errorf("assertion SubjectConfirmationData is expired"), ErrExpired)
-		}
-	}
-	if !hasBearerSubjectConfirmation(assertion.Subject) {
-		return classify(fmt.Errorf("assertion has no bearer SubjectConfirmation"), ErrMissingElement)
+	if err := sp.validateBearerSubjectConfirmations(assertion.Subject, possibleRequestIDs, now); err != nil {
+		return err
 	}
 	if assertion.Conditions.NotBefore.Add(-MaxClockSkew).After(now) {
 		return classify(fmt.Errorf("assertion Conditions is not yet valid"), ErrNotYetValid)
@@ -1823,12 +1799,22 @@ func acceptableUntil(assertion *Assertion) time.Time {
 	if assertion.Conditions != nil && !assertion.Conditions.NotOnOrAfter.IsZero() {
 		deadline = earliest(deadline, skewedDeadline(assertion.Conditions.NotOnOrAfter))
 	}
+	// One valid bearer confirmation is enough, so the assertion stays
+	// acceptable until the latest bearer NotOnOrAfter. Confirmations with
+	// another Method are not checked and set no deadline.
+	var confirmationDeadline time.Time
 	if assertion.Subject != nil {
 		for _, confirmation := range assertion.Subject.SubjectConfirmations {
-			if confirmation.SubjectConfirmationData != nil {
-				deadline = earliest(deadline, skewedDeadline(confirmation.SubjectConfirmationData.NotOnOrAfter))
+			if confirmation.Method != bearerSubjectConfirmationMethod || confirmation.SubjectConfirmationData == nil {
+				continue
+			}
+			if d := skewedDeadline(confirmation.SubjectConfirmationData.NotOnOrAfter); d.After(confirmationDeadline) {
+				confirmationDeadline = d
 			}
 		}
+	}
+	if !confirmationDeadline.IsZero() {
+		deadline = earliest(deadline, confirmationDeadline)
 	}
 	return deadline
 }
@@ -1891,20 +1877,62 @@ func consumeLogoutRequest(cache AssertionReplayCache, req *LogoutRequest) error 
 // SAML web browser SSO profile.
 const bearerSubjectConfirmationMethod = "urn:oasis:names:tc:SAML:2.0:cm:bearer" //nolint:gosec // not a credential
 
-// hasBearerSubjectConfirmation reports whether subject has the bearer
-// SubjectConfirmation the web browser SSO profile requires (saml-profiles
-// §4.1.4.2). Without one, the Recipient, InResponseTo and expiry checks on
-// SubjectConfirmationData never run.
-func hasBearerSubjectConfirmation(subject *Subject) bool {
-	if subject == nil {
-		return false
-	}
+// validateBearerSubjectConfirmations checks the bearer SubjectConfirmations
+// of subject. The Web Browser SSO profile requires one (saml-profiles
+// §4.1.4.2), and "satisfying any one of them is sufficient to confirm the
+// subject" (saml-core §2.4.1), so the assertion is accepted if one bearer
+// confirmation has SubjectConfirmationData that names this SP's ACS as
+// Recipient, answers one of possibleRequestIDs (or none, if IdP-initiated
+// responses are allowed), and is valid at now. Confirmations with another
+// Method ("Other ... confirmation methods MAY be included", §4.1.4.2) are
+// not checked. If none passes, the error of the first bearer confirmation is
+// returned.
+func (sp *ServiceProvider) validateBearerSubjectConfirmations(subject *Subject, possibleRequestIDs []string, now time.Time) error {
+	var firstErr error
 	for _, subjectConfirmation := range subject.SubjectConfirmations {
-		if subjectConfirmation.Method == bearerSubjectConfirmationMethod {
-			return true
+		if subjectConfirmation.Method != bearerSubjectConfirmationMethod {
+			continue
+		}
+		err := sp.validateBearerSubjectConfirmationData(subjectConfirmation.SubjectConfirmationData, possibleRequestIDs, now)
+		if err == nil {
+			return nil
+		}
+		if firstErr == nil {
+			firstErr = err
 		}
 	}
-	return false
+	if firstErr == nil {
+		return classify(fmt.Errorf("assertion has no bearer SubjectConfirmation"), ErrMissingElement)
+	}
+	return firstErr
+}
+
+// validateBearerSubjectConfirmationData checks the SubjectConfirmationData of
+// one bearer SubjectConfirmation (saml-profiles §4.1.4.3).
+func (sp *ServiceProvider) validateBearerSubjectConfirmationData(data *SubjectConfirmationData, possibleRequestIDs []string, now time.Time) error {
+	if data == nil {
+		return classify(fmt.Errorf("assertion SubjectConfirmation has no SubjectConfirmationData"), ErrMissingElement)
+	}
+	if err := sp.validateAssertionInResponseTo(data.InResponseTo, possibleRequestIDs); err != nil {
+		return err
+	}
+	if data.Recipient != sp.AcsURL.String() {
+		return classify(fmt.Errorf("assertion SubjectConfirmation Recipient is not %s", sp.AcsURL.String()), ErrDestinationMismatch)
+	}
+	// saml-profiles §4.1.4.2 says a bearer SubjectConfirmationData MUST
+	// NOT carry NotBefore, but some IdPs send one anyway; accept it as
+	// long as it is not in the future (saml-core §2.4.1.2). An omitted
+	// NotBefore is the zero time, which always passes.
+	if data.NotBefore.Add(-MaxClockSkew).After(now) {
+		return classify(fmt.Errorf("assertion SubjectConfirmationData is not yet valid"), ErrNotYetValid)
+	}
+	// A bearer SubjectConfirmationData MUST carry NotOnOrAfter
+	// (saml-profiles §4.1.4.2): an omitted one is the zero time, which
+	// has always passed.
+	if pastDeadline(data.NotOnOrAfter, now) {
+		return classify(fmt.Errorf("assertion SubjectConfirmationData is expired"), ErrExpired)
+	}
+	return nil
 }
 
 func (sp *ServiceProvider) validateAudienceRestriction(assertion *Assertion) error {
