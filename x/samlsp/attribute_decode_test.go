@@ -1,6 +1,7 @@
 package samlsp_test
 
 import (
+	"errors"
 	"math"
 	"net/netip"
 	"net/url"
@@ -219,5 +220,111 @@ func TestDecodeAttributesErrors(t *testing.T) {
 		if err := assertionWith().DecodeAttributes(bad); err == nil {
 			t.Errorf("DecodeAttributes(%T) succeeded", bad)
 		}
+	}
+}
+
+// both implements AttributeUnmarshaler and encoding.TextUnmarshaler.
+type both string
+
+func (b *both) UnmarshalSAMLAttribute(attr samlsp.Attribute) error {
+	*b = both("saml:" + strings.Join(attr.Values, "+"))
+	return nil
+}
+
+func (b *both) UnmarshalText(text []byte) error {
+	*b = both("text:" + string(text))
+	return nil
+}
+
+// set collects every value of an attribute, with its declared type.
+type set map[string]string
+
+func (s *set) UnmarshalSAMLAttribute(attr samlsp.Attribute) error {
+	*s = set{}
+	for i, v := range attr.Values {
+		(*s)[v] = attr.Types[i]
+	}
+	return nil
+}
+
+// groups is a slice type that unmarshals the whole attribute itself.
+type groups []string
+
+func (g *groups) UnmarshalSAMLAttribute(attr samlsp.Attribute) error {
+	*g = append(groups{"from:" + attr.Name}, attr.Values...)
+	return nil
+}
+
+// strictBool accepts only values declared as xs:boolean.
+type strictBool bool
+
+func (b *strictBool) UnmarshalSAMLAttribute(attr samlsp.Attribute) error {
+	if attr.Types[0] != "xs:boolean" {
+		return errors.New("not declared xs:boolean")
+	}
+	*b = attr.Values[0] == "true" || attr.Values[0] == "1"
+	return nil
+}
+
+func TestDecodeAttributesAttributeUnmarshaler(t *testing.T) {
+	a := &samlsp.Assertion{Attributes: samlsp.Attributes{
+		{Name: "x", NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:uri", Values: []string{"a", "b"}, Types: []string{"xs:string", ""}},
+		{Name: "y", Values: []string{"1"}},
+		// A second element with the same Name adds to the values; its
+		// missing Types count as undeclared.
+		{Name: "x", Values: []string{"c"}},
+		{Name: "flag", Values: []string{"true"}, Types: []string{"xs:boolean"}},
+	}}
+
+	var got struct {
+		Both      both              `saml:"x"`
+		BothSlice []both            `saml:"x"`
+		Set       set               `saml:"x"`
+		PSet      *set              `saml:"x"`
+		Groups    groups            `saml:"x"`
+		Raw       samlsp.Attribute  `saml:"x"`
+		PRaw      *samlsp.Attribute `saml:"y"`
+		Flag      strictBool        `saml:"flag"`
+		Absent    *set              `saml:"absent"`
+	}
+	if err := a.DecodeAttributes(&got); err != nil {
+		t.Fatal(err)
+	}
+
+	if got.Both != "saml:a+b+c" {
+		t.Errorf("Both = %q: AttributeUnmarshaler not preferred, or not given every value", got.Both)
+	}
+	if len(got.BothSlice) != 3 || got.BothSlice[2] != "saml:c" {
+		t.Errorf("BothSlice = %q: elements should each get one value", got.BothSlice)
+	}
+	if len(got.Set) != 3 || got.Set["a"] != "xs:string" || got.Set["c"] != "" {
+		t.Errorf("Set = %v", got.Set)
+	}
+	if got.PSet == nil || len(*got.PSet) != 3 {
+		t.Errorf("PSet = %v", got.PSet)
+	}
+	if strings.Join(got.Groups, ",") != "from:x,a,b,c" {
+		t.Errorf("Groups = %q", got.Groups)
+	}
+	if got.Raw.Name != "x" || got.Raw.NameFormat == "" || len(got.Raw.Values) != 3 || len(got.Raw.Types) != 3 {
+		t.Errorf("Raw = %+v", got.Raw)
+	}
+	if got.PRaw == nil || got.PRaw.Values[0] != "1" || got.PRaw.Types[0] != "" {
+		t.Errorf("PRaw = %+v", got.PRaw)
+	}
+	if !got.Flag {
+		t.Error("Flag not set")
+	}
+	if got.Absent != nil {
+		t.Error("an absent attribute was unmarshaled")
+	}
+
+	// Errors are wrapped with the attribute and field.
+	var strict struct {
+		Y strictBool `saml:"y"`
+	}
+	err := a.DecodeAttributes(&strict)
+	if err == nil || !strings.Contains(err.Error(), `attribute "y" into field Y`) || !strings.Contains(err.Error(), "not declared xs:boolean") {
+		t.Errorf("err = %v", err)
 	}
 }
