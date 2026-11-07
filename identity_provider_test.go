@@ -732,6 +732,52 @@ func TestIDPMakeAssertion(t *testing.T) {
 	assert.Check(t, is.DeepEqual(expectedAttributes, req.Assertion.AttributeStatements[0].Attributes))
 }
 
+func TestIDPMakeAssertionAddressWithoutPort(t *testing.T) {
+	// SubjectConfirmationData/@Address and SubjectLocality/@Address are
+	// network addresses; the port from http.Request.RemoteAddr must not be
+	// included (saml-core-2.0-os §2.4.1.2, §2.7.2.1).
+	testCases := []struct {
+		remoteAddr string
+		want       string
+	}{
+		{remoteAddr: "192.0.2.1:1234", want: "192.0.2.1"},
+		{remoteAddr: "[::1]:1234", want: "::1"},
+		{remoteAddr: "[2001:db8::1]:443", want: "2001:db8::1"},
+		{remoteAddr: "192.0.2.1", want: "192.0.2.1"},
+		{remoteAddr: "2001:db8::1", want: "2001:db8::1"},
+		{remoteAddr: "", want: ""},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.remoteAddr, func(t *testing.T) {
+			test := NewIdentityProviderTest(t, applyKey)
+			req := IdpAuthnRequest{
+				Now: TimeNow(),
+				IDP: &test.IDP,
+				RequestBuffer: []byte("" +
+					"<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
+					"  AssertionConsumerServiceURL=\"https://sp.example.com/saml2/acs\" " +
+					"  Destination=\"https://idp.example.com/saml/sso\" " +
+					"  ID=\"id-00020406080a0c0e10121416181a1c1e\" " +
+					"  IssueInstant=\"2015-12-01T01:57:09Z\" ProtocolBinding=\"\" " +
+					"  Version=\"2.0\">" +
+					"  <Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" " +
+					"    Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</Issuer>" +
+					"</AuthnRequest>"),
+			}
+			req.HTTPRequest, _ = http.NewRequest("POST", "http://idp.example.com/saml/sso", nil)
+			req.HTTPRequest.RemoteAddr = tc.remoteAddr
+			assert.NilError(t, req.Validate())
+
+			assert.NilError(t, DefaultAssertionMaker{}.MakeAssertion(&req, &Session{
+				ID:     "f00df00df00d",
+				NameID: "alice",
+			}))
+			assert.Check(t, is.Equal(req.Assertion.Subject.SubjectConfirmations[0].SubjectConfirmationData.Address, tc.want))
+			assert.Check(t, is.Equal(req.Assertion.AuthnStatements[0].SubjectLocality.Address, tc.want))
+		})
+	}
+}
+
 func TestIDPMarshalAssertion(t *testing.T) {
 	test := NewIdentityProviderTest(t, applyKey)
 	req := IdpAuthnRequest{
