@@ -1609,7 +1609,7 @@ func (sp *ServiceProvider) decryptElement(encryptedEl *etree.Element) (*etree.El
 	for i, k := range sp.DecryptionKeys {
 		keys = append(keys, namedDecryptionKey{fmt.Sprintf("DecryptionKeys[%d]", i), k})
 	}
-	return decryptWithKeys(encryptedEl, keys)
+	return decryptWithKeys(encryptedEl, keys, sp.entityID())
 }
 
 // parsePlaintext parses the plaintext of a decrypted element and returns its
@@ -1634,16 +1634,26 @@ func parsePlaintext(plaintextEl []byte) (*etree.Element, error) {
 }
 
 // decryptWithKey decrypts encryptedDataEl, the EncryptedData child of
-// encryptedEl, with decryptionKey. The content key is wrapped in an
-// EncryptedKey either beside the EncryptedData or inside its KeyInfo.
-func decryptWithKey(decryptionKey interface{}, encryptedEl, encryptedDataEl *etree.Element) ([]byte, error) {
-	key := decryptionKey
-	keyEl := encryptedEl.FindElement("./EncryptedKey")
-	if keyEl != nil {
-		var err error
-		key, err = xmlenc.Decrypt(decryptionKey, keyEl)
-		if err != nil {
+// encryptedEl, with decryptionKey. If encryptedKeyEl is not nil, it is an
+// EncryptedKey, beside the EncryptedData or inside its KeyInfo, that holds
+// the content key wrapped with decryptionKey.
+func decryptWithKey(decryptionKey interface{}, encryptedEl, encryptedKeyEl, encryptedDataEl *etree.Element) ([]byte, error) {
+	if encryptedKeyEl == nil {
+		return xmlenc.Decrypt(decryptionKey, encryptedDataEl)
+	}
+	key, err := xmlenc.Decrypt(decryptionKey, encryptedKeyEl)
+	if err != nil {
+		if encryptedKeyEl.Parent() == encryptedEl {
 			return nil, classify(fmt.Errorf("failed to decrypt key from response: %w", err), ErrDecryptionFailed)
+		}
+		return nil, err
+	}
+	// The block ciphers unwrap an EncryptedKey in KeyInfo themselves, so
+	// hand them the EncryptedData without one, now that the key is known.
+	if encryptedDataEl.FindElement("./KeyInfo/EncryptedKey") != nil {
+		encryptedDataEl = encryptedDataEl.Copy()
+		for _, el := range encryptedDataEl.FindElements("./KeyInfo/EncryptedKey") {
+			el.Parent().RemoveChild(el)
 		}
 	}
 	return xmlenc.Decrypt(key, encryptedDataEl)

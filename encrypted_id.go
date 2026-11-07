@@ -196,8 +196,15 @@ type namedDecryptionKey struct {
 // decryptWithKeys decrypts encryptedEl, an element with an
 // xenc:EncryptedData child such as saml:EncryptedID or
 // saml:EncryptedAssertion, with the first of keys that can, and returns the
-// root element of the plaintext.
-func decryptWithKeys(encryptedEl *etree.Element, keys []namedDecryptionKey) (*etree.Element, error) {
+// root element of the plaintext. recipient is the entity ID of this party.
+//
+// The content key may be wrapped for several recipients, in several
+// xenc:EncryptedKey elements beside the EncryptedData or inside its KeyInfo
+// (saml-core errata E43, §6.3: "It is RECOMMENDED that implementations simply
+// use the first key they understand and ignore any additional keys"). Those
+// whose Recipient is recipient are tried first, then the others in document
+// order, each with every one of keys.
+func decryptWithKeys(encryptedEl *etree.Element, keys []namedDecryptionKey, recipient string) (*etree.Element, error) {
 	encryptedDataEl, err := findOneChild(encryptedEl, "http://www.w3.org/2001/04/xmlenc#", "EncryptedData")
 	if err != nil {
 		return nil, err
@@ -206,27 +213,50 @@ func decryptWithKeys(encryptedEl *etree.Element, keys []namedDecryptionKey) (*et
 		return nil, errors.New("no decryption key")
 	}
 
-	plaintext, err := decryptWithKey(keys[0].key, encryptedEl, encryptedDataEl)
-	if err != nil && len(keys) > 1 {
-		// Key transport is RSA-OAEP only, which fails the same way for every
-		// wrong key, so trying several keys reveals no more than trying one.
-		errs := []error{fmt.Errorf("%s: %w", keys[0].name, err)}
-		for _, k := range keys[1:] {
-			var keyErr error
-			if plaintext, keyErr = decryptWithKey(k.key, encryptedEl, encryptedDataEl); keyErr == nil {
-				err = nil
-				break
+	encryptedKeyEls := encryptedKeyCandidates(encryptedEl, encryptedDataEl, recipient)
+	if len(encryptedKeyEls) == 0 {
+		// No EncryptedKey: the keys are used on the EncryptedData directly.
+		encryptedKeyEls = []*etree.Element{nil}
+	}
+
+	// Only the failures of the first EncryptedKey tried are reported, so
+	// that the error says no more than it did when only that one was tried.
+	// Key transport is RSA-OAEP only, which fails the same way for every
+	// wrong key, so trying several keys reveals no more than trying one.
+	var errs []error
+	for i, encryptedKeyEl := range encryptedKeyEls {
+		for _, k := range keys {
+			plaintext, keyErr := decryptWithKey(k.key, encryptedEl, encryptedKeyEl, encryptedDataEl)
+			if keyErr == nil {
+				return parsePlaintext(plaintext)
 			}
-			errs = append(errs, fmt.Errorf("%s: %w", k.name, keyErr))
-		}
-		if err != nil {
-			err = fmt.Errorf("no decryption key could decrypt it: %w", errors.Join(errs...))
+			if i == 0 {
+				errs = append(errs, fmt.Errorf("%s: %w", k.name, keyErr))
+			}
 		}
 	}
-	if err != nil {
-		return nil, err
+	if len(keys) == 1 {
+		return nil, errors.Unwrap(errs[0])
 	}
-	return parsePlaintext(plaintext)
+	return nil, fmt.Errorf("no decryption key could decrypt it: %w", errors.Join(errs...))
+}
+
+// encryptedKeyCandidates returns the xenc:EncryptedKey elements that may
+// hold the content key of encryptedDataEl: those beside it in encryptedEl
+// and those in its KeyInfo, the ones whose Recipient is recipient first and
+// otherwise in document order.
+func encryptedKeyCandidates(encryptedEl, encryptedDataEl *etree.Element, recipient string) []*etree.Element {
+	all := append(encryptedEl.FindElements("./EncryptedKey"), encryptedDataEl.FindElements("./KeyInfo/EncryptedKey")...)
+	matching := make([]*etree.Element, 0, len(all))
+	others := make([]*etree.Element, 0, len(all))
+	for _, el := range all {
+		if recipient != "" && el.SelectAttrValue("Recipient", "") == recipient {
+			matching = append(matching, el)
+		} else {
+			others = append(others, el)
+		}
+	}
+	return append(matching, others...)
 }
 
 // decryptElement decrypts encryptedEl, an element with an xenc:EncryptedData
@@ -246,5 +276,5 @@ func (idp *IdentityProvider) decryptElement(encryptedEl *etree.Element) (*etree.
 	if len(keys) == 0 {
 		return nil, errors.New("the IdentityProvider has no decryption key: Key is not an *rsa.PrivateKey and DecryptionKeys is empty")
 	}
-	return decryptWithKeys(encryptedEl, keys)
+	return decryptWithKeys(encryptedEl, keys, idp.MetadataURL.String())
 }

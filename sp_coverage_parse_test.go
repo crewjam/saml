@@ -156,6 +156,8 @@ func TestSpcovDecryptElement(t *testing.T) {
 
 	t.Run("bad sibling EncryptedKey", func(t *testing.T) {
 		el := e.encryptedAssertion(t, []byte(`<x/>`))
+		keyInfo := el.FindElement("./EncryptedData/KeyInfo")
+		keyInfo.RemoveChild(keyInfo.FindElement("./EncryptedKey"))
 		keyEl := el.CreateElement("xenc:EncryptedKey")
 		keyEl.CreateAttr("xmlns:xenc", "http://www.w3.org/2001/04/xmlenc#")
 		keyEl.CreateElement("xenc:EncryptionMethod").CreateAttr("Algorithm", "urn:bogus")
