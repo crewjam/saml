@@ -116,25 +116,34 @@ func mustURL(s string) url.URL {
 	return *u
 }
 
+const (
+	spEntityID = "https://sp.example.com/saml/metadata"
+	spACSURL   = "https://sp.example.com/saml/acs"
+	spSLOURL   = "https://sp.example.com/saml/slo"
+)
+
+// staticIDP returns a MetadataFunc for ti's metadata.
+func staticIDP(ti *testIDP) samlsp.MetadataFunc {
+	return func(context.Context) (*saml.EntityDescriptor, error) { return ti.idp.Metadata(), nil }
+}
+
 // newTestConfig returns an SP Config that trusts ti, and registers the SP
 // with ti.
-func newTestConfig(t *testing.T, ti *testIDP) *samlsp.Config {
+func newTestConfig(t *testing.T, ti *testIDP, opts ...samlsp.Option) *samlsp.Config {
+	t.Helper()
+	return newTestConfigWithIDP(t, ti, staticIDP(ti), opts...)
+}
+
+// newTestConfigWithIDP is newTestConfig with the IdP metadata from idp.
+func newTestConfigWithIDP(t *testing.T, ti *testIDP, idp samlsp.MetadataFunc, opts ...samlsp.Option) *samlsp.Config {
 	t.Helper()
 	key, cert := newKeyPair(t, "sp")
-	cfg := &samlsp.Config{
-		IdentityProviderMetadata: func(context.Context) (*saml.EntityDescriptor, error) { return ti.idp.Metadata(), nil },
-		EntityID:                 "https://sp.example.com/saml/metadata",
-		MetadataURL:              "https://sp.example.com/saml/metadata",
-		ACSURL:                   "https://sp.example.com/saml/acs",
-		SLOURL:                   "https://sp.example.com/saml/slo",
-		Key:                      key,
-		Certificate:              cert,
-	}
-	md, err := cfg.Metadata(t.Context())
+	opts = append([]samlsp.Option{samlsp.WithKey(key, cert), samlsp.WithSLOURL(spSLOURL)}, opts...)
+	cfg, err := samlsp.New(idp, spEntityID, spACSURL, opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ti.spMeta = md
+	ti.spMeta = cfg.Metadata(t.Context())
 	return cfg
 }
 
@@ -183,8 +192,7 @@ func TestLogin(t *testing.T) {
 	for _, binding := range []string{saml.HTTPRedirectBinding, saml.HTTPPostBinding, saml.HTTPPostSimpleSignBinding} {
 		t.Run(binding, func(t *testing.T) {
 			ti := newTestIDP(t)
-			cfg := newTestConfig(t, ti)
-			cfg.SignRequests = true
+			cfg := newTestConfig(t, ti, samlsp.SignAuthnRequests)
 
 			msg, err := cfg.AuthnRequest(t.Context(), "state-1", samlsp.WithBinding(binding))
 			if err != nil {
@@ -320,8 +328,11 @@ func TestAuthnRequestBindingErrors(t *testing.T) {
 	if _, err := cfg.AuthnRequest(t.Context(), "s", samlsp.WithBinding(saml.HTTPArtifactBinding)); err == nil {
 		t.Error("expected an error for an unsupported binding")
 	}
-	cfg.Key = nil
-	if _, err := cfg.AuthnRequest(t.Context(), "s", samlsp.WithBinding(saml.HTTPPostSimpleSignBinding)); err == nil {
+	noKey, err := samlsp.New(staticIDP(ti), spEntityID, spACSURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := noKey.AuthnRequest(t.Context(), "s", samlsp.WithBinding(saml.HTTPPostSimpleSignBinding)); err == nil {
 		t.Error("expected an error for SimpleSign without a key")
 	}
 }
@@ -373,7 +384,7 @@ func TestServeMetadata(t *testing.T) {
 	ti := newTestIDP(t)
 	cfg := newTestConfig(t, ti)
 	w := httptest.NewRecorder()
-	cfg.ServeMetadata(w, httptest.NewRequest(http.MethodGet, cfg.MetadataURL, nil))
+	cfg.ServeMetadata(w, httptest.NewRequest(http.MethodGet, spEntityID, nil))
 	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "application/samlmetadata+xml" {
 		t.Fatalf("%d %q", w.Code, w.Header().Get("Content-Type"))
 	}
@@ -382,32 +393,41 @@ func TestServeMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	sp := md.SPSSODescriptors[0]
-	if md.EntityID != cfg.EntityID || sp.AssertionConsumerServices[0].Location != cfg.ACSURL {
+	if md.EntityID != spEntityID || sp.AssertionConsumerServices[0].Location != spACSURL {
 		t.Errorf("unexpected metadata %s", w.Body.String())
 	}
-	if len(sp.SingleLogoutServices) == 0 || sp.SingleLogoutServices[0].Location != cfg.SLOURL {
+	if len(sp.SingleLogoutServices) == 0 || sp.SingleLogoutServices[0].Location != spSLOURL {
 		t.Errorf("SLO not advertised: %+v", sp.SingleLogoutServices)
 	}
 }
 
-func TestConfigErrors(t *testing.T) {
+func TestNewErrors(t *testing.T) {
 	ti := newTestIDP(t)
-	good := newTestConfig(t, ti)
-	for name, mutate := range map[string]func(*samlsp.Config){
-		"no IdP metadata": func(c *samlsp.Config) { c.IdentityProviderMetadata = nil },
-		"IdP metadata error": func(c *samlsp.Config) {
-			c.IdentityProviderMetadata = func(context.Context) (*saml.EntityDescriptor, error) { return nil, errors.New("down") }
+	idp := staticIDP(ti)
+	for name, f := range map[string]func() (*samlsp.Config, error){
+		"no IdP":       func() (*samlsp.Config, error) { return samlsp.New(nil, spEntityID, spACSURL) },
+		"no entity ID": func() (*samlsp.Config, error) { return samlsp.New(idp, "", spACSURL) },
+		"no ACS":       func() (*samlsp.Config, error) { return samlsp.New(idp, spEntityID, "") },
+		"relative ACS": func() (*samlsp.Config, error) { return samlsp.New(idp, spEntityID, "/saml/acs") },
+		"relative SLO": func() (*samlsp.Config, error) {
+			return samlsp.New(idp, spEntityID, spACSURL, samlsp.WithSLOURL("/slo"))
 		},
-		"not an IdP": func(c *samlsp.Config) {
-			c.IdentityProviderMetadata = samlsp.StaticMetadata(&saml.EntityDescriptor{EntityID: "sp"})
-		},
-		"no ACS":           func(c *samlsp.Config) { c.ACSURL = "" },
-		"relative ACS":     func(c *samlsp.Config) { c.ACSURL = "/saml/acs" },
-		"no entity ID":     func(c *samlsp.Config) { c.EntityID, c.MetadataURL = "", "" },
-		"sign without key": func(c *samlsp.Config) { c.Key, c.SignRequests = nil, true },
+		"sign without key": func() (*samlsp.Config, error) { return samlsp.New(idp, spEntityID, spACSURL, samlsp.SignAuthnRequests) },
 	} {
-		cfg := *good
-		mutate(&cfg)
+		if _, err := f(); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+}
+
+func TestIdentityProviderErrors(t *testing.T) {
+	ti := newTestIDP(t)
+	for name, idp := range map[string]samlsp.MetadataFunc{
+		"error":      func(context.Context) (*saml.EntityDescriptor, error) { return nil, errors.New("down") },
+		"not an IdP": samlsp.StaticMetadata(&saml.EntityDescriptor{EntityID: "sp"}),
+		"nil":        samlsp.StaticMetadata(nil),
+	} {
+		cfg := newTestConfigWithIDP(t, ti, idp)
 		if _, err := cfg.AuthnRequest(t.Context(), "s"); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
@@ -451,7 +471,7 @@ func TestSPInitiatedLogout(t *testing.T) {
 			if loc := w.Header().Get("Location"); loc != "" {
 				back = httptest.NewRequest(http.MethodGet, loc, nil)
 			} else {
-				back = postForm(cfg.SLOURL, formValues(w.Body.String()))
+				back = postForm(spSLOURL, formValues(w.Body.String()))
 			}
 			resp, err := cfg.ParseLogoutResponse(t.Context(), back, samlsp.WithRequestID(logout.ID))
 			if err != nil {
@@ -479,7 +499,7 @@ func TestIDPInitiatedLogout(t *testing.T) {
 		ID:           "id-logout-1",
 		Version:      "2.0",
 		IssueInstant: time.Now().UTC(),
-		Destination:  cfg.SLOURL,
+		Destination:  spSLOURL,
 		Issuer:       &saml.Issuer{Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity", Value: ti.idp.Metadata().EntityID},
 		NameID:       &saml.NameID{Format: string(saml.EmailAddressNameIDFormat), Value: "alice@example.com"},
 		SessionIndex: &saml.SessionIndex{Value: "index-1"},
@@ -498,7 +518,7 @@ func TestIDPInitiatedLogout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := postForm(cfg.SLOURL, url.Values{
+	r := postForm(spSLOURL, url.Values{
 		"SAMLRequest": {base64.StdEncoding.EncodeToString(buf)},
 		"RelayState":  {"idp-state"},
 	})
@@ -527,7 +547,7 @@ func TestIDPInitiatedLogout(t *testing.T) {
 
 	// An unsigned request is refused.
 	unsigned, _ := xml.Marshal(req)
-	r = postForm(cfg.SLOURL, url.Values{"SAMLRequest": {base64.StdEncoding.EncodeToString(unsigned)}})
+	r = postForm(spSLOURL, url.Values{"SAMLRequest": {base64.StdEncoding.EncodeToString(unsigned)}})
 	if _, err := cfg.ParseLogoutRequest(t.Context(), r); err == nil {
 		t.Error("expected an unsigned LogoutRequest to be refused")
 	}
@@ -563,12 +583,11 @@ func TestParseMetadata(t *testing.T) {
 
 func TestSPMetadataDoesNotNeedIdP(t *testing.T) {
 	ti := newTestIDP(t)
-	cfg := newTestConfig(t, ti)
-	cfg.IdentityProviderMetadata = func(context.Context) (*saml.EntityDescriptor, error) {
+	cfg := newTestConfigWithIDP(t, ti, func(context.Context) (*saml.EntityDescriptor, error) {
 		return nil, errors.New("IdP is down")
-	}
+	})
 	w := httptest.NewRecorder()
-	cfg.ServeMetadata(w, httptest.NewRequest(http.MethodGet, cfg.MetadataURL, nil))
+	cfg.ServeMetadata(w, httptest.NewRequest(http.MethodGet, spEntityID, nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("ServeMetadata = %d", w.Code)
 	}
@@ -644,8 +663,7 @@ func TestRemoteMetadata(t *testing.T) {
 func TestRemoteMetadataWithConfig(t *testing.T) {
 	ti := newTestIDP(t)
 	srv := newMetadataServer(t, ti.idp.Metadata())
-	cfg := newTestConfig(t, ti)
-	cfg.IdentityProviderMetadata = samlsp.RemoteMetadata(srv.URL, samlsp.WithHTTPClient(srv.Client()))
+	cfg := newTestConfigWithIDP(t, ti, samlsp.RemoteMetadata(srv.URL, samlsp.WithHTTPClient(srv.Client())))
 	msg, err := cfg.AuthnRequest(t.Context(), "s")
 	if err != nil {
 		t.Fatal(err)
@@ -657,12 +675,9 @@ func TestRemoteMetadataWithConfig(t *testing.T) {
 
 func TestServiceProviderOptions(t *testing.T) {
 	ti := newTestIDP(t)
-	cfg := newTestConfig(t, ti)
-
 	var order []string
-	cfg.ServiceProviderOptions = []samlsp.ServiceProviderOption{
-		func(*saml.ServiceProvider) { order = append(order, "config") },
-	}
+	cfg := newTestConfig(t, ti, samlsp.WithServiceProvider(func(*saml.ServiceProvider) { order = append(order, "config") }))
+	order = nil // registering the SP built its metadata
 	perCall := samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
 		order = append(order, "call")
 		f := true
@@ -712,10 +727,9 @@ func TestServiceProviderOptions(t *testing.T) {
 
 func TestSignMetadata(t *testing.T) {
 	ti := newTestIDP(t)
-	cfg := newTestConfig(t, ti)
-	cfg.ServiceProviderOptions = append(cfg.ServiceProviderOptions, samlsp.SignMetadata)
+	cfg := newTestConfig(t, ti, samlsp.SignMetadata)
 	w := httptest.NewRecorder()
-	cfg.ServeMetadata(w, httptest.NewRequest(http.MethodGet, cfg.MetadataURL, nil))
+	cfg.ServeMetadata(w, httptest.NewRequest(http.MethodGet, spEntityID, nil))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "SignatureValue") {
 		t.Fatalf("metadata is not signed: %d %s", w.Code, w.Body.String())
 	}

@@ -94,7 +94,7 @@ func (f messageOptionFunc) applyLogout(o *logoutOptions) { f(&o.messageOptions) 
 
 // WithBinding sends the message with binding: saml.HTTPRedirectBinding,
 // saml.HTTPPostBinding or saml.HTTPPostSimpleSignBinding. The
-// HTTP-POST-SimpleSign binding needs a Key that can sign.
+// HTTP-POST-SimpleSign binding needs a key that can sign (see WithKey).
 //
 // By default HTTP-Redirect is used when the identity provider supports it,
 // and HTTP-POST otherwise.
@@ -194,7 +194,7 @@ func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...Au
 			sp.SignatureMethod = sp.LogoutSignatureMethod
 		}
 		if sp.SignatureMethod == "" {
-			return nil, errors.New("samlsp: the HTTP-POST-SimpleSign binding needs an RSA or ECDSA Key")
+			return nil, errors.New("samlsp: the HTTP-POST-SimpleSign binding needs an RSA or ECDSA key (see WithKey)")
 		}
 		if m.form, err = req.SimpleSignWithNonce(relayState, o.scriptNonce, sp); err != nil {
 			return nil, err
@@ -241,7 +241,7 @@ var AllowUnsolicited ResponseOption = responseOptionFunc(func(o *responseOptions
 
 // ParseResponse verifies the identity provider's Response in r, sent to
 // the ACS URL, and returns its assertion. Call it from the handler at
-// Config.ACSURL.
+// the ACS URL passed to New.
 //
 // It accepts the HTTP-POST, HTTP-POST-SimpleSign and HTTP-Artifact
 // bindings. For HTTP-Artifact, it resolves the artifact with a request to

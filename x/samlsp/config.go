@@ -19,87 +19,148 @@ import (
 	"github.com/crewjam/saml/internal/signerutil"
 )
 
-// Config describes a SAML service provider and the identity provider it
-// trusts. It is plain data: fill in the fields and call its methods. A Config must not be
-// modified while it is in use, and it is safe for concurrent use.
+// Config is a SAML service provider (SP) and the identity provider (IdP)
+// it trusts. Create one with New. A Config is immutable and safe for
+// concurrent use.
 type Config struct {
-	// IdentityProviderMetadata returns the metadata of the identity
-	// provider that this SP trusts. It is called with the context of each
-	// method. It is required. See RemoteMetadata, ParseMetadata and
-	// StaticMetadata.
-	IdentityProviderMetadata MetadataFunc
+	identityProvider MetadataFunc
+	entityID         string
+	acsURL           url.URL
+	sloURL           url.URL
 
-	// EntityID is the entityID of this service provider. If empty,
-	// MetadataURL is used.
-	EntityID string
+	key            crypto.Signer
+	certificate    *x509.Certificate
+	intermediates  []*x509.Certificate
+	decryptionKeys []*rsa.PrivateKey
+	signRequests   bool
+	nameIDFormat   saml.NameIDFormat
+	replayCache    saml.AssertionReplayCache
+	clock          *dsig.Clock
 
-	// ACSURL is the absolute URL of this SP's assertion consumer service,
-	// where the IdP sends responses. The handler at this URL calls
-	// ParseResponse. It is required.
-	ACSURL string
-
-	// MetadataURL is the absolute URL where this SP serves its metadata
-	// (see ServeMetadata). It is required if EntityID is empty.
-	MetadataURL string
-
-	// SLOURL is the absolute URL of this SP's single logout service. The
-	// handler at this URL calls ParseLogoutRequest and ParseLogoutResponse.
-	// If it is empty, the SP metadata advertises no single logout service.
-	SLOURL string
-
-	// Key is the SP's private key. It signs requests when SignRequests is
-	// set, and it always signs logout messages. If it is an *rsa.PrivateKey,
-	// it also decrypts encrypted assertions. Certificate is its certificate,
-	// which is published in the SP metadata.
-	Key         crypto.Signer
-	Certificate *x509.Certificate
-
-	// Intermediates are further certificates of Certificate's chain to
-	// publish in the metadata.
-	Intermediates []*x509.Certificate
-
-	// DecryptionKeys are other keys that can decrypt encrypted assertions,
-	// for key rotation.
-	DecryptionKeys []*rsa.PrivateKey
-
-	// SignRequests makes AuthnRequests carry a signature by Key, using
-	// RSA-SHA256 or ECDSA-SHA256.
-	SignRequests bool
-
-	// NameIDFormat is the NameID format requested from the IdP. If it is
-	// empty, transient is requested.
-	NameIDFormat saml.NameIDFormat
-
-	// ReplayCache, if set, makes ParseResponse refuse an assertion it has already
-	// accepted. Applications served by several processes need a cache
-	// that the processes share.
-	ReplayCache saml.AssertionReplayCache
-
-	// Clock, if set, is the time source used to check validity periods.
-	// It is mainly useful in tests.
-	Clock *dsig.Clock
-
-	// ServiceProviderOptions customize the saml.ServiceProvider that each
-	// method builds from this Config, in order, before the options passed
-	// to the method itself. Use them for settings that Config does not
-	// expose, such as saml.ServiceProvider.RejectUnknownConditions.
-	ServiceProviderOptions []ServiceProviderOption
+	spOptions []ServiceProviderOption
 }
+
+// New returns a Config for the service provider entityID.
+//
+// identityProvider supplies the metadata of the IdP that the SP trusts.
+// It is called with the context of each method. See RemoteMetadata,
+// ParseMetadata and StaticMetadata.
+//
+// acsURL is the absolute URL of the SP's assertion consumer service, where
+// the IdP sends its Responses. The handler at this URL calls
+// ParseResponse.
+//
+// New returns an error if a required argument is missing or a URL is not
+// absolute. It does not call identityProvider.
+func New(identityProvider MetadataFunc, entityID, acsURL string, opts ...Option) (*Config, error) {
+	if identityProvider == nil {
+		return nil, errors.New("samlsp: the identity provider is nil")
+	}
+	if entityID == "" {
+		return nil, errors.New("samlsp: the entity ID is empty")
+	}
+	c := &Config{identityProvider: identityProvider, entityID: entityID}
+	var err error
+	if c.acsURL, err = absoluteURL("ACS URL", acsURL); err != nil {
+		return nil, err
+	}
+	var o configOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt.applyConfig(c, &o)
+		}
+	}
+	if o.sloURL != "" {
+		if c.sloURL, err = absoluteURL("SLO URL", o.sloURL); err != nil {
+			return nil, err
+		}
+	}
+	if c.signRequests && signatureMethod(c.key) == "" {
+		return nil, errors.New("samlsp: SignAuthnRequests needs an RSA or ECDSA key (see WithKey)")
+	}
+	return c, nil
+}
+
+// Option configures New.
+type Option interface {
+	applyConfig(c *Config, o *configOptions)
+}
+
+// configOptions holds options that New validates after applying them.
+type configOptions struct {
+	sloURL string
+}
+
+type optionFunc func(c *Config, o *configOptions)
+
+func (f optionFunc) applyConfig(c *Config, o *configOptions) { f(c, o) }
+
+// WithSLOURL sets the absolute URL of the SP's single logout service. The
+// handler at this URL calls ParseLogoutRequest and ParseLogoutResponse.
+// Without it, the SP metadata advertises no single logout service.
+func WithSLOURL(sloURL string) Option {
+	return optionFunc(func(_ *Config, o *configOptions) { o.sloURL = sloURL })
+}
+
+// WithKey sets the SP's private key and its certificate, which is published
+// in the SP metadata, with any intermediates of its chain. The key always
+// signs logout messages, and it signs AuthnRequests with
+// SignAuthnRequests. If it is an *rsa.PrivateKey, it also decrypts
+// encrypted assertions.
+func WithKey(key crypto.Signer, cert *x509.Certificate, intermediates ...*x509.Certificate) Option {
+	return optionFunc(func(c *Config, _ *configOptions) {
+		c.key, c.certificate = key, cert
+		c.intermediates = append([]*x509.Certificate(nil), intermediates...)
+	})
+}
+
+// WithDecryptionKeys adds keys that can decrypt encrypted assertions, for
+// key rotation.
+func WithDecryptionKeys(keys ...*rsa.PrivateKey) Option {
+	return optionFunc(func(c *Config, _ *configOptions) {
+		c.decryptionKeys = append(c.decryptionKeys, keys...)
+	})
+}
+
+// SignAuthnRequests makes AuthnRequests carry a signature by the key of
+// WithKey, using RSA-SHA256 or ECDSA-SHA256.
+var SignAuthnRequests Option = optionFunc(func(c *Config, _ *configOptions) { c.signRequests = true })
+
+// WithNameIDFormat sets the NameID format requested from the IdP. The
+// default is transient.
+func WithNameIDFormat(format saml.NameIDFormat) Option {
+	return optionFunc(func(c *Config, _ *configOptions) { c.nameIDFormat = format })
+}
+
+// WithReplayCache makes ParseResponse refuse an assertion that cache has
+// already seen. Applications served by several processes need a cache
+// that the processes share.
+func WithReplayCache(cache saml.AssertionReplayCache) Option {
+	return optionFunc(func(c *Config, _ *configOptions) { c.replayCache = cache })
+}
+
+// WithClock sets the time source used to check validity periods. It is
+// mainly useful in tests.
+func WithClock(clock *dsig.Clock) Option {
+	return optionFunc(func(c *Config, _ *configOptions) { c.clock = clock })
+}
+
+// EntityID returns the entityID of the service provider.
+func (c *Config) EntityID() string { return c.entityID }
 
 // ServiceProviderOption customizes the saml.ServiceProvider that a Config
-// method builds and uses. Set it on Config.ServiceProviderOptions to apply
-// it to every call, or pass it to a single method: it is an AuthnOption, a
-// ResponseOption and a LogoutOption. The options of the call are applied
-// after those of the Config.
+// method builds and uses, for settings that have no Option of their own.
+// Pass it to New to apply it to every call, or to a single method: it is
+// an Option, an AuthnOption, a ResponseOption and a LogoutOption. The
+// options of a call are applied after those passed to New.
 type ServiceProviderOption func(sp *saml.ServiceProvider)
 
-func (f ServiceProviderOption) applyAuthn(o *authnOptions) { o.sp = append(o.sp, f) }
-func (f ServiceProviderOption) applyLogout(o *logoutOptions) {
-	o.sp = append(o.sp, f)
+func (f ServiceProviderOption) applyConfig(c *Config, _ *configOptions) {
+	c.spOptions = append(c.spOptions, f)
 }
-func (f ServiceProviderOption) applyResponse(o *responseOptions) {
-	o.sp = append(o.sp, f)
-}
+func (f ServiceProviderOption) applyAuthn(o *authnOptions)       { o.sp = append(o.sp, f) }
+func (f ServiceProviderOption) applyLogout(o *logoutOptions)     { o.sp = append(o.sp, f) }
+func (f ServiceProviderOption) applyResponse(o *responseOptions) { o.sp = append(o.sp, f) }
 
 // WithServiceProvider returns a ServiceProviderOption that calls fn.
 func WithServiceProvider(fn func(sp *saml.ServiceProvider)) ServiceProviderOption {
@@ -107,7 +168,7 @@ func WithServiceProvider(fn func(sp *saml.ServiceProvider)) ServiceProviderOptio
 }
 
 // SignMetadata makes ServeMetadata and Metadata sign the SP metadata with
-// Key. Set it on Config.ServiceProviderOptions.
+// the key of WithKey. Pass it to New.
 var SignMetadata ServiceProviderOption = func(sp *saml.ServiceProvider) { sp.SignMetadata = true }
 
 // RejectUnknownConditions makes ParseResponse refuse an assertion whose
@@ -117,7 +178,7 @@ var RejectUnknownConditions ServiceProviderOption = func(sp *saml.ServiceProvide
 
 // applyServiceProviderOptions applies the options of c, then extra, to sp.
 func (c *Config) applyServiceProviderOptions(sp *saml.ServiceProvider, extra []ServiceProviderOption) {
-	for _, opt := range c.ServiceProviderOptions {
+	for _, opt := range c.spOptions {
 		if opt != nil {
 			opt(sp)
 		}
@@ -130,89 +191,63 @@ func (c *Config) applyServiceProviderOptions(sp *saml.ServiceProvider, extra []S
 }
 
 // serviceProvider returns a new saml.ServiceProvider configured from c,
-// with the identity provider's metadata from IdentityProviderMetadata.
+// with the identity provider's metadata, and with the
+// ServiceProviderOptions passed to New and then opts applied.
 func (c *Config) serviceProvider(ctx context.Context, opts []ServiceProviderOption) (*saml.ServiceProvider, error) {
-	if c.IdentityProviderMetadata == nil {
-		return nil, errors.New("samlsp: Config.IdentityProviderMetadata is nil")
-	}
-	idpMetadata, err := c.IdentityProviderMetadata(ctx)
+	idpMetadata, err := c.identityProvider(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("samlsp: cannot get identity provider metadata: %w", err)
 	}
 	if err := checkIDPMetadata(idpMetadata); err != nil {
 		return nil, err
 	}
-	sp, err := c.localServiceProvider(ctx)
-	if err != nil {
-		return nil, err
-	}
+	sp := c.localServiceProvider(ctx)
 	sp.IDPMetadata = idpMetadata
 	c.applyServiceProviderOptions(sp, opts)
 	return sp, nil
 }
 
 // localServiceProvider returns a new saml.ServiceProvider configured from
-// c, without the identity provider's metadata and without applying
-// ServiceProviderOptions.
-func (c *Config) localServiceProvider(ctx context.Context) (*saml.ServiceProvider, error) {
-	acsURL, err := absoluteURL("ACSURL", c.ACSURL, true)
-	if err != nil {
-		return nil, err
-	}
-	metadataURL, err := absoluteURL("MetadataURL", c.MetadataURL, c.EntityID == "")
-	if err != nil {
-		return nil, err
-	}
-	sloURL, err := absoluteURL("SLOURL", c.SLOURL, false)
-	if err != nil {
-		return nil, err
-	}
-
+// c, without the identity provider's metadata and without applying any
+// ServiceProviderOption.
+func (c *Config) localServiceProvider(ctx context.Context) *saml.ServiceProvider {
 	sp := &saml.ServiceProvider{
-		EntityID:          c.EntityID,
-		Key:               c.Key,
-		Certificate:       c.Certificate,
-		Intermediates:     c.Intermediates,
-		DecryptionKeys:    c.DecryptionKeys,
+		EntityID:          c.entityID,
+		Key:               c.key,
+		Certificate:       c.certificate,
+		Intermediates:     c.intermediates,
+		DecryptionKeys:    c.decryptionKeys,
 		HTTPClient:        clientFromContext(ctx),
-		MetadataURL:       metadataURL,
-		AcsURL:            acsURL,
-		SloURL:            sloURL,
-		AuthnNameIDFormat: c.NameIDFormat,
-		ReplayCache:       c.ReplayCache,
-		Clock:             c.Clock,
+		AcsURL:            c.acsURL,
+		SloURL:            c.sloURL,
+		AuthnNameIDFormat: c.nameIDFormat,
+		ReplayCache:       c.replayCache,
+		Clock:             c.clock,
 	}
-	if c.SLOURL != "" {
+	if c.sloURL.String() != "" {
 		sp.LogoutBindings = []string{saml.HTTPRedirectBinding, saml.HTTPPostBinding}
 	}
-
-	method := signatureMethod(c.Key)
-	if c.SignRequests {
-		if method == "" {
-			return nil, errors.New("samlsp: SignRequests needs an RSA or ECDSA Key")
-		}
+	method := signatureMethod(c.key)
+	if c.signRequests {
 		sp.SignatureMethod = method
 	}
 	// The single logout profile requires logout messages to be signed with
 	// the HTTP-Redirect and HTTP-POST bindings (saml-profiles §4.4.3), so
 	// sign them whenever there is a key that can.
 	sp.LogoutSignatureMethod = method
-	return sp, nil
+	return sp
 }
 
-func absoluteURL(field, s string, required bool) (url.URL, error) {
+func absoluteURL(what, s string) (url.URL, error) {
 	if s == "" {
-		if required {
-			return url.URL{}, fmt.Errorf("samlsp: Config.%s is required", field)
-		}
-		return url.URL{}, nil
+		return url.URL{}, fmt.Errorf("samlsp: the %s is empty", what)
 	}
 	u, err := url.Parse(s)
 	if err != nil {
-		return url.URL{}, fmt.Errorf("samlsp: invalid Config.%s: %w", field, err)
+		return url.URL{}, fmt.Errorf("samlsp: invalid %s: %w", what, err)
 	}
 	if !u.IsAbs() || u.Host == "" {
-		return url.URL{}, fmt.Errorf("samlsp: Config.%s must be an absolute URL, not %q", field, s)
+		return url.URL{}, fmt.Errorf("samlsp: the %s must be an absolute URL, not %q", what, s)
 	}
 	return *u, nil
 }
@@ -234,30 +269,24 @@ func signatureMethod(key crypto.Signer) string {
 }
 
 // Metadata returns the metadata of this service provider, to register it
-// with the identity provider. It does not call IdentityProviderMetadata.
-func (c *Config) Metadata(ctx context.Context, opts ...ServiceProviderOption) (*saml.EntityDescriptor, error) {
-	sp, err := c.spForMetadata(ctx, opts)
-	if err != nil {
-		return nil, err
-	}
-	return sp.Metadata(), nil
+// with the identity provider. It does not call the identity provider's
+// MetadataFunc.
+func (c *Config) Metadata(ctx context.Context, opts ...ServiceProviderOption) *saml.EntityDescriptor {
+	return c.spForMetadata(ctx, opts).Metadata()
 }
 
 // spForMetadata returns the saml.ServiceProvider that describes this SP's
 // metadata. The SP metadata does not depend on the IdP, so it is served
 // even when the IdP metadata cannot be had.
-func (c *Config) spForMetadata(ctx context.Context, opts []ServiceProviderOption) (*saml.ServiceProvider, error) {
-	sp, err := c.localServiceProvider(ctx)
-	if err != nil {
-		return nil, err
-	}
+func (c *Config) spForMetadata(ctx context.Context, opts []ServiceProviderOption) *saml.ServiceProvider {
+	sp := c.localServiceProvider(ctx)
 	c.applyServiceProviderOptions(sp, opts)
-	return sp, nil
+	return sp
 }
 
 // ServeMetadata is an http.HandlerFunc that serves this service provider's
-// metadata. Serve it at MetadataURL. With the SignMetadata option in
-// Config.ServiceProviderOptions, the metadata is signed with Key.
+// metadata, conventionally at the entity ID's URL. If New was passed
+// SignMetadata, the metadata is signed.
 func (c *Config) ServeMetadata(w http.ResponseWriter, r *http.Request) {
 	buf, err := c.metadataBytes(r.Context())
 	if err != nil {
@@ -269,10 +298,7 @@ func (c *Config) ServeMetadata(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Config) metadataBytes(ctx context.Context) ([]byte, error) {
-	sp, err := c.spForMetadata(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
+	sp := c.spForMetadata(ctx, nil)
 	if !sp.SignMetadata {
 		return xml.MarshalIndent(sp.Metadata(), "", "  ")
 	}
