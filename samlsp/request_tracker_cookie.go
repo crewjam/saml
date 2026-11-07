@@ -14,6 +14,13 @@ var _ RequestTracker = CookieRequestTracker{}
 
 // CookieRequestTracker tracks requests by setting a uniquely named
 // cookie for each request.
+//
+// The cookie must be sent back by the browser when the IDP POSTs the SAML
+// response to the ACS URL, which is a cross-site request. Browsers treat a
+// cookie without a SameSite attribute as SameSite=Lax and do not send it on a
+// cross-site POST, so when SameSite is unset (zero or http.SameSiteDefaultMode)
+// and the ACS URL uses https, the cookie is issued with SameSite=None (and Secure). Set
+// SameSite explicitly to override this.
 type CookieRequestTracker struct {
 	ServiceProvider *saml.ServiceProvider
 	NamePrefix      string
@@ -44,17 +51,29 @@ func (t CookieRequestTracker) TrackRequest(w http.ResponseWriter, r *http.Reques
 		return "", err
 	}
 
+	secure := t.ServiceProvider.AcsURL.Scheme == "https"
 	http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure is set when served over https
 		Name:     t.NamePrefix + trackedRequest.Index,
 		Value:    signedTrackedRequest,
 		MaxAge:   int(t.MaxAge.Seconds()),
 		HttpOnly: true,
-		SameSite: t.SameSite,
-		Secure:   t.ServiceProvider.AcsURL.Scheme == "https",
+		SameSite: t.sameSite(secure),
+		Secure:   secure,
 		Path:     t.ServiceProvider.AcsURL.Path,
 	})
 
 	return trackedRequest.Index, nil
+}
+
+// sameSite returns the SameSite mode for the tracking cookie. An unset mode
+// becomes SameSite=None on a secure cookie, so that the browser sends the cookie
+// with the IDP's cross-site POST to the ACS URL. Browsers reject SameSite=None
+// without Secure, so an insecure cookie keeps the configured mode.
+func (t CookieRequestTracker) sameSite(secure bool) http.SameSite {
+	if (t.SameSite == 0 || t.SameSite == http.SameSiteDefaultMode) && secure {
+		return http.SameSiteNoneMode
+	}
+	return t.SameSite
 }
 
 // StopTrackingRequest stops tracking the SAML request given by index, which is a string
@@ -71,6 +90,8 @@ func (t CookieRequestTracker) StopTrackingRequest(w http.ResponseWriter, r *http
 	cookie.Domain = ""
 	cookie.Expires = time.Unix(1, 0) // past time as close to epoch as possible, but not zero time.Time{}
 	cookie.Path = t.ServiceProvider.AcsURL.Path
+	cookie.Secure = t.ServiceProvider.AcsURL.Scheme == "https"
+	cookie.SameSite = t.sameSite(cookie.Secure)
 	http.SetCookie(w, cookie)
 	return nil
 }

@@ -214,7 +214,31 @@ type ServiceProvider struct {
 	// certificates as a result. Enabling this allows interoperating with
 	// them.
 	IgnoreCertificateExpiry bool
+
+	// ReplayCache, if set, records the ID of the assertion each accepted
+	// response is accepted for, and refuses a response whose assertion it
+	// has already recorded. Without it, a captured assertion is accepted
+	// again until it expires, and an IdP-initiated one has no request ID to
+	// tie it to a single use. If nil, assertions are not checked for replay.
+	ReplayCache AssertionReplayCache
 }
+
+// AssertionReplayCache records the IDs of accepted assertions, so that each
+// is accepted only once. Implementations must be safe for concurrent use, and
+// should be shared by every server that accepts assertions for the same
+// service provider.
+type AssertionReplayCache interface {
+	// Consume atomically records assertionID as used until expiresAt, the
+	// last moment the ServiceProvider would accept the assertion; after
+	// that the record may be dropped. It returns ErrAssertionReplayed if
+	// assertionID is already recorded, and any other error if it cannot
+	// record it. Any error refuses the assertion.
+	Consume(assertionID string, expiresAt time.Time) error
+}
+
+// ErrAssertionReplayed is returned by an AssertionReplayCache for an
+// assertion ID it has already recorded.
+var ErrAssertionReplayed = errors.New("assertion has already been used")
 
 // now returns the current time as seen by this ServiceProvider.
 func (sp *ServiceProvider) now() time.Time {
@@ -724,6 +748,14 @@ func (sp *ServiceProvider) MakePostAuthenticationRequest(relayState string) ([]b
 
 // Post returns an HTML form suitable for using the HTTP-POST binding with the request
 func (r *AuthnRequest) Post(relayState string) []byte {
+	return r.PostWithNonce(relayState, "")
+}
+
+// PostWithNonce is like Post, but if nonce is not empty it is set as the
+// nonce attribute of the form's auto-submit <script> element, so that the
+// form can be served under a Content-Security-Policy that allows scripts by
+// nonce.
+func (r *AuthnRequest) PostWithNonce(relayState, nonce string) []byte {
 	doc := etree.NewDocument()
 	doc.SetRoot(r.Element())
 	reqBuf, err := doc.WriteToBytes()
@@ -738,16 +770,18 @@ func (r *AuthnRequest) Post(relayState string) []byte {
 		`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
 		`<input id="SAMLSubmitButton" type="submit" value="Submit" />` +
 		`</form>` +
-		`<script>document.getElementById('SAMLSubmitButton').style.visibility="hidden";` +
+		`<script{{with .Nonce}} nonce="{{.}}"{{end}}>document.getElementById('SAMLSubmitButton').style.visibility="hidden";` +
 		`document.getElementById('SAMLRequestForm').submit();</script>`))
 	data := struct {
 		URL         string
 		SAMLRequest string
 		RelayState  string
+		Nonce       string
 	}{
 		URL:         r.Destination,
 		SAMLRequest: encodedReqBuf,
 		RelayState:  relayState,
+		Nonce:       nonce,
 	}
 
 	rv := bytes.Buffer{}
@@ -1159,6 +1193,9 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 	// contain only one assertion. This is less that fully correct, but we didn't realize that there could be more
 	// than one assertion at the time of establishing the public interface of ParseXMLResponse(), so for compatibility
 	// we return the first one.
+	if err := sp.consumeAssertion(&assertions[0]); err != nil {
+		return nil, err
+	}
 	return &assertions[0], nil
 }
 
@@ -1257,8 +1294,8 @@ func (sp *ServiceProvider) parseAssertion(assertionEl *etree.Element, possibleRe
 // the failure. (The digital signature on the assertion is not checked -- this
 // should be done before calling this function).
 func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleRequestIDs []string, now time.Time) error {
-	if assertion.IssueInstant.Add(MaxIssueDelay).Before(now) {
-		return fmt.Errorf("expired on %s", assertion.IssueInstant.Add(MaxIssueDelay))
+	if issueDeadline(assertion).Before(now) {
+		return fmt.Errorf("expired on %s", issueDeadline(assertion))
 	}
 	if assertion.Issuer.Value != sp.IDPMetadata.EntityID {
 		return fmt.Errorf("issuer is not %q", sp.IDPMetadata.EntityID)
@@ -1306,7 +1343,7 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 		if subjectConfirmation.SubjectConfirmationData.Recipient != sp.AcsURL.String() {
 			return fmt.Errorf("assertion SubjectConfirmation Recipient is not %s", sp.AcsURL.String())
 		}
-		if subjectConfirmation.SubjectConfirmationData.NotOnOrAfter.Add(MaxClockSkew).Before(now) {
+		if skewedDeadline(subjectConfirmation.SubjectConfirmationData.NotOnOrAfter).Before(now) {
 			return fmt.Errorf("assertion SubjectConfirmationData is expired")
 		}
 	}
@@ -1316,12 +1353,63 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if assertion.Conditions.NotBefore.Add(-MaxClockSkew).After(now) {
 		return fmt.Errorf("assertion Conditions is not yet valid")
 	}
-	if assertion.Conditions.NotOnOrAfter.Add(MaxClockSkew).Before(now) {
+	if skewedDeadline(assertion.Conditions.NotOnOrAfter).Before(now) {
 		return fmt.Errorf("assertion Conditions is expired")
 	}
 
 	if err := sp.validateAudienceRestriction(assertion); err != nil {
 		return err
+	}
+	return nil
+}
+
+// issueDeadline is the last moment validateAssertion accepts assertion by its
+// IssueInstant.
+func issueDeadline(assertion *Assertion) time.Time {
+	return assertion.IssueInstant.Add(MaxIssueDelay)
+}
+
+// skewedDeadline is the last moment validateAssertion accepts a NotOnOrAfter
+// time, allowing for clock skew.
+func skewedDeadline(notOnOrAfter time.Time) time.Time {
+	return notOnOrAfter.Add(MaxClockSkew)
+}
+
+// acceptableUntil returns the last moment validateAssertion accepts
+// assertion: the earliest of the deadlines its expiry checks apply.
+func acceptableUntil(assertion *Assertion) time.Time {
+	deadline := issueDeadline(assertion)
+	if assertion.Conditions != nil {
+		deadline = earliest(deadline, skewedDeadline(assertion.Conditions.NotOnOrAfter))
+	}
+	if assertion.Subject != nil {
+		for _, confirmation := range assertion.Subject.SubjectConfirmations {
+			if confirmation.SubjectConfirmationData != nil {
+				deadline = earliest(deadline, skewedDeadline(confirmation.SubjectConfirmationData.NotOnOrAfter))
+			}
+		}
+	}
+	return deadline
+}
+
+func earliest(a, b time.Time) time.Time {
+	if b.Before(a) {
+		return b
+	}
+	return a
+}
+
+// consumeAssertion records assertion in the ReplayCache, if one is set,
+// refusing it if it was recorded before.
+func (sp *ServiceProvider) consumeAssertion(assertion *Assertion) error {
+	if sp.ReplayCache == nil {
+		return nil
+	}
+	if assertion.ID == "" {
+		return errors.New("assertion has no ID to check for replay")
+	}
+	if err := sp.ReplayCache.Consume(assertion.ID, acceptableUntil(assertion)); err != nil {
+		return fmt.Errorf("assertion %q: %w", assertion.ID, err)
 	}
 	return nil
 }
@@ -1634,6 +1722,14 @@ func (sp *ServiceProvider) MakePostLogoutRequest(nameID, relayState string, opts
 
 // Post returns an HTML form suitable for using the HTTP-POST binding with the request
 func (r *LogoutRequest) Post(relayState string) []byte {
+	return r.PostWithNonce(relayState, "")
+}
+
+// PostWithNonce is like Post, but if nonce is not empty it is set as the
+// nonce attribute of the form's auto-submit <script> element, so that the
+// form can be served under a Content-Security-Policy that allows scripts by
+// nonce.
+func (r *LogoutRequest) PostWithNonce(relayState, nonce string) []byte {
 	doc := etree.NewDocument()
 	doc.SetRoot(r.Element())
 	reqBuf, err := doc.WriteToBytes()
@@ -1648,16 +1744,18 @@ func (r *LogoutRequest) Post(relayState string) []byte {
 		`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
 		`<input id="SAMLSubmitButton" type="submit" value="Submit" />` +
 		`</form>` +
-		`<script>document.getElementById('SAMLSubmitButton').style.visibility="hidden";` +
+		`<script{{with .Nonce}} nonce="{{.}}"{{end}}>document.getElementById('SAMLSubmitButton').style.visibility="hidden";` +
 		`document.getElementById('SAMLRequestForm').submit();</script>`))
 	data := struct {
 		URL         string
 		SAMLRequest string
 		RelayState  string
+		Nonce       string
 	}{
 		URL:         r.Destination,
 		SAMLRequest: encodedReqBuf,
 		RelayState:  relayState,
+		Nonce:       nonce,
 	}
 
 	rv := bytes.Buffer{}
@@ -1761,6 +1859,14 @@ func (sp *ServiceProvider) MakePostLogoutResponse(logoutRequestID, relayState st
 
 // Post returns an HTML form suitable for using the HTTP-POST binding with the LogoutResponse.
 func (r *LogoutResponse) Post(relayState string) []byte {
+	return r.PostWithNonce(relayState, "")
+}
+
+// PostWithNonce is like Post, but if nonce is not empty it is set as the
+// nonce attribute of the form's auto-submit <script> element, so that the
+// form can be served under a Content-Security-Policy that allows scripts by
+// nonce.
+func (r *LogoutResponse) PostWithNonce(relayState, nonce string) []byte {
 	doc := etree.NewDocument()
 	doc.SetRoot(r.Element())
 	reqBuf, err := doc.WriteToBytes()
@@ -1775,16 +1881,18 @@ func (r *LogoutResponse) Post(relayState string) []byte {
 		`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
 		`<input id="SAMLSubmitButton" type="submit" value="Submit" />` +
 		`</form>` +
-		`<script>document.getElementById('SAMLSubmitButton').style.visibility="hidden";` +
+		`<script{{with .Nonce}} nonce="{{.}}"{{end}}>document.getElementById('SAMLSubmitButton').style.visibility="hidden";` +
 		`document.getElementById('SAMLResponseForm').submit();</script>`))
 	data := struct {
 		URL          string
 		SAMLResponse string
 		RelayState   string
+		Nonce        string
 	}{
 		URL:          r.Destination,
 		SAMLResponse: encodedReqBuf,
 		RelayState:   relayState,
+		Nonce:        nonce,
 	}
 
 	rv := bytes.Buffer{}

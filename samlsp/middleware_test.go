@@ -2,6 +2,7 @@ package samlsp
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -189,7 +190,7 @@ func TestMiddlewareRequireAccountNoCredsSecure(t *testing.T) {
 	handler.ServeHTTP(resp, req)
 
 	assert.Check(t, is.Equal(http.StatusFound, resp.Code))
-	assert.Check(t, is.Equal("saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure",
+	assert.Check(t, is.Equal("saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure; SameSite=None",
 		resp.Header().Get("Set-Cookie")))
 
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
@@ -215,7 +216,7 @@ func TestMiddlewareRequireAccountNoCredsPostBinding(t *testing.T) {
 	handler.ServeHTTP(resp, req)
 
 	assert.Check(t, is.Equal(http.StatusOK, resp.Code))
-	assert.Check(t, is.Equal("saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure",
+	assert.Check(t, is.Equal("saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure; SameSite=None",
 		resp.Header().Get("Set-Cookie")))
 
 	golden.Assert(t, resp.Body.String(), "expected_post_binding_response.html")
@@ -230,6 +231,40 @@ func TestMiddlewareRequireAccountNoCredsPostBinding(t *testing.T) {
 	assert.Check(t, is.Equal("text/html", resp.Header().Get("Content-type")))
 }
 
+func TestMiddlewareRequireAccountNoCredsPostBindingScriptNonce(t *testing.T) {
+	test := NewMiddlewareTest(t)
+	test.Middleware.ServiceProvider.IDPMetadata.IDPSSODescriptors[0].SingleSignOnServices = test.Middleware.ServiceProvider.IDPMetadata.IDPSSODescriptors[0].SingleSignOnServices[1:2]
+
+	type nonceKey struct{}
+	test.Middleware.ScriptNonce = func(r *http.Request) string {
+		nonce, _ := r.Context().Value(nonceKey{}).(string)
+		return nonce
+	}
+
+	handler := test.Middleware.RequireAccount(
+		http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+			panic("not reached")
+		}))
+
+	req, _ := http.NewRequest("GET", "/frob", nil)
+	req = req.WithContext(context.WithValue(req.Context(), nonceKey{}, "n0nce"))
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	assert.Check(t, is.Equal(http.StatusOK, resp.Code))
+	// the body is the usual form, with the nonce on its <script> element
+	expected := strings.Replace(string(golden.Get(t, "expected_post_binding_response.html")),
+		"<script>", `<script nonce="n0nce">`, 1)
+	assert.Check(t, is.Equal(expected, resp.Body.String()))
+
+	// the script content, and so the CSP hash, is unchanged
+	scriptContent := "document.getElementById('SAMLSubmitButton').style.visibility=\"hidden\";document.getElementById('SAMLRequestForm').submit();"
+	scriptSum := sha256.Sum256([]byte(scriptContent))
+	scriptHash := base64.StdEncoding.EncodeToString(scriptSum[:])
+	assert.Check(t, is.Equal("default-src; script-src 'sha256-"+scriptHash+"'; reflected-xss block; referrer no-referrer;",
+		resp.Header().Get("Content-Security-Policy")))
+}
+
 func TestMiddlewareRequireAccountCreds(t *testing.T) {
 	test := NewMiddlewareTest(t)
 	handler := test.Middleware.RequireAccount(
@@ -239,7 +274,7 @@ func TestMiddlewareRequireAccountCreds(t *testing.T) {
 			assert.Check(t, is.Equal("555-5555", jwtSession.Attributes.Get("telephoneNumber")))
 			assert.Check(t, is.Equal("And I", jwtSession.Attributes.Get("sn")))
 			assert.Check(t, is.Equal("urn:mace:dir:entitlement:common-lib-terms", jwtSession.Attributes.Get("eduPersonEntitlement")))
-			assert.Check(t, is.Equal("", jwtSession.Attributes.Get("eduPersonTargetedID")))
+			assert.Check(t, is.Equal("8F+M9ovyaYNwCId0pVkVsnZYRDo=", jwtSession.Attributes.Get("eduPersonTargetedID")))
 			assert.Check(t, is.Equal("Me Myself", jwtSession.Attributes.Get("givenName")))
 			assert.Check(t, is.Equal("Me Myself And I", jwtSession.Attributes.Get("cn")))
 			assert.Check(t, is.Equal("myself", jwtSession.Attributes.Get("uid")))
@@ -275,7 +310,7 @@ func TestMiddlewareRequireAccountBadCreds(t *testing.T) {
 
 	assert.Check(t, is.Equal(http.StatusFound, resp.Code))
 
-	assert.Check(t, is.Equal("saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure",
+	assert.Check(t, is.Equal("saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure; SameSite=None",
 		resp.Header().Get("Set-Cookie")))
 
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
@@ -305,7 +340,7 @@ func TestMiddlewareRequireAccountExpiredCreds(t *testing.T) {
 	handler.ServeHTTP(resp, req)
 
 	assert.Check(t, is.Equal(http.StatusFound, resp.Code))
-	assert.Check(t, is.Equal("saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure",
+	assert.Check(t, is.Equal("saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+test.makeTrackedRequest("id-00020406080a0c0e10121416181a1c1e20222426")+"; Path=/saml2/acs; Max-Age=90; HttpOnly; Secure; SameSite=None",
 		resp.Header().Get("Set-Cookie")))
 
 	redirectURL, err := url.Parse(resp.Header().Get("Location"))
@@ -415,7 +450,7 @@ func TestMiddlewareCanParseResponse(t *testing.T) {
 
 	assert.Check(t, is.Equal("/frob", resp.Header().Get("Location")))
 	assert.Check(t, is.DeepEqual([]string{
-		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6=; Path=/saml2/acs; Expires=Thu, 01 Jan 1970 00:00:01 GMT",
+		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6=; Path=/saml2/acs; Expires=Thu, 01 Jan 1970 00:00:01 GMT; Secure; SameSite=None",
 		// the domain-scoped session cookie set by earlier versions is expired
 		"ttt=; Path=/; Domain=15661444.ngrok.io; Expires=Thu, 01 Jan 1970 00:00:01 GMT; HttpOnly; Secure",
 		"ttt=" + test.expectedSessionCookie + "; " +
