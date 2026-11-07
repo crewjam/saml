@@ -1541,6 +1541,21 @@ func unboundedParentContext(el *etree.Element) (etreeutils.NSContext, error) {
 	return ctx.SubContext(parent)
 }
 
+// stripKeyInfoWithoutCertificate removes the KeyInfo from el's Signature
+// when it carries no X509Certificate, so that dsig verifies against the
+// trusted certificates instead, and reports whether it had none.
+func stripKeyInfoWithoutCertificate(el *etree.Element) bool {
+	if el.FindElement("./Signature/KeyInfo/X509Data/X509Certificate") != nil {
+		return false
+	}
+	if sigEl := el.FindElement("./Signature"); sigEl != nil {
+		if keyInfo := sigEl.FindElement("KeyInfo"); keyInfo != nil {
+			sigEl.RemoveChild(keyInfo)
+		}
+	}
+	return true
+}
+
 // validateWithEachCert validates the signature on el against each of certs
 // in turn, with a copy of base that trusts only that certificate, and
 // returns nil as soon as one of them verifies it. Otherwise it returns the
@@ -1617,14 +1632,7 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	//
 	// The best course of action is to just remove the KeyInfo so that dsig falls back to
 	// verifying against the public key provided in the metadata.
-	noCertInKeyInfo := el.FindElement("./Signature/KeyInfo/X509Data/X509Certificate") == nil
-	if noCertInKeyInfo {
-		if sigEl := el.FindElement("./Signature"); sigEl != nil {
-			if keyInfo := sigEl.FindElement("KeyInfo"); keyInfo != nil {
-				sigEl.RemoveChild(keyInfo)
-			}
-		}
-	}
+	noCertInKeyInfo := stripKeyInfoWithoutCertificate(el)
 
 	tag := el.Tag
 	ctx, err := unboundedParentContext(el)
