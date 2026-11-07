@@ -54,6 +54,12 @@ type Middleware struct {
 	Session          SessionProvider
 	AssertionHandler AssertionHandler
 
+	// LogoutRequestTracker tracks the LogoutRequests sent by
+	// HandleStartLogout, so that ServeSLO accepts only a LogoutResponse to
+	// one of them. It must not share pending requests with RequestTracker.
+	// SP initiated single logout fails if it is nil.
+	LogoutRequestTracker RequestTracker
+
 	// ScriptNonce, if set, is called when the middleware serves the
 	// auto-submitting HTML form of the HTTP-POST binding. A non-empty result
 	// is set as the nonce attribute of the form's <script> element, for

@@ -27,6 +27,10 @@ var _ SessionWithNameID = JWTSessionClaims{}
 // session does not expose a NameID.
 var errLogoutNoNameID = errors.New("saml: cannot start single logout: the session does not implement SessionWithNameID")
 
+// errNoLogoutRequestTracker is passed to OnError when SP initiated single
+// logout is used without a LogoutRequestTracker.
+var errNoLogoutRequestTracker = errors.New("saml: single logout needs Middleware.LogoutRequestTracker")
+
 // errSLOUnexpectedMessage is passed to OnError by ServeSLO when the request
 // carries neither a SAMLRequest nor a SAMLResponse.
 var errSLOUnexpectedMessage = errors.New("saml: single logout endpoint received neither a SAMLRequest nor a SAMLResponse")
@@ -34,9 +38,10 @@ var errSLOUnexpectedMessage = errors.New("saml: single logout endpoint received 
 // HandleStartLogout starts SP initiated single logout. It deletes the local
 // session and sends the browser to the IDP with a LogoutRequest for the
 // session's NameID (and SessionIndex, if known), using the HTTP-Redirect
-// binding if the IDP supports it and the HTTP-POST binding otherwise. The IDP
-// answers with a LogoutResponse to ServiceProvider.SloURL, which ServeHTTP
-// handles (see ServeSLO).
+// binding if the IDP supports it and the HTTP-POST binding otherwise. The
+// request is tracked with LogoutRequestTracker, and its index is the
+// RelayState. The IDP answers with a LogoutResponse to
+// ServiceProvider.SloURL, which ServeHTTP handles (see ServeSLO).
 //
 // If the request has no session, or the IDP metadata lists no
 // SingleLogoutService, only the local session is ended and the browser is
@@ -69,31 +74,48 @@ func (m *Middleware) HandleStartLogout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	binding := m.sloBinding()
+	if binding == "" {
+		// The IDP does not support single logout; end the local session only.
+		if err := m.Session.DeleteSession(w, r); err != nil {
+			m.OnError(w, r, err)
+			return
+		}
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	if m.LogoutRequestTracker == nil {
+		m.OnError(w, r, errNoLogoutRequestTracker)
+		return
+	}
+
+	logoutRequest, err := m.ServiceProvider.MakeLogoutRequest(
+		m.ServiceProvider.GetSLOBindingLocation(binding), nameID, opts...)
+	if err != nil {
+		m.OnError(w, r, err)
+		return
+	}
+	relayState, err := m.LogoutRequestTracker.TrackRequest(w, r, logoutRequest.ID)
+	if err != nil {
+		m.OnError(w, r, err)
+		return
+	}
+
 	if err := m.Session.DeleteSession(w, r); err != nil {
 		m.OnError(w, r, err)
 		return
 	}
 
-	switch m.sloBinding() {
-	case saml.HTTPRedirectBinding:
-		redirectURL, err := m.ServiceProvider.MakeRedirectLogoutRequest(nameID, "", opts...)
+	if binding == saml.HTTPRedirectBinding {
+		redirectURL, err := m.ServiceProvider.RedirectLogoutRequestURL(logoutRequest, relayState)
 		if err != nil {
 			m.OnError(w, r, err)
 			return
 		}
 		http.Redirect(w, r, redirectURL.String(), http.StatusFound)
-	case saml.HTTPPostBinding:
-		req, err := m.ServiceProvider.MakeLogoutRequest(
-			m.ServiceProvider.GetSLOBindingLocation(saml.HTTPPostBinding), nameID, opts...)
-		if err != nil {
-			m.OnError(w, r, err)
-			return
-		}
-		m.writePostForm(w, postRequestScriptHash, req.PostWithNonce("", m.scriptNonce(r)))
-	default:
-		// The IDP does not support single logout; the local session is gone.
-		http.Redirect(w, r, "/", http.StatusFound)
+		return
 	}
+	m.writePostForm(w, postRequestScriptHash, logoutRequest.PostWithNonce(relayState, m.scriptNonce(r)))
 }
 
 // sloBinding returns the binding to send logout messages to the IDP with:
@@ -113,9 +135,10 @@ func (m *Middleware) sloBinding() string {
 // binding.
 //
 // A LogoutResponse is the IDP's answer to a LogoutRequest sent by
-// HandleStartLogout. Once it is validated, the session (if any is left) is
-// deleted and the browser is redirected to the RelayState, if it is a path on
-// this site, or else to "/".
+// HandleStartLogout. It is accepted only if its InResponseTo is the ID of a
+// LogoutRequest pending in LogoutRequestTracker. Once it is validated, the
+// request stops being tracked, the session (if any is left) is deleted and
+// the browser is redirected to "/".
 //
 // A LogoutRequest is IDP initiated single logout. Once it is validated, the
 // session of the requesting browser is deleted and the browser is sent back
@@ -142,9 +165,31 @@ func (m *Middleware) ServeSLO(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Middleware) serveSLOResponse(w http.ResponseWriter, r *http.Request) {
-	if err := m.ServiceProvider.ValidateLogoutResponseRequest(r); err != nil {
+	if m.LogoutRequestTracker == nil {
+		m.OnError(w, r, errNoLogoutRequestTracker)
+		return
+	}
+
+	trackedRequests := m.LogoutRequestTracker.GetTrackedRequests(r)
+	possibleRequestIDs := make([]string, 0, len(trackedRequests))
+	for _, tr := range trackedRequests {
+		possibleRequestIDs = append(possibleRequestIDs, tr.SAMLRequestID)
+	}
+
+	logoutResponse, err := m.ServiceProvider.ParseLogoutResponse(r, possibleRequestIDs)
+	if err != nil {
 		m.OnError(w, r, err)
 		return
+	}
+
+	for _, tr := range trackedRequests {
+		if tr.SAMLRequestID != logoutResponse.InResponseTo {
+			continue
+		}
+		if err := m.LogoutRequestTracker.StopTrackingRequest(w, r, tr.Index); err != nil {
+			m.OnError(w, r, err)
+			return
+		}
 	}
 
 	if err := m.Session.DeleteSession(w, r); err != nil {
@@ -152,11 +197,7 @@ func (m *Middleware) serveSLOResponse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	redirectURI := "/"
-	if uri := r.Form.Get("RelayState"); isLocalRedirect(uri) {
-		redirectURI = uri
-	}
-	http.Redirect(w, r, redirectURI, http.StatusFound) //nolint:gosec // redirectURI is "/" or a local path
+	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 func (m *Middleware) serveSLORequest(w http.ResponseWriter, r *http.Request) {

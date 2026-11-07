@@ -28,6 +28,18 @@ type CookieRequestTracker struct {
 	MaxAge          time.Duration
 	RelayStateFunc  func(w http.ResponseWriter, r *http.Request) string
 	SameSite        http.SameSite
+
+	// Path is the Path attribute of the tracking cookies, which must cover
+	// the endpoint the IDP answers at. If empty, it is the path of the ACS
+	// URL.
+	Path string
+}
+
+func (t CookieRequestTracker) cookiePath() string {
+	if t.Path != "" {
+		return t.Path
+	}
+	return t.ServiceProvider.AcsURL.Path
 }
 
 // TrackRequest starts tracking the SAML request with the given ID. It returns an
@@ -59,7 +71,7 @@ func (t CookieRequestTracker) TrackRequest(w http.ResponseWriter, r *http.Reques
 		HttpOnly: true,
 		SameSite: t.sameSite(secure),
 		Secure:   secure,
-		Path:     t.ServiceProvider.AcsURL.Path,
+		Path:     t.cookiePath(),
 	})
 
 	return trackedRequest.Index, nil
@@ -89,7 +101,7 @@ func (t CookieRequestTracker) StopTrackingRequest(w http.ResponseWriter, r *http
 	cookie.Value = ""
 	cookie.Domain = ""
 	cookie.Expires = time.Unix(1, 0) // past time as close to epoch as possible, but not zero time.Time{}
-	cookie.Path = t.ServiceProvider.AcsURL.Path
+	cookie.Path = t.cookiePath()
 	cookie.Secure = t.ServiceProvider.AcsURL.Scheme == "https"
 	cookie.SameSite = t.sameSite(cookie.Secure)
 	http.SetCookie(w, cookie)

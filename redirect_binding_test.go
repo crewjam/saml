@@ -456,6 +456,24 @@ func TestRedirectBindingOutgoingSignature(t *testing.T) {
 		check(t, u, "SAMLRequest")
 	})
 
+	t.Run("LogoutRequest from MakeLogoutRequest", func(t *testing.T) {
+		// MakeLogoutRequest adds an enveloped signature, which
+		// RedirectLogoutRequestURL must leave out.
+		req, err := e.sp.MakeLogoutRequest("https://idp.example.com/slo/redirect", "alice")
+		assert.NilError(t, err)
+		assert.Assert(t, req.Signature != nil)
+		u, err := e.sp.RedirectLogoutRequestURL(req, relayState)
+		assert.NilError(t, err)
+		assert.Check(t, req.Signature != nil, "req must not be modified")
+		check(t, u, "SAMLRequest")
+
+		buf, err := base64.StdEncoding.DecodeString(u.Query().Get("SAMLRequest"))
+		assert.NilError(t, err)
+		doc := etree.NewDocument()
+		assert.NilError(t, doc.ReadFromBytes(spcovInflate(t, buf)))
+		assert.Check(t, is.Equal(req.ID, doc.Root().SelectAttrValue("ID", "")))
+	})
+
 	t.Run("LogoutResponse", func(t *testing.T) {
 		u, err := e.sp.MakeRedirectLogoutResponse("id-req", relayState)
 		assert.NilError(t, err)

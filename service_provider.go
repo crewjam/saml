@@ -1749,11 +1749,26 @@ func (sp *ServiceProvider) makeUnsignedLogoutRequest(idpURL, nameID string, opts
 // signature.
 func (sp *ServiceProvider) MakeRedirectLogoutRequest(nameID, relayState string, opts ...LogoutRequestOption) (*url.URL, error) {
 	req := sp.makeUnsignedLogoutRequest(sp.GetSLOBindingLocation(HTTPRedirectBinding), nameID, opts...)
-	encoded, err := deflateAndEncode(req.Element())
+	return sp.RedirectLogoutRequestURL(req, relayState)
+}
+
+// RedirectLogoutRequestURL returns the URL that sends req to its Destination
+// with the HTTP-Redirect binding. Use it instead of MakeRedirectLogoutRequest
+// when the request's ID is needed, for example to track the request and
+// match it with the IDP's LogoutResponse; req is typically made by
+// MakeLogoutRequest with the IDP's HTTP-Redirect SingleLogoutService location.
+//
+// Any enveloped XML signature on req is left out of the message. If
+// sp.SignatureMethod is set, the URL carries a query string signature
+// instead, as the binding requires (saml-bindings-2.0-os section 3.4.4.1).
+func (sp *ServiceProvider) RedirectLogoutRequestURL(req *LogoutRequest, relayState string) (*url.URL, error) {
+	unsigned := *req
+	unsigned.Signature = nil
+	encoded, err := deflateAndEncode(unsigned.Element())
 	if err != nil {
 		return nil, err
 	}
-	return sp.redirectBindingURL(req.Destination, redirectParamSAMLRequest, encoded, relayState)
+	return sp.redirectBindingURL(unsigned.Destination, redirectParamSAMLRequest, encoded, relayState)
 }
 
 // Redirect returns a URL suitable for using the redirect binding with the
@@ -2031,21 +2046,55 @@ func (sp *ServiceProvider) metadataNameIDFormat() NameIDFormat {
 // With the HTTP-Redirect binding the response must be signed, either with a
 // query string signature (SigAlg and Signature parameters) or with an
 // enveloped XML signature.
+//
+// It does not check the response's InResponseTo against the LogoutRequest
+// this service provider sent; use ParseLogoutResponse for that.
 func (sp *ServiceProvider) ValidateLogoutResponseRequest(req *http.Request) error {
+	_, err := sp.parseLogoutResponseRequest(req)
+	return err
+}
+
+// ParseLogoutResponse validates the LogoutResponse content from the request,
+// which may use either the HTTP-Redirect or the HTTP-POST binding, as
+// ValidateLogoutResponseRequest does, and returns it. In addition, the
+// response's InResponseTo must be one of possibleRequestIDs, the IDs of the
+// LogoutRequests this service provider sent and still expects an answer to,
+// so that a LogoutResponse cannot be replayed or delivered unsolicited.
+func (sp *ServiceProvider) ParseLogoutResponse(req *http.Request, possibleRequestIDs []string) (*LogoutResponse, error) {
+	resp, err := sp.parseLogoutResponseRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	for _, possibleRequestID := range possibleRequestIDs {
+		if possibleRequestID != "" && resp.InResponseTo == possibleRequestID {
+			return resp, nil
+		}
+	}
+	return nil, fmt.Errorf("`InResponseTo` does not match any of the possible request IDs (expected %v)", possibleRequestIDs)
+}
+
+func (sp *ServiceProvider) parseLogoutResponseRequest(req *http.Request) (*LogoutResponse, error) {
 	if data := req.URL.Query().Get("SAMLResponse"); data != "" {
 		return sp.validateLogoutResponseRedirectQuery(req.URL.RawQuery)
 	}
 
 	err := req.ParseForm()
 	if err != nil {
-		return fmt.Errorf("unable to parse form: %v", err)
+		return nil, fmt.Errorf("unable to parse form: %v", err)
 	}
 
-	return sp.ValidateLogoutResponseForm(req.PostForm.Get("SAMLResponse"))
+	return sp.parseLogoutResponseForm(req.PostForm.Get("SAMLResponse"))
 }
 
 // ValidateLogoutResponseForm returns a nil error if the logout response is valid.
+//
+// It does not check the response's InResponseTo; see ParseLogoutResponse.
 func (sp *ServiceProvider) ValidateLogoutResponseForm(postFormData string) error {
+	_, err := sp.parseLogoutResponseForm(postFormData)
+	return err
+}
+
+func (sp *ServiceProvider) parseLogoutResponseForm(postFormData string) (*LogoutResponse, error) {
 	retErr := &InvalidResponseError{
 		Now: sp.now(),
 	}
@@ -2053,36 +2102,39 @@ func (sp *ServiceProvider) ValidateLogoutResponseForm(postFormData string) error
 	rawResponseBuf, err := base64.StdEncoding.DecodeString(postFormData)
 	if err != nil {
 		retErr.PrivateErr = fmt.Errorf("unable to parse base64: %s", err)
-		return retErr
+		return nil, retErr
 	}
 	retErr.Response = string(rawResponseBuf)
 
 	// TODO(ross): add test case for this (SLO does not have tests right now)
 	if err := xrv.Validate(bytes.NewReader(rawResponseBuf)); err != nil {
-		return fmt.Errorf("response contains invalid XML: %s", err)
+		return nil, fmt.Errorf("response contains invalid XML: %s", err)
 	}
 
 	doc := etree.NewDocument()
 	if err := doc.ReadFromBytes(rawResponseBuf); err != nil {
 		retErr.PrivateErr = err
-		return retErr
+		return nil, retErr
 	}
 	if doc.Root() == nil {
 		retErr.PrivateErr = errors.New("invalid xml: no root")
-		return retErr
+		return nil, retErr
 	}
 
 	if err := sp.validateSignature(doc.Root()); err != nil {
 		retErr.PrivateErr = err
-		return retErr
+		return nil, retErr
 	}
 
 	var resp LogoutResponse
 	if err := unmarshalElement(doc.Root(), &resp); err != nil {
 		retErr.PrivateErr = err
-		return retErr
+		return nil, retErr
 	}
-	return sp.validateLogoutResponse(&resp)
+	if err := sp.validateLogoutResponse(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // ValidateLogoutResponseRedirect returns a nil error if the logout response is valid.
@@ -2095,30 +2147,36 @@ func (sp *ServiceProvider) ValidateLogoutResponseForm(postFormData string) error
 // a query string signature instead (as saml-bindings-2.0-os section 3.4.4.1
 // requires); use ValidateLogoutResponseRequest to accept those.
 //
+// It does not check the response's InResponseTo; see ParseLogoutResponse.
+//
 // URL Binding appears to be gzip / flate encoded
 // See https://www.oasis-open.org/committees/download.php/20645/sstc-saml-tech-overview-2%200-draft-10.pdf  6.6
 func (sp *ServiceProvider) ValidateLogoutResponseRedirect(queryParameterData string) error {
-	return sp.validateLogoutResponseRedirectQuery(redirectParamSAMLResponse + "=" + url.QueryEscape(queryParameterData))
+	_, err := sp.validateLogoutResponseRedirectQuery(redirectParamSAMLResponse + "=" + url.QueryEscape(queryParameterData))
+	return err
 }
 
 // validateLogoutResponseRedirectQuery validates a LogoutResponse received
 // via the HTTP-Redirect binding. rawQuery is the URL's raw query string.
-func (sp *ServiceProvider) validateLogoutResponseRedirectQuery(rawQuery string) error {
+func (sp *ServiceProvider) validateLogoutResponseRedirectQuery(rawQuery string) (*LogoutResponse, error) {
 	retErr := &InvalidResponseError{
 		Now: sp.now(),
 	}
 
 	root, err := sp.readRedirectBindingMessage(rawQuery, redirectParamSAMLResponse, retErr)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	var resp LogoutResponse
 	if err := unmarshalElement(root, &resp); err != nil {
 		retErr.PrivateErr = err
-		return retErr
+		return nil, retErr
 	}
-	return sp.validateLogoutResponse(&resp)
+	if err := sp.validateLogoutResponse(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // validateLogoutResponse validates the LogoutResponse fields. Returns a nil error if the LogoutResponse is valid.

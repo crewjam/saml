@@ -187,6 +187,22 @@ func DefaultRequestTracker(opts Options, serviceProvider *saml.ServiceProvider) 
 	}
 }
 
+// DefaultLogoutRequestTracker returns a new RequestTracker for the
+// LogoutRequests of SP initiated single logout: a CookieRequestTracker whose
+// cookies are sent to the SLO URL. Its cookie names do not share the prefix
+// of DefaultRequestTracker, so a logout request ID is never accepted as the
+// ID of an authentication request, nor the other way around.
+func DefaultLogoutRequestTracker(opts Options, serviceProvider *saml.ServiceProvider) CookieRequestTracker {
+	return CookieRequestTracker{
+		ServiceProvider: serviceProvider,
+		NamePrefix:      "samlslo_",
+		Codec:           DefaultTrackedRequestCodec(opts),
+		MaxAge:          saml.MaxIssueDelay,
+		SameSite:        opts.CookieSameSite,
+		Path:            serviceProvider.SloURL.Path,
+	}
+}
+
 // DefaultServiceProvider returns the default saml.ServiceProvider for the provided
 // options.
 func DefaultServiceProvider(opts Options) saml.ServiceProvider {
@@ -276,8 +292,8 @@ func DefaultAssertionHandler(_ Options) NopAssertionHandler {
 // given options.
 //
 // You can customize the behavior of the middleware in more detail by
-// replacing and/or changing Session, RequestTracker, and ServiceProvider
-// in the returned Middleware.
+// replacing and/or changing Session, RequestTracker, LogoutRequestTracker
+// and ServiceProvider in the returned Middleware.
 func New(opts Options) (*Middleware, error) {
 	m := &Middleware{
 		ServiceProvider:  DefaultServiceProvider(opts),
@@ -288,6 +304,7 @@ func New(opts Options) (*Middleware, error) {
 		AssertionHandler: DefaultAssertionHandler(opts),
 	}
 	m.RequestTracker = DefaultRequestTracker(opts, &m.ServiceProvider)
+	m.LogoutRequestTracker = DefaultLogoutRequestTracker(opts, &m.ServiceProvider)
 	if opts.UseArtifactResponse {
 		m.ResponseBinding = saml.HTTPArtifactBinding
 	}
