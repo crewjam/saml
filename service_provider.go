@@ -437,7 +437,8 @@ type ServiceProvider struct {
 	// Either way, the EndpointIndex of a type 0x0004 artifact selects the
 	// indexed SOAP ArtifactResolutionService it names in the IdP metadata,
 	// falling back to the first SOAP ArtifactResolutionService when none
-	// has that index.
+	// has that index, and a SAMLart longer than 256 bytes or with bytes
+	// outside printable ASCII is refused without contacting the IdP.
 	RequireStandardArtifacts bool
 
 	// EncryptLogoutNameID, if true, makes MakeLogoutRequest,
