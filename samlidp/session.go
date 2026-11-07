@@ -52,6 +52,9 @@ func isBcryptHash(hash []byte) bool {
 // is returned with an English-language toast telling the user their
 // password was invalid.
 //
+// Credentials posted by a browser from another origin are refused with 403
+// Forbidden (see checkLoginOrigin).
+//
 // If a session cookie already exists and represents a valid session,
 // then the session is returned, unless the AuthnRequest has
 // ForceAuthn="true": the user must then authenticate again, so the login
@@ -67,6 +70,11 @@ func isBcryptHash(hash []byte) bool {
 func (s *Server) GetSession(w http.ResponseWriter, r *http.Request, req *saml.IdpAuthnRequest) *saml.Session {
 	// if we received login credentials then maybe we can create a session
 	if r.Method == "POST" && r.PostForm.Get("user") != "" {
+		if err := s.checkLoginOrigin(r); err != nil {
+			s.logger.Printf("ERROR: refusing cross-origin login: %s", err)
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return nil
+		}
 		return s.authenticate(w, r, req)
 	}
 
@@ -138,6 +146,31 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, req *saml.
 
 	s.logger.Printf("User '%s' authenticated successfully", r.PostForm.Get("user"))
 	return session
+}
+
+// checkLoginOrigin returns an error if r, which posts login credentials,
+// was sent by a browser from a page of another origin.
+//
+// Without this check, a page on any site could post the attacker's own
+// username and password to /login or /sso from the victim's browser (login
+// CSRF): the browser would store the attacker's session cookie and the
+// victim would then be logged in to service providers as the attacker. The
+// login form is served by the IdP itself, so legitimate credentials always
+// come from its own origin.
+//
+// The check uses the Sec-Fetch-Site and Origin headers that browsers send
+// (see http.CrossOriginProtection); the origin of the IdP's configured URL
+// is trusted, so that it also works behind a proxy that changes the Host
+// header. Requests without those headers, which do not come from a
+// browser, are allowed.
+func (s *Server) checkLoginOrigin(r *http.Request) error {
+	protection := http.NewCrossOriginProtection()
+	if u := s.IDP.SSOURL; u.Scheme != "" && u.Host != "" {
+		if err := protection.AddTrustedOrigin(u.Scheme + "://" + u.Host); err != nil {
+			return err
+		}
+	}
+	return protection.Check(r)
 }
 
 // lookupSession returns the unexpired session named by the session cookie
