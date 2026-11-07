@@ -216,6 +216,7 @@ func TestCovIDPInitiatedRelayState(t *testing.T) {
 
 	assert.Check(t, is.Equal("fixed-state", relayState("https://idp.example.com/login/fixed/ignored")))
 	assert.Check(t, is.Equal("/whoami", relayState("https://idp.example.com/login/suffix/whoami")))
+	assert.Check(t, is.Equal("/a/b/c", relayState("https://idp.example.com/login/suffix/a/b/c")))
 	assert.Check(t, is.Equal("", relayState("https://idp.example.com/login/suffix")))
 	assert.Check(t, is.Equal("", relayState("https://idp.example.com/login/none/whoami")))
 }
