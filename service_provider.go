@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"time"
 
@@ -177,12 +178,28 @@ type ServiceProvider struct {
 	// RequestedAuthnContext. It has no effect if RequestedAuthnContext is
 	// nil or names no class.
 	//
-	// Only the "exact" Comparison (or an empty one, which means "exact") is
-	// supported. The ordering that "minimum", "better" and "maximum" refer
-	// to is defined by each deployment, not by the SAML specification
-	// (saml-core §3.3.2.2.1), so with any other Comparison every assertion
+	// The "exact" Comparison (or an empty one, which means "exact") is
+	// supported directly. The ordering that "minimum", "better" and
+	// "maximum" refer to is defined by each deployment, not by the SAML
+	// specification (saml-core §3.3.2.2.1), so for any other Comparison
+	// AuthnContextClassRefComparator decides; without it, every assertion
 	// is rejected rather than accepted unchecked.
 	ValidateAuthnContextClassRef bool
+
+	// AuthnContextClassRefComparator, if set, lets ValidateAuthnContextClassRef
+	// check a RequestedAuthnContext whose Comparison is not "exact" (for
+	// example "minimum", "better" or "maximum"), using the deployment's own
+	// ordering of authentication context classes.
+	//
+	// It is called with the Comparison, the requested classes (in order of
+	// preference) and the AuthnContextClassRef of one AuthnStatement of the
+	// assertion, and reports whether that class satisfies the request. The
+	// assertion is accepted if it returns true for any AuthnStatement. It
+	// should return false for a Comparison it does not know.
+	//
+	// It is not called for the "exact" Comparison, which is always checked
+	// by string equality.
+	AuthnContextClassRefComparator func(comparison string, requested []string, got string) bool
 
 	// AllowIDPInitiated accepts unsolicited (IdP-initiated) responses, which
 	// have no InResponseTo. A response or assertion that does carry an
@@ -231,7 +248,11 @@ type ServiceProvider struct {
 	AssertionConsumerServiceBindings []string
 
 	// ValidateAudienceRestriction allows you to override the default audience validation
-	// for an assertion. If nil, the default audience validation is used.
+	// for an assertion. If nil, the default audience validation is used: the
+	// assertion must have at least one AudienceRestriction, and every
+	// AudienceRestriction must list this SP's audience (EntityID, or
+	// MetadataURL when EntityID is empty) among its audiences (saml-core
+	// §2.5.1.4).
 	ValidateAudienceRestriction func(assertion *Assertion) error
 
 	// ValidateRequestID allows you to override the default request ID validation.
@@ -316,6 +337,12 @@ var MaxIssueDelay = time.Second * 90
 // MaxClockSkew allows for leeway for clock skew between the IDP and SP when
 // validating assertions. It defaults to 180 seconds (matches shibboleth).
 var MaxClockSkew = time.Second * 180
+
+// MaxArtifactResponseSize is the largest SOAP response body, in bytes, that
+// the service provider reads from the IDP's ArtifactResolutionService when it
+// resolves an artifact received with the HTTP-Artifact binding. A larger
+// response is rejected without being parsed.
+var MaxArtifactResponseSize int64 = 10 << 20
 
 // DefaultValidDuration is how long we assert that the SP metadata is valid.
 const DefaultValidDuration = time.Hour * 24 * 2
@@ -992,9 +1019,14 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 		retErr.PrivateErr = classify(fmt.Errorf("Error during artifact resolution: HTTP status %d (%s)", response.StatusCode, response.Status), ErrArtifactResolution)
 		return nil, retErr
 	}
-	responseBody, err := io.ReadAll(response.Body)
+	limit := MaxArtifactResponseSize
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {
 		retErr.PrivateErr = classify(fmt.Errorf("Error during artifact resolution: %w", err), ErrArtifactResolution)
+		return nil, retErr
+	}
+	if int64(len(responseBody)) > limit {
+		retErr.PrivateErr = classify(fmt.Errorf("Error during artifact resolution: response body is larger than %d bytes", limit), ErrArtifactResolution)
 		return nil, retErr
 	}
 	assertion, err := sp.ParseXMLArtifactResponse(responseBody, possibleRequestIDs, artifactResolveRequest.ID, *req.URL)
@@ -1520,7 +1552,9 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 
 // validateAuthnContextClassRef checks, if ValidateAuthnContextClassRef is
 // set, that one of the assertion's AuthnStatements has an
-// AuthnContextClassRef listed in RequestedAuthnContext.
+// AuthnContextClassRef that satisfies RequestedAuthnContext: one listed in it
+// for the "exact" Comparison, or one AuthnContextClassRefComparator accepts
+// for any other.
 func (sp *ServiceProvider) validateAuthnContextClassRef(assertion *Assertion) error {
 	if !sp.ValidateAuthnContextClassRef || sp.RequestedAuthnContext == nil {
 		return nil
@@ -1529,8 +1563,16 @@ func (sp *ServiceProvider) validateAuthnContextClassRef(assertion *Assertion) er
 	if len(requested) == 0 {
 		return nil
 	}
-	if comparison := sp.RequestedAuthnContext.Comparison; comparison != "" && comparison != "exact" {
+	comparison := sp.RequestedAuthnContext.Comparison
+	exact := comparison == "" || comparison == "exact"
+	if !exact && sp.AuthnContextClassRefComparator == nil {
 		return classify(fmt.Errorf("cannot validate AuthnContextClassRef for RequestedAuthnContext Comparison %q: only \"exact\" is supported", comparison), ErrUnsupported)
+	}
+	satisfies := func(got string) bool {
+		if exact {
+			return slices.Contains(requested, got)
+		}
+		return sp.AuthnContextClassRefComparator(comparison, requested, got)
 	}
 	var got []string
 	for _, authnStatement := range assertion.AuthnStatements {
@@ -1538,12 +1580,13 @@ func (sp *ServiceProvider) validateAuthnContextClassRef(assertion *Assertion) er
 		if classRef == nil {
 			continue
 		}
-		for _, want := range requested {
-			if classRef.Value == want {
-				return nil
-			}
+		if satisfies(classRef.Value) {
+			return nil
 		}
 		got = append(got, classRef.Value)
+	}
+	if !exact {
+		return classify(fmt.Errorf("assertion AuthnContextClassRef %q does not satisfy the requested %q with Comparison %q", got, requested, comparison), ErrAuthnContextMismatch)
 	}
 	return classify(fmt.Errorf("assertion AuthnContextClassRef %q is not one of the requested %q", got, requested), ErrAuthnContextMismatch)
 }
@@ -1659,18 +1702,24 @@ func (sp *ServiceProvider) validateAudienceRestriction(assertion *Assertion) err
 	if len(assertion.Conditions.AudienceRestrictions) == 0 {
 		return classify(fmt.Errorf("assertion Conditions has no AudienceRestriction for %q", audience), ErrAudienceMismatch)
 	}
-	audienceRestrictionsValid := false
-	for _, audienceRestriction := range assertion.Conditions.AudienceRestrictions {
-		for _, v := range audienceRestriction.AllAudiences() {
-			if v.Value == audience {
-				audienceRestrictionsValid = true
-			}
+	// Every AudienceRestriction must be satisfied, and one is satisfied when
+	// any of its audiences is this SP (saml-core §2.5.1.4).
+	for i := range assertion.Conditions.AudienceRestrictions {
+		if !audienceRestrictionContains(&assertion.Conditions.AudienceRestrictions[i], audience) {
+			return classify(fmt.Errorf("assertion Conditions AudienceRestriction does not contain %q", audience), ErrAudienceMismatch)
 		}
 	}
-	if !audienceRestrictionsValid {
-		return classify(fmt.Errorf("assertion Conditions AudienceRestriction does not contain %q", audience), ErrAudienceMismatch)
-	}
 	return nil
+}
+
+// audienceRestrictionContains reports whether any audience of r is audience.
+func audienceRestrictionContains(r *AudienceRestriction, audience string) bool {
+	for _, v := range r.AllAudiences() {
+		if v.Value == audience {
+			return true
+		}
+	}
+	return false
 }
 
 // withoutValidityPeriod returns copies of certs whose validity period covers

@@ -34,15 +34,28 @@ type Options struct {
 	// AdminMiddleware, if set, wraps the handlers of the administrative
 	// endpoints (/services, /users, /sessions and /shortcuts), for example to
 	// require authentication. It is not applied to /metadata, /sso and
-	// /login, which must stay reachable by browsers and service providers.
+	// /login and /slo, which must stay reachable by browsers and service
+	// providers.
 	// If nil, the administrative endpoints are unauthenticated.
 	AdminMiddleware func(http.Handler) http.Handler
+
+	// ExtraCertificates are additional signing certificates published in
+	// the metadata, for example to announce a new certificate before a key
+	// rollover. They are never used to sign anything. See
+	// saml.IdentityProvider.ExtraCertificates.
+	ExtraCertificates []*x509.Certificate
+
+	// MetadataScopes are published in the metadata as Shibboleth
+	// shibmd:Scope extension elements. See
+	// saml.IdentityProvider.MetadataScopes.
+	MetadataScopes []saml.ShibbolethScope
 }
 
 // Server represents an IDP server. The server provides the following URLs:
 //
 //	/metadata     - the SAML metadata
 //	/sso          - the SAML endpoint to initiate an authentication flow
+//	/slo          - the SAML single logout endpoint (SP-initiated logout)
 //	/login        - prompt for a username and password if no session established
 //	/login/:shortcut - kick off an IDP-initiated authentication flow
 //	/services     - RESTful interface to Service objects
@@ -76,6 +89,8 @@ func New(opts Options) (*Server, error) {
 	ssoURL.Path += "/sso"
 	loginURL := opts.URL
 	loginURL.Path += "/login"
+	logoutURL := opts.URL
+	logoutURL.Path += "/slo"
 	logr := opts.Logger
 	if logr == nil {
 		logr = logger.DefaultLogger
@@ -91,6 +106,13 @@ func New(opts Options) (*Server, error) {
 			MetadataURL: metadataURL,
 			SSOURL:      ssoURL,
 			LoginURL:    loginURL,
+			LogoutURL:   logoutURL,
+			LogoutBindings: []string{
+				saml.HTTPRedirectBinding,
+				saml.HTTPPostBinding,
+			},
+			ExtraCertificates: opts.ExtraCertificates,
+			MetadataScopes:    opts.MetadataScopes,
 		},
 		logger:            logr,
 		Store:             opts.Store,
@@ -122,6 +144,9 @@ func (s *Server) InitializeHTTP() {
 	})
 	mux.HandleFunc("/sso", func(w http.ResponseWriter, r *http.Request) {
 		s.IDP.ServeSSO(w, r)
+	})
+	mux.HandleFunc("/slo", func(w http.ResponseWriter, r *http.Request) {
+		s.IDP.ServeSLO(w, r)
 	})
 
 	mux.HandleFunc("/login", s.HandleLogin)
