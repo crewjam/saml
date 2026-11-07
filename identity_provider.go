@@ -3,7 +3,6 @@ package saml
 import (
 	"bytes"
 	"crypto"
-	"crypto/ecdsa"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -84,6 +83,36 @@ type AssertionMaker interface {
 	MakeAssertion(req *IdpAuthnRequest, session *Session) error
 }
 
+// ResponseWriter is an interface used by IdentityProvider to send the SAML
+// response for a request to the browser, once the assertion has been made.
+// The default implementation is DefaultResponseWriter, which is used if
+// IdentityProvider.ResponseWriter is not set.
+//
+// Implement it to control the whole HTTP response, for example to set
+// headers, to render the response inside the embedding application's own
+// pages, or to support a binding other than HTTP-POST. To only change the
+// markup of the default auto-submitting HTML form, set
+// IdentityProvider.ResponseFormTemplate instead.
+type ResponseWriter interface {
+	// WriteResponse writes the HTTP response carrying the SAML response for
+	// req. req.ResponseEl is nil until req.MakeResponse (or req.PostBinding,
+	// which calls it) has been called. If it returns an error, the caller
+	// logs it and replies with an HTTP 500 error, so an implementation
+	// should return errors before it starts writing to w.
+	WriteResponse(w http.ResponseWriter, req *IdpAuthnRequest) error
+}
+
+// DefaultResponseWriter is the default ResponseWriter. It calls
+// req.WriteResponse, which writes an auto-submitting HTML form (see
+// IdentityProvider.ResponseFormTemplate) that posts the response to the
+// service provider using the HTTP-POST binding.
+type DefaultResponseWriter struct{}
+
+// WriteResponse implements ResponseWriter.
+func (DefaultResponseWriter) WriteResponse(w http.ResponseWriter, req *IdpAuthnRequest) error {
+	return req.WriteResponse(w)
+}
+
 // IdentityProvider implements the SAML Identity Provider role (IDP).
 //
 // An identity provider receives SAML assertion requests and responds
@@ -114,6 +143,12 @@ type IdentityProvider struct {
 	SignatureMethod         string
 	ValidDuration           *time.Duration
 	ResponseFormTemplate    *template.Template
+
+	// ResponseWriter, if set, writes the HTTP response carrying the SAML
+	// response in ServeSSO and ServeIDPInitiated. If nil,
+	// DefaultResponseWriter is used, which posts the response with the
+	// HTML form from ResponseFormTemplate.
+	ResponseWriter ResponseWriter
 
 	// ExtraCertificates are additional certificates published in the IdP
 	// metadata as signing keys, after Certificate. They are never used to
@@ -151,6 +186,11 @@ type IdentityProvider struct {
 	// digest and AES-128-CBC, for compatibility with existing service
 	// providers.
 	AssertionEncrypter xmlenc.Encrypter
+
+	// SignMetadata, if true, causes ServeMetadata to publish metadata that
+	// carries an enveloped XML signature made with the IdP's key. See
+	// SignedMetadata.
+	SignMetadata bool
 }
 
 // Metadata returns the metadata structure for this identity provider.
@@ -266,9 +306,41 @@ func (idp *IdentityProvider) Handler() http.Handler {
 	return mux
 }
 
-// ServeMetadata is an http.HandlerFunc that serves the IDP metadata
+// SignedMetadata returns the IdP metadata as an XML element carrying an
+// enveloped signature made with the IdP's key (saml-metadata-2.0-os §3).
+//
+// The signature references the EntityDescriptor by its ID attribute; one is
+// generated if the metadata does not have one. The returned element must be
+// serialized as-is: re-indenting it changes the signed content.
+func (idp *IdentityProvider) SignedMetadata() (*etree.Element, error) {
+	signingContext, err := idp.signingContext()
+	if err != nil {
+		return nil, err
+	}
+	return signMetadata(idp.Metadata(), signingContext)
+}
+
+// ServeMetadata is an http.HandlerFunc that serves the IDP metadata. If
+// SignMetadata is set, the metadata is signed.
 func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, _ *http.Request) {
-	buf, _ := xml.MarshalIndent(idp.Metadata(), "", "  ")
+	var buf []byte
+	if idp.SignMetadata {
+		el, err := idp.SignedMetadata()
+		if err != nil {
+			idp.Logger.Printf("ERROR: failed to sign metadata: %s", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+		doc := etree.NewDocument()
+		doc.SetRoot(el)
+		if buf, err = doc.WriteToBytes(); err != nil {
+			idp.Logger.Printf("ERROR: %s", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		buf, _ = xml.MarshalIndent(idp.Metadata(), "", "  ")
+	}
 	w.Header().Set("Content-Type", "application/samlmetadata+xml")
 	if _, err := w.Write(buf); err != nil {
 		idp.Logger.Printf("ERROR: %s", err)
@@ -324,7 +396,7 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
-	if err := req.WriteResponse(w); err != nil {
+	if err := idp.responseWriter().WriteResponse(w, req); err != nil {
 		idp.Logger.Printf("failed to write response: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
@@ -403,11 +475,20 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if err := req.WriteResponse(w); err != nil {
+	if err := idp.responseWriter().WriteResponse(w, req); err != nil {
 		idp.Logger.Printf("failed to write response: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+}
+
+// responseWriter returns idp.ResponseWriter, or DefaultResponseWriter if it
+// is not set.
+func (idp *IdentityProvider) responseWriter() ResponseWriter {
+	if idp.ResponseWriter != nil {
+		return idp.ResponseWriter
+	}
+	return DefaultResponseWriter{}
 }
 
 // IdpAuthnRequest is used by IdentityProvider to handle a single authentication request.
@@ -1181,23 +1262,28 @@ func (req *IdpAuthnRequest) MakeResponse() error {
 
 // signingContext will create a signing context for the request.
 func (req *IdpAuthnRequest) signingContext() (*dsig.SigningContext, error) {
+	return req.IDP.signingContext()
+}
+
+// signingContext returns a signing context for the IdP's key and certificate.
+func (idp *IdentityProvider) signingContext() (*dsig.SigningContext, error) {
 	// A typed-nil key (for example the *rsa.PrivateKey returned by a failed
 	// x509.ParsePKCS1PrivateKey call) is not == nil but panics when used to
 	// sign, so check for that explicitly and return an error instead.
-	useSigner := !signerutil.IsNil(req.IDP.Signer)
+	useSigner := !signerutil.IsNil(idp.Signer)
 	if !useSigner {
-		if key, _ := req.IDP.Key.(crypto.Signer); signerutil.IsNil(key) {
+		if key, _ := idp.Key.(crypto.Signer); signerutil.IsNil(key) {
 			return nil, errors.New("cannot sign: IdentityProvider.Key and IdentityProvider.Signer are both nil or invalid")
 		}
 	}
-	if req.IDP.Certificate == nil {
+	if idp.Certificate == nil {
 		return nil, errors.New("cannot sign: IdentityProvider.Certificate is nil")
 	}
 
 	// Create a cert chain based off of the IDP cert and its intermediates.
-	certificates := make([][]byte, 0, 1+len(req.IDP.Intermediates))
-	certificates = append(certificates, req.IDP.Certificate.Raw)
-	for _, cert := range req.IDP.Intermediates {
+	certificates := make([][]byte, 0, 1+len(idp.Intermediates))
+	certificates = append(certificates, idp.Certificate.Raw)
+	for _, cert := range idp.Intermediates {
 		certificates = append(certificates, cert.Raw)
 	}
 
@@ -1205,15 +1291,15 @@ func (req *IdpAuthnRequest) signingContext() (*dsig.SigningContext, error) {
 	var err error
 	// If signer is set, use it instead of the private key.
 	if useSigner {
-		signingContext, err = dsig.NewSigningContext(req.IDP.Signer, certificates)
+		signingContext, err = dsig.NewSigningContext(idp.Signer, certificates)
 		if err != nil {
 			return nil, err
 		}
 	} else {
 		keyPair := tls.Certificate{
 			Certificate: certificates,
-			PrivateKey:  req.IDP.Key,
-			Leaf:        req.IDP.Certificate,
+			PrivateKey:  idp.Key,
+			Leaf:        idp.Certificate,
 		}
 		keyStore := dsig.TLSCertKeyStore(keyPair)
 
@@ -1222,16 +1308,13 @@ func (req *IdpAuthnRequest) signingContext() (*dsig.SigningContext, error) {
 
 	// Default to SHA-256 if the signature method isn't set. SHA-1 based
 	// methods are deprecated for XML signatures.
-	signatureMethod := req.IDP.SignatureMethod
+	signatureMethod := idp.SignatureMethod
 	if signatureMethod == "" {
-		publicKey := req.IDP.Certificate.PublicKey
+		publicKey := idp.Certificate.PublicKey
 		if useSigner {
-			publicKey = req.IDP.Signer.Public()
+			publicKey = idp.Signer.Public()
 		}
-		signatureMethod = dsig.RSASHA256SignatureMethod
-		if _, ok := publicKey.(*ecdsa.PublicKey); ok {
-			signatureMethod = dsig.ECDSASHA256SignatureMethod
-		}
+		signatureMethod = defaultSignatureMethod(publicKey)
 	}
 
 	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)

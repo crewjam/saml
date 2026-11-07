@@ -42,6 +42,7 @@ func TestCovKeyTransports(t *testing.T) {
 	for name, e := range map[string]RSA{
 		"OAEP":        OAEP(),
 		"OAEP_SHA256": OAEP_SHA256(),
+		"OAEP_SHA384": OAEP_SHA384(),
 		"OAEP_SHA512": OAEP_SHA512(),
 		"PKCS1v15":    PKCS1v15(),
 	} {
@@ -57,6 +58,7 @@ func TestCovKeyTransports(t *testing.T) {
 
 	assert.Check(t, is.Equal("http://www.w3.org/2009/xmlenc11#rsa-oaep", OAEP_SHA256().Algorithm()))
 	assert.Check(t, is.Equal(SHA256.Algorithm(), OAEP_SHA256().DigestMethod.Algorithm()))
+	assert.Check(t, is.Equal(SHA384.Algorithm(), OAEP_SHA384().DigestMethod.Algorithm()))
 	assert.Check(t, is.Equal(SHA512.Algorithm(), OAEP_SHA512().DigestMethod.Algorithm()))
 	assert.Check(t, PKCS1v15().DigestMethod == nil)
 }

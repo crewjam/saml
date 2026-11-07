@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"encoding/xml"
+	"sort"
 	"strconv"
 	"time"
 
@@ -187,10 +188,16 @@ func (r *LogoutRequest) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	aux := &struct {
 		IssueInstant RelaxedTime  `xml:",attr"`
 		NotOnOrAfter *RelaxedTime `xml:",attr,omitempty"`
+		// Issuer is repeated so that it is written before Signature, as
+		// the schema requires.
+		Issuer    *Issuer          `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
+		Signature *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		IssueInstant: RelaxedTime(r.IssueInstant),
 		NotOnOrAfter: (*RelaxedTime)(r.NotOnOrAfter),
+		Issuer:       r.Issuer,
+		Signature:    (*etreeElementXML)(r.Signature),
 		Alias:        (*Alias)(r),
 	}
 	return e.Encode(aux)
@@ -200,8 +207,9 @@ func (r *LogoutRequest) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 func (r *LogoutRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias LogoutRequest
 	aux := &struct {
-		IssueInstant RelaxedTime  `xml:",attr"`
-		NotOnOrAfter *RelaxedTime `xml:",attr"`
+		IssueInstant RelaxedTime      `xml:",attr"`
+		NotOnOrAfter *RelaxedTime     `xml:",attr"`
+		Signature    *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(r),
@@ -209,6 +217,7 @@ func (r *LogoutRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) err
 	if err := d.DecodeElement(&aux, &start); err != nil {
 		return err
 	}
+	r.Signature = (*etree.Element)(aux.Signature)
 	r.IssueInstant = time.Time(aux.IssueInstant)
 	r.NotOnOrAfter = (*time.Time)(aux.NotOnOrAfter)
 	return nil
@@ -315,9 +324,15 @@ func (r *AuthnRequest) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias AuthnRequest
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
+		// Issuer is repeated so that it is written before Signature, as
+		// the schema requires.
+		Issuer    *Issuer          `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
+		Signature *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		IssueInstant: RelaxedTime(r.IssueInstant),
+		Issuer:       r.Issuer,
+		Signature:    (*etreeElementXML)(r.Signature),
 		Alias:        (*Alias)(r),
 	}
 	return e.Encode(aux)
@@ -327,7 +342,8 @@ func (r *AuthnRequest) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 func (r *AuthnRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias AuthnRequest
 	aux := &struct {
-		IssueInstant RelaxedTime `xml:",attr"`
+		IssueInstant RelaxedTime      `xml:",attr"`
+		Signature    *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(r),
@@ -335,6 +351,7 @@ func (r *AuthnRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) erro
 	if err := d.DecodeElement(&aux, &start); err != nil {
 		return err
 	}
+	r.Signature = (*etree.Element)(aux.Signature)
 	r.IssueInstant = time.Time(aux.IssueInstant)
 	return nil
 }
@@ -455,9 +472,15 @@ func (r *ArtifactResolve) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias ArtifactResolve
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
+		// Issuer is repeated so that it is written before Signature, as
+		// the schema requires.
+		Issuer    *Issuer          `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
+		Signature *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		IssueInstant: RelaxedTime(r.IssueInstant),
+		Issuer:       r.Issuer,
+		Signature:    (*etreeElementXML)(r.Signature),
 		Alias:        (*Alias)(r),
 	}
 	return e.Encode(aux)
@@ -467,7 +490,8 @@ func (r *ArtifactResolve) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 func (r *ArtifactResolve) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias ArtifactResolve
 	aux := &struct {
-		IssueInstant RelaxedTime `xml:",attr"`
+		IssueInstant RelaxedTime      `xml:",attr"`
+		Signature    *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(r),
@@ -475,6 +499,7 @@ func (r *ArtifactResolve) UnmarshalXML(d *xml.Decoder, start xml.StartElement) e
 	if err := d.DecodeElement(&aux, &start); err != nil {
 		return err
 	}
+	r.Signature = (*etree.Element)(aux.Signature)
 	r.IssueInstant = time.Time(aux.IssueInstant)
 	return nil
 }
@@ -529,9 +554,15 @@ func (r *ArtifactResponse) MarshalXML(e *xml.Encoder, _ xml.StartElement) error 
 	type Alias ArtifactResponse
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
+		// Issuer is repeated so that it is written before Signature, as
+		// the schema requires.
+		Issuer    *Issuer          `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
+		Signature *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		IssueInstant: RelaxedTime(r.IssueInstant),
+		Issuer:       r.Issuer,
+		Signature:    (*etreeElementXML)(r.Signature),
 		Alias:        (*Alias)(r),
 	}
 	return e.Encode(aux)
@@ -541,7 +572,8 @@ func (r *ArtifactResponse) MarshalXML(e *xml.Encoder, _ xml.StartElement) error 
 func (r *ArtifactResponse) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias ArtifactResponse
 	aux := &struct {
-		IssueInstant RelaxedTime `xml:",attr"`
+		IssueInstant RelaxedTime      `xml:",attr"`
+		Signature    *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(r),
@@ -549,6 +581,7 @@ func (r *ArtifactResponse) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 	if err := d.DecodeElement(&aux, &start); err != nil {
 		return err
 	}
+	r.Signature = (*etree.Element)(aux.Signature)
 	r.IssueInstant = time.Time(aux.IssueInstant)
 	return nil
 }
@@ -623,10 +656,21 @@ func (r *Response) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias Response
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
+		// Issuer is repeated so that it is written before Signature, as
+		// the schema requires.
+		Issuer    *Issuer          `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
+		Signature *etreeElementXML `xml:"Signature"`
+		// Status is repeated so that it is written before EncryptedAssertion.
+		Status             Status           `xml:"urn:oasis:names:tc:SAML:2.0:protocol Status"`
+		EncryptedAssertion *etreeElementXML `xml:"urn:oasis:names:tc:SAML:2.0:assertion EncryptedAssertion"`
 		*Alias
 	}{
-		IssueInstant: RelaxedTime(r.IssueInstant),
-		Alias:        (*Alias)(r),
+		IssueInstant:       RelaxedTime(r.IssueInstant),
+		Issuer:             r.Issuer,
+		Signature:          (*etreeElementXML)(r.Signature),
+		Status:             r.Status,
+		EncryptedAssertion: (*etreeElementXML)(r.EncryptedAssertion),
+		Alias:              (*Alias)(r),
 	}
 	return e.Encode(aux)
 }
@@ -635,7 +679,9 @@ func (r *Response) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 func (r *Response) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias Response
 	aux := &struct {
-		IssueInstant RelaxedTime `xml:",attr"`
+		IssueInstant       RelaxedTime      `xml:",attr"`
+		Signature          *etreeElementXML `xml:"Signature"`
+		EncryptedAssertion *etreeElementXML `xml:"urn:oasis:names:tc:SAML:2.0:assertion EncryptedAssertion"`
 		*Alias
 	}{
 		Alias: (*Alias)(r),
@@ -643,6 +689,8 @@ func (r *Response) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	if err := d.DecodeElement(&aux, &start); err != nil {
 		return err
 	}
+	r.Signature = (*etree.Element)(aux.Signature)
+	r.EncryptedAssertion = (*etree.Element)(aux.EncryptedAssertion)
 	r.IssueInstant = time.Time(aux.IssueInstant)
 	return nil
 }
@@ -799,6 +847,69 @@ func (sm StatusDetail) Element() *etree.Element {
 	return el
 }
 
+// MarshalXML implements xml.Marshaler, writing Children as XML.
+//
+// encoding/xml cannot marshal an *etree.Element itself, so without this
+// method the children were written as their struct fields.
+func (sm StatusDetail) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+	for _, child := range sm.Children {
+		if err := encodeEtreeElement(e, child, nil); err != nil {
+			return err
+		}
+	}
+	return e.EncodeToken(start.End())
+}
+
+// UnmarshalXML implements xml.Unmarshaler, reading every child element into
+// Children. Text between the children is ignored.
+//
+// Each child keeps its prefixes. Namespaces declared on StatusDetail are
+// declared again on each child, which no longer has StatusDetail as a
+// parent. A prefix declared further out cannot be recovered and is replaced
+// by a generated one bound to the same namespace.
+func (sm *StatusDetail) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	scope := map[string]string{}
+	for _, attr := range start.Attr {
+		switch {
+		case attr.Name.Space == "xmlns":
+			scope[attr.Name.Local] = attr.Value
+		case attr.Name.Space == "" && attr.Name.Local == "xmlns":
+			scope[""] = attr.Value
+		}
+	}
+	prefixes := make([]string, 0, len(scope))
+	for prefix := range scope {
+		prefixes = append(prefixes, prefix)
+	}
+	sort.Strings(prefixes)
+
+	for {
+		tok, err := d.Token()
+		if err != nil {
+			return err
+		}
+		switch tok := tok.(type) {
+		case xml.StartElement:
+			child, err := decodeEtreeElement(d, tok, scope)
+			if err != nil {
+				return err
+			}
+			for _, prefix := range prefixes {
+				key := xmlnsAttrName(prefix)
+				if child.SelectAttr(key) == nil {
+					child.CreateAttr(key, scope[prefix])
+				}
+			}
+			sm.Children = append(sm.Children, child)
+		case xml.EndElement:
+			return nil
+		}
+	}
+}
+
 // Assertion represents the SAML element Assertion.
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf §2.3.3
@@ -848,11 +959,29 @@ func (a *Assertion) Element() *etree.Element {
 	return el
 }
 
+// MarshalXML implements xml.Marshaler
+func (a *Assertion) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
+	type Alias Assertion
+	aux := &struct {
+		// Issuer is repeated so that it is written before Signature, as
+		// the schema requires.
+		Issuer    Issuer           `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
+		Signature *etreeElementXML `xml:"Signature"`
+		*Alias
+	}{
+		Issuer:    a.Issuer,
+		Signature: (*etreeElementXML)(a.Signature),
+		Alias:     (*Alias)(a),
+	}
+	return e.Encode(aux)
+}
+
 // UnmarshalXML implements xml.Unmarshaler
 func (a *Assertion) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias Assertion
 	aux := &struct {
-		IssueInstant RelaxedTime `xml:",attr"`
+		IssueInstant RelaxedTime      `xml:",attr"`
+		Signature    *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(a),
@@ -860,6 +989,7 @@ func (a *Assertion) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	if err := d.DecodeElement(&aux, &start); err != nil {
 		return err
 	}
+	a.Signature = (*etree.Element)(aux.Signature)
 	a.IssueInstant = time.Time(aux.IssueInstant)
 	return nil
 }
@@ -1433,9 +1563,15 @@ func (r *LogoutResponse) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias LogoutResponse
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
+		// Issuer is repeated so that it is written before Signature, as
+		// the schema requires.
+		Issuer    *Issuer          `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
+		Signature *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		IssueInstant: RelaxedTime(r.IssueInstant),
+		Issuer:       r.Issuer,
+		Signature:    (*etreeElementXML)(r.Signature),
 		Alias:        (*Alias)(r),
 	}
 	return e.Encode(aux)
@@ -1445,7 +1581,8 @@ func (r *LogoutResponse) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 func (r *LogoutResponse) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias LogoutResponse
 	aux := &struct {
-		IssueInstant RelaxedTime `xml:",attr"`
+		IssueInstant RelaxedTime      `xml:",attr"`
+		Signature    *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(r),
@@ -1453,6 +1590,7 @@ func (r *LogoutResponse) UnmarshalXML(d *xml.Decoder, start xml.StartElement) er
 	if err := d.DecodeElement(&aux, &start); err != nil {
 		return err
 	}
+	r.Signature = (*etree.Element)(aux.Signature)
 	r.IssueInstant = time.Time(aux.IssueInstant)
 	return nil
 }
