@@ -93,13 +93,27 @@ func TestCovGetSessionSecureCookieOverTLS(t *testing.T) {
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
 	assert.Check(t, strings.Contains(w.Header().Get("Set-Cookie"), "Secure"), w.Header().Get("Set-Cookie"))
 
-	// plain http: not Secure
+	// A request without TLS to an IdP whose URL is https (behind a proxy
+	// that terminates TLS): still Secure.
 	r = httptest.NewRequest("POST", "http://idp.example.com/login", strings.NewReader("user=alice&password=hunter2"))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
+	assert.Check(t, strings.Contains(w.Header().Get("Set-Cookie"), "; Secure; SameSite=None"), w.Header().Get("Set-Cookie"))
+
+	// An IdP served over plain http: neither Secure nor SameSite=None,
+	// which browsers refuse without Secure.
+	plain := covNewServer(t, &MemoryStore{})
+	plain.IDP.SSOURL.Scheme = "http"
+	covPutUser(t, plain)
+	r = httptest.NewRequest("POST", "http://idp.example.com/login", strings.NewReader("user=alice&password=hunter2"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	plain.ServeHTTP(w, r)
+	assert.Check(t, is.Equal(http.StatusOK, w.Code))
 	assert.Check(t, !strings.Contains(w.Header().Get("Set-Cookie"), "Secure"), w.Header().Get("Set-Cookie"))
+	assert.Check(t, !strings.Contains(w.Header().Get("Set-Cookie"), "SameSite"), w.Header().Get("Set-Cookie"))
 }
 
 func TestCovGetSessionCookieStoreError(t *testing.T) {

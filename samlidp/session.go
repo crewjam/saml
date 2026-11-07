@@ -134,14 +134,7 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, req *saml.
 		return nil
 	}
 
-	http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure is set when served over https
-		Name:     sessionCookieName,
-		Value:    session.ID,
-		MaxAge:   int(sessionMaxAge.Seconds()),
-		HttpOnly: true,
-		Secure:   r.TLS != nil || r.URL.Scheme == "https",
-		Path:     "/",
-	})
+	http.SetCookie(w, s.sessionCookie(r, session.ID, int(sessionMaxAge.Seconds())))
 
 	s.logger.Printf("User '%s' authenticated successfully", r.PostForm.Get("user"))
 	return session
