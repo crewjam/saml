@@ -64,6 +64,33 @@ func specCoreIDPRequest(t *testing.T) *IdpAuthnRequest {
 	return req
 }
 
+// saml-core §2.4.1.2 (lines 756-757): the SubjectConfirmationData
+// NotBefore/NotOnOrAfter period "SHOULD fall within the overall assertion
+// validity period as specified by the <Conditions> element's NotBefore and
+// NotOnOrAfter attributes." The IdP's confirmation window ends no later
+// than its Conditions, however the AuthnRequest's IssueInstant compares
+// with the IdP clock.
+func TestSpecCore_2_4_1_2_ConfirmationWithinConditions(t *testing.T) {
+	for name, offset := range map[string]time.Duration{
+		"request issued 5s ago":             -5 * time.Second,
+		"request issued now":                0,
+		"request issued long ago":           -MaxClockSkew - time.Minute,
+		"request issued ahead of IdP clock": 30 * time.Second,
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := specCoreIDPRequest(t)
+			req.Request.IssueInstant = req.Now.Add(offset)
+			assert.NilError(t, DefaultAssertionMaker{}.MakeAssertion(req, &Session{ID: "x", NameID: "n"}))
+			conditions := req.Assertion.Conditions
+			data := req.Assertion.Subject.SubjectConfirmations[0].SubjectConfirmationData
+			assert.Check(t, !data.NotOnOrAfter.After(conditions.NotOnOrAfter),
+				"confirmation NotOnOrAfter %s is after Conditions NotOnOrAfter %s", data.NotOnOrAfter, conditions.NotOnOrAfter)
+			assert.Check(t, data.NotOnOrAfter.After(req.Now), "confirmation already expired at issue")
+			assert.Check(t, data.NotOnOrAfter.After(conditions.NotBefore))
+		})
+	}
+}
+
 // saml-core §1.3.1 (lines 280-283): "all elements in SAML documents that have
 // the XML Schema xs:string type ... MUST be compared using an exact binary
 // comparison. In particular, SAML implementations ... MUST NOT depend on
