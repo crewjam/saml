@@ -286,6 +286,8 @@ Some protections the SAML profiles call for are opt-in, because turning them on 
 
 - **Unknown conditions.** An assertion whose `<Conditions>` holds a condition this package does not understand (an extension `saml:Condition`, for example) is Indeterminate, and SAML Core says it MUST be rejected. Such conditions are ignored by default, since some IDPs send extension conditions. Set `Options.RejectUnknownConditions` (`ServiceProvider.RejectUnknownConditions`) to refuse them, or `ServiceProvider.ValidateUnknownConditions` to evaluate them yourself.
 
+- **Artifact format.** With the HTTP-Artifact binding, a `SAMLart` that is not a standard type 0x0004 artifact, or whose SourceID is not the SHA-1 hash of the IDP's entityID, is sent to the IDP as is, since the ArtifactResponse it resolves to is fully checked anyway. Set `Options.RequireStandardArtifacts` (`ServiceProvider.RequireStandardArtifacts`) to refuse such an artifact without contacting the IDP. With a replay cache (above), each artifact is also resolved only once.
+
 - **RelayState length.** The bindings limit RelayState to 80 bytes. Set `Options.LimitRelayStateLength` (`ServiceProvider.LimitRelayStateLength`, `IdentityProvider.LimitRelayStateLength`) to refuse to send a longer one. See [RelayState](#relaystate).
 
 ## Customizing the session lifetime
