@@ -289,7 +289,7 @@ func TestIDPCovGetACSEndpoint(t *testing.T) {
 		{"index match", AuthnRequest{AssertionConsumerServiceIndex: "2"}, md(post, redirect), "https://sp/redirect"},
 		{"index miss", AuthnRequest{AssertionConsumerServiceIndex: "9"}, md(post, redirect), ""},
 		{"index miss, url match", AuthnRequest{AssertionConsumerServiceIndex: "9", AssertionConsumerServiceURL: "https://sp/post"}, md(post, redirect), "https://sp/post"},
-		{"default redirect", AuthnRequest{}, md(postNotDefault, artifactDefault, redirectDefault), "https://sp/redirect-default"},
+		{"default redirect ignored, it cannot carry a Response", AuthnRequest{}, md(postNotDefault, artifactDefault, redirectDefault), "https://sp/post-nd"},
 		{"no usable default, any binding", AuthnRequest{}, md(artifactDefault, postNotDefault), "https://sp/post-nd"},
 		{"nothing usable", AuthnRequest{}, md(artifactDefault), ""},
 	}

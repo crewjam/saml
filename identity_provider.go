@@ -358,6 +358,31 @@ type IdentityProvider struct {
 	// *StatusError gets an error Response, in ServeSSO and
 	// ServeIDPInitiated.
 	SendErrorResponses bool
+
+	// StrictACSBinding makes the IdP match the ProtocolBinding of an
+	// AuthnRequest, as well as its AssertionConsumerServiceURL, against the
+	// service provider's assertion consumer services (saml-core §3.4.1:
+	// ProtocolBinding "identifies a SAML protocol binding to be used when
+	// returning the <Response> message"). If no endpoint at that URL has
+	// that binding, or the matching endpoint has a binding the IdP cannot
+	// send a Response with, ServeSSO answers with a Requester error Response
+	// with the second-level status UnsupportedBinding, sent to the service
+	// provider's default assertion consumer service from its metadata (or
+	// with HTTP 400 if it has none the IdP can send to).
+	//
+	// When false, an endpoint is matched on its Location as before, so a
+	// request that names, say, HTTP-Artifact or HTTP-Redirect at the URL of
+	// an HTTP-POST endpoint still gets an HTTP-POST Response. Set it only if
+	// the service providers send a correct ProtocolBinding.
+	//
+	// Whether or not it is set, when ResponseWriter is not set (or is
+	// DefaultResponseWriter) and the endpoint a request names (by URL or
+	// index) has a binding other than HTTP-POST and HTTP-POST-SimpleSign,
+	// ServeSSO answers with that UnsupportedBinding error Response before
+	// asking the SessionProvider for a session, instead of failing with
+	// HTTP 500 once the user has logged in. A custom ResponseWriter is
+	// given such an endpoint, since it may support other bindings.
+	StrictACSBinding bool
 }
 
 // Metadata returns the metadata structure for this identity provider.
@@ -573,6 +598,14 @@ func (idp *IdentityProvider) onError(w http.ResponseWriter, r *http.Request, sta
 // response is sent, unless SendErrorResponses is set and the request can be
 // answered with a SAML error Response (see SendErrorResponses).
 //
+// A request that names an assertion consumer service whose binding the
+// default ResponseWriter cannot send a Response with (anything but HTTP-POST
+// and HTTP-POST-SimpleSign), or, with StrictACSBinding, whose URL has no
+// endpoint with the requested ProtocolBinding, gets an error Response with
+// the status Requester and UnsupportedBinding, sent to the service
+// provider's default assertion consumer service from its metadata, before
+// the SessionProvider is asked for a session.
+//
 // If the AssertionMaker returns a *StatusError, a SAML Response with that
 // status and no assertion is sent to the assertion consumer service instead
 // (see SendErrorResponse). If the assertion cannot otherwise be created or
@@ -586,12 +619,14 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := req.Validate(); err != nil {
-		if idp.SendErrorResponses {
-			if statusErr := req.validationStatusError(err); statusErr != nil {
-				idp.sendStatusError(w, r, req, statusErr)
-				return
-			}
+	err = req.Validate()
+	if err == nil {
+		err = req.checkSendableACS()
+	}
+	if err != nil {
+		if statusErr := req.validationErrorResponse(err); statusErr != nil {
+			idp.sendStatusError(w, r, req, statusErr)
+			return
 		}
 		idp.onError(w, r, http.StatusBadRequest, fmt.Errorf("failed to validate request: %w", err))
 		return
@@ -685,16 +720,17 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 }
 
 // NewIdpInitiatedRequest returns the IdpAuthnRequest for an IdP-initiated
-// login to the service provider serviceProviderID, with its metadata and the
-// first HTTP-POST assertion consumer service in it resolved. It is the part
-// of ServeIDPInitiated that runs before the SessionProvider is asked for a
-// session.
+// login to the service provider serviceProviderID, with its metadata and its
+// default assertion consumer service resolved: the default endpoint, by the
+// saml-metadata §2.2.3 rule, among those with the HTTP-POST or
+// HTTP-POST-SimpleSign binding. It is the part of ServeIDPInitiated that
+// runs before the SessionProvider is asked for a session.
 //
 // It returns an error matching ErrUnknownServiceProvider (and os.ErrNotExist)
 // if the ServiceProviderProvider does not know serviceProviderID,
 // ErrUnknownAssertionConsumerService if the service provider has no HTTP-POST
-// assertion consumer service, and otherwise the ServiceProviderProvider's
-// error, wrapped.
+// or HTTP-POST-SimpleSign assertion consumer service, and otherwise the
+// ServiceProviderProvider's error, wrapped.
 func (idp *IdentityProvider) NewIdpInitiatedRequest(r *http.Request, serviceProviderID string, relayState string) (*IdpAuthnRequest, error) {
 	if err := checkRelayState(idp.LimitRelayStateLength, relayState); err != nil {
 		return nil, err
@@ -722,10 +758,9 @@ func (idp *IdentityProvider) NewIdpInitiatedRequest(r *http.Request, serviceProv
 	// An unsolicited Response "SHOULD be delivered to the
 	// <md:AssertionConsumerService> endpoint of the service provider
 	// designated as the default" (saml-profiles §4.1.5): the default among
-	// the endpoints the IdP can send a Response to, HTTP-POST before
-	// HTTP-POST-SimpleSign.
-	req.selectDefaultACSEndpoint(func(binding string) bool { return binding == HTTPPostBinding }, isSimpleSign)
-	if req.ACSEndpoint == nil {
+	// the endpoints the IdP can send a Response to, by the saml-metadata
+	// §2.2.3 rule.
+	if !req.selectDefaultACSEndpoint() {
 		return nil, classify(errors.New("saml metadata does not contain an Assertion Customer Service url"), ErrUnknownAssertionConsumerService)
 	}
 
@@ -932,6 +967,9 @@ func (req *IdpAuthnRequest) resolveServiceProvider() error {
 
 	// Check that the ACS URL matches an ACS endpoint in the SP metadata.
 	if err := req.getACSEndpoint(); err != nil {
+		if errors.Is(err, errUnsupportedACSBinding) {
+			return fmt.Errorf("cannot find assertion consumer service: %w", err)
+		}
 		return classify(fmt.Errorf("cannot find assertion consumer service: %w", err), ErrUnknownAssertionConsumerService)
 	}
 
@@ -942,16 +980,15 @@ func (req *IdpAuthnRequest) resolveServiceProvider() error {
 // sent to and sets SPSSODescriptor and ACSEndpoint.
 //
 // An endpoint named by AssertionConsumerServiceIndex is used whatever its
-// binding. An endpoint named by AssertionConsumerServiceURL is matched by
-// Location; an HTTP-POST-SimpleSign endpoint there is preferred when
-// ProtocolBinding asks for that binding, and is otherwise only used when no
-// endpoint with another binding has that Location and ProtocolBinding is
-// empty. So a service provider that lists both bindings at one URL keeps
-// getting HTTP-POST unless it asks for SimpleSign. Without either, the
-// response goes to "the default location associated with the requester"
-// (saml-core §3.4.1): the default HTTP-POST, HTTP-Redirect or
-// HTTP-POST-SimpleSign endpoint, chosen as selectDefaultACSEndpoint
-// describes, HTTP-POST and HTTP-Redirect before HTTP-POST-SimpleSign.
+// binding, and an endpoint named by AssertionConsumerServiceURL is chosen as
+// selectACSEndpointByURL describes. Without either, the response goes to
+// "the default location associated with the requester" (saml-core §3.4.1):
+// the default endpoint among those the IdP can send a Response to, chosen
+// by selectDefaultACSEndpoint.
+//
+// When StrictACSBinding is set and an endpoint has the requested URL but
+// none there has the requested ProtocolBinding, it returns an error
+// matching errUnsupportedACSBinding.
 func (req *IdpAuthnRequest) getACSEndpoint() error {
 	if index := req.Request.AssertionConsumerServiceIndex; index != "" {
 		if req.selectACSEndpoint(func(ep *IndexedEndpoint) bool { return strconv.Itoa(ep.Index) == index }) {
@@ -963,12 +1000,18 @@ func (req *IdpAuthnRequest) getACSEndpoint() error {
 		if req.selectACSEndpointByURL(acsURL) {
 			return nil
 		}
+		if req.strictACSBinding() {
+			if _, ep := req.findACSEndpoint(func(ep *IndexedEndpoint) bool { return ep.Location == acsURL }); ep != nil {
+				return classify(fmt.Errorf("no assertion consumer service at %q has binding %q", acsURL, req.Request.ProtocolBinding),
+					ErrUnsupported, errUnsupportedACSBinding)
+			}
+		}
 	}
 
 	// Some service providers, like the Microsoft Azure AD service provider, issue
 	// assertion requests that don't specify an ACS url at all.
 	if req.Request.AssertionConsumerServiceURL == "" && req.Request.AssertionConsumerServiceIndex == "" {
-		if req.selectDefaultACSEndpoint(isPostOrRedirect, isSimpleSign) {
+		if req.selectDefaultACSEndpoint() {
 			return nil
 		}
 	}
@@ -976,90 +1019,115 @@ func (req *IdpAuthnRequest) getACSEndpoint() error {
 	return os.ErrNotExist // no ACS url found or specified
 }
 
-// selectACSEndpointByURL selects the ACS endpoint at acsURL, as described for
-// getACSEndpoint, and reports whether there is one.
+// errUnsupportedACSBinding is attached, with ErrUnsupported, when the IdP
+// cannot send a Response with the binding an AuthnRequest asks for, so that
+// ServeSSO can answer it with the status Requester and the second-level
+// status UnsupportedBinding.
+var errUnsupportedACSBinding = errors.New("saml: unsupported assertion consumer service binding")
+
+// strictACSBinding reports whether the request's ProtocolBinding must match
+// the Binding of the endpoint at its AssertionConsumerServiceURL: when it
+// has one and StrictACSBinding is set.
+func (req *IdpAuthnRequest) strictACSBinding() bool {
+	return req.Request.ProtocolBinding != "" && req.IDP != nil && req.IDP.StrictACSBinding
+}
+
+// selectACSEndpointByURL selects the ACS endpoint at acsURL, and reports
+// whether there is one.
+//
+// When StrictACSBinding is set and the request has a ProtocolBinding, the
+// endpoint must have both that Location and that Binding.
+//
+// Otherwise it is matched by Location; an HTTP-POST-SimpleSign endpoint
+// there is preferred when ProtocolBinding asks for that binding, and is
+// otherwise only used when no endpoint with another binding has that
+// Location and ProtocolBinding is empty. So a service provider that lists
+// both bindings at one URL keeps getting HTTP-POST unless it asks for
+// SimpleSign. Among the other endpoints at that Location, an HTTP-POST one
+// is preferred when ProtocolBinding is HTTP-POST or empty, so that one
+// listed after, say, an HTTP-Artifact endpoint there is still used.
 func (req *IdpAuthnRequest) selectACSEndpointByURL(acsURL string) bool {
-	atURL := func(simpleSign bool) func(*IndexedEndpoint) bool {
-		return func(ep *IndexedEndpoint) bool {
-			return ep.Location == acsURL && (ep.Binding == HTTPPostSimpleSignBinding) == simpleSign
-		}
+	binding := req.Request.ProtocolBinding
+	if req.strictACSBinding() {
+		return req.selectACSEndpoint(func(ep *IndexedEndpoint) bool {
+			return ep.Location == acsURL && ep.Binding == binding
+		})
 	}
-	switch req.Request.ProtocolBinding {
+
+	preferPost := binding == "" || binding == HTTPPostBinding
+	atURL := func(simpleSign bool) bool {
+		if !simpleSign && preferPost && req.selectACSEndpoint(func(ep *IndexedEndpoint) bool {
+			return ep.Location == acsURL && ep.Binding == HTTPPostBinding
+		}) {
+			return true
+		}
+		return req.selectACSEndpoint(func(ep *IndexedEndpoint) bool {
+			return ep.Location == acsURL && (ep.Binding == HTTPPostSimpleSignBinding) == simpleSign
+		})
+	}
+	switch binding {
 	case HTTPPostSimpleSignBinding:
-		return req.selectACSEndpoint(atURL(true)) || req.selectACSEndpoint(atURL(false))
+		return atURL(true) || atURL(false)
 	case "":
-		return req.selectACSEndpoint(atURL(false)) || req.selectACSEndpoint(atURL(true))
+		return atURL(false) || atURL(true)
 	default:
-		return req.selectACSEndpoint(atURL(false))
+		return atURL(false)
 	}
 }
 
 // selectDefaultACSEndpoint selects the service provider's default
-// AssertionConsumerService endpoint among those with a binding one of tiers
-// accepts, and reports whether there is one. saml-metadata §2.2.3: "the
-// default endpoint is the first such endpoint with the isDefault attribute
-// set to true. If no such endpoints exist, the default endpoint is the first
-// such endpoint without the isDefault attribute set to false. If no such
-// endpoints exist, the default endpoint is the first element in the
-// sequence."
-//
-// An endpoint with isDefault="true" is chosen whatever its tier. For the
-// next two steps the tiers are tried in order, so that, say, an HTTP-POST
-// endpoint is preferred to an HTTP-POST-SimpleSign one listed before it
-// when neither is marked as the default.
-func (req *IdpAuthnRequest) selectDefaultACSEndpoint(tiers ...func(binding string) bool) bool {
-	usable := func(binding string) bool {
-		for _, tier := range tiers {
-			if tier(binding) {
-				return true
-			}
-		}
-		return false
-	}
-	if req.selectACSEndpoint(func(ep *IndexedEndpoint) bool {
-		return usable(ep.Binding) && ep.IsDefault != nil && *ep.IsDefault
-	}) {
-		return true
-	}
-	for _, tier := range tiers {
-		if req.selectACSEndpoint(func(ep *IndexedEndpoint) bool {
-			return tier(ep.Binding) && ep.IsDefault == nil
-		}) {
-			return true
-		}
-	}
-	for _, tier := range tiers {
-		if req.selectACSEndpoint(func(ep *IndexedEndpoint) bool { return tier(ep.Binding) }) {
-			return true
-		}
-	}
-	return false
+// AssertionConsumerService endpoint among those the IdP can send a Response
+// to (see isSendableBinding), and reports whether there is one.
+// saml-metadata §2.2.3: "the default endpoint is the first such endpoint
+// with the isDefault attribute set to true. If no such endpoints exist, the
+// default endpoint is the first such endpoint without the isDefault
+// attribute set to false. If no such endpoints exist, the default endpoint
+// is the first element in the sequence."
+func (req *IdpAuthnRequest) selectDefaultACSEndpoint() bool {
+	return req.selectACSEndpoint(func(ep *IndexedEndpoint) bool {
+		return isSendableBinding(ep.Binding) && ep.IsDefault != nil && *ep.IsDefault
+	}) || req.selectACSEndpoint(func(ep *IndexedEndpoint) bool {
+		return isSendableBinding(ep.Binding) && (ep.IsDefault == nil || *ep.IsDefault)
+	}) || req.selectACSEndpoint(func(ep *IndexedEndpoint) bool {
+		return isSendableBinding(ep.Binding)
+	})
 }
 
 // selectACSEndpoint sets SPSSODescriptor and ACSEndpoint to the first
 // AssertionConsumerService endpoint in the service provider metadata for
 // which match returns true, and reports whether there is one.
 func (req *IdpAuthnRequest) selectACSEndpoint(match func(*IndexedEndpoint) bool) bool {
+	spssoDescriptor, endpoint := req.findACSEndpoint(match)
+	if endpoint == nil {
+		return false
+	}
+	req.SPSSODescriptor = spssoDescriptor
+	req.ACSEndpoint = endpoint
+	return true
+}
+
+// findACSEndpoint returns copies of the first AssertionConsumerService
+// endpoint in the service provider metadata for which match returns true
+// and of its SPSSODescriptor, or nils if there is none.
+func (req *IdpAuthnRequest) findACSEndpoint(match func(*IndexedEndpoint) bool) (*SPSSODescriptor, *IndexedEndpoint) {
 	for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
 		for _, endpoint := range spssoDescriptor.AssertionConsumerServices {
 			if match(&endpoint) {
 				// Copy, so that the pointers do not alias the metadata.
 				spssoDescriptor, endpoint := spssoDescriptor, endpoint
-				req.SPSSODescriptor = &spssoDescriptor
-				req.ACSEndpoint = &endpoint
-				return true
+				return &spssoDescriptor, &endpoint
 			}
 		}
 	}
-	return false
+	return nil, nil
 }
 
-func isPostOrRedirect(binding string) bool {
-	return binding == HTTPPostBinding || binding == HTTPRedirectBinding
-}
-
-func isSimpleSign(binding string) bool {
-	return binding == HTTPPostSimpleSignBinding
+// isSendableBinding reports whether the IdP can send a Response to an
+// assertion consumer service with binding: HTTP-POST or
+// HTTP-POST-SimpleSign. HTTP-Redirect cannot carry a Response with an
+// assertion (saml-profiles §4.1.2), and HTTP-Artifact is not supported.
+func isSendableBinding(binding string) bool {
+	return binding == HTTPPostBinding || binding == HTTPPostSimpleSignBinding
 }
 
 // hostFromRemoteAddr returns the host part of an http.Request RemoteAddr,
