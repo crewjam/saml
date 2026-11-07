@@ -57,6 +57,12 @@ type Options struct {
 	// single process sees (see SessionRevocations).
 	LogoutBindings []string
 
+	// LimitRelayStateLength sets saml.ServiceProvider.LimitRelayStateLength:
+	// if true, a RelayStateFunc result or other RelayState the middleware
+	// would send that is longer than saml.MaxRelayStateLength (80 bytes) is
+	// refused. It is off by default.
+	LimitRelayStateLength bool
+
 	// CookieDomain, if set, is the Domain attribute of the session cookie,
 	// which makes the browser also send the cookie to subdomains of that
 	// domain. If empty, the session cookie is a host-only cookie, sent only to
@@ -339,6 +345,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		RequestedAuthnContext: opts.RequestedAuthnContext,
 		SignatureMethod:       signatureMethod,
 		AllowIDPInitiated:     opts.AllowIDPInitiated,
+		LimitRelayStateLength: opts.LimitRelayStateLength,
 		DefaultRedirectURI:    opts.DefaultRedirectURI,
 		LogoutBindings:        opts.LogoutBindings,
 

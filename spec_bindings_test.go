@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/xml"
+	"errors"
 	"html"
 	"io"
 	"net/http"
@@ -606,6 +607,103 @@ func TestSpecBinding_3_4_4_1_RedirectMethodsRemoveXMLSignature(t *testing.T) {
 		u := resp.Redirect("relay")
 		assert.Check(t, inflated(t, u, "SAMLResponse").FindElement("./Signature") == nil)
 		assert.Check(t, resp.Signature != nil, "caller's response was modified")
+	})
+}
+
+// saml-bindings-2.0-os §3.4.3 and §3.5.3 (and SimpleSign §2.3): RelayState
+// "MUST NOT exceed 80 bytes in length". With LimitRelayStateLength set,
+// every request this package starts refuses a longer one with
+// ErrRelayStateTooLong, and an 80-byte one is sent unchanged. Without it
+// (the default, since many deployments rely on longer values) a longer one
+// is sent as given. A response echoes the RelayState it was given, which
+// "MUST [be] the exact data it received", so responses are never checked.
+func TestSpecBinding_3_4_3_OriginatedRelayStateAtMost80Bytes(t *testing.T) {
+	e := spcovSetup(t)
+	e.sp.SignatureMethod = dsig.RSASHA256SignatureMethod
+	ok := strings.Repeat("r", MaxRelayStateLength)
+	tooLong := ok + "r"
+
+	starts := map[string]func(relayState string) error{
+		"MakeRedirectAuthenticationRequest": func(rs string) error {
+			_, err := e.sp.MakeRedirectAuthenticationRequest(rs)
+			return err
+		},
+		"MakePostAuthenticationRequest": func(rs string) error {
+			_, err := e.sp.MakePostAuthenticationRequest(rs)
+			return err
+		},
+		"AuthnRequest.SimpleSign": func(rs string) error {
+			req, err := e.sp.MakeAuthenticationRequest("https://idp.example.com/sso/simplesign", HTTPPostSimpleSignBinding, HTTPPostBinding)
+			assert.NilError(t, err)
+			_, err = req.SimpleSign(rs, e.sp)
+			return err
+		},
+		"MakeRedirectLogoutRequest": func(rs string) error {
+			_, err := e.sp.MakeRedirectLogoutRequest("alice@example.com", rs)
+			return err
+		},
+		"MakePostLogoutRequest": func(rs string) error {
+			_, err := e.sp.MakePostLogoutRequest("alice@example.com", rs)
+			return err
+		},
+		"LogoutRequest.SimpleSign": func(rs string) error {
+			req, err := e.sp.MakeLogoutRequest("https://idp.example.com/slo/simplesign", "alice@example.com")
+			assert.NilError(t, err)
+			_, err = req.SimpleSign(rs, e.sp)
+			return err
+		},
+	}
+	for name, start := range starts {
+		t.Run(name+" not limited by default", func(t *testing.T) {
+			e.sp.LimitRelayStateLength = false
+			assert.Check(t, start(tooLong))
+		})
+		t.Run(name+" limited", func(t *testing.T) {
+			e.sp.LimitRelayStateLength = true
+			t.Cleanup(func() { e.sp.LimitRelayStateLength = false })
+			assert.Check(t, start(ok))
+			err := start(tooLong)
+			assert.Check(t, errors.Is(err, ErrRelayStateTooLong), "%v", err)
+		})
+	}
+
+	t.Run("default redirect URL carries a longer RelayState unchanged", func(t *testing.T) {
+		u, err := e.sp.MakeRedirectAuthenticationRequest(tooLong)
+		assert.NilError(t, err)
+		assert.Check(t, is.Equal(tooLong, u.Query().Get("RelayState")))
+	})
+
+	t.Run("redirect URL carries the 80-byte RelayState unchanged", func(t *testing.T) {
+		u, err := e.sp.MakeRedirectAuthenticationRequest(ok)
+		assert.NilError(t, err)
+		assert.Check(t, is.Equal(ok, u.Query().Get("RelayState")))
+	})
+
+	t.Run("responses echo a longer RelayState", func(t *testing.T) {
+		e.sp.LimitRelayStateLength = true
+		t.Cleanup(func() { e.sp.LimitRelayStateLength = false })
+		u, err := e.sp.MakeRedirectLogoutResponse("id-logout-request", tooLong)
+		assert.NilError(t, err)
+		assert.Check(t, is.Equal(tooLong, u.Query().Get("RelayState")))
+		_, err = e.sp.MakePostLogoutResponse("id-logout-request", tooLong)
+		assert.Check(t, err)
+	})
+
+	t.Run("IdP-initiated", func(t *testing.T) {
+		test := NewIdentityProviderTest(t, applyKey)
+		r := httptest.NewRequest(http.MethodGet, "https://idp.example.com/services/sp/whoami", nil)
+		_, err := test.IDP.NewIdpInitiatedRequest(r, test.SP.MetadataURL.String(), tooLong)
+		assert.Check(t, err, "not limited by default")
+
+		test.IDP.LimitRelayStateLength = true
+		_, err = test.IDP.NewIdpInitiatedRequest(r, test.SP.MetadataURL.String(), tooLong)
+		assert.Check(t, errors.Is(err, ErrRelayStateTooLong), "%v", err)
+		_, err = test.IDP.NewIdpInitiatedRequest(r, test.SP.MetadataURL.String(), ok)
+		assert.Check(t, err)
+
+		w := httptest.NewRecorder()
+		test.IDP.ServeIDPInitiated(w, r, test.SP.MetadataURL.String(), tooLong)
+		assert.Check(t, is.Equal(http.StatusBadRequest, w.Code))
 	})
 }
 
