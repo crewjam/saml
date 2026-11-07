@@ -37,7 +37,7 @@ var errSLOUnexpectedMessage = errors.New("saml: single logout endpoint received 
 
 // HandleStartLogout starts SP initiated single logout. It deletes the local
 // session and sends the browser to the IDP with a LogoutRequest for the
-// session's NameID (and SessionIndex, if known), using LogoutBinding if it
+// session's NameID (and its SessionIndexes, if known), using LogoutBinding if it
 // is set and the IDP supports it, otherwise the HTTP-Redirect binding if the
 // IDP supports it and the HTTP-POST binding otherwise. The
 // request is tracked with LogoutRequestTracker, and its index is the
@@ -70,8 +70,10 @@ func (m *Middleware) HandleStartLogout(w http.ResponseWriter, r *http.Request) {
 	nameID := sessionWithNameID.GetNameID()
 	var opts []saml.LogoutRequestOption
 	if sa, ok := session.(SessionWithAttributes); ok {
-		if sessionIndex := sa.GetAttributes().Get(claimNameSessionIndex); sessionIndex != "" {
-			opts = append(opts, saml.WithSessionIndex(sessionIndex))
+		// The session keeps the SessionIndex of every AuthnStatement of the
+		// assertion; the request lists them all (saml-core-2.0-os §3.7.1).
+		if sessionIndexes := sa.GetAttributes()[claimNameSessionIndex]; len(sessionIndexes) > 0 {
+			opts = append(opts, saml.WithSessionIndexes(sessionIndexes...))
 		}
 	}
 

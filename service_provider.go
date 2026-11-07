@@ -331,6 +331,35 @@ type ServiceProvider struct {
 	// collide with assertion IDs, which are recorded as is and, being
 	// xs:ID values, contain no colon.
 	ReplayCache AssertionReplayCache
+
+	// EncryptLogoutNameID, if true, makes MakeLogoutRequest,
+	// MakeRedirectLogoutRequest and MakeSimpleSignLogoutRequest identify the
+	// principal with a saml:EncryptedID instead of a NameID: the NameID is
+	// encrypted to the IDP's encryption certificate from IDPMetadata (see
+	// EncryptLogoutRequestNameID). Set it when the IDP requires it, or so
+	// that the NameID is not disclosed to the browser.
+	EncryptLogoutNameID bool
+
+	// LogoutNameIDEncrypter, if set, encrypts the NameID of LogoutRequests
+	// for the IDP (see EncryptLogoutNameID). It is passed the IDP's
+	// *x509.Certificate as the key. Use it to select the key transport,
+	// digest and block cipher the IDP supports, for example:
+	//
+	//	enc := xmlenc.OAEP()
+	//	enc.BlockCipher = xmlenc.AES256GCM
+	//	sp.LogoutNameIDEncrypter = enc
+	//
+	// When nil, RSA-OAEP-MGF1P with a SHA-1 digest and AES-128-CBC are used,
+	// as the IdentityProvider does for assertions by default.
+	LogoutNameIDEncrypter xmlenc.Encrypter
+
+	// AcceptLogoutRequestBaseID, if true, lets ValidateLogoutRequest accept
+	// a LogoutRequest whose principal is a saml:BaseID (in the clear, or in
+	// an EncryptedID) rather than a NameID. The returned request's BaseID
+	// then holds the element and its NameID is nil, so the caller must
+	// interpret the BaseID itself. If false, such a request is refused with
+	// an error matching ErrUnsupported.
+	AcceptLogoutRequestBaseID bool
 }
 
 // AssertionReplayCache records the IDs of accepted assertions, so that each
@@ -1492,39 +1521,16 @@ func (sp *ServiceProvider) parseEncryptedAssertion(encryptedAssertionEl *etree.E
 }
 
 func (sp *ServiceProvider) decryptElement(encryptedEl *etree.Element) (*etree.Element, error) {
-	encryptedDataEl, err := findOneChild(encryptedEl, "http://www.w3.org/2001/04/xmlenc#", "EncryptedData")
-	if err != nil {
-		return nil, err
-	}
-
-	var decryptionKey interface{} = sp.Key
-	decryptionKeyName := "Key"
+	keys := make([]namedDecryptionKey, 0, 1+len(sp.DecryptionKeys))
 	if sp.EncryptionKey != nil {
-		decryptionKey = sp.EncryptionKey
-		decryptionKeyName = "EncryptionKey"
+		keys = append(keys, namedDecryptionKey{"EncryptionKey", sp.EncryptionKey})
+	} else {
+		keys = append(keys, namedDecryptionKey{"Key", sp.Key})
 	}
-
-	plaintextEl, err := decryptWithKey(decryptionKey, encryptedEl, encryptedDataEl)
-	if err != nil && len(sp.DecryptionKeys) > 0 {
-		// Key transport is RSA-OAEP only, which fails the same way for every
-		// wrong key, so trying several keys reveals no more than trying one.
-		errs := []error{fmt.Errorf("%s: %w", decryptionKeyName, err)}
-		for i, k := range sp.DecryptionKeys {
-			var keyErr error
-			if plaintextEl, keyErr = decryptWithKey(k, encryptedEl, encryptedDataEl); keyErr == nil {
-				err = nil
-				break
-			}
-			errs = append(errs, fmt.Errorf("DecryptionKeys[%d]: %w", i, keyErr))
-		}
-		if err != nil {
-			err = fmt.Errorf("no decryption key could decrypt it: %w", errors.Join(errs...))
-		}
+	for i, k := range sp.DecryptionKeys {
+		keys = append(keys, namedDecryptionKey{fmt.Sprintf("DecryptionKeys[%d]", i), k})
 	}
-	if err != nil {
-		return nil, err
-	}
-	return parsePlaintext(plaintextEl)
+	return decryptWithKeys(encryptedEl, keys)
 }
 
 // parsePlaintext parses the plaintext of a decrypted element and returns its
@@ -1621,8 +1627,8 @@ func (sp *ServiceProvider) decryptEncryptedIDs(subject *Subject) error {
 
 // decryptEncryptedID returns the NameID held by encryptedID, or nameID if
 // encryptedID is nil. The two are alternatives, so an element with both is
-// rejected, and an EncryptedID must hold a saml:NameID; other identifiers
-// (such as a BaseID) are not supported.
+// rejected. The EncryptedID is decrypted with the SP's decryption keys and
+// must hold a saml:NameID (see decryptNameID).
 func (sp *ServiceProvider) decryptEncryptedID(nameID *NameID, encryptedID *etree.Element) (*NameID, error) {
 	if encryptedID == nil {
 		return nameID, nil
@@ -1630,18 +1636,7 @@ func (sp *ServiceProvider) decryptEncryptedID(nameID *NameID, encryptedID *etree
 	if nameID != nil {
 		return nil, classify(errors.New("has both a NameID and an EncryptedID"), ErrMalformedMessage)
 	}
-	nameIDEl, err := sp.decryptElement(encryptedID)
-	if err != nil {
-		return nil, classify(fmt.Errorf("failed to decrypt EncryptedID: %w", err), ErrDecryptionFailed)
-	}
-	if nameIDEl.Tag != "NameID" || nameIDEl.NamespaceURI() != "urn:oasis:names:tc:SAML:2.0:assertion" {
-		return nil, classify(fmt.Errorf("EncryptedID holds a %s element, only saml:NameID is supported", nameIDEl.FullTag()), ErrUnsupported)
-	}
-	var decrypted NameID
-	if err := unmarshalElement(nameIDEl, &decrypted); err != nil {
-		return nil, err
-	}
-	return &decrypted, nil
+	return decryptNameID(encryptedID, sp.decryptElement)
 }
 
 // validateAssertion checks that the conditions specified in assertion match
@@ -2223,7 +2218,10 @@ func WithSessionIndexes(sessionIndexes ...string) LogoutRequestOption {
 // sp.SignatureMethod is set, the request carries an enveloped XML signature,
 // which is what the HTTP-POST binding uses.
 func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string, opts ...LogoutRequestOption) (*LogoutRequest, error) {
-	req := sp.makeUnsignedLogoutRequest(idpURL, nameID, opts...)
+	req, err := sp.makeLogoutRequest(idpURL, nameID, opts...)
+	if err != nil {
+		return nil, err
+	}
 	if sp.SignatureMethod != "" {
 		if err := sp.SignLogoutRequest(req); err != nil {
 			return nil, err
@@ -2255,6 +2253,76 @@ func (sp *ServiceProvider) makeUnsignedLogoutRequest(idpURL, nameID string, opts
 	return req
 }
 
+// makeLogoutRequest returns an unsigned LogoutRequest, whose NameID is
+// encrypted if sp.EncryptLogoutNameID is set.
+func (sp *ServiceProvider) makeLogoutRequest(idpURL, nameID string, opts ...LogoutRequestOption) (*LogoutRequest, error) {
+	req := sp.makeUnsignedLogoutRequest(idpURL, nameID, opts...)
+	if sp.EncryptLogoutNameID {
+		if err := sp.EncryptLogoutRequestNameID(req); err != nil {
+			return nil, err
+		}
+	}
+	return req, nil
+}
+
+// EncryptLogoutRequestNameID replaces the NameID of req with a
+// saml:EncryptedID holding it (saml-core-2.0-os §2.2.4), encrypted to the
+// IDP's encryption certificate with LogoutNameIDEncrypter. The certificate
+// is the first one in IDPMetadata whose KeyDescriptor has use="encryption",
+// or else the first one with no use. Call it before signing req. Use it to
+// encrypt the NameID of some requests only; EncryptLogoutNameID encrypts
+// every request.
+func (sp *ServiceProvider) EncryptLogoutRequestNameID(req *LogoutRequest) error {
+	if req.NameID == nil {
+		return classify(errors.New("cannot encrypt the NameID of a LogoutRequest that has none"), ErrMissingElement)
+	}
+	cert, err := sp.getIDPEncryptionCert()
+	if err != nil {
+		return err
+	}
+	encryptedID, err := encryptIdentifier(req.NameID.Element(), cert, sp.LogoutNameIDEncrypter)
+	if err != nil {
+		return fmt.Errorf("cannot encrypt NameID: %w", err)
+	}
+	req.EncryptedID = encryptedID
+	req.NameID = nil
+	return nil
+}
+
+// getIDPEncryptionCert returns the IDP certificate to encrypt to: the first
+// one in the IDP SSO descriptors whose use is "encryption", or else the
+// first one whose use is unspecified.
+func (sp *ServiceProvider) getIDPEncryptionCert() (*x509.Certificate, error) {
+	if sp.IDPMetadata == nil {
+		return nil, classify(errors.New("no IDP metadata"), ErrMissingElement)
+	}
+	for _, use := range []string{"encryption", ""} {
+		for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
+			for _, keyDescriptor := range idpSSODescriptor.KeyDescriptors {
+				if keyDescriptor.Use != use {
+					continue
+				}
+				for _, certificate := range keyDescriptor.KeyInfo.X509Data.X509Certificates {
+					certStr := regexp.MustCompile(`\s+`).ReplaceAllString(certificate.Data, "")
+					if certStr == "" {
+						continue
+					}
+					certBytes, err := base64.StdEncoding.DecodeString(certStr)
+					if err != nil {
+						return nil, classify(fmt.Errorf("cannot decode IDP encryption certificate: %w", err), ErrInvalidCertificate)
+					}
+					cert, err := x509.ParseCertificate(certBytes)
+					if err != nil {
+						return nil, classify(fmt.Errorf("cannot parse IDP encryption certificate: %w", err), ErrInvalidCertificate)
+					}
+					return cert, nil
+				}
+			}
+		}
+	}
+	return nil, classify(errors.New("cannot find an encryption certificate in the IDP SSO descriptor"), ErrMissingElement)
+}
+
 // MakeRedirectLogoutRequest creates a SAML LogoutRequest using the
 // HTTP-Redirect binding. It returns a URL that we will redirect the user to
 // in order to start the logout process.
@@ -2264,7 +2332,10 @@ func (sp *ServiceProvider) makeUnsignedLogoutRequest(idpURL, nameID string, opts
 // (saml-bindings-2.0-os section 3.4.4.1), rather than with an enveloped XML
 // signature.
 func (sp *ServiceProvider) MakeRedirectLogoutRequest(nameID, relayState string, opts ...LogoutRequestOption) (*url.URL, error) {
-	req := sp.makeUnsignedLogoutRequest(sp.GetSLOBindingLocation(HTTPRedirectBinding), nameID, opts...)
+	req, err := sp.makeLogoutRequest(sp.GetSLOBindingLocation(HTTPRedirectBinding), nameID, opts...)
+	if err != nil {
+		return nil, err
+	}
 	return sp.RedirectLogoutRequestURL(req, relayState)
 }
 
@@ -2775,7 +2846,9 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 // HTTP-POST-SimpleSign binding. It returns the request only if it is valid.
 // If the request identifies the principal with an EncryptedID rather than a
 // NameID, it is decrypted with the service provider's decryption keys (as
-// for encrypted assertions) and NameID is set to the result. All the
+// for encrypted assertions) and NameID is set to the result. A request whose
+// principal is a BaseID is refused unless AcceptLogoutRequestBaseID is set;
+// its NameID is then nil. All the
 // request's SessionIndexes are returned by its AllSessionIndexes method.
 //
 // The request must be signed by the IDP. With the HTTP-Redirect binding that
@@ -2914,7 +2987,7 @@ func (sp *ServiceProvider) validateLogoutRequest(req *LogoutRequest) error {
 	if req.Issuer == nil || req.Issuer.Value != sp.IDPMetadata.EntityID {
 		return classify(fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
 	}
-	return resolveLogoutRequestNameID(req, sp.decryptElement)
+	return resolveLogoutRequestNameID(req, sp.decryptElement, sp.AcceptLogoutRequestBaseID)
 }
 
 func firstSet(a, b string) string {

@@ -153,8 +153,18 @@ type LogoutRequest struct {
 	// EncryptedID is the saml:EncryptedID element that identifies the
 	// principal instead of NameID (saml-core-2.0-os §2.2.4 and §3.7.1), or
 	// nil. IdpLogoutRequest.Validate and ServiceProvider.ValidateLogoutRequest
-	// decrypt it and set NameID to the result.
+	// decrypt it and set NameID to the result, or BaseID if it holds a
+	// saml:BaseID.
 	EncryptedID *etree.Element `xml:"urn:oasis:names:tc:SAML:2.0:assertion EncryptedID"`
+
+	// BaseID is the saml:BaseID element that identifies the principal
+	// instead of NameID (saml-core-2.0-os §2.2.3 and §3.7.1), or nil. It is
+	// kept as an element because the content of a BaseID is defined by its
+	// xsi:type extension, which this package does not interpret. It is set
+	// either as read, or by decrypting an EncryptedID. A request identified
+	// by a BaseID is refused unless IdentityProvider.AcceptLogoutRequestBaseID
+	// or ServiceProvider.AcceptLogoutRequestBaseID is set.
+	BaseID *etree.Element `xml:"urn:oasis:names:tc:SAML:2.0:assertion BaseID"`
 
 	// A LogoutRequest carries zero or more SessionIndex elements
 	// (saml-core-2.0-os §3.7.1). SessionIndex holds the first one, and
@@ -208,6 +218,9 @@ func (r *LogoutRequest) Element() *etree.Element {
 	if r.Signature != nil {
 		el.AddChild(r.Signature)
 	}
+	if r.BaseID != nil {
+		el.AddChild(r.BaseID)
+	}
 	if r.NameID != nil {
 		el.AddChild(r.NameID.Element())
 	}
@@ -230,8 +243,9 @@ func (r *LogoutRequest) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 		// the schema requires.
 		Issuer    *Issuer          `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
 		Signature *etreeElementXML `xml:"Signature"`
-		// NameID and EncryptedID are repeated so that they are written
-		// before the SessionIndex elements.
+		// BaseID, NameID and EncryptedID are repeated so that they are
+		// written before the SessionIndex elements.
+		BaseID         *etreeElementXML `xml:"urn:oasis:names:tc:SAML:2.0:assertion BaseID"`
 		NameID         *NameID          `xml:"urn:oasis:names:tc:SAML:2.0:assertion NameID"`
 		EncryptedID    *etreeElementXML `xml:"urn:oasis:names:tc:SAML:2.0:assertion EncryptedID"`
 		SessionIndexes []SessionIndex   `xml:"SessionIndex"`
@@ -241,6 +255,7 @@ func (r *LogoutRequest) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 		NotOnOrAfter:   (*RelaxedTime)(r.NotOnOrAfter),
 		Issuer:         r.Issuer,
 		Signature:      (*etreeElementXML)(r.Signature),
+		BaseID:         (*etreeElementXML)(r.BaseID),
 		NameID:         r.NameID,
 		EncryptedID:    (*etreeElementXML)(r.EncryptedID),
 		SessionIndexes: r.AllSessionIndexes(),
@@ -256,6 +271,7 @@ func (r *LogoutRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) err
 		IssueInstant   RelaxedTime      `xml:",attr"`
 		NotOnOrAfter   *RelaxedTime     `xml:",attr"`
 		Signature      *etreeElementXML `xml:"Signature"`
+		BaseID         *etreeElementXML `xml:"urn:oasis:names:tc:SAML:2.0:assertion BaseID"`
 		EncryptedID    *etreeElementXML `xml:"urn:oasis:names:tc:SAML:2.0:assertion EncryptedID"`
 		SessionIndexes []SessionIndex   `xml:"SessionIndex"`
 		*Alias
@@ -266,6 +282,7 @@ func (r *LogoutRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) err
 		return err
 	}
 	r.Signature = (*etree.Element)(aux.Signature)
+	r.BaseID = (*etree.Element)(aux.BaseID)
 	r.EncryptedID = (*etree.Element)(aux.EncryptedID)
 	r.IssueInstant = time.Time(aux.IssueInstant)
 	r.NotOnOrAfter = (*time.Time)(aux.NotOnOrAfter)

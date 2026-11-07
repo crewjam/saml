@@ -3,6 +3,7 @@ package saml
 import (
 	"bytes"
 	"crypto"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -242,6 +243,32 @@ type IdentityProvider struct {
 	// by ServeSLO.
 	LogoutBindings []string
 
+	// EncryptionCertificate, if set, is published in the IdP metadata as the
+	// IdP's encryption key in place of Certificate. Service providers encrypt
+	// to it, for example the EncryptedID of a LogoutRequest. Its private key
+	// must be Key or one of DecryptionKeys. Set it when Key cannot decrypt,
+	// such as when the IdP signs with a Signer held in an HSM or KMS, or to
+	// encrypt with a key other than the signing key.
+	EncryptionCertificate *x509.Certificate
+
+	// DecryptionKeys are further private keys that decrypt what service
+	// providers encrypt to the IdP, such as the EncryptedID of a
+	// LogoutRequest. They are tried in order after Key, if Key is an
+	// *rsa.PrivateKey. Set them while rotating the IdP encryption key, so
+	// that messages encrypted to the previous certificate by service
+	// providers that have not yet refreshed the IdP metadata can still be
+	// decrypted, or when Key cannot decrypt (see EncryptionCertificate).
+	DecryptionKeys []*rsa.PrivateKey
+
+	// AcceptLogoutRequestBaseID, if true, lets ServeSLO and
+	// IdpLogoutRequest.Validate accept a LogoutRequest whose principal is a
+	// saml:BaseID (in the clear, or in an EncryptedID) rather than a NameID.
+	// Request.BaseID then holds the element and Request.NameID is nil, so
+	// MatchesSession matches no session; the SessionInvalidator must
+	// interpret the BaseID itself. If false, such a request is refused with
+	// an error matching ErrUnsupported.
+	AcceptLogoutRequestBaseID bool
+
 	// ReplayCache, if set, records the ID of each LogoutRequest that
 	// IdpLogoutRequest.Validate (and so ServeSLO) accepts, and refuses a
 	// LogoutRequest whose ID it has already recorded, so that a captured
@@ -262,6 +289,10 @@ type IdentityProvider struct {
 // Metadata returns the metadata structure for this identity provider.
 func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 	certStr := base64.StdEncoding.EncodeToString(idp.Certificate.Raw)
+	encryptionCertStr := certStr
+	if idp.EncryptionCertificate != nil {
+		encryptionCertStr = base64.StdEncoding.EncodeToString(idp.EncryptionCertificate.Raw)
+	}
 
 	var validDuration time.Duration
 	if idp.ValidDuration != nil {
@@ -300,7 +331,7 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 								KeyInfo: KeyInfo{
 									X509Data: X509Data{
 										X509Certificates: []X509Certificate{
-											{Data: certStr},
+											{Data: encryptionCertStr},
 										},
 									},
 								},

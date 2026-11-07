@@ -223,6 +223,20 @@ func TestIDPServeSLORoundTrip(t *testing.T) {
 				assert.NilError(t, test.SP.SignLogoutRequest(req))
 				return httptest.NewRequest(http.MethodGet, req.Redirect(sloTestRelayState).String(), nil)
 			}, http.StatusBadRequest},
+		// A sender that does not follow saml-bindings-2.0-os §3.4.4.1 can
+		// still deliver a Redirect request that keeps its enveloped XML
+		// signature and carries no query string signature. The IdP accepts
+		// it, because the enveloped signature verifies (see
+		// IdpLogoutRequest.Validate).
+		{"redirect request carrying an enveloped signature", []string{HTTPRedirectBinding},
+			func(t *testing.T, test *sloTest, req *LogoutRequest) *http.Request {
+				assert.NilError(t, test.SP.SignLogoutRequest(req))
+				encoded, err := deflateAndEncode(req.Element())
+				assert.NilError(t, err)
+				u := test.IDP.LogoutURL
+				u.RawQuery = url.Values{"SAMLRequest": {encoded}, "RelayState": {sloTestRelayState}}.Encode()
+				return httptest.NewRequest(http.MethodGet, u.String(), nil)
+			}, http.StatusFound},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			test := newSLOTest(t)
