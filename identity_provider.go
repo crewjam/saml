@@ -1074,6 +1074,11 @@ func (req *IdpAuthnRequest) validateFields() error {
 		return classify(fmt.Errorf("request expired at %s",
 			req.Request.IssueInstant.Add(MaxIssueDelay)), ErrExpired)
 	}
+	// As for LogoutRequests, an IssueInstant later than the clock skew
+	// allows is refused rather than trusted.
+	if req.Request.IssueInstant.Add(-MaxClockSkew).After(req.Now) {
+		return classify(fmt.Errorf("request IssueInstant %s is in the future", req.Request.IssueInstant), ErrNotYetValid)
+	}
 	if req.Request.Version != "2.0" {
 		return classify(fmt.Errorf("expected SAML request version 2.0 got %v", req.Request.Version), ErrUnsupported, errVersionMismatch)
 	}
@@ -1489,11 +1494,16 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 	}
 
 	// allow for some clock skew in the validity period using the
-	// issuer's apparent clock.
+	// issuer's apparent clock, but never start the validity period after
+	// now: the request's IssueInstant comes from the service provider, and
+	// a later one would postdate the assertion.
 	notBefore := req.Now.Add(-1 * MaxClockSkew)
 	notOnOrAfterAfter := req.Now.Add(MaxIssueDelay)
 	if notBefore.Before(req.Request.IssueInstant) {
 		notBefore = req.Request.IssueInstant
+		if notBefore.After(req.Now) {
+			notBefore = req.Now
+		}
 		notOnOrAfterAfter = notBefore.Add(MaxIssueDelay)
 	}
 	// The subject confirmation window SHOULD fall within the assertion's
