@@ -20,6 +20,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -349,8 +350,12 @@ type ServiceProvider struct {
 	//	enc.BlockCipher = xmlenc.AES256GCM
 	//	sp.LogoutNameIDEncrypter = enc
 	//
-	// When nil, RSA-OAEP-MGF1P with a SHA-1 digest and AES-128-CBC are used,
-	// as the IdentityProvider does for assertions by default.
+	// When nil, RSA-OAEP-MGF1P with a SHA-1 digest is used with the
+	// strongest block cipher that the IDP metadata lists in the
+	// EncryptionMethods of its encryption key: AES-GCM (256, 128 then 192
+	// bit keys) before AES-CBC. If the metadata lists none of them,
+	// AES-256-GCM is used; set LogoutNameIDEncrypter for an IDP that cannot
+	// decrypt AES-GCM and does not say so in its metadata.
 	LogoutNameIDEncrypter xmlenc.Encrypter
 
 	// AcceptLogoutRequestBaseID, if true, lets ValidateLogoutRequest accept
@@ -2276,11 +2281,11 @@ func (sp *ServiceProvider) EncryptLogoutRequestNameID(req *LogoutRequest) error 
 	if req.NameID == nil {
 		return classify(errors.New("cannot encrypt the NameID of a LogoutRequest that has none"), ErrMissingElement)
 	}
-	cert, err := sp.getIDPEncryptionCert()
+	cert, methods, err := sp.getIDPEncryptionCert()
 	if err != nil {
 		return err
 	}
-	encryptedID, err := encryptIdentifier(req.NameID.Element(), cert, sp.LogoutNameIDEncrypter)
+	encryptedID, err := encryptIdentifier(req.NameID.Element(), cert, identifierEncrypter(sp.LogoutNameIDEncrypter, methods))
 	if err != nil {
 		return fmt.Errorf("cannot encrypt NameID: %w", err)
 	}
@@ -2289,38 +2294,25 @@ func (sp *ServiceProvider) EncryptLogoutRequestNameID(req *LogoutRequest) error 
 	return nil
 }
 
-// getIDPEncryptionCert returns the IDP certificate to encrypt to: the first
-// one in the IDP SSO descriptors whose use is "encryption", or else the
-// first one whose use is unspecified.
-func (sp *ServiceProvider) getIDPEncryptionCert() (*x509.Certificate, error) {
+// getIDPEncryptionCert returns the IDP certificate to encrypt to, and the
+// EncryptionMethods listed with it: the first one in the IDP SSO descriptors
+// whose use is "encryption", or else the first one whose use is unspecified.
+func (sp *ServiceProvider) getIDPEncryptionCert() (*x509.Certificate, []EncryptionMethod, error) {
 	if sp.IDPMetadata == nil {
-		return nil, classify(errors.New("no IDP metadata"), ErrMissingElement)
+		return nil, nil, classify(errors.New("no IDP metadata"), ErrMissingElement)
 	}
-	for _, use := range []string{"encryption", ""} {
-		for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
-			for _, keyDescriptor := range idpSSODescriptor.KeyDescriptors {
-				if keyDescriptor.Use != use {
-					continue
-				}
-				for _, certificate := range keyDescriptor.KeyInfo.X509Data.X509Certificates {
-					certStr := regexp.MustCompile(`\s+`).ReplaceAllString(certificate.Data, "")
-					if certStr == "" {
-						continue
-					}
-					certBytes, err := base64.StdEncoding.DecodeString(certStr)
-					if err != nil {
-						return nil, classify(fmt.Errorf("cannot decode IDP encryption certificate: %w", err), ErrInvalidCertificate)
-					}
-					cert, err := x509.ParseCertificate(certBytes)
-					if err != nil {
-						return nil, classify(fmt.Errorf("cannot parse IDP encryption certificate: %w", err), ErrInvalidCertificate)
-					}
-					return cert, nil
-				}
-			}
-		}
+	var keyDescriptors []KeyDescriptor
+	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
+		keyDescriptors = append(keyDescriptors, idpSSODescriptor.KeyDescriptors...)
 	}
-	return nil, classify(errors.New("cannot find an encryption certificate in the IDP SSO descriptor"), ErrMissingElement)
+	cert, methods, err := encryptionKey(keyDescriptors)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil, classify(errors.New("cannot find an encryption certificate in the IDP SSO descriptor"), ErrMissingElement)
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("IDP encryption certificate: %w", err)
+	}
+	return cert, methods, nil
 }
 
 // MakeRedirectLogoutRequest creates a SAML LogoutRequest using the

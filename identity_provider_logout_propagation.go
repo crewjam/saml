@@ -14,6 +14,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -278,6 +279,11 @@ func (idp *IdentityProvider) sendLogoutRequest(w http.ResponseWriter, r *http.Re
 	if participant.SessionIndex != "" {
 		logoutRequest.SessionIndex = &SessionIndex{Value: participant.SessionIndex}
 	}
+	if idp.EncryptLogoutNameID {
+		if err := idp.encryptLogoutNameID(logoutRequest, metadata); err != nil {
+			return err
+		}
+	}
 
 	write, err := idp.logoutRequestWriter(logoutRequest, endpoint.Binding)
 	if err != nil {
@@ -290,6 +296,31 @@ func (idp *IdentityProvider) sendLogoutRequest(w http.ResponseWriter, r *http.Re
 		return err
 	}
 	write(w, r)
+	return nil
+}
+
+// encryptLogoutNameID replaces the NameID of logoutRequest with a
+// saml:EncryptedID holding it, encrypted to the encryption certificate in
+// metadata, the service provider's metadata. If metadata has no encryption
+// certificate, logoutRequest is left as it is.
+func (idp *IdentityProvider) encryptLogoutNameID(logoutRequest *LogoutRequest, metadata *EntityDescriptor) error {
+	var keyDescriptors []KeyDescriptor
+	for _, spssoDescriptor := range metadata.SPSSODescriptors {
+		keyDescriptors = append(keyDescriptors, spssoDescriptor.KeyDescriptors...)
+	}
+	cert, methods, err := encryptionKey(keyDescriptors)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("service provider encryption certificate: %w", err)
+	}
+	encryptedID, err := encryptIdentifier(logoutRequest.NameID.Element(), cert, identifierEncrypter(idp.LogoutNameIDEncrypter, methods))
+	if err != nil {
+		return fmt.Errorf("cannot encrypt NameID: %w", err)
+	}
+	logoutRequest.EncryptedID = encryptedID
+	logoutRequest.NameID = nil
 	return nil
 }
 

@@ -180,7 +180,7 @@ When a user visits `/logout`:
 
 The middleware also handles IDP initiated logout: when the IDP sends a signed `LogoutRequest` to `/saml/slo`, the middleware deletes the session cookie of that browser and answers the IDP with a `LogoutResponse`.
 
-For single logout to work, the IDP needs to know the SLO URL. It is in the service provider's metadata, or you can enter `<root URL>/saml/slo` in the IDP's settings. Many IDPs require logout requests to be signed; set `Options.SignRequest` to sign them. If the IDP requires the NameID to be encrypted, set `ServiceProvider.EncryptLogoutNameID`: the request then carries an `EncryptedID`, encrypted to the encryption certificate in the IDP's metadata. If you need different behaviour, for example to end server-side sessions, the `ServiceProvider` methods `MakeLogoutRequest`, `RedirectLogoutRequestURL`, `ParseLogoutResponse`, `ValidateLogoutRequest` and `MakeRedirectLogoutResponse` are the building blocks `HandleStartLogout` and `ServeSLO` use.
+For single logout to work, the IDP needs to know the SLO URL. It is in the service provider's metadata, or you can enter `<root URL>/saml/slo` in the IDP's settings. Many IDPs require logout requests to be signed; set `Options.SignRequest` to sign them. If the IDP requires the NameID to be encrypted, set `ServiceProvider.EncryptLogoutNameID`: the request then carries an `EncryptedID`, encrypted to the encryption certificate in the IDP's metadata, with the strongest cipher the metadata lists for it, AES-256-GCM if it lists none. Set `ServiceProvider.LogoutNameIDEncrypter` for an IDP that cannot decrypt AES-GCM. If you need different behaviour, for example to end server-side sessions, the `ServiceProvider` methods `MakeLogoutRequest`, `RedirectLogoutRequestURL`, `ParseLogoutResponse`, `ValidateLogoutRequest` and `MakeRedirectLogoutResponse` are the building blocks `HandleStartLogout` and `ServeSLO` use.
 
 ### Trusting the IDP's metadata
 
@@ -256,7 +256,7 @@ When a service provider sends a `LogoutRequest`, `ServeSLO`:
 
 1. sends a `LogoutResponse`, signed with the IdP's key (SHA-256 unless `SignatureMethod` says otherwise), to the service provider's `SingleLogoutService`, preferring the binding the request came with, and passes back the `RelayState`. Its status is `Success`, or `Responder` if the session could not be ended or the `SessionProvider` is not a `SessionInvalidator`.
 
-`ServeSLO` does not yet propagate the logout to the other service providers the user is logged in to.
+If the `SessionProvider` also implements `SessionParticipantTracker`, which records the service providers each session logged in to, `ServeSLO` sends a `LogoutRequest` to each of the session's other service providers before it answers, and `IdentityProvider.StartLogout` starts IdP-initiated logout of a session. Set `EncryptLogoutNameID` to send those requests an `EncryptedID` instead of a NameID, encrypted to each service provider's encryption certificate. A service provider whose metadata publishes none gets the NameID in the clear.
 
 ## Support
 
