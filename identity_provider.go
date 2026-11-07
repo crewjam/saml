@@ -105,7 +105,9 @@ type ResponseWriter interface {
 // DefaultResponseWriter is the default ResponseWriter. It calls
 // req.WriteResponse, which writes an auto-submitting HTML form (see
 // IdentityProvider.ResponseFormTemplate) that posts the response to the
-// service provider using the HTTP-POST binding.
+// service provider using the HTTP-POST binding, or, when the ACS endpoint
+// uses the HTTP-POST-SimpleSign binding, using that binding (see
+// IdentityProvider.SimpleSignResponseFormTemplate).
 type DefaultResponseWriter struct{}
 
 // WriteResponse implements ResponseWriter.
@@ -143,6 +145,19 @@ type IdentityProvider struct {
 	SignatureMethod         string
 	ValidDuration           *time.Duration
 	ResponseFormTemplate    *template.Template
+
+	// SimpleSignResponseFormTemplate, if set, replaces the default
+	// auto-submitting HTML form used to send responses to ACS endpoints with
+	// the HTTP-POST-SimpleSign binding. It is executed with an
+	// IdpAuthnRequestSimpleSignForm and must post its SAMLResponse, SigAlg
+	// and Signature fields, and RelayState when it is not empty (an empty
+	// RelayState field would be included in the signed content).
+	SimpleSignResponseFormTemplate *template.Template
+
+	// AdvertiseSimpleSignSSO, if true, adds an HTTP-POST-SimpleSign
+	// SingleSignOnService endpoint at SSOURL to the metadata. ServeSSO
+	// accepts SimpleSign authentication requests whether or not this is set.
+	AdvertiseSimpleSignSSO bool
 
 	// ResponseWriter, if set, writes the HTTP response carrying the SAML
 	// response in ServeSSO and ServeIDPInitiated. If nil,
@@ -254,6 +269,13 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 				},
 			},
 		},
+	}
+
+	if idp.AdvertiseSimpleSignSSO {
+		ed.IDPSSODescriptors[0].SingleSignOnServices = append(ed.IDPSSODescriptors[0].SingleSignOnServices, Endpoint{
+			Binding:  HTTPPostSimpleSignBinding,
+			Location: idp.SSOURL.String(),
+		})
 	}
 
 	for _, cert := range idp.ExtraCertificates {
@@ -418,26 +440,10 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// find an ACS endpoint that we can use
-	for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
-		for _, endpoint := range spssoDescriptor.AssertionConsumerServices {
-			if endpoint.Binding == HTTPPostBinding {
-				// explicitly copy loop iterator variables
-				//
-				// c.f. https://github.com/golang/go/wiki/CommonMistakes#using-reference-to-loop-iterator-variable
-				//
-				// (note that I'm pretty sure this isn't strictly necessary because we break out of the loop immediately,
-				// but it certainly doesn't hurt anything and may prevent bugs in the future.)
-				endpoint, spssoDescriptor := endpoint, spssoDescriptor
-
-				req.ACSEndpoint = &endpoint
-				req.SPSSODescriptor = &spssoDescriptor
-				break
-			}
-		}
-		if req.ACSEndpoint != nil {
-			break
-		}
+	// find an ACS endpoint that we can use: the first HTTP-POST one, or,
+	// if there is none, the first HTTP-POST-SimpleSign one.
+	if !req.selectACSEndpoint(func(ep *IndexedEndpoint) bool { return ep.Binding == HTTPPostBinding }) {
+		req.selectACSEndpoint(func(ep *IndexedEndpoint) bool { return ep.Binding == HTTPPostSimpleSignBinding })
 	}
 	if req.ACSEndpoint == nil {
 		idp.Logger.Printf("saml metadata does not contain an Assertion Customer Service url")
@@ -492,10 +498,21 @@ type IdpAuthnRequest struct {
 	AssertionEl             *etree.Element
 	ResponseEl              *etree.Element
 	Now                     time.Time
+
+	// simpleSign is the HTTP-POST-SimpleSign message the request arrived
+	// in, or nil if it arrived with another binding. Validate checks its
+	// signature once it knows the service provider.
+	simpleSign *simpleSignMessage
 }
 
 // NewIdpAuthnRequest returns a new IdpAuthnRequest for the given HTTP request to the authorization
 // service.
+//
+// A GET request carries the request with the HTTP-Redirect binding and a
+// POST request with the HTTP-POST binding, or with the HTTP-POST-SimpleSign
+// binding when the form has a SigAlg or Signature field. The SimpleSign form
+// is checked for duplicated or missing fields here; its signature is checked
+// by Validate, once the service provider is known.
 func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnRequest, error) {
 	req := &IdpAuthnRequest{
 		IDP:         idp,
@@ -518,7 +535,16 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 		if err := r.ParseForm(); err != nil {
 			return nil, err
 		}
-		var err error
+		simpleSign, err := parseSimpleSignRequest(r, redirectParamSAMLRequest)
+		if err != nil {
+			return nil, err
+		}
+		if simpleSign != nil {
+			req.simpleSign = simpleSign
+			req.RequestBuffer = simpleSign.XML
+			req.RelayState = simpleSign.RelayState
+			break
+		}
 		req.RequestBuffer, err = base64.StdEncoding.DecodeString(r.PostForm.Get("SAMLRequest"))
 		if err != nil {
 			return nil, err
@@ -534,6 +560,12 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 // Validate checks that the authentication request is valid and assigns
 // the AuthnRequest and Metadata properties. Returns a non-nil error if the
 // request is not valid.
+//
+// Signatures on requests sent with the HTTP-Redirect or HTTP-POST binding
+// are not checked. A request sent with the HTTP-POST-SimpleSign binding must
+// carry a valid SimpleSign signature made with a signing certificate from
+// the service provider's metadata (its validity period is not checked), and
+// a Destination equal to SSOURL; it is rejected otherwise.
 func (req *IdpAuthnRequest) Validate() error {
 	if err := xrv.Validate(bytes.NewReader(req.RequestBuffer)); err != nil {
 		return err
@@ -567,8 +599,11 @@ func (req *IdpAuthnRequest) Validate() error {
 	//
 	// We require the destination be correct either (a) if signing is enabled or
 	// (b) if it was provided.
+	//
+	// A request sent with the HTTP-POST-SimpleSign binding is signed, so it
+	// must carry a Destination (sstc-saml-binding-simplesign-cs-01 §2.4).
 	mustHaveDestination := idpSsoDescriptor.WantAuthnRequestsSigned != nil && *idpSsoDescriptor.WantAuthnRequestsSigned
-	mustHaveDestination = mustHaveDestination || req.Request.Destination != ""
+	mustHaveDestination = mustHaveDestination || req.Request.Destination != "" || req.simpleSign != nil
 	if mustHaveDestination {
 		if req.Request.Destination != req.IDP.SSOURL.String() {
 			return fmt.Errorf("expected destination to be %q, not %q", req.IDP.SSOURL.String(), req.Request.Destination)
@@ -596,6 +631,12 @@ func (req *IdpAuthnRequest) Validate() error {
 	}
 	req.ServiceProviderMetadata = serviceProvider
 
+	if req.simpleSign != nil {
+		if err := req.verifySimpleSignSignature(); err != nil {
+			return fmt.Errorf("cannot verify HTTP-POST-SimpleSign signature: %w", err)
+		}
+	}
+
 	// Check that the ACS URL matches an ACS endpoint in the SP metadata.
 	if err := req.getACSEndpoint(); err != nil {
 		return fmt.Errorf("cannot find assertion consumer service: %v", err)
@@ -604,44 +645,29 @@ func (req *IdpAuthnRequest) Validate() error {
 	return nil
 }
 
+// getACSEndpoint finds the AssertionConsumerService endpoint the response is
+// sent to and sets SPSSODescriptor and ACSEndpoint.
+//
+// An endpoint named by AssertionConsumerServiceIndex is used whatever its
+// binding. An endpoint named by AssertionConsumerServiceURL is matched by
+// Location; an HTTP-POST-SimpleSign endpoint there is preferred when
+// ProtocolBinding asks for that binding, and is otherwise only used when no
+// endpoint with another binding has that Location and ProtocolBinding is
+// empty. So a service provider that lists both bindings at one URL keeps
+// getting HTTP-POST unless it asks for SimpleSign. Without either, the
+// default endpoint (HTTP-POST, HTTP-Redirect or HTTP-POST-SimpleSign) is
+// used, then any HTTP-POST or HTTP-Redirect endpoint, then any
+// HTTP-POST-SimpleSign endpoint.
 func (req *IdpAuthnRequest) getACSEndpoint() error {
-	if req.Request.AssertionConsumerServiceIndex != "" {
-		for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
-			for _, spAssertionConsumerService := range spssoDescriptor.AssertionConsumerServices {
-				if strconv.Itoa(spAssertionConsumerService.Index) == req.Request.AssertionConsumerServiceIndex {
-					// explicitly copy loop iterator variables
-					//
-					// c.f. https://github.com/golang/go/wiki/CommonMistakes#using-reference-to-loop-iterator-variable
-					//
-					// (note that I'm pretty sure this isn't strictly necessary because we break out of the loop immediately,
-					// but it certainly doesn't hurt anything and may prevent bugs in the future.)
-					spssoDescriptor, spAssertionConsumerService := spssoDescriptor, spAssertionConsumerService
-
-					req.SPSSODescriptor = &spssoDescriptor
-					req.ACSEndpoint = &spAssertionConsumerService
-					return nil
-				}
-			}
+	if index := req.Request.AssertionConsumerServiceIndex; index != "" {
+		if req.selectACSEndpoint(func(ep *IndexedEndpoint) bool { return strconv.Itoa(ep.Index) == index }) {
+			return nil
 		}
 	}
 
-	if req.Request.AssertionConsumerServiceURL != "" {
-		for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
-			for _, spAssertionConsumerService := range spssoDescriptor.AssertionConsumerServices {
-				if spAssertionConsumerService.Location == req.Request.AssertionConsumerServiceURL {
-					// explicitly copy loop iterator variables
-					//
-					// c.f. https://github.com/golang/go/wiki/CommonMistakes#using-reference-to-loop-iterator-variable
-					//
-					// (note that I'm pretty sure this isn't strictly necessary because we break out of the loop immediately,
-					// but it certainly doesn't hurt anything and may prevent bugs in the future.)
-					spssoDescriptor, spAssertionConsumerService := spssoDescriptor, spAssertionConsumerService
-
-					req.SPSSODescriptor = &spssoDescriptor
-					req.ACSEndpoint = &spAssertionConsumerService
-					return nil
-				}
-			}
+	if acsURL := req.Request.AssertionConsumerServiceURL; acsURL != "" {
+		if req.selectACSEndpointByURL(acsURL) {
+			return nil
 		}
 	}
 
@@ -649,49 +675,62 @@ func (req *IdpAuthnRequest) getACSEndpoint() error {
 	// assertion requests that don't specify an ACS url at all.
 	if req.Request.AssertionConsumerServiceURL == "" && req.Request.AssertionConsumerServiceIndex == "" {
 		// find a default ACS binding in the metadata that we can use
-		for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
-			for _, spAssertionConsumerService := range spssoDescriptor.AssertionConsumerServices {
-				if spAssertionConsumerService.IsDefault != nil && *spAssertionConsumerService.IsDefault {
-					switch spAssertionConsumerService.Binding {
-					case HTTPPostBinding, HTTPRedirectBinding:
-						// explicitly copy loop iterator variables
-						//
-						// c.f. https://github.com/golang/go/wiki/CommonMistakes#using-reference-to-loop-iterator-variable
-						//
-						// (note that I'm pretty sure this isn't strictly necessary because we break out of the loop immediately,
-						// but it certainly doesn't hurt anything and may prevent bugs in the future.)
-						spssoDescriptor, spAssertionConsumerService := spssoDescriptor, spAssertionConsumerService
-
-						req.SPSSODescriptor = &spssoDescriptor
-						req.ACSEndpoint = &spAssertionConsumerService
-						return nil
-					}
-				}
-			}
+		if req.selectACSEndpoint(func(ep *IndexedEndpoint) bool {
+			return ep.IsDefault != nil && *ep.IsDefault && (isPostOrRedirect(ep.Binding) || ep.Binding == HTTPPostSimpleSignBinding)
+		}) {
+			return nil
 		}
 
 		// if we can't find a default, use *any* ACS binding
-		for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
-			for _, spAssertionConsumerService := range spssoDescriptor.AssertionConsumerServices {
-				switch spAssertionConsumerService.Binding {
-				case HTTPPostBinding, HTTPRedirectBinding:
-					// explicitly copy loop iterator variables
-					//
-					// c.f. https://github.com/golang/go/wiki/CommonMistakes#using-reference-to-loop-iterator-variable
-					//
-					// (note that I'm pretty sure this isn't strictly necessary because we break out of the loop immediately,
-					// but it certainly doesn't hurt anything and may prevent bugs in the future.)
-					spssoDescriptor, spAssertionConsumerService := spssoDescriptor, spAssertionConsumerService
-
-					req.SPSSODescriptor = &spssoDescriptor
-					req.ACSEndpoint = &spAssertionConsumerService
-					return nil
-				}
-			}
+		if req.selectACSEndpoint(func(ep *IndexedEndpoint) bool { return isPostOrRedirect(ep.Binding) }) {
+			return nil
+		}
+		if req.selectACSEndpoint(func(ep *IndexedEndpoint) bool { return ep.Binding == HTTPPostSimpleSignBinding }) {
+			return nil
 		}
 	}
 
 	return os.ErrNotExist // no ACS url found or specified
+}
+
+// selectACSEndpointByURL selects the ACS endpoint at acsURL, as described for
+// getACSEndpoint, and reports whether there is one.
+func (req *IdpAuthnRequest) selectACSEndpointByURL(acsURL string) bool {
+	atURL := func(simpleSign bool) func(*IndexedEndpoint) bool {
+		return func(ep *IndexedEndpoint) bool {
+			return ep.Location == acsURL && (ep.Binding == HTTPPostSimpleSignBinding) == simpleSign
+		}
+	}
+	switch req.Request.ProtocolBinding {
+	case HTTPPostSimpleSignBinding:
+		return req.selectACSEndpoint(atURL(true)) || req.selectACSEndpoint(atURL(false))
+	case "":
+		return req.selectACSEndpoint(atURL(false)) || req.selectACSEndpoint(atURL(true))
+	default:
+		return req.selectACSEndpoint(atURL(false))
+	}
+}
+
+// selectACSEndpoint sets SPSSODescriptor and ACSEndpoint to the first
+// AssertionConsumerService endpoint in the service provider metadata for
+// which match returns true, and reports whether there is one.
+func (req *IdpAuthnRequest) selectACSEndpoint(match func(*IndexedEndpoint) bool) bool {
+	for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
+		for _, endpoint := range spssoDescriptor.AssertionConsumerServices {
+			if match(&endpoint) {
+				// Copy, so that the pointers do not alias the metadata.
+				spssoDescriptor, endpoint := spssoDescriptor, endpoint
+				req.SPSSODescriptor = &spssoDescriptor
+				req.ACSEndpoint = &endpoint
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isPostOrRedirect(binding string) bool {
+	return binding == HTTPPostBinding || binding == HTTPRedirectBinding
 }
 
 // hostFromRemoteAddr returns the host part of an http.Request RemoteAddr,
@@ -1122,7 +1161,16 @@ var defaultResponseFormTemplate = template.Must(template.New("saml-post-form").P
 
 // WriteResponse writes the `Response` to the http.ResponseWriter. If
 // `Response` is not already set, it calls MakeResponse to produce it.
+//
+// If the ACS endpoint uses the HTTP-POST-SimpleSign binding, the form is the
+// one SimpleSignBinding describes, rendered with
+// IdentityProvider.SimpleSignResponseFormTemplate. Otherwise it is the
+// HTTP-POST form PostBinding describes, rendered with ResponseFormTemplate.
 func (req *IdpAuthnRequest) WriteResponse(w http.ResponseWriter) error {
+	if req.ACSEndpoint != nil && req.ACSEndpoint.Binding == HTTPPostSimpleSignBinding {
+		return req.writeSimpleSignResponse(w)
+	}
+
 	form, err := req.PostBinding()
 	if err != nil {
 		return err
