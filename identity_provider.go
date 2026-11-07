@@ -1332,6 +1332,10 @@ func hostFromRemoteAddr(remoteAddr string) string {
 	return host
 }
 
+// nonAlphanumeric matches what DefaultAssertionMaker ignores when it
+// matches the name of a requested attribute.
+var nonAlphanumeric = regexp.MustCompile("[^A-Za-z0-9]+")
+
 // DefaultAssertionMaker produces a SAML assertion for the
 // given request and assigns it to req.Assertion.
 type DefaultAssertionMaker struct {
@@ -1350,9 +1354,18 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 	attributeConsumingService := defaultAttributeConsumingService(req.SPSSODescriptor)
 
 	for _, requestedAttribute := range attributeConsumingService.RequestedAttributes {
-		if requestedAttribute.NameFormat == "urn:oasis:names:tc:SAML:2.0:attrname-format:basic" || requestedAttribute.NameFormat == "urn:oasis:names:tc:SAML:2.0:attrname-format:unspecified" {
-			attrName := requestedAttribute.Name
-			attrName = regexp.MustCompile("[^A-Za-z0-9]+").ReplaceAllString(attrName, "")
+		// "If no NameFormat value is provided, the identifier
+		// urn:oasis:names:tc:SAML:2.0:attrname-format:unspecified ... is in
+		// effect" (saml-core §2.7.3.1).
+		switch requestedAttribute.NameFormat {
+		case "", "urn:oasis:names:tc:SAML:2.0:attrname-format:basic", "urn:oasis:names:tc:SAML:2.0:attrname-format:unspecified":
+			// The name is compared case-sensitively: string values "MUST be
+			// compared using an exact binary comparison" and implementations
+			// "MUST NOT depend on case-insensitive string comparisons"
+			// (saml-core §1.3.1). Punctuation is removed before comparing,
+			// as this code always has, so "email_address" matches
+			// "emailaddress"; that is a convenience beyond the specification.
+			attrName := nonAlphanumeric.ReplaceAllString(requestedAttribute.Name, "")
 			switch attrName {
 			case "email", "emailaddress":
 				attributes = append(attributes, Attribute{
