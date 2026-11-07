@@ -634,7 +634,7 @@ func TestSpcovValidateLogoutResponseRequest(t *testing.T) {
 
 	t.Run("unparsable form", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, e.sp.SloURL.String()+"?a=%zz", nil)
-		assert.Error(t, e.sp.ValidateLogoutResponseRequest(req), `unable to parse form: invalid URL escape "%zz"`)
+		assert.Error(t, spcovPrivateErr(t, e.sp.ValidateLogoutResponseRequest(req)), `unable to parse form: invalid URL escape "%zz"`)
 	})
 
 	t.Run("empty post", func(t *testing.T) {
@@ -670,28 +670,28 @@ func TestParseLogoutResponse(t *testing.T) {
 	t.Run("InResponseTo not pending", func(t *testing.T) {
 		resp, err := e.sp.ParseLogoutResponse(postRequest(valid), []string{"id-other"})
 		assert.Check(t, is.Nil(resp))
-		assert.Error(t, err, "`InResponseTo` does not match any of the possible request IDs (expected [id-other])")
+		assert.Error(t, spcovPrivateErr(t, err), "`InResponseTo` does not match any of the possible request IDs (expected [id-other])")
 		assert.Check(t, errors.Is(err, ErrRequestIDMismatch))
 	})
 
 	t.Run("no pending requests", func(t *testing.T) {
 		resp, err := e.sp.ParseLogoutResponse(postRequest(valid), nil)
 		assert.Check(t, is.Nil(resp))
-		assert.Error(t, err, "`InResponseTo` does not match any of the possible request IDs (expected [])")
+		assert.Error(t, spcovPrivateErr(t, err), "`InResponseTo` does not match any of the possible request IDs (expected [])")
 	})
 
 	t.Run("empty InResponseTo", func(t *testing.T) {
 		buf := e.signedLogoutResponse(t, func(lr *LogoutResponse) { lr.InResponseTo = "" })
 		resp, err := e.sp.ParseLogoutResponse(postRequest(buf), []string{""})
 		assert.Check(t, is.Nil(resp))
-		assert.Error(t, err, "`InResponseTo` does not match any of the possible request IDs (expected [])")
+		assert.Error(t, spcovPrivateErr(t, err), "`InResponseTo` does not match any of the possible request IDs (expected [])")
 	})
 
 	t.Run("invalid response", func(t *testing.T) {
 		buf := e.signedLogoutResponse(t, func(lr *LogoutResponse) { lr.Destination = "https://evil.example.com/slo" })
 		resp, err := e.sp.ParseLogoutResponse(postRequest(buf), []string{"id-logout-request"})
 		assert.Check(t, is.Nil(resp))
-		assert.Error(t, err, "`Destination` does not match SloURL (expected \"https://sp.example.com/saml/slo\")")
+		assert.Error(t, spcovPrivateErr(t, err), "`Destination` does not match SloURL (expected \"https://sp.example.com/saml/slo\")")
 		assert.Check(t, errors.Is(err, ErrDestinationMismatch))
 	})
 }
@@ -764,7 +764,7 @@ func TestSpcovValidateLogoutResponseContent(t *testing.T) {
 				if tc.wantErr == "" {
 					assert.NilError(t, err)
 				} else {
-					assert.Error(t, err, tc.wantErr)
+					assert.Error(t, spcovPrivateErr(t, err), tc.wantErr)
 				}
 			})
 		}
@@ -830,6 +830,7 @@ func TestSpcovValidateLogoutResponseMalformed(t *testing.T) {
 					want := tc.wantErr
 					if variant == "form" {
 						want = "response contains invalid XML: " + want
+						err = spcovPrivateErr(t, err)
 					}
 					assert.Error(t, err, want)
 					return

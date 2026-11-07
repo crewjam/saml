@@ -724,8 +724,11 @@ func (r *AuthnRequest) Redirect(relayState string, sp *ServiceProvider) (*url.UR
 
 // GetSSOBindingLocation returns URL for the IDP's Single Sign On Service binding
 // of the specified type (HTTPRedirectBinding, HTTPPostBinding or
-// HTTPPostSimpleSignBinding)
+// HTTPPostSimpleSignBinding), or "" if there is none or IDPMetadata is nil.
 func (sp *ServiceProvider) GetSSOBindingLocation(binding string) string {
+	if sp.IDPMetadata == nil {
+		return ""
+	}
 	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
 		for _, singleSignOnService := range idpSSODescriptor.SingleSignOnServices {
 			if singleSignOnService.Binding == binding {
@@ -737,8 +740,11 @@ func (sp *ServiceProvider) GetSSOBindingLocation(binding string) string {
 }
 
 // GetArtifactBindingLocation returns URL for the IDP's Artifact binding of the
-// specified type
+// specified type, or "" if there is none or IDPMetadata is nil.
 func (sp *ServiceProvider) GetArtifactBindingLocation(binding string) string {
+	if sp.IDPMetadata == nil {
+		return ""
+	}
 	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
 		// The deprecated IDPSSODescriptor.ArtifactResolutionServices is
 		// consulted first, so that a caller that changed it after parsing
@@ -763,8 +769,12 @@ func (sp *ServiceProvider) GetArtifactBindingLocation(binding string) string {
 }
 
 // GetSLOBindingLocation returns URL for the IDP's Single Log Out Service binding
-// of the specified type (HTTPRedirectBinding or HTTPPostBinding)
+// of the specified type (HTTPRedirectBinding or HTTPPostBinding), or "" if
+// there is none or IDPMetadata is nil.
 func (sp *ServiceProvider) GetSLOBindingLocation(binding string) string {
+	if sp.IDPMetadata == nil {
+		return ""
+	}
 	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
 		for _, singleLogoutService := range idpSSODescriptor.SingleLogoutServices {
 			if singleLogoutService.Binding == binding {
@@ -1383,7 +1393,11 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 		retErr.PrivateErr = classify(fmt.Errorf("Error during artifact resolution: response body is larger than %d bytes", limit), ErrArtifactResolution)
 		return nil, retErr
 	}
-	assertion, err := sp.ParseXMLArtifactResponse(responseBody, possibleRequestIDs, artifactResolveRequest.ID, *req.URL)
+	// The Response inside the ArtifactResponse was delivered, by reference,
+	// to the ACS, so its Destination is checked against AcsURL. req.URL is
+	// the IdP's ArtifactResolutionService, which a Response for this SP
+	// must never name.
+	assertion, err := sp.ParseXMLArtifactResponse(responseBody, possibleRequestIDs, artifactResolveRequest.ID, sp.AcsURL)
 	if err != nil {
 		return nil, err
 	}
@@ -1490,8 +1504,8 @@ func (sp *ServiceProvider) parseArtifactResponse(artifactResponseEl *etree.Eleme
 			retErr.PrivateErr = classify(fmt.Errorf("`InResponseTo` does not match the artifact request ID (expected %s)", artifactRequestID), ErrRequestIDMismatch)
 			return nil, retErr
 		}
-		if artifactResponse.IssueInstant.Add(MaxIssueDelay).Before(now) {
-			retErr.PrivateErr = classify(fmt.Errorf("response IssueInstant expired at %s", artifactResponse.IssueInstant.Add(MaxIssueDelay)), ErrExpired)
+		if err := checkIssueInstant("response IssueInstant", artifactResponse.IssueInstant, now); err != nil {
+			retErr.PrivateErr = err
 			return nil, retErr
 		}
 		if artifactResponse.Issuer != nil && artifactResponse.Issuer.Value != sp.IDPMetadata.EntityID {
@@ -1687,6 +1701,9 @@ func (sp *ServiceProvider) parseReceivedResponse(responseEl, receivedEl *etree.E
 		return nil, err
 	}
 
+	// assertionRequestIDs are the request IDs an assertion may answer.
+	assertionRequestIDs := possibleRequestIDs
+
 	// validate request attributes
 	{
 		var response Response
@@ -1710,9 +1727,17 @@ func (sp *ServiceProvider) parseReceivedResponse(responseEl, receivedEl *etree.E
 		if err := sp.validateRequestID(response, possibleRequestIDs); err != nil {
 			return nil, err
 		}
+		// A Response to an AuthnRequest carries assertions issued for that
+		// same request (saml-profiles §4.1.4.2), so an assertion issued for
+		// another pending request cannot be rewrapped in it. An assertion
+		// without InResponseTo is still accepted with AllowIDPInitiated:
+		// it would be accepted on its own anyway.
+		if response.InResponseTo != "" {
+			assertionRequestIDs = []string{response.InResponseTo}
+		}
 
-		if response.IssueInstant.Add(MaxIssueDelay).Before(now) {
-			return nil, classify(fmt.Errorf("response IssueInstant expired at %s", response.IssueInstant.Add(MaxIssueDelay)), ErrExpired)
+		if err := checkIssueInstant("response IssueInstant", response.IssueInstant, now); err != nil {
+			return nil, err
 		}
 		if response.Issuer != nil && response.Issuer.Value != sp.IDPMetadata.EntityID {
 			return nil, classify(fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
@@ -1754,7 +1779,7 @@ func (sp *ServiceProvider) parseReceivedResponse(responseEl, receivedEl *etree.E
 	// look for encrypted assertions
 	{
 		for _, encryptedAssertionEl := range encryptedAssertionEls {
-			assertion, err := sp.parseEncryptedAssertion(encryptedAssertionEl, possibleRequestIDs, now, signatureRequirement)
+			assertion, err := sp.parseEncryptedAssertion(encryptedAssertionEl, assertionRequestIDs, now, signatureRequirement)
 			if err != nil {
 				errs = append(errs, err)
 				continue
@@ -1766,7 +1791,7 @@ func (sp *ServiceProvider) parseReceivedResponse(responseEl, receivedEl *etree.E
 	// look for plaintext assertions
 	{
 		for i, assertionEl := range assertionEls {
-			assertion, err := sp.parseReceivedAssertion(assertionEl, receivedAssertionEls[i], possibleRequestIDs, now, signatureRequirement)
+			assertion, err := sp.parseReceivedAssertion(assertionEl, receivedAssertionEls[i], assertionRequestIDs, now, signatureRequirement)
 			if err != nil {
 				errs = append(errs, err)
 				continue
@@ -1808,8 +1833,10 @@ func (sp *ServiceProvider) validateRequestID(response Response, possibleRequestI
 	if sp.AllowIDPInitiated && response.InResponseTo == "" {
 		requestIDvalid = true
 	} else {
+		// An empty entry of possibleRequestIDs never matches: it would
+		// accept an unsolicited response without AllowIDPInitiated.
 		for _, possibleRequestID := range possibleRequestIDs {
-			if response.InResponseTo == possibleRequestID {
+			if possibleRequestID != "" && response.InResponseTo == possibleRequestID {
 				requestIDvalid = true
 			}
 		}
@@ -2141,6 +2168,9 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if issueDeadline(assertion).Before(now) {
 		return classify(fmt.Errorf("expired on %s", issueDeadline(assertion)), ErrExpired)
 	}
+	if assertion.IssueInstant.Add(-MaxClockSkew).After(now) {
+		return classify(fmt.Errorf("assertion IssueInstant %s is in the future", assertion.IssueInstant), ErrNotYetValid)
+	}
 	if assertion.Issuer.Value != sp.IDPMetadata.EntityID {
 		return classify(fmt.Errorf("issuer is not %q", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
 	}
@@ -2270,7 +2300,8 @@ func (sp *ServiceProvider) validateAssertionInResponseTo(inResponseTo string, po
 		}
 	}
 	for _, possibleRequestID := range possibleRequestIDs {
-		if inResponseTo == possibleRequestID {
+		// As in validateRequestID, an empty entry never matches.
+		if possibleRequestID != "" && inResponseTo == possibleRequestID {
 			return nil
 		}
 	}
@@ -2280,7 +2311,29 @@ func (sp *ServiceProvider) validateAssertionInResponseTo(inResponseTo string, po
 // issueDeadline is the last moment validateAssertion accepts assertion by its
 // IssueInstant.
 func issueDeadline(assertion *Assertion) time.Time {
-	return assertion.IssueInstant.Add(MaxIssueDelay)
+	return issueInstantDeadline(assertion.IssueInstant)
+}
+
+// issueInstantDeadline is the last moment a message issued at issueInstant
+// is accepted: MaxIssueDelay later. MaxIssueDelay already allows for some
+// clock drift.
+func issueInstantDeadline(issueInstant time.Time) time.Time {
+	return issueInstant.Add(MaxIssueDelay)
+}
+
+// checkIssueInstant refuses a message whose IssueInstant is more than
+// MaxIssueDelay in the past, or more than MaxClockSkew in
+// the future. A message dated in the future would otherwise stay acceptable
+// by its IssueInstant for as long as the issuer liked. what names the
+// message in the error.
+func checkIssueInstant(what string, issueInstant, now time.Time) error {
+	if deadline := issueInstantDeadline(issueInstant); deadline.Before(now) {
+		return classify(fmt.Errorf("%s expired at %s", what, deadline), ErrExpired)
+	}
+	if issueInstant.Add(-MaxClockSkew).After(now) {
+		return classify(fmt.Errorf("%s %s is in the future", what, issueInstant), ErrNotYetValid)
+	}
+	return nil
 }
 
 // skewedDeadline is a NotOnOrAfter time moved later by the allowed clock
@@ -2359,7 +2412,7 @@ const logoutRequestReplayKeyPrefix = "LogoutRequest:"
 // is refused: IssueInstant plus MaxIssueDelay or, if it is earlier, the
 // NotOnOrAfter time allowing for clock skew.
 func logoutRequestAcceptableUntil(req *LogoutRequest) time.Time {
-	deadline := req.IssueInstant.Add(MaxIssueDelay)
+	deadline := issueInstantDeadline(req.IssueInstant)
 	if req.NotOnOrAfter != nil {
 		deadline = earliest(deadline, skewedDeadline(*req.NotOnOrAfter))
 	}
@@ -3280,7 +3333,10 @@ func (sp *ServiceProvider) ParseLogoutResponse(req *http.Request, possibleReques
 			return resp, nil
 		}
 	}
-	return nil, classify(fmt.Errorf("`InResponseTo` does not match any of the possible request IDs (expected %v)", possibleRequestIDs), ErrRequestIDMismatch)
+	return nil, &InvalidResponseError{
+		Now:        sp.now(),
+		PrivateErr: classify(fmt.Errorf("`InResponseTo` does not match any of the possible request IDs (expected %v)", possibleRequestIDs), ErrRequestIDMismatch),
+	}
 }
 
 func (sp *ServiceProvider) parseLogoutResponseRequest(req *http.Request) (*LogoutResponse, error) {
@@ -3290,7 +3346,10 @@ func (sp *ServiceProvider) parseLogoutResponseRequest(req *http.Request) (*Logou
 
 	err := req.ParseForm()
 	if err != nil {
-		return nil, classify(fmt.Errorf("unable to parse form: %w", err), ErrMalformedMessage)
+		return nil, &InvalidResponseError{
+			Now:        sp.now(),
+			PrivateErr: classify(fmt.Errorf("unable to parse form: %w", err), ErrMalformedMessage),
+		}
 	}
 
 	if isSimpleSignRequest(req) {
@@ -3322,7 +3381,8 @@ func (sp *ServiceProvider) parseLogoutResponseSimpleSign(req *http.Request) (*Lo
 		return nil, retErr
 	}
 	if err := sp.validateLogoutResponse(&resp); err != nil {
-		return nil, err
+		retErr.PrivateErr = err
+		return nil, retErr
 	}
 	return &resp, nil
 }
@@ -3350,9 +3410,9 @@ func (sp *ServiceProvider) parseLogoutResponseForm(postFormData string) (*Logout
 	}
 	retErr.Response = string(rawResponseBuf)
 
-	// TODO(ross): add test case for this (SLO does not have tests right now)
 	if err := xmlroundtrip.Validate(rawResponseBuf); err != nil {
-		return nil, classify(fmt.Errorf("response contains invalid XML: %w", err), ErrMalformedMessage)
+		retErr.PrivateErr = classify(fmt.Errorf("response contains invalid XML: %w", err), ErrMalformedMessage)
+		return nil, retErr
 	}
 
 	doc := etree.NewDocument()
@@ -3377,7 +3437,8 @@ func (sp *ServiceProvider) parseLogoutResponseForm(postFormData string) (*Logout
 		return nil, retErr
 	}
 	if err := sp.validateLogoutResponse(&resp); err != nil {
-		return nil, err
+		retErr.PrivateErr = err
+		return nil, retErr
 	}
 	return &resp, nil
 }
@@ -3422,7 +3483,8 @@ func (sp *ServiceProvider) validateLogoutResponseRedirectQuery(rawQuery string) 
 		return nil, retErr
 	}
 	if err := sp.validateLogoutResponse(&resp); err != nil {
-		return nil, err
+		retErr.PrivateErr = err
+		return nil, retErr
 	}
 	return &resp, nil
 }
@@ -3437,8 +3499,8 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 	}
 
 	now := sp.now()
-	if resp.IssueInstant.Add(MaxIssueDelay).Before(now) {
-		return classify(fmt.Errorf("issueInstant expired at %s", resp.IssueInstant.Add(MaxIssueDelay)), ErrExpired)
+	if err := checkIssueInstant("issueInstant", resp.IssueInstant, now); err != nil {
+		return err
 	}
 	if resp.Issuer == nil || resp.Issuer.Value != sp.IDPMetadata.EntityID {
 		return classify(fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
@@ -3479,7 +3541,10 @@ func (sp *ServiceProvider) ValidateLogoutRequest(req *http.Request) (*LogoutRequ
 	}
 
 	if err := req.ParseForm(); err != nil {
-		return nil, classify(fmt.Errorf("unable to parse form: %w", err), ErrMalformedMessage)
+		return nil, &InvalidResponseError{
+			Now:        sp.now(),
+			PrivateErr: classify(fmt.Errorf("unable to parse form: %w", err), ErrMalformedMessage),
+		}
 	}
 
 	if isSimpleSignRequest(req) {
@@ -3523,7 +3588,8 @@ func (sp *ServiceProvider) ValidateLogoutRequestForm(postFormData string) (*Logo
 	retErr.Response = string(rawRequestBuf)
 
 	if err := xmlroundtrip.Validate(rawRequestBuf); err != nil {
-		return nil, classify(fmt.Errorf("request contains invalid XML: %w", err), ErrMalformedMessage)
+		retErr.PrivateErr = classify(fmt.Errorf("request contains invalid XML: %w", err), ErrMalformedMessage)
+		return nil, retErr
 	}
 
 	doc := etree.NewDocument()
@@ -3597,11 +3663,8 @@ func (sp *ServiceProvider) validateLogoutRequest(req *LogoutRequest) error {
 // Destination.
 func (sp *ServiceProvider) validateLogoutRequestFields(req *LogoutRequest) error {
 	now := sp.now()
-	if req.IssueInstant.Add(MaxIssueDelay).Before(now) {
-		return classify(fmt.Errorf("issueInstant expired at %s", req.IssueInstant.Add(MaxIssueDelay)), ErrExpired)
-	}
-	if req.IssueInstant.Add(-MaxClockSkew).After(now) {
-		return classify(fmt.Errorf("issueInstant %s is in the future", req.IssueInstant), ErrNotYetValid)
+	if err := checkIssueInstant("issueInstant", req.IssueInstant, now); err != nil {
+		return err
 	}
 	if req.NotOnOrAfter != nil && !now.Before(req.NotOnOrAfter.Add(MaxClockSkew)) {
 		return classify(fmt.Errorf("request expired at %s", req.NotOnOrAfter), ErrExpired)

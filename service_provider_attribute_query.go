@@ -272,7 +272,7 @@ func (sp *ServiceProvider) ParseXMLAttributeQueryResponse(soapResponseXML []byte
 
 func (sp *ServiceProvider) parseAttributeQueryResponse(soapResponseXML []byte, query *AttributeQuery, now time.Time) (*AttributeQueryResult, error) {
 	if query == nil || query.ID == "" || query.Subject == nil || query.Subject.NameID == nil {
-		return nil, errors.New("the attribute query has no ID or no Subject NameID")
+		return nil, classify(errors.New("the attribute query has no ID or no Subject NameID"), ErrMissingElement)
 	}
 	if sp.IDPMetadata == nil {
 		return nil, errors.New("IDPMetadata is not set")
@@ -295,7 +295,7 @@ func (sp *ServiceProvider) parseAttributeQueryResponse(soapResponseXML []byte, q
 
 	var response Response
 	if err := unmarshalElement(responseEl, &response); err != nil {
-		return nil, fmt.Errorf("cannot unmarshal response: %v", err)
+		return nil, classify(fmt.Errorf("cannot unmarshal response: %w", err), ErrMalformedMessage)
 	}
 	if err := sp.validateAttributeQueryResponse(&response, query, responseSigned, now); err != nil {
 		return nil, err
@@ -377,20 +377,20 @@ func (sp *ServiceProvider) validateAttributeQueryResponse(response *Response, qu
 		return err
 	}
 	if response.InResponseTo != query.ID {
-		return fmt.Errorf("`InResponseTo` %q does not match the attribute query ID %q", response.InResponseTo, query.ID)
+		return classify(fmt.Errorf("`InResponseTo` %q does not match the attribute query ID %q", response.InResponseTo, query.ID), ErrRequestIDMismatch)
 	}
-	if response.IssueInstant.Add(MaxIssueDelay).Before(now) {
-		return fmt.Errorf("response IssueInstant expired at %s", response.IssueInstant.Add(MaxIssueDelay))
+	if err := checkIssueInstant("response IssueInstant", response.IssueInstant, now); err != nil {
+		return err
 	}
 	if response.Issuer == nil {
 		if signed {
-			return errors.New("the signed Response has no Issuer")
+			return classify(errors.New("the signed Response has no Issuer"), ErrMissingElement)
 		}
 	} else if response.Issuer.Value != sp.IDPMetadata.EntityID {
-		return fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
+		return classify(fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
 	}
 	if response.Destination != "" && response.Destination != sp.entityID() {
-		return fmt.Errorf("`Destination` %q is not this service provider (%q)", response.Destination, sp.entityID())
+		return classify(fmt.Errorf("`Destination` %q is not this service provider (%q)", response.Destination, sp.entityID()), ErrDestinationMismatch)
 	}
 	return statusError(response.Status)
 }
@@ -443,10 +443,10 @@ func (sp *ServiceProvider) attributeQueryAssertions(responseEl, receivedEl *etre
 		}
 		assertionEl, err := sp.decryptElement(encryptedAssertionEl)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt EncryptedAssertion: %v", err)
+			return nil, classify(fmt.Errorf("failed to decrypt EncryptedAssertion: %w", err), ErrDecryptionFailed)
 		}
 		if assertionEl.NamespaceURI() != "urn:oasis:names:tc:SAML:2.0:assertion" || assertionEl.Tag != "Assertion" {
-			return nil, errors.New("the EncryptedAssertion does not hold an Assertion")
+			return nil, classify(errors.New("the EncryptedAssertion does not hold an Assertion"), ErrMalformedMessage)
 		}
 		assertionEls = append(assertionEls, assertionEl)
 	}
@@ -507,13 +507,16 @@ func (sp *ServiceProvider) validateAttributeQueryAssertion(assertion *Assertion,
 		return err
 	}
 	if issueDeadline(assertion).Before(now) {
-		return fmt.Errorf("expired on %s", issueDeadline(assertion))
+		return classify(fmt.Errorf("expired on %s", issueDeadline(assertion)), ErrExpired)
+	}
+	if assertion.IssueInstant.Add(-MaxClockSkew).After(now) {
+		return classify(fmt.Errorf("assertion IssueInstant %s is in the future", assertion.IssueInstant), ErrNotYetValid)
 	}
 	if assertion.Issuer.Value != sp.IDPMetadata.EntityID {
-		return fmt.Errorf("issuer is not %q", sp.IDPMetadata.EntityID)
+		return classify(fmt.Errorf("issuer is not %q", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
 	}
 	if assertion.Subject == nil || assertion.Subject.NameID == nil {
-		return errors.New("assertion has no Subject NameID")
+		return classify(errors.New("assertion has no Subject NameID"), ErrMissingElement)
 	}
 	if !sp.nameIDsIdentical(query.Subject.NameID, assertion.Subject.NameID) {
 		return fmt.Errorf("assertion Subject NameID %q does not match the queried NameID %q",
@@ -523,13 +526,13 @@ func (sp *ServiceProvider) validateAttributeQueryAssertion(assertion *Assertion,
 		return err
 	}
 	if assertion.Conditions == nil {
-		return errors.New("assertion has no Conditions")
+		return classify(errors.New("assertion has no Conditions"), ErrMissingElement)
 	}
 	if assertion.Conditions.NotBefore.Add(-MaxClockSkew).After(now) {
-		return errors.New("assertion Conditions is not yet valid")
+		return classify(errors.New("assertion Conditions is not yet valid"), ErrNotYetValid)
 	}
 	if !assertion.Conditions.NotOnOrAfter.IsZero() && pastDeadline(assertion.Conditions.NotOnOrAfter, now) {
-		return errors.New("assertion Conditions is expired")
+		return classify(errors.New("assertion Conditions is expired"), ErrExpired)
 	}
 	if err := sp.validateUnknownConditions(assertion); err != nil {
 		return err
@@ -546,13 +549,13 @@ func validateQuerySubjectConfirmations(subject *Subject, queryID string, now tim
 			continue
 		}
 		if data.InResponseTo != "" && data.InResponseTo != queryID {
-			return fmt.Errorf("assertion SubjectConfirmationData InResponseTo %q is not the attribute query ID", data.InResponseTo)
+			return classify(fmt.Errorf("assertion SubjectConfirmationData InResponseTo %q is not the attribute query ID", data.InResponseTo), ErrRequestIDMismatch)
 		}
 		if data.NotBefore.Add(-MaxClockSkew).After(now) {
-			return errors.New("assertion SubjectConfirmationData is not yet valid")
+			return classify(errors.New("assertion SubjectConfirmationData is not yet valid"), ErrNotYetValid)
 		}
 		if !data.NotOnOrAfter.IsZero() && pastDeadline(data.NotOnOrAfter, now) {
-			return errors.New("assertion SubjectConfirmationData is expired")
+			return classify(errors.New("assertion SubjectConfirmationData is expired"), ErrExpired)
 		}
 	}
 	return nil

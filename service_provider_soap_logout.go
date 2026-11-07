@@ -362,11 +362,8 @@ func (sp *ServiceProvider) validateSOAPLogoutResponse(resp *LogoutResponse, req 
 	if resp.InResponseTo != req.ID {
 		return classify(fmt.Errorf("`InResponseTo` %q does not match the logout request ID %q", resp.InResponseTo, req.ID), ErrRequestIDMismatch)
 	}
-	if resp.IssueInstant.Add(MaxIssueDelay).Before(now) {
-		return classify(fmt.Errorf("issueInstant expired at %s", resp.IssueInstant.Add(MaxIssueDelay)), ErrExpired)
-	}
-	if resp.IssueInstant.Add(-MaxClockSkew).After(now) {
-		return classify(fmt.Errorf("issueInstant %s is in the future", resp.IssueInstant), ErrNotYetValid)
+	if err := checkIssueInstant("issueInstant", resp.IssueInstant, now); err != nil {
+		return err
 	}
 	if resp.Issuer == nil || resp.Issuer.Value != sp.IDPMetadata.EntityID {
 		return classify(fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
