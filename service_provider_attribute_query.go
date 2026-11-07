@@ -256,7 +256,8 @@ func (sp *ServiceProvider) postSOAP(ctx context.Context, location string, envelo
 // AttributeAuthorityDescriptor, or, if it publishes none, those of its
 // IDPSSODescriptor (or IDPCertificate or IDPCertificateFingerprint, if set).
 //
-// EncryptedAssertions are decrypted as for login. Every assertion must be
+// EncryptedAssertions, and EncryptedIDs in place of a Subject NameID, are
+// decrypted as for login. Every assertion must be
 // valid, or the response is rejected:
 //
 //   - its Issuer is the IdP entity ID, and it was recently issued;
@@ -495,6 +496,9 @@ func (sp *ServiceProvider) attributeQueryAssertion(assertionEl *etree.Element, q
 	var assertion Assertion
 	if err := unmarshalElement(assertionEl, &assertion); err != nil {
 		return nil, err
+	}
+	if err := sp.decryptEncryptedIDs(assertion.Subject); err != nil {
+		return nil, fmt.Errorf("assertion %q: %w", assertion.ID, err)
 	}
 	if err := sp.validateAttributeQueryAssertion(&assertion, query, now); err != nil {
 		return nil, fmt.Errorf("assertion %q: %w", assertion.ID, err)

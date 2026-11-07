@@ -1189,7 +1189,8 @@ func (sp *ServiceProvider) parseArtifactResponse(artifactResponseEl *etree.Eleme
 //
 // This function handles decrypting the message, verifying the digital
 // signature on the assertion, and verifying that the specified conditions
-// and properties are met.
+// and properties are met. A Subject identified by an EncryptedID is given
+// the NameID it holds, decrypted like an EncryptedAssertion.
 //
 // If the function fails it will return an InvalidResponseError whose
 // properties are useful in describing which part of the parsing process
@@ -1496,12 +1497,65 @@ func (sp *ServiceProvider) parseAssertion(assertionEl *etree.Element, possibleRe
 	if err := unmarshalElement(assertionEl, &assertion); err != nil {
 		return nil, err
 	}
+	if err := sp.decryptEncryptedIDs(assertion.Subject); err != nil {
+		return nil, err
+	}
 
 	if err := sp.validateAssertion(&assertion, possibleRequestIDs, now); err != nil {
 		return nil, err
 	}
 
 	return &assertion, nil
+}
+
+// decryptEncryptedIDs sets the NameID of subject, and of each of its
+// SubjectConfirmations, that is given as an EncryptedID (saml-core §2.2.4)
+// to the NameID the EncryptedID holds, decrypted with the SP's decryption
+// keys. The EncryptedID is left as received. It is called after the
+// assertion's signature, which covers the EncryptedID, has been checked.
+func (sp *ServiceProvider) decryptEncryptedIDs(subject *Subject) error {
+	if subject == nil {
+		return nil
+	}
+	nameID, err := sp.decryptEncryptedID(subject.NameID, subject.EncryptedID)
+	if err != nil {
+		return fmt.Errorf("assertion Subject: %w", err)
+	}
+	subject.NameID = nameID
+	for i := range subject.SubjectConfirmations {
+		subjectConfirmation := &subject.SubjectConfirmations[i]
+		nameID, err := sp.decryptEncryptedID(subjectConfirmation.NameID, subjectConfirmation.EncryptedID)
+		if err != nil {
+			return fmt.Errorf("assertion SubjectConfirmation: %w", err)
+		}
+		subjectConfirmation.NameID = nameID
+	}
+	return nil
+}
+
+// decryptEncryptedID returns the NameID held by encryptedID, or nameID if
+// encryptedID is nil. The two are alternatives, so an element with both is
+// rejected, and an EncryptedID must hold a saml:NameID; other identifiers
+// (such as a BaseID) are not supported.
+func (sp *ServiceProvider) decryptEncryptedID(nameID *NameID, encryptedID *etree.Element) (*NameID, error) {
+	if encryptedID == nil {
+		return nameID, nil
+	}
+	if nameID != nil {
+		return nil, classify(errors.New("has both a NameID and an EncryptedID"), ErrMalformedMessage)
+	}
+	nameIDEl, err := sp.decryptElement(encryptedID)
+	if err != nil {
+		return nil, classify(fmt.Errorf("failed to decrypt EncryptedID: %w", err), ErrDecryptionFailed)
+	}
+	if nameIDEl.Tag != "NameID" || nameIDEl.NamespaceURI() != "urn:oasis:names:tc:SAML:2.0:assertion" {
+		return nil, classify(fmt.Errorf("EncryptedID holds a %s element, only saml:NameID is supported", nameIDEl.FullTag()), ErrUnsupported)
+	}
+	var decrypted NameID
+	if err := unmarshalElement(nameIDEl, &decrypted); err != nil {
+		return nil, err
+	}
+	return &decrypted, nil
 }
 
 // validateAssertion checks that the conditions specified in assertion match
