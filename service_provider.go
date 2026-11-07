@@ -1362,8 +1362,10 @@ func (sp *ServiceProvider) validateAudienceRestriction(assertion *Assertion) err
 	}
 	audienceRestrictionsValid := false
 	for _, audienceRestriction := range assertion.Conditions.AudienceRestrictions {
-		if audienceRestriction.Audience.Value == audience {
-			audienceRestrictionsValid = true
+		for _, v := range audienceRestriction.AllAudiences() {
+			if v.Value == audience {
+				audienceRestrictionsValid = true
+			}
 		}
 	}
 	if !audienceRestrictionsValid {
