@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/xml"
+	"errors"
 	"html"
 	"net/http"
 	"net/url"
@@ -2003,6 +2004,9 @@ func TestParseBadXMLArtifactResponse(t *testing.T) {
 	assertion, err = sp.ParseXMLArtifactResponse(samlResponse, possibleReqIDs, reqID, sp.AcsURL)
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
 		"cannot validate signature on ArtifactResponse: Cert is not valid at this time"))
+	assert.Check(t, errors.Is(err, ErrInvalidSignature))
+	assert.Check(t, errors.Is(err, ErrCertificateNotValidNow))
+	assert.Check(t, !errors.Is(err, ErrUntrustedCertificate))
 	assert.Check(t, is.Nil(assertion))
 
 	// IgnoreCertificateExpiry accepts the signature despite the expired certificate

@@ -150,6 +150,21 @@ type IdentityProvider struct {
 	// HTML form from ResponseFormTemplate.
 	ResponseWriter ResponseWriter
 
+	// OnError, if non-nil, is called when ServeSSO, ServeIDPInitiated or
+	// ServeMetadata cannot complete a request, in place of DefaultOnError,
+	// which logs err to Logger and responds with status. status is the HTTP
+	// status the IdentityProvider would respond with: StatusBadRequest for a
+	// request that cannot be parsed or is invalid, StatusNotFound for an
+	// IdP-initiated request for an unknown service provider, and
+	// StatusInternalServerError otherwise. err can be matched with errors.Is
+	// against the error values of this package, such as
+	// ErrUnknownServiceProvider or ErrInvalidCertificate.
+	//
+	// OnError must write the response. When writing the SAML response or
+	// the metadata failed part way, some of it may already have been
+	// written to w.
+	OnError func(w http.ResponseWriter, r *http.Request, status int, err error)
+
 	// ExtraCertificates are additional certificates published in the IdP
 	// metadata as signing keys, after Certificate. They are never used to
 	// sign anything. Use them to announce a new signing certificate before
@@ -322,20 +337,22 @@ func (idp *IdentityProvider) SignedMetadata() (*etree.Element, error) {
 
 // ServeMetadata is an http.HandlerFunc that serves the IDP metadata. If
 // SignMetadata is set, the metadata is signed.
-func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, _ *http.Request) {
+//
+// If the metadata cannot be signed, serialized or written, a
+// StatusInternalServerError response is sent. Set OnError to handle these
+// failures differently.
+func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, r *http.Request) {
 	var buf []byte
 	if idp.SignMetadata {
 		el, err := idp.SignedMetadata()
 		if err != nil {
-			idp.Logger.Printf("ERROR: failed to sign metadata: %s", err)
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to sign metadata: %w", err))
 			return
 		}
 		doc := etree.NewDocument()
 		doc.SetRoot(el)
 		if buf, err = doc.WriteToBytes(); err != nil {
-			idp.Logger.Printf("ERROR: %s", err)
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to serialize metadata: %w", err))
 			return
 		}
 	} else {
@@ -343,9 +360,24 @@ func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, _ *http.Reques
 	}
 	w.Header().Set("Content-Type", "application/samlmetadata+xml")
 	if _, err := w.Write(buf); err != nil {
-		idp.Logger.Printf("ERROR: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to write metadata: %w", err))
 	}
+}
+
+// DefaultOnError is how ServeSSO, ServeIDPInitiated and ServeMetadata report
+// an error when OnError is nil: it logs err to Logger and responds with
+// status. An OnError can call it for the errors it does not handle itself.
+func (idp *IdentityProvider) DefaultOnError(w http.ResponseWriter, _ *http.Request, status int, err error) {
+	idp.Logger.Printf("%s", err)
+	http.Error(w, http.StatusText(status), status)
+}
+
+func (idp *IdentityProvider) onError(w http.ResponseWriter, r *http.Request, status int, err error) {
+	if idp.OnError != nil {
+		idp.OnError(w, r, status, err)
+		return
+	}
+	idp.DefaultOnError(w, r, status, err)
 }
 
 // ServeSSO handles SAML auth requests.
@@ -365,17 +397,17 @@ func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, _ *http.Reques
 //
 // If the assertion cannot be created or returned, a StatusInternalServerError
 // response is sent.
+//
+// Set OnError to handle these failures differently.
 func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 	req, err := NewIdpAuthnRequest(idp, r)
 	if err != nil {
-		idp.Logger.Printf("failed to parse request: %s", err)
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		idp.onError(w, r, http.StatusBadRequest, fmt.Errorf("failed to parse request: %w", err))
 		return
 	}
 
 	if err := req.Validate(); err != nil {
-		idp.Logger.Printf("failed to validate request: %s", err)
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		idp.onError(w, r, http.StatusBadRequest, fmt.Errorf("failed to validate request: %w", err))
 		return
 	}
 
@@ -392,13 +424,11 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 		assertionMaker = DefaultAssertionMaker{}
 	}
 	if err := assertionMaker.MakeAssertion(req, session); err != nil {
-		idp.Logger.Printf("failed to make assertion: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to make assertion: %w", err))
 		return
 	}
 	if err := idp.responseWriter().WriteResponse(w, req); err != nil {
-		idp.Logger.Printf("failed to write response: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to write response: %w", err))
 		return
 	}
 }
@@ -406,7 +436,57 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 // ServeIDPInitiated handes an IDP-initiated authorization request. Requests of this
 // type require us to know a registered service provider and (optionally) the RelayState
 // that will be passed to the application.
+//
+// It responds with StatusNotFound if the service provider is unknown, and
+// with StatusInternalServerError if the service provider cannot be looked up
+// or has no usable assertion consumer service, or the assertion cannot be
+// created or returned. Set OnError to handle these failures differently, or
+// build a handler from NewIdpInitiatedRequest.
 func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Request, serviceProviderID string, relayState string) {
+	req, err := idp.NewIdpInitiatedRequest(r, serviceProviderID, relayState)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, ErrUnknownServiceProvider) {
+			status = http.StatusNotFound
+		}
+		idp.onError(w, r, status, err)
+		return
+	}
+
+	session := idp.SessionProvider.GetSession(w, r, req)
+	if session == nil {
+		// If GetSession returns nil, it must have written an HTTP response, per the interface
+		// (this is probably because it drew a login form or something)
+		return
+	}
+
+	assertionMaker := idp.AssertionMaker
+	if assertionMaker == nil {
+		assertionMaker = DefaultAssertionMaker{}
+	}
+	if err := assertionMaker.MakeAssertion(req, session); err != nil {
+		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to make assertion: %w", err))
+		return
+	}
+
+	if err := idp.responseWriter().WriteResponse(w, req); err != nil {
+		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to write response: %w", err))
+		return
+	}
+}
+
+// NewIdpInitiatedRequest returns the IdpAuthnRequest for an IdP-initiated
+// login to the service provider serviceProviderID, with its metadata and the
+// first HTTP-POST assertion consumer service in it resolved. It is the part
+// of ServeIDPInitiated that runs before the SessionProvider is asked for a
+// session.
+//
+// It returns an error matching ErrUnknownServiceProvider (and os.ErrNotExist)
+// if the ServiceProviderProvider does not know serviceProviderID,
+// ErrUnknownAssertionConsumerService if the service provider has no HTTP-POST
+// assertion consumer service, and otherwise the ServiceProviderProvider's
+// error, wrapped.
+func (idp *IdentityProvider) NewIdpInitiatedRequest(r *http.Request, serviceProviderID string, relayState string) (*IdpAuthnRequest, error) {
 	req := &IdpAuthnRequest{
 		IDP:         idp,
 		HTTPRequest: r,
@@ -414,21 +494,17 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 		Now:         TimeNow(),
 	}
 
-	// Resolve the service provider and its ACS endpoint before asking the
-	// SessionProvider for a session, as ServeSSO does via Validate. Otherwise
-	// a request for an unknown service provider would prompt the user to log
-	// in before failing, and the SessionProvider would see a request without
-	// ServiceProviderMetadata.
+	// Resolve the service provider and its ACS endpoint before the
+	// SessionProvider is asked for a session, as ServeSSO does via Validate.
+	// Otherwise a request for an unknown service provider would prompt the
+	// user to log in before failing, and the SessionProvider would see a
+	// request without ServiceProviderMetadata.
 	var err error
 	req.ServiceProviderMetadata, err = idp.ServiceProviderProvider.GetServiceProvider(r, serviceProviderID)
 	if err == os.ErrNotExist {
-		idp.Logger.Printf("cannot find service provider: %s", serviceProviderID)
-		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
-		return
+		return nil, classify(fmt.Errorf("cannot find service provider: %s", serviceProviderID), ErrUnknownServiceProvider, os.ErrNotExist)
 	} else if err != nil {
-		idp.Logger.Printf("cannot find service provider %s: %v", serviceProviderID, err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("cannot find service provider %s: %w", serviceProviderID, err)
 	}
 
 	// find an ACS endpoint that we can use
@@ -453,33 +529,10 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 		}
 	}
 	if req.ACSEndpoint == nil {
-		idp.Logger.Printf("saml metadata does not contain an Assertion Customer Service url")
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
+		return nil, classify(errors.New("saml metadata does not contain an Assertion Customer Service url"), ErrUnknownAssertionConsumerService)
 	}
 
-	session := idp.SessionProvider.GetSession(w, r, req)
-	if session == nil {
-		// If GetSession returns nil, it must have written an HTTP response, per the interface
-		// (this is probably because it drew a login form or something)
-		return
-	}
-
-	assertionMaker := idp.AssertionMaker
-	if assertionMaker == nil {
-		assertionMaker = DefaultAssertionMaker{}
-	}
-	if err := assertionMaker.MakeAssertion(req, session); err != nil {
-		idp.Logger.Printf("failed to make assertion: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
-
-	if err := idp.responseWriter().WriteResponse(w, req); err != nil {
-		idp.Logger.Printf("failed to write response: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
+	return req, nil
 }
 
 // responseWriter returns idp.ResponseWriter, or DefaultResponseWriter if it
@@ -520,25 +573,25 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 	case "GET":
 		compressedRequest, err := base64.StdEncoding.DecodeString(r.URL.Query().Get("SAMLRequest"))
 		if err != nil {
-			return nil, fmt.Errorf("cannot decode request: %s", err)
+			return nil, classify(fmt.Errorf("cannot decode request: %w", err), ErrMalformedMessage)
 		}
 		req.RequestBuffer, err = io.ReadAll(newSaferFlateReader(bytes.NewReader(compressedRequest)))
 		if err != nil {
-			return nil, fmt.Errorf("cannot decompress request: %s", err)
+			return nil, classify(fmt.Errorf("cannot decompress request: %w", err), ErrMalformedMessage)
 		}
 		req.RelayState = r.URL.Query().Get("RelayState")
 	case "POST":
 		if err := r.ParseForm(); err != nil {
-			return nil, err
+			return nil, classify(err, ErrMalformedMessage)
 		}
 		var err error
 		req.RequestBuffer, err = base64.StdEncoding.DecodeString(r.PostForm.Get("SAMLRequest"))
 		if err != nil {
-			return nil, err
+			return nil, classify(err, ErrMalformedMessage)
 		}
 		req.RelayState = r.PostForm.Get("RelayState")
 	default:
-		return nil, fmt.Errorf("method not allowed")
+		return nil, classify(fmt.Errorf("method not allowed"), ErrUnsupported)
 	}
 
 	return req, nil
@@ -549,11 +602,11 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 // request is not valid.
 func (req *IdpAuthnRequest) Validate() error {
 	if err := xrv.Validate(bytes.NewReader(req.RequestBuffer)); err != nil {
-		return err
+		return classify(err, ErrMalformedMessage)
 	}
 
 	if err := xml.Unmarshal(req.RequestBuffer, &req.Request); err != nil { //nolint:gosec // parsing the untrusted request is the point; it was validated by xrv above
-		return err
+		return classify(err, ErrMalformedMessage)
 	}
 
 	// We always have exactly one IDP SSO descriptor
@@ -566,7 +619,7 @@ func (req *IdpAuthnRequest) Validate() error {
 	// For now we do the safe thing and fail in the case where we think
 	// requests might be signed.
 	if idpSsoDescriptor.WantAuthnRequestsSigned != nil && *idpSsoDescriptor.WantAuthnRequestsSigned {
-		return fmt.Errorf("authn request signature checking is not currently supported")
+		return classify(fmt.Errorf("authn request signature checking is not currently supported"), ErrUnsupported)
 	}
 
 	// In http://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf §3.4.5.2
@@ -584,34 +637,34 @@ func (req *IdpAuthnRequest) Validate() error {
 	mustHaveDestination = mustHaveDestination || req.Request.Destination != ""
 	if mustHaveDestination {
 		if req.Request.Destination != req.IDP.SSOURL.String() {
-			return fmt.Errorf("expected destination to be %q, not %q", req.IDP.SSOURL.String(), req.Request.Destination)
+			return classify(fmt.Errorf("expected destination to be %q, not %q", req.IDP.SSOURL.String(), req.Request.Destination), ErrDestinationMismatch)
 		}
 	}
 
 	if req.Request.IssueInstant.Add(MaxIssueDelay).Before(req.Now) {
-		return fmt.Errorf("request expired at %s",
-			req.Request.IssueInstant.Add(MaxIssueDelay))
+		return classify(fmt.Errorf("request expired at %s",
+			req.Request.IssueInstant.Add(MaxIssueDelay)), ErrExpired)
 	}
 	if req.Request.Version != "2.0" {
-		return fmt.Errorf("expected SAML request version 2.0 got %v", req.Request.Version)
+		return classify(fmt.Errorf("expected SAML request version 2.0 got %v", req.Request.Version), ErrUnsupported)
 	}
 
 	// find the service provider
 	if req.Request.Issuer == nil {
-		return fmt.Errorf("authn request is missing an issuer")
+		return classify(fmt.Errorf("authn request is missing an issuer"), ErrMissingElement)
 	}
 	serviceProviderID := req.Request.Issuer.Value
 	serviceProvider, err := req.IDP.ServiceProviderProvider.GetServiceProvider(req.HTTPRequest, serviceProviderID)
 	if err == os.ErrNotExist {
-		return fmt.Errorf("cannot handle request from unknown service provider %s", serviceProviderID)
+		return classify(fmt.Errorf("cannot handle request from unknown service provider %s", serviceProviderID), ErrUnknownServiceProvider, os.ErrNotExist)
 	} else if err != nil {
-		return fmt.Errorf("cannot find service provider %s: %v", serviceProviderID, err)
+		return fmt.Errorf("cannot find service provider %s: %w", serviceProviderID, err)
 	}
 	req.ServiceProviderMetadata = serviceProvider
 
 	// Check that the ACS URL matches an ACS endpoint in the SP metadata.
 	if err := req.getACSEndpoint(); err != nil {
-		return fmt.Errorf("cannot find assertion consumer service: %v", err)
+		return classify(fmt.Errorf("cannot find assertion consumer service: %w", err), ErrUnknownAssertionConsumerService)
 	}
 
 	return nil
@@ -1111,9 +1164,9 @@ func (req *IdpAuthnRequest) PostBinding() (IdpAuthnRequestForm, error) {
 	}
 
 	if req.ACSEndpoint.Binding != HTTPPostBinding {
-		return form, fmt.Errorf("%s: unsupported binding %s",
+		return form, classify(fmt.Errorf("%s: unsupported binding %s",
 			req.ServiceProviderMetadata.EntityID,
-			req.ACSEndpoint.Binding)
+			req.ACSEndpoint.Binding), ErrUnsupported)
 	}
 
 	form.URL = req.ACSEndpoint.Location
@@ -1186,11 +1239,11 @@ func (req *IdpAuthnRequest) getSPEncryptionCert() (*x509.Certificate, error) {
 	certStr = regexp.MustCompile(`\s+`).ReplaceAllString(certStr, "")
 	certBytes, err := base64.StdEncoding.DecodeString(certStr)
 	if err != nil {
-		return nil, fmt.Errorf("cannot decode certificate base64: %v", err)
+		return nil, classify(fmt.Errorf("cannot decode certificate base64: %w", err), ErrInvalidCertificate)
 	}
 	cert, err := x509.ParseCertificate(certBytes)
 	if err != nil {
-		return nil, fmt.Errorf("cannot parse certificate: %v", err)
+		return nil, classify(fmt.Errorf("cannot parse certificate: %w", err), ErrInvalidCertificate)
 	}
 	return cert, nil
 }
