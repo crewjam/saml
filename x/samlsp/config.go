@@ -33,6 +33,7 @@ type Config struct {
 	intermediates          []*x509.Certificate
 	decryptionKeys         []*rsa.PrivateKey
 	signRequests           bool
+	backChannel            bool
 	nameIDFormat           saml.NameIDFormat
 	replayState            saml.AssertionReplayCache
 	authnContextComparator func(comparison string, requested []string, got string) bool
@@ -91,6 +92,14 @@ func New(identityProvider MetadataFunc, entityID string, opts ...Option) (*Confi
 	}
 	if c.replayState == nil {
 		c.replayState = newMemoryReplayState(c.clock.Now)
+	}
+	if c.backChannel {
+		if c.sloURL.String() == "" {
+			return nil, errors.New("samlsp: BackChannelLogout needs WithSLOURL")
+		}
+		if signatureMethod(c.key) == "" {
+			return nil, errors.New("samlsp: BackChannelLogout needs an RSA or ECDSA key (see WithKey) to sign SOAP messages")
+		}
 	}
 	if c.signRequests && signatureMethod(c.key) == "" {
 		return nil, errors.New("samlsp: SignAuthnRequests needs an RSA or ECDSA key (see WithKey)")
@@ -159,6 +168,19 @@ func WithACSURL(acsURL string) Option {
 func WithSLOURL(sloURL string) Option {
 	return optionFunc(func(_ *Config, o *configOptions) { o.sloURL = sloURL })
 }
+
+// BackChannelLogout enables single logout with the SAML SOAP binding, in
+// which the IdP and the SP exchange LogoutRequests and LogoutResponses
+// directly, server to server, without the user's browser (saml-profiles
+// §4.4). The SP metadata then advertises a SOAP SingleLogoutService at the
+// SLO URL, ParseLogoutRequest accepts SOAP LogoutRequests there, and
+// SendLogoutRequest can be used.
+//
+// Enable it only if the application can end a user's sessions on the
+// server, by NameID and SessionIndex: a SOAP LogoutRequest comes without
+// the browser, so deleting a session cookie does not end anything. It
+// needs WithSLOURL and WithKey, which signs the SOAP messages.
+var BackChannelLogout Option = optionFunc(func(c *Config, _ *configOptions) { c.backChannel = true })
 
 // ACSURL returns the URL of the SP's assertion consumer service.
 func (c *Config) ACSURL() string { return c.acsURL.String() }
@@ -313,6 +335,9 @@ func (c *Config) localServiceProvider(ctx context.Context) *saml.ServiceProvider
 	harden(sp)
 	if c.sloURL.String() != "" {
 		sp.LogoutBindings = []string{saml.HTTPRedirectBinding, saml.HTTPPostBinding}
+		if c.backChannel {
+			sp.LogoutBindings = append(sp.LogoutBindings, saml.SOAPBinding)
+		}
 	}
 	method := signatureMethod(c.key)
 	if c.signRequests {
