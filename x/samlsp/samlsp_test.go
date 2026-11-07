@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -119,21 +120,17 @@ func mustURL(s string) url.URL {
 // with ti.
 func newTestConfig(t *testing.T, ti *testIDP) *samlsp.Config {
 	t.Helper()
-	provider, err := samlsp.NewIdentityProviderFromMetadata(ti.idp.Metadata())
-	if err != nil {
-		t.Fatal(err)
-	}
 	key, cert := newKeyPair(t, "sp")
 	cfg := &samlsp.Config{
-		IdentityProvider: provider,
-		EntityID:         "https://sp.example.com/saml/metadata",
-		MetadataURL:      "https://sp.example.com/saml/metadata",
-		ACSURL:           "https://sp.example.com/saml/acs",
-		SLOURL:           "https://sp.example.com/saml/slo",
-		Key:              key,
-		Certificate:      cert,
+		IdentityProviderMetadata: func(context.Context) (*saml.EntityDescriptor, error) { return ti.idp.Metadata(), nil },
+		EntityID:                 "https://sp.example.com/saml/metadata",
+		MetadataURL:              "https://sp.example.com/saml/metadata",
+		ACSURL:                   "https://sp.example.com/saml/acs",
+		SLOURL:                   "https://sp.example.com/saml/slo",
+		Key:                      key,
+		Certificate:              cert,
 	}
-	md, err := cfg.Metadata()
+	md, err := cfg.Metadata(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +186,7 @@ func TestLogin(t *testing.T) {
 			cfg := newTestConfig(t, ti)
 			cfg.SignRequests = true
 
-			msg, err := cfg.AuthnRequest("state-1", samlsp.WithBinding(binding))
+			msg, err := cfg.AuthnRequest(t.Context(), "state-1", samlsp.WithBinding(binding))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -236,7 +233,7 @@ func TestLogin(t *testing.T) {
 func TestParseResponseRefusesOtherRequestID(t *testing.T) {
 	ti := newTestIDP(t)
 	cfg := newTestConfig(t, ti)
-	msg, err := cfg.AuthnRequest("s")
+	msg, err := cfg.AuthnRequest(t.Context(), "s")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +276,7 @@ func decodeRedirectRequest(t *testing.T, u *url.URL) *saml.AuthnRequest {
 func TestAuthnRequestOptions(t *testing.T) {
 	ti := newTestIDP(t)
 	cfg := newTestConfig(t, ti)
-	msg, err := cfg.AuthnRequest("s",
+	msg, err := cfg.AuthnRequest(t.Context(), "s",
 		samlsp.ForceAuthn,
 		samlsp.IsPassive,
 		samlsp.WithAuthnContext("minimum", "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport"),
@@ -306,7 +303,7 @@ func TestAuthnRequestOptions(t *testing.T) {
 	}
 
 	// Options apply to one request only.
-	msg, err = cfg.AuthnRequest("s")
+	msg, err = cfg.AuthnRequest(t.Context(), "s")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,11 +316,11 @@ func TestAuthnRequestOptions(t *testing.T) {
 func TestAuthnRequestBindingErrors(t *testing.T) {
 	ti := newTestIDP(t)
 	cfg := newTestConfig(t, ti)
-	if _, err := cfg.AuthnRequest("s", samlsp.WithBinding(saml.HTTPArtifactBinding)); err == nil {
+	if _, err := cfg.AuthnRequest(t.Context(), "s", samlsp.WithBinding(saml.HTTPArtifactBinding)); err == nil {
 		t.Error("expected an error for an unsupported binding")
 	}
 	cfg.Key = nil
-	if _, err := cfg.AuthnRequest("s", samlsp.WithBinding(saml.HTTPPostSimpleSignBinding)); err == nil {
+	if _, err := cfg.AuthnRequest(t.Context(), "s", samlsp.WithBinding(saml.HTTPPostSimpleSignBinding)); err == nil {
 		t.Error("expected an error for SimpleSign without a key")
 	}
 }
@@ -339,17 +336,17 @@ func TestScriptHashes(t *testing.T) {
 
 	msgs := make([]*samlsp.Message, 0, 6)
 	for _, b := range []string{saml.HTTPPostBinding, saml.HTTPPostSimpleSignBinding} {
-		m, err := cfg.AuthnRequest("s", samlsp.WithBinding(b))
+		m, err := cfg.AuthnRequest(t.Context(), "s", samlsp.WithBinding(b))
 		if err != nil {
 			t.Fatal(err)
 		}
 		msgs = append(msgs, m)
-		m, err = cfg.LogoutRequest(saml.NameID{Value: "alice"}, "s", samlsp.WithBinding(b))
+		m, err = cfg.LogoutRequest(t.Context(), saml.NameID{Value: "alice"}, "s", samlsp.WithBinding(b))
 		if err != nil {
 			t.Fatal(err)
 		}
 		msgs = append(msgs, m)
-		m, err = cfg.LogoutResponse(&samlsp.LogoutRequest{ID: "id-1", RelayState: "s"}, samlsp.WithBinding(b))
+		m, err = cfg.LogoutResponse(t.Context(), &samlsp.LogoutRequest{ID: "id-1", RelayState: "s"}, samlsp.WithBinding(b))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -396,7 +393,13 @@ func TestConfigErrors(t *testing.T) {
 	ti := newTestIDP(t)
 	good := newTestConfig(t, ti)
 	for name, mutate := range map[string]func(*samlsp.Config){
-		"no provider":      func(c *samlsp.Config) { c.IdentityProvider = nil },
+		"no IdP metadata": func(c *samlsp.Config) { c.IdentityProviderMetadata = nil },
+		"IdP metadata error": func(c *samlsp.Config) {
+			c.IdentityProviderMetadata = func(context.Context) (*saml.EntityDescriptor, error) { return nil, errors.New("down") }
+		},
+		"not an IdP": func(c *samlsp.Config) {
+			c.IdentityProviderMetadata = samlsp.StaticMetadata(&saml.EntityDescriptor{EntityID: "sp"})
+		},
 		"no ACS":           func(c *samlsp.Config) { c.ACSURL = "" },
 		"relative ACS":     func(c *samlsp.Config) { c.ACSURL = "/saml/acs" },
 		"no entity ID":     func(c *samlsp.Config) { c.EntityID, c.MetadataURL = "", "" },
@@ -404,7 +407,7 @@ func TestConfigErrors(t *testing.T) {
 	} {
 		cfg := *good
 		mutate(&cfg)
-		if _, err := cfg.AuthnRequest("s"); err == nil {
+		if _, err := cfg.AuthnRequest(t.Context(), "s"); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
 	}
@@ -415,7 +418,7 @@ func TestSPInitiatedLogout(t *testing.T) {
 		t.Run(binding, func(t *testing.T) {
 			ti := newTestIDP(t)
 			cfg := newTestConfig(t, ti)
-			msg, err := cfg.AuthnRequest("s")
+			msg, err := cfg.AuthnRequest(t.Context(), "s")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -424,7 +427,7 @@ func TestSPInitiatedLogout(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			logout, err := cfg.LogoutRequest(a.NameID, "bye", samlsp.WithBinding(binding),
+			logout, err := cfg.LogoutRequest(t.Context(), a.NameID, "bye", samlsp.WithBinding(binding),
 				samlsp.WithSessionIndex(a.SessionIndexes...))
 			if err != nil {
 				t.Fatal(err)
@@ -449,14 +452,14 @@ func TestSPInitiatedLogout(t *testing.T) {
 			} else {
 				back = postForm(cfg.SLOURL, formValues(w.Body.String()))
 			}
-			resp, err := cfg.ParseLogoutResponse(back, logout.ID)
+			resp, err := cfg.ParseLogoutResponse(t.Context(), back, logout.ID)
 			if err != nil {
 				t.Fatalf("ParseLogoutResponse: %v (%v)", err, errors.Unwrap(err))
 			}
 			if resp.InResponseTo != logout.ID {
 				t.Errorf("InResponseTo = %q", resp.InResponseTo)
 			}
-			if _, err := cfg.ParseLogoutResponse(back); !errors.Is(err, samlsp.ErrNoRequestID) {
+			if _, err := cfg.ParseLogoutResponse(t.Context(), back); !errors.Is(err, samlsp.ErrNoRequestID) {
 				t.Errorf("ParseLogoutResponse without IDs = %v", err)
 			}
 		})
@@ -496,7 +499,7 @@ func TestIDPInitiatedLogout(t *testing.T) {
 		"RelayState":  {"idp-state"},
 	})
 
-	got, err := cfg.ParseLogoutRequest(r)
+	got, err := cfg.ParseLogoutRequest(t.Context(), r)
 	if err != nil {
 		t.Fatalf("ParseLogoutRequest: %v (%v)", err, errors.Unwrap(err))
 	}
@@ -505,7 +508,7 @@ func TestIDPInitiatedLogout(t *testing.T) {
 		t.Fatalf("unexpected request %+v", got)
 	}
 
-	resp, err := cfg.LogoutResponse(got)
+	resp, err := cfg.LogoutResponse(t.Context(), got)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -521,7 +524,7 @@ func TestIDPInitiatedLogout(t *testing.T) {
 	// An unsigned request is refused.
 	unsigned, _ := xml.Marshal(req)
 	r = postForm(cfg.SLOURL, url.Values{"SAMLRequest": {base64.StdEncoding.EncodeToString(unsigned)}})
-	if _, err := cfg.ParseLogoutRequest(r); err == nil {
+	if _, err := cfg.ParseLogoutRequest(t.Context(), r); err == nil {
 		t.Error("expected an unsigned LogoutRequest to be refused")
 	}
 }
@@ -530,39 +533,120 @@ func TestLogoutUnsupported(t *testing.T) {
 	ti := newTestIDP(t)
 	ti.idp.LogoutURL = url.URL{}
 	cfg := newTestConfig(t, ti)
-	if _, err := cfg.LogoutRequest(saml.NameID{Value: "alice"}, ""); !errors.Is(err, samlsp.ErrNoEndpoint) {
+	if _, err := cfg.LogoutRequest(t.Context(), saml.NameID{Value: "alice"}, ""); !errors.Is(err, samlsp.ErrNoEndpoint) {
 		t.Fatalf("err = %v, want ErrNoEndpoint", err)
 	}
 }
 
-func TestIdentityProviderMetadata(t *testing.T) {
+func TestParseMetadata(t *testing.T) {
 	ti := newTestIDP(t)
 	buf, err := xml.Marshal(ti.idp.Metadata())
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := samlsp.ParseIdentityProviderMetadata(buf)
+	f, err := samlsp.ParseMetadata(buf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.EntityID() != "https://idp.example.com/metadata" {
-		t.Errorf("EntityID = %q", p.EntityID())
+	md, err := f(t.Context())
+	if err != nil || md.EntityID != "https://idp.example.com/metadata" {
+		t.Fatalf("got %v, %v", md, err)
 	}
+	if _, err := samlsp.ParseMetadata([]byte("<nope/>")); err == nil {
+		t.Error("expected an error for bad metadata")
+	}
+}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+func TestSPMetadataDoesNotNeedIdP(t *testing.T) {
+	ti := newTestIDP(t)
+	cfg := newTestConfig(t, ti)
+	cfg.IdentityProviderMetadata = func(context.Context) (*saml.EntityDescriptor, error) {
+		return nil, errors.New("IdP is down")
+	}
+	w := httptest.NewRecorder()
+	cfg.ServeMetadata(w, httptest.NewRequest(http.MethodGet, cfg.MetadataURL, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("ServeMetadata = %d", w.Code)
+	}
+}
+
+// metadataServer serves ti's metadata, failing while fail is set, and counts
+// requests.
+type metadataServer struct {
+	*httptest.Server
+	hits atomic.Int32
+	fail atomic.Bool
+}
+
+func newMetadataServer(t *testing.T, md *saml.EntityDescriptor) *metadataServer {
+	buf, err := xml.Marshal(md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &metadataServer{}
+	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		s.hits.Add(1)
+		if s.fail.Load() {
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return
+		}
 		_, _ = w.Write(buf)
 	}))
-	defer srv.Close()
-	ctx := samlsp.ClientContext(context.Background(), srv.Client())
-	p, err = samlsp.NewIdentityProvider(ctx, srv.URL)
+	t.Cleanup(s.Close)
+	return s
+}
+
+func TestRemoteMetadata(t *testing.T) {
+	ti := newTestIDP(t)
+	srv := newMetadataServer(t, ti.idp.Metadata())
+
+	// Cached between calls.
+	f := samlsp.RemoteMetadata(srv.URL, samlsp.WithHTTPClient(srv.Client()))
+	for range 3 {
+		md, err := f(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if md.EntityID != "https://idp.example.com/metadata" {
+			t.Fatalf("EntityID = %q", md.EntityID)
+		}
+	}
+	if got := srv.hits.Load(); got != 1 {
+		t.Errorf("fetched %d times, want 1", got)
+	}
+
+	// Refreshed after the refresh interval, and kept when a refresh fails.
+	f = samlsp.RemoteMetadata(srv.URL, samlsp.WithHTTPClient(srv.Client()), samlsp.WithRefreshInterval(time.Nanosecond))
+	if _, err := f(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	srv.fail.Store(true)
+	before := srv.hits.Load()
+	time.Sleep(time.Millisecond)
+	if _, err := f(t.Context()); err != nil {
+		t.Fatalf("stale metadata not served: %v", err)
+	}
+	if srv.hits.Load() != before+1 {
+		t.Error("metadata was not refreshed")
+	}
+
+	// Nothing to fall back on.
+	f = samlsp.RemoteMetadata(srv.URL, samlsp.WithHTTPClient(srv.Client()))
+	if _, err := f(t.Context()); err == nil {
+		t.Error("expected an error")
+	}
+}
+
+func TestRemoteMetadataWithConfig(t *testing.T) {
+	ti := newTestIDP(t)
+	srv := newMetadataServer(t, ti.idp.Metadata())
+	cfg := newTestConfig(t, ti)
+	cfg.IdentityProviderMetadata = samlsp.RemoteMetadata(srv.URL, samlsp.WithHTTPClient(srv.Client()))
+	msg, err := cfg.AuthnRequest(t.Context(), "s")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.EntityID() != "https://idp.example.com/metadata" {
-		t.Errorf("EntityID = %q", p.EntityID())
-	}
-
-	if _, err := samlsp.NewIdentityProviderFromMetadata(&saml.EntityDescriptor{EntityID: "sp"}); err == nil {
-		t.Error("expected an error for metadata without an IDPSSODescriptor")
+	if _, err := cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID(msg.ID)); err != nil {
+		t.Fatal(err)
 	}
 }

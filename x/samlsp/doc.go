@@ -8,23 +8,29 @@
 // that does all of that, see github.com/crewjam/saml/samlsp.
 //
 // The shape of the API follows golang.org/x/oauth2 and
-// github.com/coreos/go-oidc: a plain Config struct, an IdentityProvider
-// built from metadata, functional options per message, and verified
-// results as plain structs.
+// github.com/coreos/go-oidc: a plain Config struct, a function that
+// supplies the identity provider's metadata, functional options per
+// message, and verified results as plain structs.
 //
 // # Setup
 //
-//	idp, err := samlsp.NewIdentityProvider(ctx, "https://idp.example.com/metadata")
 //	config := &samlsp.Config{
-//		IdentityProvider: idp,
-//		EntityID:         "https://sp.example.com/saml/metadata",
-//		MetadataURL:      "https://sp.example.com/saml/metadata",
-//		ACSURL:           "https://sp.example.com/saml/acs",
-//		SLOURL:           "https://sp.example.com/saml/slo",
-//		Key:              key,
-//		Certificate:      cert,
+//		IdentityProviderMetadata: samlsp.RemoteMetadata("https://idp.example.com/metadata"),
+//		EntityID:                 "https://sp.example.com/saml/metadata",
+//		MetadataURL:              "https://sp.example.com/saml/metadata",
+//		ACSURL:                   "https://sp.example.com/saml/acs",
+//		SLOURL:                   "https://sp.example.com/saml/slo",
+//		Key:                      key,
+//		Certificate:              cert,
 //	}
 //	http.HandleFunc("/saml/metadata", config.ServeMetadata)
+//
+// IdentityProviderMetadata is a MetadataFunc. Every method calls it with
+// its context. RemoteMetadata fetches and caches metadata from a URL,
+// ParseMetadata and StaticMetadata use metadata the application already
+// has, and an application can supply its own function: for example, one
+// that reads metadata from a database, or picks the IdP for the tenant
+// named in the context.
 //
 // # Web Browser SSO
 //
@@ -34,7 +40,7 @@
 //
 //	func login(w http.ResponseWriter, r *http.Request) {
 //		relayState := rand.Text()
-//		req, err := config.AuthnRequest(relayState)
+//		req, err := config.AuthnRequest(r.Context(), relayState)
 //		if err != nil { ... }
 //		rememberPendingRequest(w, relayState, req.ID) // e.g. in a signed cookie
 //		req.Write(w)

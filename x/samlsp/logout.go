@@ -52,12 +52,12 @@ func WithStatus(status saml.Status) LogoutOption {
 // ErrNoEndpoint.
 //
 // The request is signed if Key can sign.
-func (c *Config) LogoutRequest(nameID saml.NameID, relayState string, opts ...LogoutOption) (*Message, error) {
+func (c *Config) LogoutRequest(ctx context.Context, nameID saml.NameID, relayState string, opts ...LogoutOption) (*Message, error) {
 	var o logoutOptions
 	for _, opt := range opts {
 		opt.applyLogout(&o)
 	}
-	sp, err := c.serviceProvider(context.Background())
+	sp, err := c.serviceProvider(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -132,12 +132,17 @@ type LogoutRequest struct {
 // with LogoutResponse. A request is for this handler if it carries a
 // SAMLRequest parameter. A SAMLResponse parameter is for
 // ParseLogoutResponse.
-func (c *Config) ParseLogoutRequest(r *http.Request) (*LogoutRequest, error) {
-	sp, err := c.serviceProvider(r.Context())
+func (c *Config) ParseLogoutRequest(ctx context.Context, r *http.Request) (*LogoutRequest, error) {
+	sp, err := c.serviceProvider(ctx)
 	if err != nil {
 		return nil, err
 	}
-	req, err := sp.ValidateLogoutRequest(r)
+	// Parse the form here: r.WithContext makes a copy, and a body the copy
+	// parsed could not be read again for RelayState.
+	if err := r.ParseForm(); err != nil {
+		return nil, err
+	}
+	req, err := sp.ValidateLogoutRequest(r.WithContext(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -161,12 +166,12 @@ func (c *Config) ParseLogoutRequest(r *http.Request) (*LogoutRequest, error) {
 //
 // If the IdP lists no endpoint for the response, LogoutResponse returns an
 // error matching ErrNoEndpoint.
-func (c *Config) LogoutResponse(req *LogoutRequest, opts ...LogoutOption) (*Message, error) {
+func (c *Config) LogoutResponse(ctx context.Context, req *LogoutRequest, opts ...LogoutOption) (*Message, error) {
 	var o logoutOptions
 	for _, opt := range opts {
 		opt.applyLogout(&o)
 	}
-	sp, err := c.serviceProvider(context.Background())
+	sp, err := c.serviceProvider(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -215,16 +220,16 @@ func (c *Config) LogoutResponse(req *LogoutRequest, opts ...LogoutOption) (*Mess
 //
 // It returns an error matching saml.ErrBadStatus if the IdP could not log
 // the user out.
-func (c *Config) ParseLogoutResponse(r *http.Request, requestIDs ...string) (*saml.LogoutResponse, error) {
+func (c *Config) ParseLogoutResponse(ctx context.Context, r *http.Request, requestIDs ...string) (*saml.LogoutResponse, error) {
 	if len(requestIDs) == 0 {
 		return nil, ErrNoRequestID
 	}
-	sp, err := c.serviceProvider(r.Context())
+	sp, err := c.serviceProvider(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if err := r.ParseForm(); err != nil {
 		return nil, err
 	}
-	return sp.ParseLogoutResponse(r, requestIDs)
+	return sp.ParseLogoutResponse(r.WithContext(ctx), requestIDs)
 }

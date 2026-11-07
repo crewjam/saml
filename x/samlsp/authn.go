@@ -139,12 +139,12 @@ func chooseBinding(preferred string, locate func(string) string) (string, string
 // relayState comes back with the response. Use it to find the pending
 // login, which must hold the returned Message.ID until ParseResponse is called.
 // It should be unpredictable and at most 80 bytes long.
-func (c *Config) AuthnRequest(relayState string, opts ...AuthnOption) (*Message, error) {
+func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...AuthnOption) (*Message, error) {
 	o := authnOptions{responseBinding: saml.HTTPPostBinding}
 	for _, opt := range opts {
 		opt.applyAuthn(&o)
 	}
-	sp, err := c.serviceProvider(context.Background())
+	sp, err := c.serviceProvider(ctx)
 	if err != nil {
 		return nil, err
 	}

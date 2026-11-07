@@ -1,11 +1,9 @@
 package samlsp_test
 
 import (
-	"context"
 	"crypto/rsa"
 	"crypto/x509"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -41,25 +39,21 @@ func Example() {
 		cert *x509.Certificate // and certificate
 	)
 
-	idp, err := samlsp.NewIdentityProvider(context.Background(), "https://idp.example.com/metadata")
-	if err != nil {
-		log.Fatal(err)
-	}
 	config := &samlsp.Config{
-		IdentityProvider: idp,
-		EntityID:         "https://sp.example.com/saml/metadata",
-		MetadataURL:      "https://sp.example.com/saml/metadata",
-		ACSURL:           "https://sp.example.com/saml/acs",
-		Key:              key,
-		Certificate:      cert,
+		IdentityProviderMetadata: samlsp.RemoteMetadata("https://idp.example.com/metadata"),
+		EntityID:                 "https://sp.example.com/saml/metadata",
+		MetadataURL:              "https://sp.example.com/saml/metadata",
+		ACSURL:                   "https://sp.example.com/saml/acs",
+		Key:                      key,
+		Certificate:              cert,
 	}
 	pending := &pendingRequests{ids: map[string]string{}}
 
 	http.HandleFunc("/saml/metadata", config.ServeMetadata)
 
-	http.HandleFunc("/login", func(w http.ResponseWriter, _ *http.Request) {
+	http.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
 		relayState := randomString()
-		req, err := config.AuthnRequest(relayState)
+		req, err := config.AuthnRequest(r.Context(), relayState)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

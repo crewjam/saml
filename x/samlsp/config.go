@@ -23,8 +23,11 @@ import (
 // trusts. It is plain data: fill in the fields and call its methods. A Config must not be
 // modified while it is in use, and it is safe for concurrent use.
 type Config struct {
-	// IdentityProvider is the identity provider that this SP trusts. It is required.
-	IdentityProvider *IdentityProvider
+	// IdentityProviderMetadata returns the metadata of the identity
+	// provider that this SP trusts. It is called with the context of each
+	// method. It is required. See RemoteMetadata, ParseMetadata and
+	// StaticMetadata.
+	IdentityProviderMetadata MetadataFunc
 
 	// EntityID is the entityID of this service provider. If empty,
 	// MetadataURL is used.
@@ -83,11 +86,34 @@ type Config struct {
 	Customize func(sp *saml.ServiceProvider)
 }
 
-// serviceProvider returns a new saml.ServiceProvider configured from c.
+// serviceProvider returns a new saml.ServiceProvider configured from c,
+// with the identity provider's metadata from IdentityProviderMetadata.
 func (c *Config) serviceProvider(ctx context.Context) (*saml.ServiceProvider, error) {
-	if c.IdentityProvider == nil {
-		return nil, errors.New("samlsp: Config.IdentityProvider is nil")
+	if c.IdentityProviderMetadata == nil {
+		return nil, errors.New("samlsp: Config.IdentityProviderMetadata is nil")
 	}
+	idpMetadata, err := c.IdentityProviderMetadata(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("samlsp: cannot get identity provider metadata: %w", err)
+	}
+	if err := checkIDPMetadata(idpMetadata); err != nil {
+		return nil, err
+	}
+	sp, err := c.localServiceProvider(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sp.IDPMetadata = idpMetadata
+	if c.Customize != nil {
+		c.Customize(sp)
+	}
+	return sp, nil
+}
+
+// localServiceProvider returns a new saml.ServiceProvider configured from
+// c, without the identity provider's metadata and without calling
+// Customize.
+func (c *Config) localServiceProvider(ctx context.Context) (*saml.ServiceProvider, error) {
 	acsURL, err := absoluteURL("ACSURL", c.ACSURL, true)
 	if err != nil {
 		return nil, err
@@ -111,7 +137,6 @@ func (c *Config) serviceProvider(ctx context.Context) (*saml.ServiceProvider, er
 		MetadataURL:       metadataURL,
 		AcsURL:            acsURL,
 		SloURL:            sloURL,
-		IDPMetadata:       c.IdentityProvider.metadata,
 		AuthnNameIDFormat: c.NameIDFormat,
 		ReplayCache:       c.ReplayCache,
 		Clock:             c.Clock,
@@ -131,10 +156,6 @@ func (c *Config) serviceProvider(ctx context.Context) (*saml.ServiceProvider, er
 	// the HTTP-Redirect and HTTP-POST bindings (saml-profiles §4.4.3), so
 	// sign them whenever there is a key that can.
 	sp.LogoutSignatureMethod = method
-
-	if c.Customize != nil {
-		c.Customize(sp)
-	}
 	return sp, nil
 }
 
@@ -172,13 +193,27 @@ func signatureMethod(key crypto.Signer) string {
 }
 
 // Metadata returns the metadata of this service provider, to register it
-// with the identity provider.
-func (c *Config) Metadata() (*saml.EntityDescriptor, error) {
-	sp, err := c.serviceProvider(context.Background())
+// with the identity provider. It does not call IdentityProviderMetadata.
+func (c *Config) Metadata(ctx context.Context) (*saml.EntityDescriptor, error) {
+	sp, err := c.spForMetadata(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return sp.Metadata(), nil
+}
+
+// spForMetadata returns the saml.ServiceProvider that describes this SP's
+// metadata. The SP metadata does not depend on the IdP, so it is served
+// even when the IdP metadata cannot be had.
+func (c *Config) spForMetadata(ctx context.Context) (*saml.ServiceProvider, error) {
+	sp, err := c.localServiceProvider(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if c.Customize != nil {
+		c.Customize(sp)
+	}
+	return sp, nil
 }
 
 // ServeMetadata is an http.HandlerFunc that serves this service provider's
@@ -195,7 +230,7 @@ func (c *Config) ServeMetadata(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Config) metadataBytes(ctx context.Context) ([]byte, error) {
-	sp, err := c.serviceProvider(ctx)
+	sp, err := c.spForMetadata(ctx)
 	if err != nil {
 		return nil, err
 	}
