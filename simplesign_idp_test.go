@@ -223,7 +223,8 @@ func TestSimpleSignIDPChoosesACSEndpoint(t *testing.T) {
 		{"URL asks for POST, only SimpleSign", []IndexedEndpoint{simpleSign}, AuthnRequest{AssertionConsumerServiceURL: acs, ProtocolBinding: HTTPPostBinding}, ""},
 		{"index", []IndexedEndpoint{simpleSign, post}, AuthnRequest{AssertionConsumerServiceIndex: "1"}, HTTPPostSimpleSignBinding},
 		{"default SimpleSign", []IndexedEndpoint{post, defaultSimpleSign}, AuthnRequest{}, HTTPPostSimpleSignBinding},
-		{"no default prefers POST", []IndexedEndpoint{simpleSign, post}, AuthnRequest{}, HTTPPostBinding},
+		{"no default takes the first", []IndexedEndpoint{simpleSign, post}, AuthnRequest{}, HTTPPostSimpleSignBinding},
+		{"no default takes the first POST", []IndexedEndpoint{post, simpleSign}, AuthnRequest{}, HTTPPostBinding},
 		{"no default, only SimpleSign", []IndexedEndpoint{simpleSign}, AuthnRequest{}, HTTPPostSimpleSignBinding},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -314,8 +315,10 @@ func TestSimpleSignIDPInitiated(t *testing.T) {
 	}
 	assert.Check(t, is.Equal("alice", assertionUID(assertion)))
 
-	// With HTTP-POST also listed, IdP-initiated responses keep using it.
-	test.SP.AssertionConsumerServiceBindings = []string{HTTPPostSimpleSignBinding, HTTPPostBinding}
+	// With HTTP-POST listed first, and neither marked isDefault, it is the
+	// default endpoint (saml-metadata §2.2.3), so IdP-initiated responses
+	// use it.
+	test.SP.AssertionConsumerServiceBindings = []string{HTTPPostBinding, HTTPPostSimpleSignBinding}
 	w = httptest.NewRecorder()
 	test.IDP.ServeIDPInitiated(w, r, test.SP.MetadataURL.String(), "/after")
 	assert.Check(t, !strings.Contains(w.Body.String(), "SigAlg"), w.Body.String())

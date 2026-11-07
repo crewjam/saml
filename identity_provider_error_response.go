@@ -142,6 +142,69 @@ func (idp *IdentityProvider) sendStatusError(w http.ResponseWriter, r *http.Requ
 	}
 }
 
+// validationErrorResponse returns the error status ServeSSO answers with
+// for an AuthnRequest that Validate rejected with err, or nil if the request
+// must be answered with HTTP 400 instead: UnsupportedBinding (see
+// unsupportedBindingStatusError), or, when SendErrorResponses is set, the
+// status validationStatusError returns.
+func (req *IdpAuthnRequest) validationErrorResponse(err error) *StatusError {
+	if errors.Is(err, errUnsupportedACSBinding) {
+		return req.unsupportedBindingStatusError()
+	}
+	if req.IDP.SendErrorResponses {
+		return req.validationStatusError(err)
+	}
+	return nil
+}
+
+// checkSendableACS returns an error matching errUnsupportedACSBinding if
+// the default ResponseWriter is used and the assertion consumer service of
+// the validated request has a binding it cannot send a Response with (see
+// isSendableBinding). A custom ResponseWriter may support other bindings,
+// so it is given the endpoint.
+func (req *IdpAuthnRequest) checkSendableACS() error {
+	switch req.IDP.ResponseWriter.(type) {
+	case nil, DefaultResponseWriter, *DefaultResponseWriter:
+	default:
+		return nil
+	}
+	if isSendableBinding(req.ACSEndpoint.Binding) {
+		return nil
+	}
+	return classify(fmt.Errorf("cannot send a response to an assertion consumer service with binding %q", req.ACSEndpoint.Binding),
+		ErrUnsupported, errUnsupportedACSBinding)
+}
+
+// unsupportedBindingStatusError returns the error status ServeSSO answers
+// with when the IdP cannot send a Response to the assertion consumer service
+// the request names: Requester with the second-level status
+// UnsupportedBinding (saml-core §3.2.2.2). It sets ACSEndpoint to the
+// service provider's default assertion consumer service among those the IdP
+// can send to, so that the Response goes to an endpoint from the metadata,
+// never to one the request alone names. It returns nil, so that the request
+// gets HTTP 400, if there is no such endpoint or the request has no ID to
+// answer.
+//
+// It is only used once the request has passed every other check of
+// Validate: it is current, SAML 2.0, has an ID and a Destination as
+// required, comes from a known service provider, and has a valid
+// SimpleSign signature if it came with that binding. Validate checks the
+// assertion consumer service last, and only returns errUnsupportedACSBinding
+// from there; checkSendableACS runs once Validate has succeeded.
+func (req *IdpAuthnRequest) unsupportedBindingStatusError() *StatusError {
+	if req.Request.ID == "" || req.ServiceProviderMetadata == nil {
+		return nil
+	}
+	if !req.selectDefaultACSEndpoint() {
+		return nil
+	}
+	return &StatusError{
+		TopLevel:    StatusRequester,
+		SecondLevel: StatusUnsupportedBinding,
+		Message:     "the requested assertion consumer service binding is not supported",
+	}
+}
+
 // validationStatusError returns the error status ServeSSO answers with,
 // when SendErrorResponses is set, for an AuthnRequest that Validate rejected
 // with err, or nil if the request must be answered with HTTP 400 instead.
