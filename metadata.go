@@ -1026,8 +1026,9 @@ type AffiliationDescriptor struct {
 // descriptors that embed it.
 type roleDescriptorXML RoleDescriptor
 
-// MarshalXML implements xml.Marshaler, writing Signature as XML and XSIType
-// as xsi:type.
+// MarshalXML implements xml.Marshaler, writing Signature as XML, XSIType as
+// xsi:type, and validUntil and cacheDuration as for the concrete descriptor
+// types (see marshalRoleDescriptorAttrs).
 func (m roleDescriptorXML) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type Alias roleDescriptorXML
 	if m.XSIType.Local != "" {
@@ -1041,12 +1042,17 @@ func (m roleDescriptorXML) MarshalXML(e *xml.Encoder, start xml.StartElement) er
 		}
 		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "xsi:type"}, Value: value})
 	}
+	validUntil, cacheDuration := marshalRoleDescriptorAttrs((*RoleDescriptor)(&m))
 	aux := &struct {
-		Signature *etreeElementXML `xml:"Signature"`
+		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
+		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
-		Signature: (*etreeElementXML)(m.Signature),
-		Alias:     (*Alias)(&m),
+		ValidUntil:    validUntil,
+		CacheDuration: cacheDuration,
+		Signature:     (*etreeElementXML)(m.Signature),
+		Alias:         (*Alias)(&m),
 	}
 	return e.EncodeElement(aux, start)
 }
@@ -1056,7 +1062,9 @@ func (m roleDescriptorXML) MarshalXML(e *xml.Encoder, start xml.StartElement) er
 func (m *roleDescriptorXML) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias roleDescriptorXML
 	aux := &struct {
-		Signature *etreeElementXML `xml:"Signature"`
+		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
+		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -1064,6 +1072,7 @@ func (m *roleDescriptorXML) UnmarshalXML(d *xml.Decoder, start xml.StartElement)
 	if err := d.DecodeElement(aux, &start); err != nil {
 		return err
 	}
+	unmarshalRoleDescriptorAttrs((*RoleDescriptor)(m), aux.ValidUntil, aux.CacheDuration)
 	m.Signature = (*etree.Element)(aux.Signature)
 	m.XSIType = xml.Name{}
 	for _, attr := range start.Attr {
