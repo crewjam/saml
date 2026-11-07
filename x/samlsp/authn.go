@@ -48,23 +48,21 @@ var (
 	IsPassive AuthnOption = authnOptionFunc(func(o *authnOptions) { o.isPassive = true })
 )
 
-// WithAuthnContext asks the IdP to authenticate the user with one of the
-// authentication context classes in classRefs, such as
-// "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport".
-// comparison is "exact", "minimum", "maximum" or "better". If comparison
-// is empty, "exact" is used.
+// WithAuthnContext asks the IdP to authenticate the user with one of
+// classes, compared as comparison says.
 //
 // ParseResponse does not check the class the IdP actually used. To check it,
-// read Assertion.AuthnContextClassRef, or set
-// saml.ServiceProvider.ValidateAuthnContextClassRef in Config.Customize.
-func WithAuthnContext(comparison string, classRefs ...string) AuthnOption {
+// read Assertion.AuthnContextClassRef, or pass a ServiceProviderOption that
+// sets saml.ServiceProvider.ValidateAuthnContextClassRef.
+func WithAuthnContext(comparison AuthnContextComparison, classes ...AuthnContextClass) AuthnOption {
 	return authnOptionFunc(func(o *authnOptions) {
-		if comparison == "" {
-			comparison = "exact"
+		refs := make([]string, len(classes))
+		for i, c := range classes {
+			refs[i] = string(c)
 		}
 		o.authnContext = &saml.RequestedAuthnContext{
-			Comparison:            comparison,
-			AuthnContextClassRefs: append([]string(nil), classRefs...),
+			Comparison:            string(comparison),
+			AuthnContextClassRefs: refs,
 		}
 	})
 }
@@ -86,6 +84,7 @@ type MessageOption interface {
 type messageOptions struct {
 	binding     string
 	scriptNonce string
+	sp          []ServiceProviderOption
 }
 
 type messageOptionFunc func(*messageOptions)
@@ -144,7 +143,7 @@ func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...Au
 	for _, opt := range opts {
 		opt.applyAuthn(&o)
 	}
-	sp, err := c.serviceProvider(ctx)
+	sp, err := c.serviceProvider(ctx, o.sp)
 	if err != nil {
 		return nil, err
 	}
@@ -212,6 +211,7 @@ type ResponseOption interface {
 type responseOptions struct {
 	requestIDs  []string
 	unsolicited bool
+	sp          []ServiceProviderOption
 }
 
 type responseOptionFunc func(*responseOptions)
@@ -257,7 +257,7 @@ func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...Res
 	if len(o.requestIDs) == 0 && !o.unsolicited {
 		return nil, ErrNoRequestID
 	}
-	sp, err := c.serviceProvider(ctx)
+	sp, err := c.serviceProvider(ctx, o.sp)
 	if err != nil {
 		return nil, err
 	}

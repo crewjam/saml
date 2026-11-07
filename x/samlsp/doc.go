@@ -32,6 +32,14 @@
 // that reads metadata from a database, or picks the IdP for the tenant
 // named in the context.
 //
+// Settings that Config does not expose are reached with
+// ServiceProviderOptions, which adjust the saml.ServiceProvider that each
+// method builds. Set them on Config.ServiceProviderOptions for every call,
+// or pass them to a single call alongside its other options:
+//
+//	config.ServiceProviderOptions = append(config.ServiceProviderOptions, samlsp.SignMetadata)
+//	config.ParseResponse(ctx, r, samlsp.WithRequestID(id), samlsp.RejectUnknownConditions)
+//
 // # Web Browser SSO
 //
 // Login has two steps. First, send the browser to the IdP with an

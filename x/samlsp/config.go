@@ -79,16 +79,59 @@ type Config struct {
 	// It is mainly useful in tests.
 	Clock *dsig.Clock
 
-	// Customize, if set, is called with the saml.ServiceProvider that each
-	// method builds from this Config, just before the method uses it. Use
-	// it to reach settings that Config does not expose, such as
-	// saml.ServiceProvider.RejectUnknownConditions or SignMetadata.
-	Customize func(sp *saml.ServiceProvider)
+	// ServiceProviderOptions customize the saml.ServiceProvider that each
+	// method builds from this Config, in order, before the options passed
+	// to the method itself. Use them for settings that Config does not
+	// expose, such as saml.ServiceProvider.RejectUnknownConditions.
+	ServiceProviderOptions []ServiceProviderOption
+}
+
+// ServiceProviderOption customizes the saml.ServiceProvider that a Config
+// method builds and uses. Set it on Config.ServiceProviderOptions to apply
+// it to every call, or pass it to a single method: it is an AuthnOption, a
+// ResponseOption and a LogoutOption. The options of the call are applied
+// after those of the Config.
+type ServiceProviderOption func(sp *saml.ServiceProvider)
+
+func (f ServiceProviderOption) applyAuthn(o *authnOptions) { o.sp = append(o.sp, f) }
+func (f ServiceProviderOption) applyLogout(o *logoutOptions) {
+	o.sp = append(o.sp, f)
+}
+func (f ServiceProviderOption) applyResponse(o *responseOptions) {
+	o.sp = append(o.sp, f)
+}
+
+// WithServiceProvider returns a ServiceProviderOption that calls fn.
+func WithServiceProvider(fn func(sp *saml.ServiceProvider)) ServiceProviderOption {
+	return ServiceProviderOption(fn)
+}
+
+// SignMetadata makes ServeMetadata and Metadata sign the SP metadata with
+// Key. Set it on Config.ServiceProviderOptions.
+var SignMetadata ServiceProviderOption = func(sp *saml.ServiceProvider) { sp.SignMetadata = true }
+
+// RejectUnknownConditions makes ParseResponse refuse an assertion whose
+// Conditions hold a condition this package does not understand, as
+// saml-core §2.5.1.1 requires.
+var RejectUnknownConditions ServiceProviderOption = func(sp *saml.ServiceProvider) { sp.RejectUnknownConditions = true }
+
+// applyServiceProviderOptions applies the options of c, then extra, to sp.
+func (c *Config) applyServiceProviderOptions(sp *saml.ServiceProvider, extra []ServiceProviderOption) {
+	for _, opt := range c.ServiceProviderOptions {
+		if opt != nil {
+			opt(sp)
+		}
+	}
+	for _, opt := range extra {
+		if opt != nil {
+			opt(sp)
+		}
+	}
 }
 
 // serviceProvider returns a new saml.ServiceProvider configured from c,
 // with the identity provider's metadata from IdentityProviderMetadata.
-func (c *Config) serviceProvider(ctx context.Context) (*saml.ServiceProvider, error) {
+func (c *Config) serviceProvider(ctx context.Context, opts []ServiceProviderOption) (*saml.ServiceProvider, error) {
 	if c.IdentityProviderMetadata == nil {
 		return nil, errors.New("samlsp: Config.IdentityProviderMetadata is nil")
 	}
@@ -104,15 +147,13 @@ func (c *Config) serviceProvider(ctx context.Context) (*saml.ServiceProvider, er
 		return nil, err
 	}
 	sp.IDPMetadata = idpMetadata
-	if c.Customize != nil {
-		c.Customize(sp)
-	}
+	c.applyServiceProviderOptions(sp, opts)
 	return sp, nil
 }
 
 // localServiceProvider returns a new saml.ServiceProvider configured from
-// c, without the identity provider's metadata and without calling
-// Customize.
+// c, without the identity provider's metadata and without applying
+// ServiceProviderOptions.
 func (c *Config) localServiceProvider(ctx context.Context) (*saml.ServiceProvider, error) {
 	acsURL, err := absoluteURL("ACSURL", c.ACSURL, true)
 	if err != nil {
@@ -194,8 +235,8 @@ func signatureMethod(key crypto.Signer) string {
 
 // Metadata returns the metadata of this service provider, to register it
 // with the identity provider. It does not call IdentityProviderMetadata.
-func (c *Config) Metadata(ctx context.Context) (*saml.EntityDescriptor, error) {
-	sp, err := c.spForMetadata(ctx)
+func (c *Config) Metadata(ctx context.Context, opts ...ServiceProviderOption) (*saml.EntityDescriptor, error) {
+	sp, err := c.spForMetadata(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -205,20 +246,18 @@ func (c *Config) Metadata(ctx context.Context) (*saml.EntityDescriptor, error) {
 // spForMetadata returns the saml.ServiceProvider that describes this SP's
 // metadata. The SP metadata does not depend on the IdP, so it is served
 // even when the IdP metadata cannot be had.
-func (c *Config) spForMetadata(ctx context.Context) (*saml.ServiceProvider, error) {
+func (c *Config) spForMetadata(ctx context.Context, opts []ServiceProviderOption) (*saml.ServiceProvider, error) {
 	sp, err := c.localServiceProvider(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if c.Customize != nil {
-		c.Customize(sp)
-	}
+	c.applyServiceProviderOptions(sp, opts)
 	return sp, nil
 }
 
 // ServeMetadata is an http.HandlerFunc that serves this service provider's
-// metadata. Serve it at MetadataURL. If Customize sets SignMetadata, the
-// metadata is signed with Key.
+// metadata. Serve it at MetadataURL. With the SignMetadata option in
+// Config.ServiceProviderOptions, the metadata is signed with Key.
 func (c *Config) ServeMetadata(w http.ResponseWriter, r *http.Request) {
 	buf, err := c.metadataBytes(r.Context())
 	if err != nil {
@@ -230,7 +269,7 @@ func (c *Config) ServeMetadata(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Config) metadataBytes(ctx context.Context) ([]byte, error) {
-	sp, err := c.spForMetadata(ctx)
+	sp, err := c.spForMetadata(ctx, nil)
 	if err != nil {
 		return nil, err
 	}

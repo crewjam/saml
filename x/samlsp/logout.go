@@ -57,7 +57,7 @@ func (c *Config) LogoutRequest(ctx context.Context, nameID saml.NameID, relaySta
 	for _, opt := range opts {
 		opt.applyLogout(&o)
 	}
-	sp, err := c.serviceProvider(ctx)
+	sp, err := c.serviceProvider(ctx, o.sp)
 	if err != nil {
 		return nil, err
 	}
@@ -132,8 +132,8 @@ type LogoutRequest struct {
 // with LogoutResponse. A request is for this handler if it carries a
 // SAMLRequest parameter. A SAMLResponse parameter is for
 // ParseLogoutResponse.
-func (c *Config) ParseLogoutRequest(ctx context.Context, r *http.Request) (*LogoutRequest, error) {
-	sp, err := c.serviceProvider(ctx)
+func (c *Config) ParseLogoutRequest(ctx context.Context, r *http.Request, opts ...ServiceProviderOption) (*LogoutRequest, error) {
+	sp, err := c.serviceProvider(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +171,7 @@ func (c *Config) LogoutResponse(ctx context.Context, req *LogoutRequest, opts ..
 	for _, opt := range opts {
 		opt.applyLogout(&o)
 	}
-	sp, err := c.serviceProvider(ctx)
+	sp, err := c.serviceProvider(ctx, o.sp)
 	if err != nil {
 		return nil, err
 	}
@@ -214,22 +214,30 @@ func (c *Config) LogoutResponse(ctx context.Context, req *LogoutRequest, opts ..
 }
 
 // ParseLogoutResponse verifies the identity provider's response to a
-// LogoutRequest sent by LogoutRequest. requestIDs are the Message.IDs of
-// the logout requests that are still pending. The response must answer one
-// of them.
+// LogoutRequest sent by LogoutRequest. Pass WithRequestID with the
+// Message.ID of each logout request that is still pending. The response
+// must answer one of them. AllowUnsolicited is refused: a LogoutResponse
+// always answers a request.
 //
 // It returns an error matching saml.ErrBadStatus if the IdP could not log
 // the user out.
-func (c *Config) ParseLogoutResponse(ctx context.Context, r *http.Request, requestIDs ...string) (*saml.LogoutResponse, error) {
-	if len(requestIDs) == 0 {
+func (c *Config) ParseLogoutResponse(ctx context.Context, r *http.Request, opts ...ResponseOption) (*saml.LogoutResponse, error) {
+	var o responseOptions
+	for _, opt := range opts {
+		opt.applyResponse(&o)
+	}
+	if o.unsolicited {
+		return nil, errors.New("samlsp: a LogoutResponse cannot be unsolicited")
+	}
+	if len(o.requestIDs) == 0 {
 		return nil, ErrNoRequestID
 	}
-	sp, err := c.serviceProvider(ctx)
+	sp, err := c.serviceProvider(ctx, o.sp)
 	if err != nil {
 		return nil, err
 	}
 	if err := r.ParseForm(); err != nil {
 		return nil, err
 	}
-	return sp.ParseLogoutResponse(r.WithContext(ctx), requestIDs)
+	return sp.ParseLogoutResponse(r.WithContext(ctx), o.requestIDs)
 }
