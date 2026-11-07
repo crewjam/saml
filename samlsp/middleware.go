@@ -92,6 +92,12 @@ type Middleware struct {
 	// supports it, HTTP-POST otherwise. The HTTP-POST-SimpleSign binding
 	// signs messages with ServiceProvider.Key and SignatureMethod, which
 	// must be set.
+	//
+	// saml.SOAPBinding makes HandleStartLogout send its LogoutRequest from
+	// the server, signed with ServiceProvider.Key, when the IDP metadata has
+	// a SOAP SingleLogoutService endpoint (see HandleStartLogout). The
+	// LogoutResponses to IDP initiated logout are then sent with the
+	// default front-channel binding.
 	LogoutBinding string
 }
 

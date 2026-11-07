@@ -111,9 +111,11 @@ type Options struct {
 	// or saml.HTTPPostSimpleSignBinding. If empty, or if the IDP metadata
 	// has no SingleLogoutService endpoint for it, HTTP-Redirect is used when
 	// the IDP supports it, HTTP-POST otherwise. The HTTP-POST-SimpleSign
-	// binding requires SignRequest. See Middleware.LogoutBinding. (The
-	// bindings this SP advertises for receiving logout messages are set by
-	// LogoutBindings.)
+	// binding requires SignRequest. saml.SOAPBinding sends the
+	// LogoutRequests of HandleStartLogout from the server (back-channel
+	// single logout) when the IDP supports it. See Middleware.LogoutBinding.
+	// (The bindings this SP advertises for receiving logout messages are set
+	// by LogoutBindings.)
 	LogoutBinding string
 
 	// KeyAttributesByName keys the session's attributes by their SAML Name
@@ -421,7 +423,7 @@ func applyBindingOptions(m *Middleware, opts Options) error {
 	m.Binding = opts.Binding
 
 	switch opts.LogoutBinding {
-	case "", saml.HTTPRedirectBinding, saml.HTTPPostBinding:
+	case "", saml.HTTPRedirectBinding, saml.HTTPPostBinding, saml.SOAPBinding:
 	case saml.HTTPPostSimpleSignBinding:
 		if !opts.SignRequest && !opts.SignLogout {
 			return errors.New("samlsp: the HTTP-POST-SimpleSign logout binding requires SignRequest or SignLogout")
