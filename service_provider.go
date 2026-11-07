@@ -132,6 +132,13 @@ type ServiceProvider struct {
 	// attribute in the metadata endpoint
 	MetadataValidDuration time.Duration
 
+	// MetadataOmitValidUntil, when true, omits the optional validUntil
+	// attribute from the metadata (saml-metadata-2.0-os §2.3.2). Because the
+	// root element must carry validUntil or cacheDuration (§2.3.1), the
+	// metadata then carries cacheDuration (DefaultCacheDuration) instead.
+	// MetadataValidDuration is ignored when this is set.
+	MetadataOmitValidUntil bool
+
 	// ForceAuthn allows you to force re-authentication of users even if the user
 	// has a SSO session at the IdP.
 	ForceAuthn *bool
@@ -253,6 +260,16 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 	wantAssertionsSigned := true
 	validUntil := sp.now().Add(validDuration)
 
+	var entityValidUntil time.Time
+	var roleValidUntil *time.Time
+	var cacheDuration time.Duration
+	if sp.MetadataOmitValidUntil {
+		cacheDuration = DefaultCacheDuration
+	} else {
+		entityValidUntil = validUntil
+		roleValidUntil = &validUntil
+	}
+
 	var keyDescriptors []KeyDescriptor
 	var certBytes []byte
 	if sp.Certificate != nil {
@@ -330,8 +347,9 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 	}
 
 	return &EntityDescriptor{
-		EntityID:   firstSet(sp.EntityID, sp.MetadataURL.String()),
-		ValidUntil: validUntil,
+		EntityID:      firstSet(sp.EntityID, sp.MetadataURL.String()),
+		ValidUntil:    entityValidUntil,
+		CacheDuration: cacheDuration,
 
 		SPSSODescriptors: []SPSSODescriptor{
 			{
@@ -339,7 +357,7 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 					RoleDescriptor: RoleDescriptor{
 						ProtocolSupportEnumeration: "urn:oasis:names:tc:SAML:2.0:protocol",
 						KeyDescriptors:             keyDescriptors,
-						ValidUntil:                 &validUntil,
+						ValidUntil:                 roleValidUntil,
 					},
 					SingleLogoutServices: sloEndpoints,
 					NameIDFormats:        []NameIDFormat{sp.AuthnNameIDFormat},
