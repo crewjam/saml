@@ -62,7 +62,8 @@ func TestTripleDESDecryptUsesItsBlockSize(t *testing.T) {
 	assert.Check(t, is.DeepEqual(plaintext, actual))
 }
 
-// tripledes-cbc is not offered for decryption, because TripleDES is single DES.
+// tripledes-cbc is not offered for decryption by default, because 3DES is a
+// legacy cipher; applications opt in with RegisterDecrypter(TripleDES).
 func TestTripleDESIsNotRegisteredForDecryption(t *testing.T) {
 	_, err := Decrypt(make([]byte, TripleDES.KeySize()), encryptedData(TripleDES.Algorithm(), 24))
 	assert.Check(t, is.Error(err, ErrAlgorithmNotImplemented(TripleDES.Algorithm()).Error()))

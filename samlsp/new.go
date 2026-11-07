@@ -33,10 +33,15 @@ type Options struct {
 	UseArtifactResponse   bool
 	ForceAuthn            bool // TODO(ross): this should be *bool
 	RequestedAuthnContext *saml.RequestedAuthnContext
-	CookieSameSite        http.SameSite
-	CookieName            string
-	RelayStateFunc        func(w http.ResponseWriter, r *http.Request) string
-	LogoutBindings        []string
+	// CookieSameSite sets the SameSite attribute of the session and request
+	// tracking cookies. When it is unset and URL uses https, the request
+	// tracking cookie is issued with SameSite=None, because browsers do not
+	// send a SameSite=Lax cookie with the IDP's cross-site POST to the ACS URL.
+	// See CookieRequestTracker.
+	CookieSameSite http.SameSite
+	CookieName     string
+	RelayStateFunc func(w http.ResponseWriter, r *http.Request) string
+	LogoutBindings []string
 
 	// EncryptionKey and EncryptionCertificate, if set, are used to decrypt
 	// encrypted assertions and are advertised in the metadata for encryption,
@@ -60,6 +65,17 @@ type Options struct {
 	// SignMetadata, if true, makes the metadata endpoint serve metadata
 	// signed with Key. See saml.ServiceProvider.SignMetadata.
 	SignMetadata bool
+
+	// MetadataPath, AcsPath and SloPath set the paths of the SAML metadata,
+	// AssertionConsumerService and SingleLogoutService endpoints. Each is
+	// resolved as a URL reference against URL, so a relative path (such as
+	// the defaults "saml/metadata", "saml/acs" and "saml/slo") is appended to
+	// the path of URL, and an absolute path (beginning with "/") replaces it.
+	// Empty values use the defaults. When EntityID is empty the metadata URL is
+	// used as the entity ID, so changing MetadataPath changes it too.
+	MetadataPath string
+	AcsPath      string
+	SloPath      string
 }
 
 func getDefaultSigningMethod(signer crypto.Signer) jwt.SigningMethod {
@@ -141,9 +157,9 @@ func DefaultRequestTracker(opts Options, serviceProvider *saml.ServiceProvider) 
 // DefaultServiceProvider returns the default saml.ServiceProvider for the provided
 // options.
 func DefaultServiceProvider(opts Options) saml.ServiceProvider {
-	metadataURL := opts.URL.ResolveReference(&url.URL{Path: "saml/metadata"})
-	acsURL := opts.URL.ResolveReference(&url.URL{Path: "saml/acs"})
-	sloURL := opts.URL.ResolveReference(&url.URL{Path: "saml/slo"})
+	metadataURL := opts.URL.ResolveReference(&url.URL{Path: pathOrDefault(opts.MetadataPath, "saml/metadata")})
+	acsURL := opts.URL.ResolveReference(&url.URL{Path: pathOrDefault(opts.AcsPath, "saml/acs")})
+	sloURL := opts.URL.ResolveReference(&url.URL{Path: pathOrDefault(opts.SloPath, "saml/slo")})
 
 	var forceAuthn *bool
 	if opts.ForceAuthn {
@@ -186,6 +202,13 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		IgnoreCertificateExpiry:          opts.IgnoreCertificateExpiry,
 		SignMetadata:                     opts.SignMetadata,
 	}
+}
+
+func pathOrDefault(path, defaultPath string) string {
+	if path == "" {
+		return defaultPath
+	}
+	return path
 }
 
 // defaultSigningMethodForKey returns the signature method used for signed

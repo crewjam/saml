@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -113,6 +114,15 @@ type IdentityProvider struct {
 	ValidDuration           *time.Duration
 	ResponseFormTemplate    *template.Template
 
+	// ExtraCertificates are additional certificates published in the IdP
+	// metadata as signing keys, after Certificate. They are never used to
+	// sign anything. Use them to announce a new signing certificate before
+	// switching Certificate (and Key or Signer) to it, so that service
+	// providers that refresh their copy of the metadata already trust the
+	// new key when the rollover happens, or to keep publishing the old
+	// certificate for a while afterwards.
+	ExtraCertificates []*x509.Certificate
+
 	// NameIDFormats are the NameID formats advertised in the IdP metadata.
 	// When empty it defaults to the transient format for backwards compatibility.
 	NameIDFormats []NameIDFormat
@@ -208,6 +218,22 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 				},
 			},
 		},
+	}
+
+	for _, cert := range idp.ExtraCertificates {
+		if cert == nil {
+			continue
+		}
+		ed.IDPSSODescriptors[0].KeyDescriptors = append(ed.IDPSSODescriptors[0].KeyDescriptors, KeyDescriptor{
+			Use: "signing",
+			KeyInfo: KeyInfo{
+				X509Data: X509Data{
+					X509Certificates: []X509Certificate{
+						{Data: base64.StdEncoding.EncodeToString(cert.Raw)},
+					},
+				},
+			},
+		})
 	}
 
 	if idp.LogoutURL.String() != "" {
@@ -339,13 +365,11 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 		Now:         TimeNow(),
 	}
 
-	session := idp.SessionProvider.GetSession(w, r, req)
-	if session == nil {
-		// If GetSession returns nil, it must have written an HTTP response, per the interface
-		// (this is probably because it drew a login form or something)
-		return
-	}
-
+	// Resolve the service provider and its ACS endpoint before asking the
+	// SessionProvider for a session, as ServeSSO does via Validate. Otherwise
+	// a request for an unknown service provider would prompt the user to log
+	// in before failing, and the SessionProvider would see a request without
+	// ServiceProviderMetadata.
 	var err error
 	req.ServiceProviderMetadata, err = idp.ServiceProviderProvider.GetServiceProvider(r, serviceProviderID)
 	if err == os.ErrNotExist {
@@ -382,6 +406,13 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 	if req.ACSEndpoint == nil {
 		idp.Logger.Printf("saml metadata does not contain an Assertion Customer Service url")
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	session := idp.SessionProvider.GetSession(w, r, req)
+	if session == nil {
+		// If GetSession returns nil, it must have written an HTTP response, per the interface
+		// (this is probably because it drew a login form or something)
 		return
 	}
 
@@ -616,6 +647,20 @@ func (req *IdpAuthnRequest) getACSEndpoint() error {
 	}
 
 	return os.ErrNotExist // no ACS url found or specified
+}
+
+// hostFromRemoteAddr returns the host part of an http.Request RemoteAddr,
+// which is normally "IP:port". SubjectConfirmationData/@Address and
+// SubjectLocality/@Address hold a network address without a port
+// (saml-core-2.0-os §2.4.1.2 and §2.7.2.1), and service providers that check
+// the address (e.g. Shibboleth) reject "IP:port". If RemoteAddr has no port,
+// it is returned unchanged.
+func hostFromRemoteAddr(remoteAddr string) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return remoteAddr
+	}
+	return host
 }
 
 // DefaultAssertionMaker produces a SAML assertion for the
@@ -856,6 +901,8 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 		nameIDFormat = session.NameIDFormat
 	}
 
+	remoteAddress := hostFromRemoteAddr(req.HTTPRequest.RemoteAddr)
+
 	req.Assertion = &Assertion{
 		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
 		IssueInstant: TimeNow(),
@@ -875,7 +922,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 				{
 					Method: bearerSubjectConfirmationMethod,
 					SubjectConfirmationData: &SubjectConfirmationData{
-						Address:      req.HTTPRequest.RemoteAddr,
+						Address:      remoteAddress,
 						InResponseTo: req.Request.ID,
 						NotOnOrAfter: req.Now.Add(MaxIssueDelay),
 						Recipient:    req.ACSEndpoint.Location,
@@ -897,7 +944,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 				AuthnInstant: session.CreateTime,
 				SessionIndex: session.Index,
 				SubjectLocality: &SubjectLocality{
-					Address: req.HTTPRequest.RemoteAddr,
+					Address: remoteAddress,
 				},
 				AuthnContext: AuthnContext{
 					AuthnContextClassRef: &AuthnContextClassRef{

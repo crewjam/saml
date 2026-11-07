@@ -115,7 +115,7 @@ Next we'll have to register our service provider with the identity provider to e
            "spAcsUrl":"http://localhost:8000/saml/acs",
            "spEntityId":"http://localhost:8000/saml/metadata"}'
 
-By default `samlsp` uses `<root URL>/saml/acs` as the ACS URL and `<root URL>/saml/metadata` as the entity ID. You can view the service provider's metadata at `localhost:8000/saml/metadata`.
+By default `samlsp` uses `<root URL>/saml/acs` as the ACS URL and `<root URL>/saml/metadata` as the entity ID (set `Options.AcsPath`, `Options.MetadataPath` and `Options.SloPath` to use different paths). You can view the service provider's metadata at `localhost:8000/saml/metadata`.
 
 Now you should be able to authenticate. The flow should look like this:
 
@@ -130,6 +130,33 @@ Now you should be able to authenticate. The flow should look like this:
 1. The local service validates the response, issues a session cookie, and redirects you to the original URL, `localhost:8000/hello`.
 
 1. This time when `localhost:8000/hello` is requested there is a valid session and so the main content is served.
+
+### Reading the user's name, email and other attributes
+
+You don't need to parse the SAML response yourself. After the middleware validates it, the handlers wrapped by `RequireAccount` can read the user's details from the request context:
+
+```golang
+func hello(w http.ResponseWriter, r *http.Request) {
+	// The first value of an attribute, or "" if it is missing.
+	email := samlsp.AttributeFromContext(r.Context(), "mail")
+
+	session := samlsp.SessionFromContext(r.Context())
+
+	// Every attribute, with all of its values.
+	if s, ok := session.(samlsp.SessionWithAttributes); ok {
+		for name, values := range s.GetAttributes() {
+			fmt.Fprintf(w, "%s: %v\n", name, values)
+		}
+	}
+
+	// The NameID from the assertion's Subject, often the user's email or ID.
+	if claims, ok := session.(samlsp.JWTSessionClaims); ok {
+		fmt.Fprintf(w, "NameID: %s, email: %s\n", claims.Subject, email)
+	}
+}
+```
+
+Each attribute is stored under its `FriendlyName`, or its `Name` when the IDP sends no `FriendlyName` (for example `urn:oid:0.9.2342.19200300.100.1.3` or `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress`). The IDP decides which attributes it sends and what they are called, so if one you expect is missing, check the IDP's attribute release settings. Listing every attribute as above shows exactly what you received. The `SessionIndex` attribute is added by this package, not sent as an attribute by the IDP.
 
 ## Getting Started as an Identity Provider
 

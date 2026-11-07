@@ -225,6 +225,49 @@ func TestIDPCanProduceMetadata(t *testing.T) {
 	assert.Check(t, is.DeepEqual(expected, test.IDP.Metadata()))
 }
 
+func TestIDPMetadataPublishesExtraCertificates(t *testing.T) {
+	test := NewIdentityProviderTest(t, applyKey)
+	// Any certificate other than the IdP's own will do as the "next" key.
+	nextCert := test.SPCertificate
+	test.IDP.ExtraCertificates = []*x509.Certificate{nil, nextCert}
+
+	metadata := test.IDP.Metadata()
+	assert.Assert(t, is.Len(metadata.IDPSSODescriptors, 1))
+	keyDescriptors := metadata.IDPSSODescriptors[0].KeyDescriptors
+	assert.Assert(t, is.Len(keyDescriptors, 3))
+
+	certStr := base64.StdEncoding.EncodeToString(test.Certificate.Raw)
+	nextCertStr := base64.StdEncoding.EncodeToString(nextCert.Raw)
+
+	// The primary certificate is still published first, for signing and
+	// encryption, exactly as before.
+	assert.Check(t, is.Equal(keyDescriptors[0].Use, "signing"))
+	assert.Check(t, is.DeepEqual(keyDescriptors[0].KeyInfo.X509Data.X509Certificates, []X509Certificate{{Data: certStr}}))
+	assert.Check(t, is.Equal(keyDescriptors[1].Use, "encryption"))
+	assert.Check(t, is.DeepEqual(keyDescriptors[1].KeyInfo.X509Data.X509Certificates, []X509Certificate{{Data: certStr}}))
+
+	// The extra certificate is published as a signing key only; the nil
+	// entry is skipped.
+	assert.Check(t, is.Equal(keyDescriptors[2].Use, "signing"))
+	assert.Check(t, is.DeepEqual(keyDescriptors[2].KeyInfo.X509Data.X509Certificates, []X509Certificate{{Data: nextCertStr}}))
+	assert.Check(t, is.Len(keyDescriptors[2].EncryptionMethods, 0))
+
+	buf, err := xml.Marshal(metadata)
+	assert.NilError(t, err)
+	assert.Check(t, is.Contains(string(buf), nextCertStr))
+
+	// A service provider using this metadata trusts both certificates, so
+	// it keeps working when the IdP switches to the new key.
+	var parsed EntityDescriptor
+	assert.NilError(t, xml.Unmarshal(buf, &parsed))
+	sp := ServiceProvider{IDPMetadata: &parsed}
+	certs, err := sp.getIDPSigningCerts()
+	assert.NilError(t, err)
+	assert.Assert(t, is.Len(certs, 2))
+	assert.Check(t, certs[0].Equal(test.Certificate))
+	assert.Check(t, certs[1].Equal(nextCert))
+}
+
 func TestIDPCanAdvertiseCustomNameIDFormats(t *testing.T) {
 	test := NewIdentityProviderTest(t, applyKey)
 	test.IDP.NameIDFormats = []NameIDFormat{
@@ -733,6 +776,52 @@ func TestIDPMakeAssertion(t *testing.T) {
 	assert.Check(t, is.DeepEqual(expectedAttributes, req.Assertion.AttributeStatements[0].Attributes))
 }
 
+func TestIDPMakeAssertionAddressWithoutPort(t *testing.T) {
+	// SubjectConfirmationData/@Address and SubjectLocality/@Address are
+	// network addresses; the port from http.Request.RemoteAddr must not be
+	// included (saml-core-2.0-os §2.4.1.2, §2.7.2.1).
+	testCases := []struct {
+		remoteAddr string
+		want       string
+	}{
+		{remoteAddr: "192.0.2.1:1234", want: "192.0.2.1"},
+		{remoteAddr: "[::1]:1234", want: "::1"},
+		{remoteAddr: "[2001:db8::1]:443", want: "2001:db8::1"},
+		{remoteAddr: "192.0.2.1", want: "192.0.2.1"},
+		{remoteAddr: "2001:db8::1", want: "2001:db8::1"},
+		{remoteAddr: "", want: ""},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.remoteAddr, func(t *testing.T) {
+			test := NewIdentityProviderTest(t, applyKey)
+			req := IdpAuthnRequest{
+				Now: TimeNow(),
+				IDP: &test.IDP,
+				RequestBuffer: []byte("" +
+					"<AuthnRequest xmlns=\"urn:oasis:names:tc:SAML:2.0:protocol\" " +
+					"  AssertionConsumerServiceURL=\"https://sp.example.com/saml2/acs\" " +
+					"  Destination=\"https://idp.example.com/saml/sso\" " +
+					"  ID=\"id-00020406080a0c0e10121416181a1c1e\" " +
+					"  IssueInstant=\"2015-12-01T01:57:09Z\" ProtocolBinding=\"\" " +
+					"  Version=\"2.0\">" +
+					"  <Issuer xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\" " +
+					"    Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:entity\">https://sp.example.com/saml2/metadata</Issuer>" +
+					"</AuthnRequest>"),
+			}
+			req.HTTPRequest, _ = http.NewRequest("POST", "http://idp.example.com/saml/sso", nil)
+			req.HTTPRequest.RemoteAddr = tc.remoteAddr
+			assert.NilError(t, req.Validate())
+
+			assert.NilError(t, DefaultAssertionMaker{}.MakeAssertion(&req, &Session{
+				ID:     "f00df00df00d",
+				NameID: "alice",
+			}))
+			assert.Check(t, is.Equal(req.Assertion.Subject.SubjectConfirmations[0].SubjectConfirmationData.Address, tc.want))
+			assert.Check(t, is.Equal(req.Assertion.AuthnStatements[0].SubjectLocality.Address, tc.want))
+		})
+	}
+}
+
 func TestIDPMarshalAssertion(t *testing.T) {
 	test := NewIdentityProviderTest(t, applyKey)
 	req := IdpAuthnRequest{
@@ -907,6 +996,76 @@ func TestIDPIDPInitiatedBadServiceProvider(t *testing.T) {
 	r, _ := http.NewRequest("GET", "https://idp.example.com/services/sp/whoami", nil)
 	test.IDP.ServeIDPInitiated(w, r, "https://wrong.url/metadata", "ThisIsTheRelayState")
 	assert.Check(t, is.Equal(http.StatusNotFound, w.Code))
+}
+
+func TestIDPIDPInitiatedResolvesServiceProviderBeforeSession(t *testing.T) {
+	t.Run("unknown service provider", func(t *testing.T) {
+		test := NewIdentityProviderTest(t, applyKey)
+		getSessionCalled := false
+		test.IDP.SessionProvider = &mockSessionProvider{
+			GetSessionFunc: func(w http.ResponseWriter, _ *http.Request, _ *IdpAuthnRequest) *Session {
+				getSessionCalled = true
+				_, _ = fmt.Fprint(w, "login form")
+				return nil
+			},
+		}
+
+		w := httptest.NewRecorder()
+		r, _ := http.NewRequest("GET", "https://idp.example.com/services/sp/whoami", nil)
+		test.IDP.ServeIDPInitiated(w, r, "https://wrong.url/metadata", "ThisIsTheRelayState")
+		assert.Check(t, is.Equal(http.StatusNotFound, w.Code))
+		assert.Check(t, !getSessionCalled, "GetSession must not be called for an unknown service provider")
+	})
+
+	t.Run("service provider without a POST ACS endpoint", func(t *testing.T) {
+		test := NewIdentityProviderTest(t, applyKey)
+		getSessionCalled := false
+		test.IDP.SessionProvider = &mockSessionProvider{
+			GetSessionFunc: func(w http.ResponseWriter, _ *http.Request, _ *IdpAuthnRequest) *Session {
+				getSessionCalled = true
+				_, _ = fmt.Fprint(w, "login form")
+				return nil
+			},
+		}
+		test.IDP.ServiceProviderProvider = &mockServiceProviderProvider{
+			GetServiceProviderFunc: func(*http.Request, string) (*EntityDescriptor, error) {
+				return &EntityDescriptor{
+					EntityID: "https://sp.example.com/saml2/metadata",
+					SPSSODescriptors: []SPSSODescriptor{{AssertionConsumerServices: []IndexedEndpoint{
+						{Binding: HTTPArtifactBinding, Location: "https://sp.example.com/acs"},
+					}}},
+				}, nil
+			},
+		}
+
+		w := httptest.NewRecorder()
+		r, _ := http.NewRequest("GET", "https://idp.example.com/services/sp/whoami", nil)
+		test.IDP.ServeIDPInitiated(w, r, "https://sp.example.com/saml2/metadata", "ThisIsTheRelayState")
+		assert.Check(t, is.Equal(http.StatusInternalServerError, w.Code))
+		assert.Check(t, !getSessionCalled, "GetSession must not be called when there is no usable ACS endpoint")
+	})
+
+	t.Run("session provider sees the service provider", func(t *testing.T) {
+		test := NewIdentityProviderTest(t, applyKey)
+		getSessionCalled := false
+		test.IDP.SessionProvider = &mockSessionProvider{
+			GetSessionFunc: func(_ http.ResponseWriter, _ *http.Request, req *IdpAuthnRequest) *Session {
+				getSessionCalled = true
+				assert.Assert(t, req.ServiceProviderMetadata != nil)
+				assert.Check(t, is.Equal(req.ServiceProviderMetadata.EntityID, test.SP.MetadataURL.String()))
+				assert.Assert(t, req.ACSEndpoint != nil)
+				assert.Check(t, is.Equal(req.ACSEndpoint.Location, test.SP.AcsURL.String()))
+				assert.Check(t, req.SPSSODescriptor != nil)
+				return &Session{ID: "f00df00df00d", UserName: "alice"}
+			},
+		}
+
+		w := httptest.NewRecorder()
+		r, _ := http.NewRequest("GET", "https://idp.example.com/services/sp/whoami", nil)
+		test.IDP.ServeIDPInitiated(w, r, test.SP.MetadataURL.String(), "ThisIsTheRelayState")
+		assert.Check(t, is.Equal(http.StatusOK, w.Code))
+		assert.Check(t, getSessionCalled)
+	})
 }
 
 func TestIDPCanHandleUnencryptedResponse(t *testing.T) {

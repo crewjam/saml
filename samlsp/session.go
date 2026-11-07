@@ -34,7 +34,8 @@ type SessionProvider interface {
 	DeleteSession(w http.ResponseWriter, r *http.Request) error
 
 	// GetSession returns the current Session associated with the request, or
-	// ErrNoSession if there is no valid session.
+	// an error matching ErrNoSession (as determined by errors.Is) if there is
+	// no valid session. Such an error may wrap the underlying cause.
 	GetSession(r *http.Request) (Session, error)
 }
 

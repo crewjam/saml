@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -245,6 +246,31 @@ func TestCovCookieSessionProviderDeleteSession(t *testing.T) {
 	}
 }
 
+func TestCovCookieSessionProviderCreateSessionTooLarge(t *testing.T) {
+	attrs := func(n int) *saml.Assertion {
+		values := make([]saml.AttributeValue, n)
+		for i := range values {
+			values[i] = saml.AttributeValue{Value: strings.Repeat("x", 100)}
+		}
+		return &saml.Assertion{AttributeStatements: []saml.AttributeStatement{{
+			Attributes: []saml.Attribute{{Name: "groups", Values: values}},
+		}}}
+	}
+	p := covCookieSessionProvider(t)
+
+	// a few attributes fit
+	rec := httptest.NewRecorder()
+	assert.Assert(t, p.CreateSession(rec, httptest.NewRequest(http.MethodGet, "/", nil), attrs(5)))
+	assert.Check(t, is.Len(rec.Result().Cookies(), 1))
+
+	// too many would be silently dropped by the browser, so refuse to set it
+	rec = httptest.NewRecorder()
+	err := p.CreateSession(rec, httptest.NewRequest(http.MethodGet, "/", nil), attrs(60))
+	assert.Check(t, errors.Is(err, ErrSessionCookieTooLarge), "got %v", err)
+	assert.Check(t, is.Len(rec.Result().Cookies(), 0))
+	assert.Check(t, is.Len(rec.Header().Values("Set-Cookie"), 0))
+}
+
 func TestCovCookieSessionProviderGetSession(t *testing.T) {
 	p := covCookieSessionProvider(t)
 
@@ -254,7 +280,9 @@ func TestCovCookieSessionProviderGetSession(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(&http.Cookie{Name: "token", Value: "garbage", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	_, err = p.GetSession(req)
-	assert.Check(t, is.Equal(ErrNoSession, err))
+	// the decode failure still means "no session", but its cause is kept
+	assert.Check(t, errors.Is(err, ErrNoSession))
+	assert.Check(t, errors.Is(err, jwt.ErrTokenMalformed), "got %v", err)
 
 	rec := httptest.NewRecorder()
 	assert.Assert(t, p.CreateSession(rec, httptest.NewRequest(http.MethodGet, "/", nil), &saml.Assertion{}))
