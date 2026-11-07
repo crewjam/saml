@@ -58,7 +58,7 @@ func TestValidateAssertionMissingElements(t *testing.T) {
 			Version:      "2.0",
 			IssueInstant: now,
 			Issuer:       Issuer{Value: "https://idp.example.com/"},
-			Subject: &Subject{SubjectConfirmations: []SubjectConfirmation{{
+			Subject: &Subject{NameID: &NameID{Value: "alice"}, SubjectConfirmations: []SubjectConfirmation{{
 				Method: bearerSubjectConfirmationMethod,
 				SubjectConfirmationData: &SubjectConfirmationData{
 					InResponseTo: "id-1", Recipient: "https://sp.example.com/acs", NotOnOrAfter: now.Add(time.Minute),

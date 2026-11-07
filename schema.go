@@ -1238,7 +1238,16 @@ func (a *Assertion) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf §2.4.1
 type Subject struct {
 	XMLName xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:assertion Subject"`
-	// BaseID               *BaseID  ... TODO
+
+	// BaseID is the saml:BaseID element (saml-core §2.2.3) that identifies
+	// the subject in place of NameID, or nil. It is kept as an element
+	// because the content of a BaseID is defined by its xsi:type extension,
+	// which this package does not interpret. It is set either as read, or
+	// by decrypting an EncryptedID that holds a BaseID. The service
+	// provider refuses an assertion whose Subject is a BaseID unless
+	// ServiceProvider.AcceptAssertionBaseID is set.
+	BaseID *etree.Element `xml:"urn:oasis:names:tc:SAML:2.0:assertion BaseID"`
+
 	NameID *NameID `xml:"urn:oasis:names:tc:SAML:2.0:assertion NameID"`
 
 	// EncryptedID is the saml:EncryptedID element (saml-core §2.2.4) that
@@ -1246,7 +1255,8 @@ type Subject struct {
 	//
 	// When the service provider accepts an assertion whose Subject has an
 	// EncryptedID, it decrypts it with its decryption keys and sets NameID
-	// to the NameID it holds, then clears EncryptedID.
+	// to the NameID it holds (or BaseID to the BaseID it holds), then
+	// clears EncryptedID.
 	EncryptedID *etree.Element `xml:"urn:oasis:names:tc:SAML:2.0:assertion EncryptedID"`
 
 	SubjectConfirmations []SubjectConfirmation `xml:"urn:oasis:names:tc:SAML:2.0:assertion SubjectConfirmation"`
@@ -1255,6 +1265,9 @@ type Subject struct {
 // Element returns an etree.Element representing the object in XML form.
 func (a *Subject) Element() *etree.Element {
 	el := etree.NewElement("saml:Subject")
+	if a.BaseID != nil {
+		el.AddChild(a.BaseID.Copy())
+	}
 	if a.NameID != nil {
 		el.AddChild(a.NameID.Element())
 	}
@@ -1271,9 +1284,15 @@ func (a *Subject) Element() *etree.Element {
 func (a *Subject) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias Subject
 	aux := &struct {
+		// BaseID, NameID and EncryptedID are repeated so that they are
+		// written in the order the schema requires.
+		BaseID      *etreeElementXML `xml:"urn:oasis:names:tc:SAML:2.0:assertion BaseID"`
+		NameID      *NameID          `xml:"urn:oasis:names:tc:SAML:2.0:assertion NameID"`
 		EncryptedID *etreeElementXML `xml:"urn:oasis:names:tc:SAML:2.0:assertion EncryptedID"`
 		*Alias
 	}{
+		BaseID:      (*etreeElementXML)(a.BaseID),
+		NameID:      a.NameID,
 		EncryptedID: (*etreeElementXML)(a.EncryptedID),
 		Alias:       (*Alias)(a),
 	}
@@ -1284,6 +1303,7 @@ func (a *Subject) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 func (a *Subject) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias Subject
 	aux := &struct {
+		BaseID      *etreeElementXML `xml:"urn:oasis:names:tc:SAML:2.0:assertion BaseID"`
 		EncryptedID *etreeElementXML `xml:"urn:oasis:names:tc:SAML:2.0:assertion EncryptedID"`
 		*Alias
 	}{
@@ -1293,6 +1313,7 @@ func (a *Subject) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 		return err
 	}
 	a.XMLName = start.Name
+	a.BaseID = (*etree.Element)(aux.BaseID)
 	a.EncryptedID = (*etree.Element)(aux.EncryptedID)
 	return nil
 }
