@@ -1626,6 +1626,40 @@ func unboundedParentContext(el *etree.Element) (etreeutils.NSContext, error) {
 	return ctx.SubContext(parent)
 }
 
+// stripKeyInfoWithoutCertificate removes the KeyInfo from el's Signature
+// when it carries no X509Certificate, so that dsig verifies against the
+// trusted certificates instead, and reports whether it had none.
+func stripKeyInfoWithoutCertificate(el *etree.Element) bool {
+	if el.FindElement("./Signature/KeyInfo/X509Data/X509Certificate") != nil {
+		return false
+	}
+	if sigEl := el.FindElement("./Signature"); sigEl != nil {
+		if keyInfo := sigEl.FindElement("KeyInfo"); keyInfo != nil {
+			sigEl.RemoveChild(keyInfo)
+		}
+	}
+	return true
+}
+
+// validateWithEachCert validates the signature on el against each of certs
+// in turn, with a copy of base that trusts only that certificate, and
+// returns nil as soon as one of them verifies it. Otherwise it returns the
+// error from the last certificate tried.
+func validateWithEachCert(base *dsig.ValidationContext, certs []*x509.Certificate, el *etree.Element) error {
+	var err error
+	for _, cert := range certs {
+		ctx := dsig.NewDefaultValidationContext(&dsig.MemoryX509CertificateStore{
+			Roots: []*x509.Certificate{cert},
+		})
+		ctx.IdAttribute = base.IdAttribute
+		ctx.Clock = base.Clock
+		if _, err = ctx.Validate(el); err == nil {
+			return nil
+		}
+	}
+	return err
+}
+
 // validateSignature returns nil iff the Signature embedded in the element is valid
 func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	sigEl, err := findChild(el, "http://www.w3.org/2000/09/xmldsig#", "Signature")
@@ -1683,13 +1717,7 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	//
 	// The best course of action is to just remove the KeyInfo so that dsig falls back to
 	// verifying against the public key provided in the metadata.
-	if el.FindElement("./Signature/KeyInfo/X509Data/X509Certificate") == nil {
-		if sigEl := el.FindElement("./Signature"); sigEl != nil {
-			if keyInfo := sigEl.FindElement("KeyInfo"); keyInfo != nil {
-				sigEl.RemoveChild(keyInfo)
-			}
-		}
-	}
+	noCertInKeyInfo := stripKeyInfoWithoutCertificate(el)
 
 	tag := el.Tag
 	ctx, err := unboundedParentContext(el)
@@ -1708,6 +1736,22 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 
 	if sp.SignatureVerifier != nil {
 		return sp.SignatureVerifier.VerifySignature(validationContext, el)
+	}
+
+	// Without a certificate in KeyInfo, dsig can only pick the signing
+	// certificate itself when it trusts exactly one ("Missing x509 Element"
+	// otherwise), so an IdP that lists several signing certificates in its
+	// metadata, for example during key rollover, and signs without
+	// X509Certificate would always be rejected. In that case validate
+	// against each trusted certificate on its own. Each attempt is a full
+	// dsig validation of the same element that trusts only that
+	// certificate, so this accepts exactly what one of them would accept
+	// had the IdP named it in KeyInfo.
+	if noCertInKeyInfo && len(certs) > 1 {
+		if err := validateWithEachCert(validationContext, certs, el); err != nil {
+			return fmt.Errorf("cannot validate signature on %s: %v", tag, err)
+		}
+		return nil
 	}
 
 	if _, err := validationContext.Validate(el); err != nil {
