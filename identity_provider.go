@@ -294,6 +294,13 @@ type IdentityProvider struct {
 	// moment the request would be accepted. If nil, LogoutRequests are not
 	// checked for replay.
 	ReplayCache AssertionReplayCache
+
+	// HTTPClient is the client the IdP sends back-channel messages with:
+	// the LogoutRequests it sends over the SOAP binding to the session
+	// participants whose metadata lists a SOAP SingleLogoutService (see
+	// StartLogout and ServeSLO). If nil, a client that gives up after 10
+	// seconds and does not follow redirects is used.
+	HTTPClient *http.Client
 }
 
 // Metadata returns the metadata structure for this identity provider.
@@ -781,6 +788,12 @@ func (req *IdpAuthnRequest) Validate() error {
 	}
 	if req.Request.Version != "2.0" {
 		return classify(fmt.Errorf("expected SAML request version 2.0 got %v", req.Request.Version), ErrUnsupported)
+	}
+	// The Response answers the request by its ID (saml-core §3.2.1: ID is
+	// required, and InResponseTo must match it). Without one the Response
+	// would carry no InResponseTo and look unsolicited.
+	if req.Request.ID == "" {
+		return classify(errors.New("authn request is missing an ID"), ErrMissingElement)
 	}
 
 	// find the service provider

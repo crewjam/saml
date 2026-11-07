@@ -376,9 +376,9 @@ type ServiceProvider struct {
 // the IDs of accepted LogoutRequests in it, under keys prefixed with
 // "LogoutRequest:".
 type AssertionReplayCache interface {
-	// Consume atomically records assertionID as used until expiresAt, the
-	// last moment the ServiceProvider would accept the assertion; after
-	// that the record may be dropped. It returns ErrAssertionReplayed if
+	// Consume atomically records assertionID as used until expiresAt, after
+	// which the ServiceProvider no longer accepts the assertion; then the
+	// record may be dropped. It returns ErrAssertionReplayed if
 	// assertionID is already recorded, and any other error if it cannot
 	// record it. Any error refuses the assertion.
 	Consume(assertionID string, expiresAt time.Time) error
@@ -1225,6 +1225,10 @@ func (sp *ServiceProvider) parseArtifactResponse(artifactResponseEl *etree.Eleme
 			retErr.PrivateErr = err
 			return nil, retErr
 		}
+		if err := checkVersion("ArtifactResponse", artifactResponse.Version); err != nil {
+			retErr.PrivateErr = err
+			return nil, retErr
+		}
 		if artifactResponse.InResponseTo != artifactRequestID {
 			retErr.PrivateErr = classify(fmt.Errorf("`InResponseTo` does not match the artifact request ID (expected %s)", artifactRequestID), ErrRequestIDMismatch)
 			return nil, retErr
@@ -1392,6 +1396,9 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 		var response Response
 		if err := unmarshalElement(responseEl, &response); err != nil {
 			return nil, classify(fmt.Errorf("cannot unmarshal response: %w", err), ErrMalformedMessage)
+		}
+		if err := checkVersion("response", response.Version); err != nil {
+			return nil, err
 		}
 
 		// If the response is *not* signed, the Destination may be omitted.
@@ -1648,7 +1655,24 @@ func (sp *ServiceProvider) decryptEncryptedID(nameID *NameID, encryptedID *etree
 // the requirements to accept. If validation fails, it returns an error describing
 // the failure. (The digital signature on the assertion is not checked -- this
 // should be done before calling this function).
+// samlVersion is the only SAML version this package reads and writes.
+const samlVersion = "2.0"
+
+// checkVersion refuses a message or assertion whose Version is not 2.0
+// (saml-core §4.1.2 and §4.1.3.1: a relying party MUST NOT process an
+// assertion, and a responder MUST reject a request, with an unsupported
+// major version). what names the element in the error.
+func checkVersion(what, version string) error {
+	if version != samlVersion {
+		return classify(fmt.Errorf("%s Version %q is not %s", what, version, samlVersion), ErrUnsupported)
+	}
+	return nil
+}
+
 func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleRequestIDs []string, now time.Time) error {
+	if err := checkVersion("assertion", assertion.Version); err != nil {
+		return err
+	}
 	if issueDeadline(assertion).Before(now) {
 		return classify(fmt.Errorf("expired on %s", issueDeadline(assertion)), ErrExpired)
 	}
@@ -1678,7 +1702,10 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 		if subjectConfirmation.SubjectConfirmationData.NotBefore.Add(-MaxClockSkew).After(now) {
 			return classify(fmt.Errorf("assertion SubjectConfirmationData is not yet valid"), ErrNotYetValid)
 		}
-		if skewedDeadline(subjectConfirmation.SubjectConfirmationData.NotOnOrAfter).Before(now) {
+		// A bearer SubjectConfirmationData MUST carry NotOnOrAfter
+		// (saml-profiles §4.1.4.2): an omitted one is the zero time, which
+		// has always passed.
+		if pastDeadline(subjectConfirmation.SubjectConfirmationData.NotOnOrAfter, now) {
 			return classify(fmt.Errorf("assertion SubjectConfirmationData is expired"), ErrExpired)
 		}
 	}
@@ -1688,7 +1715,10 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if assertion.Conditions.NotBefore.Add(-MaxClockSkew).After(now) {
 		return classify(fmt.Errorf("assertion Conditions is not yet valid"), ErrNotYetValid)
 	}
-	if skewedDeadline(assertion.Conditions.NotOnOrAfter).Before(now) {
+	// An omitted Conditions NotOnOrAfter means no expiry (saml-core
+	// §2.5.1.2); the assertion is still bounded by MaxIssueDelay and the
+	// SubjectConfirmationData NotOnOrAfter.
+	if !assertion.Conditions.NotOnOrAfter.IsZero() && pastDeadline(assertion.Conditions.NotOnOrAfter, now) {
 		return classify(fmt.Errorf("assertion Conditions is expired"), ErrExpired)
 	}
 
@@ -1774,17 +1804,28 @@ func issueDeadline(assertion *Assertion) time.Time {
 	return assertion.IssueInstant.Add(MaxIssueDelay)
 }
 
-// skewedDeadline is the last moment validateAssertion accepts a NotOnOrAfter
-// time, allowing for clock skew.
+// skewedDeadline is a NotOnOrAfter time moved later by the allowed clock
+// skew: the moment from which validateAssertion refuses it.
 func skewedDeadline(notOnOrAfter time.Time) time.Time {
 	return notOnOrAfter.Add(MaxClockSkew)
 }
 
-// acceptableUntil returns the last moment validateAssertion accepts
-// assertion: the earliest of the deadlines its expiry checks apply.
+// pastDeadline reports whether now is at or after notOnOrAfter, allowing for
+// clock skew. NotOnOrAfter is exclusive: it is "the time instant at which the
+// validity interval has ended" (saml-core §2.5.1.2), so a message is no
+// longer valid at that instant itself.
+func pastDeadline(notOnOrAfter, now time.Time) bool {
+	return !now.Before(skewedDeadline(notOnOrAfter))
+}
+
+// acceptableUntil returns the moment after which validateAssertion refuses
+// assertion: the earliest of the deadlines its expiry checks apply. A
+// NotOnOrAfter deadline is exclusive (the assertion is already refused at
+// it); the MaxIssueDelay deadline is inclusive. An omitted Conditions
+// NotOnOrAfter sets no deadline.
 func acceptableUntil(assertion *Assertion) time.Time {
 	deadline := issueDeadline(assertion)
-	if assertion.Conditions != nil {
+	if assertion.Conditions != nil && !assertion.Conditions.NotOnOrAfter.IsZero() {
 		deadline = earliest(deadline, skewedDeadline(assertion.Conditions.NotOnOrAfter))
 	}
 	if assertion.Subject != nil {
@@ -1825,8 +1866,8 @@ func (sp *ServiceProvider) consumeAssertion(assertion *Assertion) error {
 // being xs:ID values, cannot contain a colon.
 const logoutRequestReplayKeyPrefix = "LogoutRequest:"
 
-// logoutRequestAcceptableUntil returns the last moment a LogoutRequest is
-// accepted: IssueInstant plus MaxIssueDelay or, if it is earlier, the
+// logoutRequestAcceptableUntil returns the moment after which a LogoutRequest
+// is refused: IssueInstant plus MaxIssueDelay or, if it is earlier, the
 // NotOnOrAfter time allowing for clock skew.
 func logoutRequestAcceptableUntil(req *LogoutRequest) time.Time {
 	deadline := req.IssueInstant.Add(MaxIssueDelay)
@@ -2815,6 +2856,9 @@ func (sp *ServiceProvider) validateLogoutResponseRedirectQuery(rawQuery string) 
 
 // validateLogoutResponse validates the LogoutResponse fields. Returns a nil error if the LogoutResponse is valid.
 func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
+	if err := checkVersion("LogoutResponse", resp.Version); err != nil {
+		return err
+	}
 	if resp.Destination != sp.SloURL.String() {
 		return classify(fmt.Errorf("`Destination` does not match SloURL (expected %q)", sp.SloURL.String()), ErrDestinationMismatch)
 	}
@@ -2962,6 +3006,14 @@ func (sp *ServiceProvider) unmarshalAndValidateLogoutRequest(root *etree.Element
 
 // validateLogoutRequest validates the LogoutRequest fields. Returns a nil error if the LogoutRequest is valid.
 func (sp *ServiceProvider) validateLogoutRequest(req *LogoutRequest) error {
+	if err := checkVersion("LogoutRequest", req.Version); err != nil {
+		return err
+	}
+	// The LogoutResponse answers the request by its ID (saml-core §3.2.1:
+	// ID is required, and InResponseTo must match it).
+	if req.ID == "" {
+		return classify(errors.New("LogoutRequest has no ID"), ErrMissingElement)
+	}
 	if req.Destination != sp.SloURL.String() {
 		return classify(fmt.Errorf("`Destination` does not match SloURL (expected %q)", sp.SloURL.String()), ErrDestinationMismatch)
 	}

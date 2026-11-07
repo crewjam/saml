@@ -119,27 +119,30 @@ func TestConsumeAssertionRequiresID(t *testing.T) {
 	assert.Check(t, is.Len(cache, 0))
 }
 
-// The cache is told the last moment the assertion is acceptable: the earliest
-// of the issue deadline and each NotOnOrAfter, with the clock skew the
-// expiry checks allow. validateAssertion accepts the assertion at that moment
-// and refuses it just after.
+// The cache is told the moment after which the assertion is no longer
+// acceptable: the earliest of the issue deadline and each NotOnOrAfter, with
+// the clock skew the expiry checks allow. The issue deadline is inclusive:
+// validateAssertion accepts the assertion at it and refuses it just after.
+// NotOnOrAfter is exclusive (saml-core §2.5.1.2): the assertion is accepted
+// just before it and refused at it.
 func TestAcceptableUntil(t *testing.T) {
 	now := TimeNow()
 	cases := []struct {
-		name     string
-		edit     func(a *Assertion)
-		deadline time.Time
+		name      string
+		edit      func(a *Assertion)
+		deadline  time.Time
+		exclusive bool
 	}{
 		{"issue deadline first", func(a *Assertion) {
 			a.Conditions.NotOnOrAfter = now.Add(time.Hour)
 			a.Subject.SubjectConfirmations[0].SubjectConfirmationData.NotOnOrAfter = now.Add(time.Hour)
-		}, now.Add(MaxIssueDelay)},
+		}, now.Add(MaxIssueDelay), false},
 		{"conditions first", func(a *Assertion) {
 			a.Conditions.NotOnOrAfter = now.Add(-150 * time.Second)
-		}, now.Add(-150*time.Second + MaxClockSkew)},
+		}, now.Add(-150*time.Second + MaxClockSkew), true},
 		{"confirmation first", func(a *Assertion) {
 			a.Subject.SubjectConfirmations[0].SubjectConfirmationData.NotOnOrAfter = now.Add(-150 * time.Second)
-		}, now.Add(-150*time.Second + MaxClockSkew)},
+		}, now.Add(-150*time.Second + MaxClockSkew), true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -149,8 +152,12 @@ func TestAcceptableUntil(t *testing.T) {
 			deadline := acceptableUntil(a)
 			assert.Check(t, is.DeepEqual(c.deadline, deadline))
 
-			assert.Check(t, sp.validateAssertion(a, []string{"id-1"}, deadline))
-			assert.Check(t, sp.validateAssertion(a, []string{"id-1"}, deadline.Add(time.Nanosecond)) != nil)
+			lastAccepted, firstRefused := deadline, deadline.Add(time.Nanosecond)
+			if c.exclusive {
+				lastAccepted, firstRefused = deadline.Add(-time.Nanosecond), deadline
+			}
+			assert.Check(t, sp.validateAssertion(a, []string{"id-1"}, lastAccepted))
+			assert.Check(t, sp.validateAssertion(a, []string{"id-1"}, firstRefused) != nil)
 		})
 	}
 }

@@ -154,3 +154,19 @@ func TestIDPLogoutNameIDEncrypter(t *testing.T) {
 	assert.Check(t, is.Equal(xmlenc.AES128CBC.Algorithm(), blockCipherOf(t, reqs[0].EncryptedID)))
 	assert.Check(t, is.Equal("alice@example.com", reqs[0].NameID.Value))
 }
+
+// The NameID of a LogoutRequest sent over SOAP is encrypted too.
+func TestIDPInitiatedLogoutOverSOAPEncryptedNameID(t *testing.T) {
+	pt := newPropagationTest(t)
+	pt.idp.EncryptLogoutNameID = true
+	soapSP := pt.addSOAPParticipant(t)
+	pt.login(t, soapSP.sp)
+
+	w := pt.startLogout("")
+	assert.Check(t, is.Equal(http.StatusOK, w.Code))
+	reqs := soapSP.requests()
+	assert.Assert(t, is.Len(reqs, 1))
+	assert.Check(t, is.Equal("alice@example.com", reqs[0].NameID.Value))
+	assert.Check(t, is.Equal(xmlenc.AES256GCM.Algorithm(), blockCipherOf(t, reqs[0].EncryptedID)))
+	soapSP.checkNoErrors(t)
+}

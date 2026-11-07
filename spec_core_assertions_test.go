@@ -316,6 +316,67 @@ func TestSpecCore_2_5_1_2_UnspecifiedNotBeforeIsOpen(t *testing.T) {
 	assert.Check(t, err)
 }
 
+// saml-core §2.5.1.2 (lines 891-893): "If the NotOnOrAfter attribute is
+// unspecified (and if all other conditions that are supplied evaluate to
+// Valid), the assertion is Valid with respect to conditions from the time
+// instant specified by the NotBefore attribute with no expiry." The
+// assertion stays bounded by MaxIssueDelay and by the bearer
+// SubjectConfirmationData NotOnOrAfter, and the replay cache is told the
+// earlier of those.
+func TestSpecCore_2_5_1_2_UnspecifiedNotOnOrAfterHasNoExpiry(t *testing.T) {
+	now := TimeNow()
+	sp := requiredConditionsSP()
+
+	a := validAssertion(now)
+	a.Conditions.NotOnOrAfter = time.Time{}
+	assert.Check(t, sp.validateAssertion(a, []string{"id-1"}, now))
+	// Here the issue deadline is the earliest one left.
+	assert.Check(t, is.DeepEqual(now.Add(MaxIssueDelay), acceptableUntil(a)))
+
+	// The SubjectConfirmationData NotOnOrAfter still applies.
+	a.Subject.SubjectConfirmations[0].SubjectConfirmationData.NotOnOrAfter = now.Add(-MaxClockSkew - time.Minute)
+	assert.Check(t, errors.Is(sp.validateAssertion(a, []string{"id-1"}, now), ErrExpired))
+
+	// Through the parser: the attribute is simply absent.
+	e := spcovSetup(t)
+	buf := specCoreSignedResponse(t, e, e.assertion(), func(el *etree.Element) {
+		el.FindElement("./Conditions").RemoveAttr("NotOnOrAfter")
+	})
+	_, err := e.sp.ParseXMLResponse(buf, []string{spcovRequestID}, e.sp.AcsURL)
+	assert.Check(t, err)
+}
+
+// saml-core §2.5.1.2 (lines 886-887): NotOnOrAfter "specifies the time
+// instant at which the validity interval has ended", and §2.4.1.2 (lines
+// 722-723): "A time instant at which the subject can no longer be
+// confirmed." The instant itself is outside the interval, so with no clock
+// skew an assertion is refused exactly at NotOnOrAfter and accepted just
+// before it.
+func TestSpecCore_2_5_1_2_NotOnOrAfterIsExclusive(t *testing.T) {
+	oldSkew := MaxClockSkew
+	MaxClockSkew = 0
+	t.Cleanup(func() { MaxClockSkew = oldSkew })
+
+	now := TimeNow()
+	sp := requiredConditionsSP()
+	for name, edit := range map[string]func(a *Assertion, at time.Time){
+		"Conditions": func(a *Assertion, at time.Time) { a.Conditions.NotOnOrAfter = at },
+		"SubjectConfirmationData": func(a *Assertion, at time.Time) {
+			a.Subject.SubjectConfirmations[0].SubjectConfirmationData.NotOnOrAfter = at
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := validAssertion(now)
+			edit(a, now)
+			assert.Check(t, errors.Is(sp.validateAssertion(a, []string{"id-1"}, now), ErrExpired))
+
+			a = validAssertion(now)
+			edit(a, now.Add(time.Nanosecond))
+			assert.Check(t, sp.validateAssertion(a, []string{"id-1"}, now))
+		})
+	}
+}
+
 // saml-core §2.5.1.2 (lines 886-887) and §2.5.1.1 rule 2 (lines 870-871,
 // 879): NotBefore is when "the validity interval begins", NotOnOrAfter when
 // it "has ended"; an assertion outside the interval is Invalid and "MUST be
@@ -420,6 +481,90 @@ func TestSpecCore_2_7_3_1_1_EmptyValueSerializedAsEmptyElement(t *testing.T) {
 	el := (&AttributeValue{Type: "xs:string", Value: ""}).Element()
 	assert.Check(t, is.Len(el.Child, 0))
 	assert.Check(t, is.Equal("", el.Text()))
+}
+
+// saml-core §4.1.2 (lines 2774-2775): "A SAML relying party MUST NOT process
+// any assertion with a major assertion version number not supported by the
+// relying party." §4.1.3.3 (lines 2824-2830) ties the response version to
+// the assertion version, and §3.2.2 makes Version required. The SP refuses
+// an assertion or Response whose Version is not 2.0, or that has none.
+func TestSpecCore_4_1_2_AssertionAndResponseVersion(t *testing.T) {
+	e := spcovSetup(t)
+	parse := func(t *testing.T, buf []byte) error {
+		t.Helper()
+		_, err := e.sp.ParseXMLResponse(buf, []string{spcovRequestID}, e.sp.AcsURL)
+		return err
+	}
+	for _, version := range []string{"3.0", "1.1", ""} {
+		t.Run("assertion Version "+version, func(t *testing.T) {
+			buf := specCoreSignedResponse(t, e, e.assertion(), func(el *etree.Element) {
+				el.RemoveAttr("Version")
+				if version != "" {
+					el.CreateAttr("Version", version)
+				}
+			})
+			err := parse(t, buf)
+			assert.Check(t, errors.Is(err, ErrUnsupported), "%v", err)
+			assert.Check(t, is.ErrorContains(spcovPrivateErr(t, err), "assertion Version"))
+		})
+		t.Run("response Version "+version, func(t *testing.T) {
+			r := e.response()
+			r.Assertion = e.assertion()
+			el := r.Element()
+			el.RemoveAttr("Version")
+			if version != "" {
+				el.CreateAttr("Version", version)
+			}
+			err := parse(t, spcovSerialize(t, e.idpSign(t, el)))
+			assert.Check(t, errors.Is(err, ErrUnsupported), "%v", err)
+			assert.Check(t, is.ErrorContains(spcovPrivateErr(t, err), "response Version"))
+		})
+	}
+
+	t.Run("ArtifactResponse Version", func(t *testing.T) {
+		const artifactReqID = "id-artifact-request"
+		el := e.artifactResponseEl(t, artifactReqID, false, nil)
+		el.CreateAttr("Version", "3.0")
+		_, err := e.sp.ParseXMLArtifactResponse(spcovSerialize(t, spcovSOAPEnvelope(e.idpSign(t, el))),
+			[]string{spcovRequestID}, artifactReqID, e.sp.AcsURL)
+		assert.Check(t, errors.Is(err, ErrUnsupported), "%v", err)
+	})
+
+	t.Run("2.0 accepted", func(t *testing.T) {
+		assert.Check(t, parse(t, specCoreSignedResponse(t, e, e.assertion(), nil)))
+	})
+}
+
+// saml-core §4.1.3.1 (line 2802): "A SAML responder MUST reject any request
+// with a major request version number not supported by the responder", and
+// §3.2.1 (lines 1467-1470): ID is required and the response's InResponseTo
+// must match it. The SP refuses an IdP LogoutRequest with another Version or
+// no ID, and a LogoutResponse with another Version.
+func TestSpecCore_4_1_3_1_LogoutMessageVersionAndID(t *testing.T) {
+	e := spcovSetup(t)
+	request := func() *LogoutRequest {
+		return &LogoutRequest{
+			ID: "id-logout-request", Version: "2.0", IssueInstant: spcovNow,
+			Destination: e.sp.SloURL.String(),
+			Issuer:      &Issuer{Value: spcovIDPEntityID}, NameID: &NameID{Value: "alice@example.com"},
+		}
+	}
+	assert.Check(t, e.sp.validateLogoutRequest(request()))
+
+	for _, version := range []string{"3.0", "1.1", ""} {
+		r := request()
+		r.Version = version
+		assert.Check(t, errors.Is(e.sp.validateLogoutRequest(r), ErrUnsupported), "LogoutRequest Version %q", version)
+
+		resp := e.logoutResponse()
+		resp.Version = version
+		assert.Check(t, errors.Is(e.sp.validateLogoutResponse(resp), ErrUnsupported), "LogoutResponse Version %q", version)
+	}
+
+	r := request()
+	r.ID = ""
+	err := e.sp.validateLogoutRequest(r)
+	assert.Check(t, errors.Is(err, ErrMissingElement), "%v", err)
 }
 
 // saml-core §4.1.3.1 (lines 2800-2803): "A SAML requester MUST NOT issue a

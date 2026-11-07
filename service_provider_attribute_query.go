@@ -1,20 +1,16 @@
 package saml
 
 import (
-	"bytes"
 	"context"
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
 	"github.com/beevik/etree"
 
 	"github.com/crewjam/saml/internal/signerutil"
-	"github.com/crewjam/saml/internal/xmlroundtrip"
-	"github.com/crewjam/saml/logger"
 )
 
 // This file implements the requester side of the SAML Assertion Query and
@@ -190,47 +186,15 @@ func (sp *ServiceProvider) QueryAttributes(ctx context.Context, nameID NameID, a
 	return sp.ParseXMLAttributeQueryResponse(responseBody, query)
 }
 
-// postSOAP sends envelope to location with the SAML SOAP binding and returns
-// the body of the response.
+// postSOAP sends envelope to location with the SAML SOAP binding, using
+// HTTPClient (or http.DefaultClient), and returns the body of the response,
+// which may be at most MaxAttributeQueryResponseSize bytes.
 func (sp *ServiceProvider) postSOAP(ctx context.Context, location string, envelope *etree.Element) ([]byte, error) {
-	requestBody, err := elementToBytes(envelope)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, location, bytes.NewReader(requestBody))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "text/xml; charset=utf-8")
-	req.Header.Set("SOAPAction", soapActionSAML)
-
 	httpClient := sp.HTTPClient
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			logger.DefaultLogger.Printf("Error while closing SOAP response body: %v", err)
-		}
-	}()
-	// A SOAP fault is sent with a 500 status (SOAP 1.1 §6.2); it is not
-	// parsed, since it carries no SAML response.
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP status %d (%s)", resp.StatusCode, resp.Status)
-	}
-	limit := MaxAttributeQueryResponseSize
-	buf, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(buf)) > limit {
-		return nil, fmt.Errorf("response body is larger than %d bytes", limit)
-	}
-	return buf, nil
+	return postSOAPMessage(ctx, httpClient, location, envelope, MaxAttributeQueryResponseSize)
 }
 
 // ParseXMLAttributeQueryResponse validates soapResponseXML, the SOAP
@@ -349,34 +313,9 @@ func (sp *ServiceProvider) parseAttributeQueryResponse(soapResponseXML []byte, q
 }
 
 // soapResponseElement parses soapResponseXML as a SOAP 1.1 envelope and
-// returns the samlp:Response that must be the only element of its Body. Each
-// element is matched by its namespace, not just its local name.
+// returns the samlp:Response that must be the only element of its Body.
 func soapResponseElement(soapResponseXML []byte) (*etree.Element, error) {
-	if err := xmlroundtrip.Validate(soapResponseXML); err != nil {
-		return nil, fmt.Errorf("invalid xml: %s", err)
-	}
-	doc := etree.NewDocument()
-	if err := doc.ReadFromBytes(soapResponseXML); err != nil {
-		return nil, fmt.Errorf("cannot parse response: %s", err)
-	}
-	root := doc.Root()
-	if root == nil {
-		return nil, errors.New("invalid xml: no root")
-	}
-	if root.NamespaceURI() != soapEnvelopeNamespace || root.Tag != "Envelope" {
-		return nil, errors.New("expected a SOAP Envelope")
-	}
-	bodyEl, err := findOneChild(root, soapEnvelopeNamespace, "Body")
-	if err != nil {
-		return nil, err
-	}
-	if fault, err := findChild(bodyEl, soapEnvelopeNamespace, "Fault"); err != nil || fault != nil {
-		return nil, errors.New("the SOAP Body holds a Fault")
-	}
-	if n := len(bodyEl.ChildElements()); n != 1 {
-		return nil, fmt.Errorf("expected exactly one element in the SOAP Body, found %d", n)
-	}
-	return findOneChild(bodyEl, "urn:oasis:names:tc:SAML:2.0:protocol", "Response")
+	return soapBodyElement(soapResponseXML, "Response")
 }
 
 // attributeAuthoritySigningCerts returns the IdP certificates that may sign
@@ -416,6 +355,9 @@ func (sp *ServiceProvider) attributeQuerySignature(el *etree.Element) (*etree.El
 // validateAttributeQueryResponse checks the Response to query, apart from
 // its signature and assertions.
 func (sp *ServiceProvider) validateAttributeQueryResponse(response *Response, query *AttributeQuery, signed bool, now time.Time) error {
+	if err := checkVersion("response", response.Version); err != nil {
+		return err
+	}
 	if response.InResponseTo != query.ID {
 		return fmt.Errorf("`InResponseTo` %q does not match the attribute query ID %q", response.InResponseTo, query.ID)
 	}
@@ -529,6 +471,9 @@ func (sp *ServiceProvider) attributeQueryAssertion(assertionEl *etree.Element, q
 // as an answer to query. Unlike validateAssertion, it does not require a
 // bearer SubjectConfirmation; see ParseXMLAttributeQueryResponse.
 func (sp *ServiceProvider) validateAttributeQueryAssertion(assertion *Assertion, query *AttributeQuery, now time.Time) error {
+	if err := checkVersion("assertion", assertion.Version); err != nil {
+		return err
+	}
 	if issueDeadline(assertion).Before(now) {
 		return fmt.Errorf("expired on %s", issueDeadline(assertion))
 	}
@@ -551,7 +496,7 @@ func (sp *ServiceProvider) validateAttributeQueryAssertion(assertion *Assertion,
 	if assertion.Conditions.NotBefore.Add(-MaxClockSkew).After(now) {
 		return errors.New("assertion Conditions is not yet valid")
 	}
-	if skewedDeadline(assertion.Conditions.NotOnOrAfter).Before(now) {
+	if !assertion.Conditions.NotOnOrAfter.IsZero() && pastDeadline(assertion.Conditions.NotOnOrAfter, now) {
 		return errors.New("assertion Conditions is expired")
 	}
 	return sp.validateAudienceRestriction(assertion)
@@ -571,7 +516,7 @@ func validateQuerySubjectConfirmations(subject *Subject, queryID string, now tim
 		if data.NotBefore.Add(-MaxClockSkew).After(now) {
 			return errors.New("assertion SubjectConfirmationData is not yet valid")
 		}
-		if !data.NotOnOrAfter.IsZero() && skewedDeadline(data.NotOnOrAfter).Before(now) {
+		if !data.NotOnOrAfter.IsZero() && pastDeadline(data.NotOnOrAfter, now) {
 			return errors.New("assertion SubjectConfirmationData is expired")
 		}
 	}
