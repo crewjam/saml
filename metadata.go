@@ -283,6 +283,10 @@ type Extensions struct {
 	SigningMethods []SigningMethod `xml:"urn:oasis:names:tc:SAML:metadata:algsupport SigningMethod"`
 	DigestMethods  []DigestMethod  `xml:"urn:oasis:names:tc:SAML:metadata:algsupport DigestMethod"`
 
+	// ShibbolethScopes are the shibmd:Scope elements an identity provider
+	// publishes in its IDPSSODescriptor or AttributeAuthorityDescriptor.
+	ShibbolethScopes []ShibbolethScope `xml:"urn:mace:shibboleth:metadata:1.0 Scope"`
+
 	// Other holds the extension elements that have no field of their own.
 	Other []ExtensionElement `xml:",any"`
 }
@@ -306,6 +310,23 @@ type SigningMethod struct {
 type DigestMethod struct {
 	XMLName   xml.Name `xml:"urn:oasis:names:tc:SAML:metadata:algsupport DigestMethod"`
 	Algorithm string   `xml:"Algorithm,attr"`
+}
+
+// ShibbolethMetadataNamespace is the namespace of the Shibboleth metadata
+// extensions, such as shibmd:Scope.
+const ShibbolethMetadataNamespace = "urn:mace:shibboleth:metadata:1.0"
+
+// ShibbolethScope represents the shibmd:Scope metadata extension element. An
+// identity provider uses it to list the security domains (scopes) it is
+// authoritative for, such as the "example.com" in a scoped attribute value
+// like "staff@example.com". When Regexp is true, Value is a regular
+// expression rather than a literal scope.
+//
+// See https://shibboleth.atlassian.net/wiki/spaces/SC/pages/1912406916/ShibMetaExt
+type ShibbolethScope struct {
+	XMLName xml.Name `xml:"urn:mace:shibboleth:metadata:1.0 Scope"`
+	Regexp  bool     `xml:"regexp,attr"`
+	Value   string   `xml:",chardata"`
 }
 
 // ExtensionElement is a generic XML element, used for extension elements
