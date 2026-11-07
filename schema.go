@@ -150,7 +150,42 @@ type LogoutRequest struct {
 	NameID       *NameID    `xml:"urn:oasis:names:tc:SAML:2.0:assertion NameID"`
 	Signature    *etree.Element
 
-	SessionIndex *SessionIndex `xml:"SessionIndex"`
+	// EncryptedID is the saml:EncryptedID element that identifies the
+	// principal instead of NameID (saml-core-2.0-os §2.2.4 and §3.7.1), or
+	// nil. IdpLogoutRequest.Validate and ServiceProvider.ValidateLogoutRequest
+	// decrypt it and set NameID to the result.
+	EncryptedID *etree.Element `xml:"urn:oasis:names:tc:SAML:2.0:assertion EncryptedID"`
+
+	// A LogoutRequest carries zero or more SessionIndex elements
+	// (saml-core-2.0-os §3.7.1). SessionIndex holds the first one, and
+	// AdditionalSessionIndexes holds the rest, in document order. Use
+	// AllSessionIndexes to read all of them.
+	SessionIndex             *SessionIndex  `xml:"SessionIndex"`
+	AdditionalSessionIndexes []SessionIndex `xml:"-"`
+}
+
+// AllSessionIndexes returns every SessionIndex of the request: SessionIndex,
+// if set, followed by AdditionalSessionIndexes.
+func (r *LogoutRequest) AllSessionIndexes() []SessionIndex {
+	rv := make([]SessionIndex, 0, 1+len(r.AdditionalSessionIndexes))
+	if r.SessionIndex != nil {
+		rv = append(rv, *r.SessionIndex)
+	}
+	return append(rv, r.AdditionalSessionIndexes...)
+}
+
+// setSessionIndexes sets SessionIndex to the first of indexes and
+// AdditionalSessionIndexes to the rest.
+func (r *LogoutRequest) setSessionIndexes(indexes []SessionIndex) {
+	r.SessionIndex = nil
+	r.AdditionalSessionIndexes = nil
+	if len(indexes) > 0 {
+		first := indexes[0]
+		r.SessionIndex = &first
+	}
+	if len(indexes) > 1 {
+		r.AdditionalSessionIndexes = append([]SessionIndex(nil), indexes[1:]...)
+	}
 }
 
 // Element returns an etree.Element representing the object in XML form.
@@ -176,8 +211,11 @@ func (r *LogoutRequest) Element() *etree.Element {
 	if r.NameID != nil {
 		el.AddChild(r.NameID.Element())
 	}
-	if r.SessionIndex != nil {
-		el.AddChild(r.SessionIndex.Element())
+	if r.EncryptedID != nil {
+		el.AddChild(r.EncryptedID)
+	}
+	for _, sessionIndex := range r.AllSessionIndexes() {
+		el.AddChild(sessionIndex.Element())
 	}
 	return el
 }
@@ -192,13 +230,21 @@ func (r *LogoutRequest) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 		// the schema requires.
 		Issuer    *Issuer          `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
 		Signature *etreeElementXML `xml:"Signature"`
+		// NameID and EncryptedID are repeated so that they are written
+		// before the SessionIndex elements.
+		NameID         *NameID          `xml:"urn:oasis:names:tc:SAML:2.0:assertion NameID"`
+		EncryptedID    *etreeElementXML `xml:"urn:oasis:names:tc:SAML:2.0:assertion EncryptedID"`
+		SessionIndexes []SessionIndex   `xml:"SessionIndex"`
 		*Alias
 	}{
-		IssueInstant: RelaxedTime(r.IssueInstant),
-		NotOnOrAfter: (*RelaxedTime)(r.NotOnOrAfter),
-		Issuer:       r.Issuer,
-		Signature:    (*etreeElementXML)(r.Signature),
-		Alias:        (*Alias)(r),
+		IssueInstant:   RelaxedTime(r.IssueInstant),
+		NotOnOrAfter:   (*RelaxedTime)(r.NotOnOrAfter),
+		Issuer:         r.Issuer,
+		Signature:      (*etreeElementXML)(r.Signature),
+		NameID:         r.NameID,
+		EncryptedID:    (*etreeElementXML)(r.EncryptedID),
+		SessionIndexes: r.AllSessionIndexes(),
+		Alias:          (*Alias)(r),
 	}
 	return e.Encode(aux)
 }
@@ -207,9 +253,11 @@ func (r *LogoutRequest) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 func (r *LogoutRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias LogoutRequest
 	aux := &struct {
-		IssueInstant RelaxedTime      `xml:",attr"`
-		NotOnOrAfter *RelaxedTime     `xml:",attr"`
-		Signature    *etreeElementXML `xml:"Signature"`
+		IssueInstant   RelaxedTime      `xml:",attr"`
+		NotOnOrAfter   *RelaxedTime     `xml:",attr"`
+		Signature      *etreeElementXML `xml:"Signature"`
+		EncryptedID    *etreeElementXML `xml:"urn:oasis:names:tc:SAML:2.0:assertion EncryptedID"`
+		SessionIndexes []SessionIndex   `xml:"SessionIndex"`
 		*Alias
 	}{
 		Alias: (*Alias)(r),
@@ -218,8 +266,10 @@ func (r *LogoutRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) err
 		return err
 	}
 	r.Signature = (*etree.Element)(aux.Signature)
+	r.EncryptedID = (*etree.Element)(aux.EncryptedID)
 	r.IssueInstant = time.Time(aux.IssueInstant)
 	r.NotOnOrAfter = (*time.Time)(aux.NotOnOrAfter)
+	r.setSessionIndexes(aux.SessionIndexes)
 	return nil
 }
 

@@ -1,12 +1,12 @@
 package samlidp
 
 import (
-	"bytes"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 
-	xrv "github.com/mattermost/xml-roundtrip-validator"
+	"github.com/crewjam/saml/internal/xmlroundtrip"
 
 	"github.com/crewjam/saml"
 )
@@ -19,14 +19,26 @@ func randomBytes(n int) []byte {
 	return rv
 }
 
+// MaxServiceMetadataSize is the size in bytes of the largest service
+// provider metadata document the service endpoints read. A larger request
+// body is refused rather than read into memory in full.
+var MaxServiceMetadataSize int64 = 10 << 20
+
+// getSPMetadata reads service provider metadata from r: an EntityDescriptor,
+// or an EntitiesDescriptor holding exactly one entity with an
+// SPSSODescriptor. With several, it cannot tell which one is meant.
 func getSPMetadata(r io.Reader) (spMetadata *saml.EntityDescriptor, err error) {
+	limit := MaxServiceMetadataSize
 	var data []byte
-	if data, err = io.ReadAll(r); err != nil {
+	if data, err = io.ReadAll(io.LimitReader(r, limit+1)); err != nil {
 		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("metadata is larger than %d bytes (MaxServiceMetadataSize)", limit)
 	}
 
 	spMetadata = &saml.EntityDescriptor{}
-	if err := xrv.Validate(bytes.NewBuffer(data)); err != nil {
+	if err := xmlroundtrip.Validate(data); err != nil {
 		return nil, err
 	}
 
@@ -37,18 +49,34 @@ func getSPMetadata(r io.Reader) (spMetadata *saml.EntityDescriptor, err error) {
 				return nil, err
 			}
 
-			for _, e := range entities.EntityDescriptors {
-				if len(e.SPSSODescriptors) > 0 {
-					return &e, nil
-				}
+			sps := spEntities(entities)
+			switch len(sps) {
+			case 0:
+				return nil, errors.New("metadata contained no service provider metadata")
+			case 1:
+				return sps[0], nil
+			default:
+				return nil, fmt.Errorf("metadata holds %d entities with an SPSSODescriptor; register them one at a time", len(sps))
 			}
-
-			// there were no SPSSODescriptors in the response
-			return nil, errors.New("metadata contained no service provider metadata")
 		}
 
 		return nil, err
 	}
 
 	return spMetadata, nil
+}
+
+// spEntities returns the entities with an SPSSODescriptor in entities and
+// in any EntitiesDescriptor nested in it.
+func spEntities(entities *saml.EntitiesDescriptor) []*saml.EntityDescriptor {
+	var rv []*saml.EntityDescriptor
+	for i := range entities.EntityDescriptors {
+		if len(entities.EntityDescriptors[i].SPSSODescriptors) > 0 {
+			rv = append(rv, &entities.EntityDescriptors[i])
+		}
+	}
+	for i := range entities.EntitiesDescriptors {
+		rv = append(rv, spEntities(&entities.EntitiesDescriptors[i])...)
+	}
+	return rv
 }

@@ -99,6 +99,13 @@ func TestSPCanSetAuthenticationNameIDFormat(t *testing.T) {
 	assert.Check(t, err)
 	assert.Check(t, is.Equal("", *req.NameIDPolicy.Format))
 
+	// "unspecified" sent explicitly when opted in
+	s.SendUnspecifiedNameIDFormat = true
+	req, err = s.MakeAuthenticationRequest("", HTTPRedirectBinding, HTTPPostBinding)
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(string(UnspecifiedNameIDFormat), *req.NameIDPolicy.Format))
+	s.SendUnspecifiedNameIDFormat = false
+
 	// explicitly set to "emailAddress"
 	s.AuthnNameIDFormat = EmailAddressNameIDFormat
 	req, err = s.MakeAuthenticationRequest("", HTTPRedirectBinding, HTTPPostBinding)
@@ -480,6 +487,33 @@ func TestSPCanProducePostLogoutRequest(t *testing.T) {
 	form, err := s.MakePostLogoutRequest("ros@octolabs.io", "relayState")
 	assert.Check(t, err)
 	golden.Assert(t, string(form), t.Name()+"_form")
+}
+
+func TestSPLogoutRequestUnspecifiedNameIDFormat(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	s := ServiceProvider{
+		Key:               test.Key,
+		Certificate:       test.Certificate,
+		MetadataURL:       mustParseURL("https://15661444.ngrok.io/saml2/metadata"),
+		AcsURL:            mustParseURL("https://15661444.ngrok.io/saml2/acs"),
+		IDPMetadata:       &EntityDescriptor{},
+		AuthnNameIDFormat: UnspecifiedNameIDFormat,
+	}
+	err := xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata)
+	assert.Check(t, err)
+
+	// left off by default
+	req, err := s.MakeLogoutRequest("", "ros@octolabs.io")
+	assert.Check(t, err)
+	assert.Check(t, is.Equal("", req.NameID.Format))
+	assert.Check(t, req.Element().FindElement("./NameID[@Format]") == nil)
+
+	// sent when opted in
+	s.SendUnspecifiedNameIDFormat = true
+	req, err = s.MakeLogoutRequest("", "ros@octolabs.io")
+	assert.Check(t, err)
+	assert.Check(t, is.Equal(string(UnspecifiedNameIDFormat), req.NameID.Format))
+	assert.Check(t, req.Element().FindElement("./NameID[@Format]") != nil)
 }
 
 func TestSPCanProduceRedirectLogoutRequest(t *testing.T) {
@@ -1509,9 +1543,10 @@ func TestXswPermutationThreeIsRejected(t *testing.T) {
 	// This response contains two assertions. The first is missing a Signature element. The second is
 	// signed by a certificate that is not yet valid at the time of issue.
 	//
-	// When no assertions are valid, we return the first error encountered, which in this case is that
-	// there is no Signature on the element.
-	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr, "signature element not present"))
+	// The Response is not signed, so it may carry only one assertion; it is rejected before either
+	// assertion is looked at.
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
+		"an unsigned Response must contain exactly one Assertion or EncryptedAssertion, not 2"))
 }
 
 func TestXswPermutationFourIsRejected(t *testing.T) {
@@ -1567,8 +1602,9 @@ func TestXswPermutationFiveIsRejected(t *testing.T) {
 	req := http.Request{PostForm: url.Values{}, URL: &s.AcsURL}
 	req.PostForm.Set("SAMLResponse", string(respStr))
 	_, err = s.ParseResponse(&req, []string{"ONELOGIN_4fee3b046395c4e751011e97f8900b5273d56685"})
+	// The unsigned Response carries two assertions, so it is rejected before either is looked at.
 	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
-		"cannot validate signature on Assertion: Missing signature referencing the top-level element"))
+		"an unsigned Response must contain exactly one Assertion or EncryptedAssertion, not 2"))
 }
 
 func TestXswPermutationSixIsRejected(t *testing.T) {
@@ -2122,8 +2158,12 @@ func TestMultipleAssertions(t *testing.T) {
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(respStr))
 	profile, err := s.ParseResponse(&req, []string{"id-3992f74e652d89c3cf1efd6c7e472abaac9bc917"})
 
-	assert.Check(t, err)
-	assert.Check(t, profile.Subject.NameID.Value != "admin@evil.com")
+	// The unsigned Response carries an injected, unsigned assertion for
+	// admin@evil.com beside the signed one. It used to be accepted, returning
+	// the signed assertion; an unsigned Response may now carry only one.
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
+		"an unsigned Response must contain exactly one Assertion or EncryptedAssertion, not 2"))
+	assert.Check(t, is.Nil(profile))
 }
 
 func TestSPRejectsMalformedResponse(t *testing.T) {
