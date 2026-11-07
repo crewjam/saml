@@ -250,6 +250,13 @@ type IdentityProvider struct {
 	// moment the request would be accepted. If nil, LogoutRequests are not
 	// checked for replay.
 	ReplayCache AssertionReplayCache
+
+	// HTTPClient is the client the IdP sends back-channel messages with:
+	// the LogoutRequests it sends over the SOAP binding to the session
+	// participants whose metadata lists a SOAP SingleLogoutService (see
+	// StartLogout and ServeSLO). If nil, a client that gives up after 10
+	// seconds and does not follow redirects is used.
+	HTTPClient *http.Client
 }
 
 // Metadata returns the metadata structure for this identity provider.
