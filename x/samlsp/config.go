@@ -41,7 +41,8 @@ type Config struct {
 	authnContextComparator func(comparison string, requested []string, got string) bool
 	clock                  *dsig.Clock
 
-	spOptions []ServiceProviderOption
+	spOptions  []ServiceProviderOption
+	spMetadata spMetadataOptions
 }
 
 // New returns a Config for the service provider entityID.
@@ -110,6 +111,9 @@ func New(identityProvider MetadataFunc, entityID string, opts ...Option) (*Confi
 		if pub, ok := c.encryptionCert.PublicKey.(*rsa.PublicKey); !ok || !pub.Equal(&c.encryptionKey.PublicKey) {
 			return nil, errors.New("samlsp: the certificate of WithEncryptionKey is not for its key")
 		}
+	}
+	if err := c.spMetadata.check(); err != nil {
+		return nil, err
 	}
 	if c.signRequests && signatureMethod(c.key) == "" {
 		return nil, errors.New("samlsp: SignAuthnRequests needs an RSA or ECDSA key (see WithKey)")
@@ -396,7 +400,9 @@ func signatureMethod(key crypto.Signer) string {
 // with the identity provider. It does not call the identity provider's
 // MetadataFunc.
 func (c *Config) Metadata(ctx context.Context, opts ...ServiceProviderOption) *saml.EntityDescriptor {
-	return c.spForMetadata(ctx, opts).Metadata()
+	md := c.spForMetadata(ctx, opts).Metadata()
+	c.spMetadata.apply(md)
+	return md
 }
 
 // spForMetadata returns the saml.ServiceProvider that describes this SP's
@@ -423,10 +429,12 @@ func (c *Config) ServeMetadata(w http.ResponseWriter, r *http.Request) {
 
 func (c *Config) metadataBytes(ctx context.Context) ([]byte, error) {
 	sp := c.spForMetadata(ctx, nil)
+	md := sp.Metadata()
+	c.spMetadata.apply(md)
 	if !sp.SignMetadata {
-		return xml.MarshalIndent(sp.Metadata(), "", "  ")
+		return xml.MarshalIndent(md, "", "  ")
 	}
-	el, err := sp.SignedMetadata()
+	el, err := sp.SignEntityDescriptor(md)
 	if err != nil {
 		return nil, err
 	}

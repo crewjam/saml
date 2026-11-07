@@ -1029,6 +1029,15 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding stri
 // generated if the metadata does not have one. The returned element must be
 // serialized as-is: re-indenting it changes the signed content.
 func (sp *ServiceProvider) SignedMetadata() (*etree.Element, error) {
+	return sp.SignEntityDescriptor(sp.Metadata())
+}
+
+// SignEntityDescriptor returns ed as an XML element carrying an enveloped
+// signature made with Key and Certificate, as SignedMetadata does for
+// Metadata. Use it to sign SP metadata that has been changed after
+// Metadata built it, such as with an Organization or ContactPersons. ed is
+// not modified; the returned element must be serialized as-is.
+func (sp *ServiceProvider) SignEntityDescriptor(ed *EntityDescriptor) (*etree.Element, error) {
 	signatureMethod := sp.SignatureMethod
 	if signatureMethod == "" && !signerutil.IsNil(sp.Key) {
 		signatureMethod = defaultSignatureMethod(sp.Key.Public())
@@ -1037,7 +1046,7 @@ func (sp *ServiceProvider) SignedMetadata() (*etree.Element, error) {
 	if err != nil {
 		return nil, err
 	}
-	return signMetadata(sp.Metadata(), signingContext)
+	return signMetadata(ed, signingContext)
 }
 
 // GetSigningContext returns a dsig.SigningContext initialized based on the Service Provider's configuration
