@@ -76,6 +76,13 @@ type Options struct {
 	// refused. It is off by default.
 	LimitRelayStateLength bool
 
+	// RequireStandardArtifacts sets
+	// saml.ServiceProvider.RequireStandardArtifacts: if true, a SAMLart that
+	// is not a type 0x0004 artifact, or whose SourceID is not the SHA-1 hash
+	// of the IdP's entityID, is refused without contacting the IdP. It is
+	// off by default.
+	RequireStandardArtifacts bool
+
 	// CookieDomain, if set, is the Domain attribute of the session cookie,
 	// which makes the browser also send the cookie to subdomains of that
 	// domain. If empty, the session cookie is a host-only cookie, sent only to
@@ -395,6 +402,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		IgnoreCertificateExpiry:          opts.IgnoreCertificateExpiry,
 		RejectExpiredIDPMetadata:         opts.RejectExpiredIDPMetadata,
 		SignMetadata:                     opts.SignMetadata,
+		RequireStandardArtifacts:         opts.RequireStandardArtifacts,
 		ReplayCache:                      opts.ReplayCache,
 	}
 }
