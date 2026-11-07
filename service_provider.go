@@ -155,6 +155,18 @@ type ServiceProvider struct {
 	// context in authentication requests
 	RequestedAuthnContext *RequestedAuthnContext
 
+	// ValidateAuthnContextClassRef, if true, requires an assertion to carry
+	// an AuthnStatement whose AuthnContextClassRef is one of the classes in
+	// RequestedAuthnContext. It has no effect if RequestedAuthnContext is
+	// nil or names no class.
+	//
+	// Only the "exact" Comparison (or an empty one, which means "exact") is
+	// supported. The ordering that "minimum", "better" and "maximum" refer
+	// to is defined by each deployment, not by the SAML specification
+	// (saml-core §3.3.2.2.1), so with any other Comparison every assertion
+	// is rejected rather than accepted unchecked.
+	ValidateAuthnContextClassRef bool
+
 	// AllowIDPInitiated accepts unsolicited (IdP-initiated) responses, which
 	// have no InResponseTo. A response or assertion that does carry an
 	// InResponseTo must still match a request this SP made; set
@@ -1377,7 +1389,40 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if err := sp.validateAudienceRestriction(assertion); err != nil {
 		return err
 	}
+	if err := sp.validateAuthnContextClassRef(assertion); err != nil {
+		return err
+	}
 	return nil
+}
+
+// validateAuthnContextClassRef checks, if ValidateAuthnContextClassRef is
+// set, that one of the assertion's AuthnStatements has an
+// AuthnContextClassRef listed in RequestedAuthnContext.
+func (sp *ServiceProvider) validateAuthnContextClassRef(assertion *Assertion) error {
+	if !sp.ValidateAuthnContextClassRef || sp.RequestedAuthnContext == nil {
+		return nil
+	}
+	requested := sp.RequestedAuthnContext.ClassRefs()
+	if len(requested) == 0 {
+		return nil
+	}
+	if comparison := sp.RequestedAuthnContext.Comparison; comparison != "" && comparison != "exact" {
+		return fmt.Errorf("cannot validate AuthnContextClassRef for RequestedAuthnContext Comparison %q: only \"exact\" is supported", comparison)
+	}
+	var got []string
+	for _, authnStatement := range assertion.AuthnStatements {
+		classRef := authnStatement.AuthnContext.AuthnContextClassRef
+		if classRef == nil {
+			continue
+		}
+		for _, want := range requested {
+			if classRef.Value == want {
+				return nil
+			}
+		}
+		got = append(got, classRef.Value)
+	}
+	return fmt.Errorf("assertion AuthnContextClassRef %q is not one of the requested %q", got, requested)
 }
 
 // validateAssertionInResponseTo checks the InResponseTo of an assertion's

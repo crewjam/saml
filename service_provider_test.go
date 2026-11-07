@@ -2218,3 +2218,154 @@ func TestSPValidateRequestIDWithAllowIDPInitiated(t *testing.T) {
 	// A matching InResponseTo is accepted.
 	assert.Check(t, s.validateRequestID(Response{InResponseTo: "id-expected"}, []string{"", "id-expected"}))
 }
+
+func TestSPValidateAuthnContextClassRef(t *testing.T) {
+	const (
+		password    = "urn:oasis:names:tc:SAML:2.0:ac:classes:Password"
+		x509        = "urn:oasis:names:tc:SAML:2.0:ac:classes:X509"
+		unspecified = "urn:oasis:names:tc:SAML:2.0:ac:classes:unspecified"
+	)
+	assertionWith := func(classRefs ...string) *Assertion {
+		a := &Assertion{}
+		for _, ref := range classRefs {
+			a.AuthnStatements = append(a.AuthnStatements, AuthnStatement{
+				AuthnContext: AuthnContext{AuthnContextClassRef: &AuthnContextClassRef{Value: ref}},
+			})
+		}
+		return a
+	}
+
+	for _, tc := range []struct {
+		name      string
+		validate  bool
+		requested *RequestedAuthnContext
+		assertion *Assertion
+		wantErr   string
+	}{
+		{
+			name:      "disabled by default",
+			requested: &RequestedAuthnContext{Comparison: "exact", AuthnContextClassRefs: []string{x509}},
+			assertion: assertionWith(password),
+		},
+		{
+			name:      "nothing requested",
+			validate:  true,
+			assertion: assertionWith(password),
+		},
+		{
+			name:      "no class requested",
+			validate:  true,
+			requested: &RequestedAuthnContext{Comparison: "exact"},
+			assertion: assertionWith(password),
+		},
+		{
+			name:      "exact match",
+			validate:  true,
+			requested: &RequestedAuthnContext{Comparison: "exact", AuthnContextClassRefs: []string{password}},
+			assertion: assertionWith(password),
+		},
+		{
+			name:      "empty comparison means exact",
+			validate:  true,
+			requested: &RequestedAuthnContext{AuthnContextClassRefs: []string{password}},
+			assertion: assertionWith(password),
+		},
+		{
+			name:      "deprecated single class ref",
+			validate:  true,
+			requested: &RequestedAuthnContext{Comparison: "exact", AuthnContextClassRef: password},
+			assertion: assertionWith(password),
+		},
+		{
+			name:      "any of several requested",
+			validate:  true,
+			requested: &RequestedAuthnContext{Comparison: "exact", AuthnContextClassRefs: []string{x509, password}},
+			assertion: assertionWith(password),
+		},
+		{
+			name:      "any of several statements",
+			validate:  true,
+			requested: &RequestedAuthnContext{Comparison: "exact", AuthnContextClassRefs: []string{x509}},
+			assertion: assertionWith(password, x509),
+		},
+		{
+			name:      "mismatch",
+			validate:  true,
+			requested: &RequestedAuthnContext{Comparison: "exact", AuthnContextClassRefs: []string{x509}},
+			assertion: assertionWith(password),
+			wantErr:   `assertion AuthnContextClassRef ["urn:oasis:names:tc:SAML:2.0:ac:classes:Password"] is not one of the requested ["urn:oasis:names:tc:SAML:2.0:ac:classes:X509"]`,
+		},
+		{
+			name:      "no AuthnStatement",
+			validate:  true,
+			requested: &RequestedAuthnContext{Comparison: "exact", AuthnContextClassRefs: []string{x509}},
+			assertion: assertionWith(),
+			wantErr:   `assertion AuthnContextClassRef [] is not one of the requested ["urn:oasis:names:tc:SAML:2.0:ac:classes:X509"]`,
+		},
+		{
+			name:      "minimum is not supported",
+			validate:  true,
+			requested: &RequestedAuthnContext{Comparison: "minimum", AuthnContextClassRefs: []string{password}},
+			assertion: assertionWith(password),
+			wantErr:   `cannot validate AuthnContextClassRef for RequestedAuthnContext Comparison "minimum": only "exact" is supported`,
+		},
+		{
+			name:      "minimum without validation",
+			requested: &RequestedAuthnContext{Comparison: "minimum", AuthnContextClassRefs: []string{password}},
+			assertion: assertionWith(unspecified),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sp := ServiceProvider{
+				RequestedAuthnContext:        tc.requested,
+				ValidateAuthnContextClassRef: tc.validate,
+			}
+			err := sp.validateAuthnContextClassRef(tc.assertion)
+			if tc.wantErr == "" {
+				assert.Check(t, err)
+			} else {
+				assert.Check(t, is.Error(err, tc.wantErr))
+			}
+		})
+	}
+}
+
+func TestSPValidateAuthnContextClassRefParseResponse(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	// An actual response from google, whose AuthnStatement has the
+	// "unspecified" AuthnContextClassRef.
+	TimeNow = func() time.Time {
+		rv, _ := time.Parse("Mon Jan 2 15:04:05 UTC 2006", "Tue Jan 5 16:55:39 UTC 2016")
+		return rv
+	}
+	Clock = dsig.NewFakeClockAt(TimeNow())
+	samlResponse := golden.Get(t, "TestSPCanHandlePlaintextResponse_response")
+	test.IDPMetadata = golden.Get(t, "TestSPCanHandlePlaintextResponse_IDPMetadata")
+
+	parse := func(classRef string) error {
+		s := ServiceProvider{
+			Key:         test.Key,
+			Certificate: test.Certificate,
+			MetadataURL: mustParseURL("https://29ee6d2e.ngrok.io/saml/metadata"),
+			AcsURL:      mustParseURL("https://29ee6d2e.ngrok.io/saml/acs"),
+			IDPMetadata: &EntityDescriptor{},
+			RequestedAuthnContext: &RequestedAuthnContext{
+				Comparison:            "exact",
+				AuthnContextClassRefs: []string{classRef},
+			},
+			ValidateAuthnContextClassRef: true,
+		}
+		assert.Check(t, xml.Unmarshal(test.IDPMetadata, &s.IDPMetadata))
+		req := http.Request{PostForm: url.Values{}, URL: &s.AcsURL}
+		req.PostForm.Set("SAMLResponse", string(samlResponse))
+		_, err := s.ParseResponse(&req, []string{"id-fd419a5ab0472645427f8e07d87a3a5dd0b2e9a6"})
+		return err
+	}
+
+	assert.Check(t, parse("urn:oasis:names:tc:SAML:2.0:ac:classes:unspecified"))
+
+	err := parse("urn:oasis:names:tc:SAML:2.0:ac:classes:X509")
+	assert.Assert(t, err != nil)
+	assert.Check(t, is.Error(err.(*InvalidResponseError).PrivateErr,
+		`assertion AuthnContextClassRef ["urn:oasis:names:tc:SAML:2.0:ac:classes:unspecified"] is not one of the requested ["urn:oasis:names:tc:SAML:2.0:ac:classes:X509"]`))
+}
