@@ -126,13 +126,27 @@ func (idp *IdentityProvider) sessionParticipants(r *http.Request, match func(*Se
 }
 
 // StartLogout starts IdP-initiated single logout (saml-profiles-2.0-os
-// §4.4.3.3) of session. The browser is sent, one at a time, to each service
-// provider the session was used for (see SessionParticipantTracker) with a
-// signed LogoutRequest, using the HTTP-Redirect binding if the service
-// provider's metadata lists a SingleLogoutService with it and HTTP-POST
-// otherwise. Each service provider answers with a LogoutResponse to
-// LogoutURL, which ServeSLO handles. The progress of the logout is kept in a
-// cookie signed with the IdP's key and scoped to LogoutURL.
+// §4.4.3.3) of session. Each service provider the session was used for
+// (see SessionParticipantTracker) is sent a signed LogoutRequest, one at a
+// time.
+//
+// A service provider whose metadata lists a SingleLogoutService with the
+// SOAP binding is sent it server to server, over the SOAP binding, with
+// HTTPClient; the browser does not leave the IdP. Its LogoutResponse must be
+// signed by the service provider and is checked as one that comes back
+// through the browser is, except that it may omit its Destination. If that
+// fails (the service provider cannot be reached, its response is invalid or
+// its status is not Success), the service provider is tried again through
+// the browser, as below, if its metadata lists a front-channel endpoint: the
+// browser may reach a service provider the IdP cannot, and logging the
+// user's browser out there is better than not at all.
+//
+// Otherwise the browser is sent to the service provider with the
+// LogoutRequest, using the HTTP-Redirect binding if the service provider's
+// metadata lists a SingleLogoutService with it and HTTP-POST otherwise. It
+// answers with a LogoutResponse to LogoutURL, which ServeSLO handles. The
+// progress of the logout is kept in a cookie signed with the IdP's key and
+// scoped to LogoutURL.
 //
 // Once every service provider has answered, or could not be contacted, the
 // browser is redirected to returnURL, or, if returnURL is empty, shown a page
@@ -234,41 +248,71 @@ func (idp *IdentityProvider) continueLogout(w http.ResponseWriter, r *http.Reque
 	for len(state.Pending) > 0 {
 		participant := state.Pending[0]
 		state.Pending = state.Pending[1:]
-		err := idp.sendLogoutRequest(w, r, state, participant)
-		if err == nil {
+		if idp.logoutParticipant(w, r, state, participant) {
 			return
 		}
-		idp.Logger.Printf("cannot send logout request to %s: %s", participant.ServiceProviderID, err)
-		state.Failed = append(state.Failed, participant.ServiceProviderID)
 	}
 	idp.finishLogout(w, r, state)
 }
 
-// sendLogoutRequest sends a signed LogoutRequest for participant to its
-// SingleLogoutService and records it in state. It returns errors before it
-// starts writing to w.
-func (idp *IdentityProvider) sendLogoutRequest(w http.ResponseWriter, r *http.Request, state *logoutState, participant SessionParticipant) error {
+// logoutParticipant logs participant out. If its metadata lists a SOAP
+// SingleLogoutService, it is sent a LogoutRequest over the SOAP binding
+// first (see logoutParticipantSOAP). If it has none, or that fails, the
+// browser is sent to its HTTP-Redirect or HTTP-POST SingleLogoutService
+// with a LogoutRequest, and logoutParticipant returns true: the response
+// has been written, and the logout continues when the participant's
+// LogoutResponse arrives. A participant that cannot be logged out either
+// way is added to state.Failed.
+func (idp *IdentityProvider) logoutParticipant(w http.ResponseWriter, r *http.Request, state *logoutState, participant SessionParticipant) bool {
+	metadata, err := idp.participantMetadata(r, participant)
+	if err != nil {
+		idp.Logger.Printf("cannot send logout request to %s: %s", participant.ServiceProviderID, err)
+		state.Failed = append(state.Failed, participant.ServiceProviderID)
+		return false
+	}
+
+	err = idp.logoutParticipantSOAP(r.Context(), metadata, participant)
+	switch {
+	case err == nil:
+		return false
+	case errors.Is(err, errNoSOAPLogoutEndpoint):
+	default:
+		idp.Logger.Printf("back-channel logout of %s failed: %s", participant.ServiceProviderID, err)
+	}
+
+	if err := idp.sendLogoutRequest(w, r, state, participant, metadata); err != nil {
+		idp.Logger.Printf("cannot send logout request to %s: %s", participant.ServiceProviderID, err)
+		state.Failed = append(state.Failed, participant.ServiceProviderID)
+		return false
+	}
+	return true
+}
+
+// participantMetadata returns the metadata of the service provider of
+// participant.
+func (idp *IdentityProvider) participantMetadata(r *http.Request, participant SessionParticipant) (*EntityDescriptor, error) {
 	if idp.ServiceProviderProvider == nil {
-		return errors.New("IdentityProvider.ServiceProviderProvider is not set")
+		return nil, errors.New("IdentityProvider.ServiceProviderProvider is not set")
 	}
 	metadata, err := idp.ServiceProviderProvider.GetServiceProvider(r, participant.ServiceProviderID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if metadata == nil {
-		return errors.New("no metadata")
+		return nil, errors.New("no metadata")
 	}
-	endpoint, err := logoutRequestEndpoint(metadata)
-	if err != nil {
-		return err
-	}
+	return metadata, nil
+}
 
+// participantLogoutRequest returns an unsigned LogoutRequest for the
+// session of participant, addressed to destination.
+func (idp *IdentityProvider) participantLogoutRequest(participant SessionParticipant, destination string) *LogoutRequest {
 	nameID := participant.NameID
 	logoutRequest := &LogoutRequest{
 		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
 		Version:      "2.0",
 		IssueInstant: TimeNow(),
-		Destination:  endpoint.Location,
+		Destination:  destination,
 		Issuer: &Issuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
 			Value:  idp.MetadataURL.String(),
@@ -278,6 +322,19 @@ func (idp *IdentityProvider) sendLogoutRequest(w http.ResponseWriter, r *http.Re
 	if participant.SessionIndex != "" {
 		logoutRequest.SessionIndex = &SessionIndex{Value: participant.SessionIndex}
 	}
+	return logoutRequest
+}
+
+// sendLogoutRequest sends the browser with a signed LogoutRequest for
+// participant to its HTTP-Redirect or HTTP-POST SingleLogoutService, as
+// listed in metadata, and records it in state. It returns errors before it
+// starts writing to w.
+func (idp *IdentityProvider) sendLogoutRequest(w http.ResponseWriter, r *http.Request, state *logoutState, participant SessionParticipant, metadata *EntityDescriptor) error {
+	endpoint, err := logoutRequestEndpoint(metadata)
+	if err != nil {
+		return err
+	}
+	logoutRequest := idp.participantLogoutRequest(participant, endpoint.Location)
 
 	write, err := idp.logoutRequestWriter(logoutRequest, endpoint.Binding)
 	if err != nil {
@@ -530,16 +587,28 @@ func (idp *IdentityProvider) validateLogoutResponse(r *http.Request, state *logo
 }
 
 // validateLogoutResponseFields checks the fields of an authenticated
-// LogoutResponse that answers the LogoutRequest requestID.
+// LogoutResponse that answers the LogoutRequest requestID, which was sent
+// through the browser: its Destination must be LogoutURL.
 func (idp *IdentityProvider) validateLogoutResponseFields(resp *LogoutResponse, requestID string) error {
+	if err := validateLogoutResponseAnswer(resp, requestID); err != nil {
+		return err
+	}
+	if resp.Destination != idp.LogoutURL.String() {
+		return fmt.Errorf("expected logout response destination to be %q, not %q", idp.LogoutURL.String(), resp.Destination)
+	}
+	return nil
+}
+
+// validateLogoutResponseAnswer checks the fields of an authenticated
+// LogoutResponse, other than its Issuer and Destination, as an answer to the
+// LogoutRequest requestID.
+func validateLogoutResponseAnswer(resp *LogoutResponse, requestID string) error {
 	now := TimeNow()
 	switch {
 	case resp.InResponseTo != requestID:
 		return fmt.Errorf("logout response InResponseTo %q does not match the outstanding request", resp.InResponseTo)
 	case resp.Version != "2.0":
 		return fmt.Errorf("expected SAML response version 2.0 got %v", resp.Version)
-	case resp.Destination != idp.LogoutURL.String():
-		return fmt.Errorf("expected logout response destination to be %q, not %q", idp.LogoutURL.String(), resp.Destination)
 	case resp.IssueInstant.Add(MaxIssueDelay).Before(now):
 		return fmt.Errorf("logout response expired at %s", resp.IssueInstant.Add(MaxIssueDelay))
 	case resp.IssueInstant.Add(-MaxClockSkew).After(now):

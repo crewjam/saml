@@ -460,9 +460,10 @@ func (req *IdpLogoutRequest) writePostLogoutResponse(w http.ResponseWriter, resp
 // If the SessionProvider implements SessionParticipantTracker and the session
 // was terminated, the logout is first propagated to the other service
 // providers the ended sessions were used for (saml-profiles-2.0-os
-// §4.4.4.2): the browser is sent to each with a LogoutRequest, one at a
-// time, and only then is the LogoutResponse sent to the service provider
-// that asked. If some of them could not be logged out, its status is
+// §4.4.4.2), as StartLogout does: over the SOAP binding to those whose
+// metadata lists a SOAP SingleLogoutService, and otherwise by sending the
+// browser to each with a LogoutRequest, one at a time. Only then is the
+// LogoutResponse sent to the service provider that asked. If some of them could not be logged out, its status is
 // StatusSuccess with the second-level status StatusPartialLogout
 // (saml-core-2.0-os §3.7.3.2). Without a SessionParticipantTracker, the
 // logout is not propagated.
