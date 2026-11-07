@@ -18,7 +18,9 @@ import (
 // needs it to honor a LogoutRequest the IdP sends with the SOAP binding
 // (back-channel single logout): no browser is involved, so the session
 // cookie cannot be deleted, and the session must be refused the next time
-// it is presented instead.
+// it is presented instead. ServeSLO also uses it for a LogoutRequest the IdP
+// sends through the browser, to end the copies of the named sessions that
+// other browsers hold.
 //
 // CookieSessionProvider implements it when its Revocations store is set.
 type SessionTerminator interface {

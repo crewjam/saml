@@ -167,10 +167,16 @@ func (m *Middleware) sloBinding() string {
 //
 // A LogoutRequest is IDP initiated single logout. Once it is validated, the
 // session of the requesting browser is deleted and the browser is sent back
-// to the IDP with a LogoutResponse. A SessionProvider that keeps sessions on
-// the server, rather than in a cookie, should also end the sessions of the
-// request's NameID; such applications can handle SloURL themselves with
-// ServiceProvider.ValidateLogoutRequest.
+// to the IDP with a LogoutResponse. If Session implements
+// SessionTerminator, the sessions the request names are also ended there,
+// as for a request sent with the SOAP binding, so that other copies of the
+// session, in other browsers, are refused too: those with one of its
+// SessionIndexes or, if it has none, every session of its NameID issued
+// before it. A session provider that cannot do that
+// (ErrSessionTerminationUnsupported) only has the browser's session
+// deleted, as before; any other error ending them is passed to OnError,
+// whose response is discarded, and the IDP is still answered with Success,
+// since the session of the browser it sent has ended.
 //
 // A POST with Content-Type text/xml is a LogoutRequest sent with the SOAP
 // binding (back-channel single logout, saml-profiles §4.4): the IDP sends it
@@ -252,6 +258,7 @@ func (m *Middleware) serveSLORequest(w http.ResponseWriter, r *http.Request) {
 		m.OnError(w, r, err)
 		return
 	}
+	m.terminateFrontChannelSessions(r, logoutRequest)
 
 	// The RelayState of the request must be returned unchanged with the
 	// response (saml-bindings-2.0-os sections 3.4.3 and 3.5.3).
