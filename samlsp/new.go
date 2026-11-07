@@ -128,6 +128,12 @@ type Options struct {
 	// Changing the session key invalidates existing sessions and pending
 	// requests.
 	SessionKey crypto.Signer
+
+	// ReplayCache, if set, records the ID of each accepted assertion and
+	// refuses an assertion it has already recorded. See
+	// saml.ServiceProvider.ReplayCache. NewMemoryReplayCache returns one for
+	// a single process. If nil, assertions are not checked for replay.
+	ReplayCache saml.AssertionReplayCache
 }
 
 // sessionKey returns the key that signs session and tracked-request JWTs.
@@ -304,6 +310,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		AssertionConsumerServiceBindings: opts.AssertionConsumerServiceBindings,
 		IgnoreCertificateExpiry:          opts.IgnoreCertificateExpiry,
 		SignMetadata:                     opts.SignMetadata,
+		ReplayCache:                      opts.ReplayCache,
 	}
 }
 
