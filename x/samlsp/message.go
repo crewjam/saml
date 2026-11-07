@@ -33,6 +33,7 @@ type Message struct {
 	form         []byte
 	scriptHash   string
 	soapResponse *saml.LogoutResponse
+	write        func(http.ResponseWriter)
 }
 
 // RedirectURL returns the URL to redirect the browser to, for a message
@@ -52,6 +53,10 @@ func (m *Message) RedirectURL() *url.URL {
 // to answer a back-channel LogoutRequest, it writes the SOAP response to
 // the IdP. Write must be called before anything else is written to w.
 func (m *Message) Write(w http.ResponseWriter) {
+	if m.write != nil {
+		m.write(w)
+		return
+	}
 	if m.soapResponse != nil {
 		_ = saml.WriteSOAPLogoutResponse(w, m.soapResponse)
 		return

@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/beevik/etree"
+
 	"github.com/crewjam/saml"
 )
 
@@ -198,6 +200,7 @@ type MessageOption interface {
 
 type messageOptions struct {
 	binding     string
+	custom      Binding
 	scriptNonce string
 	sp          []ServiceProviderOption
 }
@@ -268,7 +271,7 @@ func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...Au
 		return nil, fmt.Errorf("samlsp: unsupported response binding %q", o.responseBinding)
 	}
 
-	binding, location, err := chooseBinding(o.binding, sp.GetSSOBindingLocation)
+	binding, location, err := pickBinding(o.messageOptions, sp.GetSSOBindingLocation)
 	if err != nil {
 		return nil, err
 	}
@@ -300,6 +303,21 @@ func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...Au
 		if err := modify(req); err != nil {
 			return nil, err
 		}
+	}
+
+	if o.custom != nil {
+		return o.custom.Encode(ctx, &OutboundMessage{
+			ID: req.ID, Binding: binding, Destination: location, Param: "SAMLRequest",
+			RelayState: relayState, ScriptNonce: o.scriptNonce,
+			element: func() (*etree.Element, error) {
+				if sp.SignatureMethod != "" && req.Signature == nil {
+					if err := sp.SignAuthnRequest(req); err != nil {
+						return nil, err
+					}
+				}
+				return req.Element(), nil
+			},
+		})
 	}
 
 	m := &Message{ID: req.ID, Binding: binding, Destination: location, RelayState: relayState, scriptHash: requestScriptHash}

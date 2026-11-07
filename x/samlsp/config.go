@@ -45,8 +45,9 @@ type Config struct {
 	httpClient             *http.Client
 	signatureMethod        string
 
-	spOptions  []ServiceProviderOption
-	spMetadata spMetadataOptions
+	spOptions     []ServiceProviderOption
+	spMetadata    spMetadataOptions
+	metadataHooks []func(*saml.EntityDescriptor)
 }
 
 // New returns a Config for the service provider entityID.
@@ -482,7 +483,7 @@ func signatureMethod(key crypto.Signer) string {
 // MetadataFunc.
 func (c *Config) Metadata(_ context.Context, opts ...ServiceProviderOption) *saml.EntityDescriptor {
 	md := c.spForMetadata(opts).Metadata()
-	c.spMetadata.apply(md)
+	c.decorateMetadata(md)
 	return md
 }
 
@@ -508,10 +509,18 @@ func (c *Config) ServeMetadata(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write(buf) //nolint:gosec // our own metadata, served as application/samlmetadata+xml
 }
 
+// decorateMetadata adds to md, the SP metadata, what the options add.
+func (c *Config) decorateMetadata(md *saml.EntityDescriptor) {
+	c.spMetadata.apply(md)
+	for _, modify := range c.metadataHooks {
+		modify(md)
+	}
+}
+
 func (c *Config) metadataBytes() ([]byte, error) {
 	sp := c.spForMetadata(nil)
 	md := sp.Metadata()
-	c.spMetadata.apply(md)
+	c.decorateMetadata(md)
 	if !sp.SignMetadata {
 		return xml.MarshalIndent(md, "", "  ")
 	}

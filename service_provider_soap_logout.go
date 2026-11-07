@@ -127,6 +127,26 @@ func (sp *ServiceProvider) parseSOAPLogoutRequest(soapRequestXML []byte) (*Logou
 // requireIDPSignature verifies the enveloped signature of el, which must
 // have one, against the IdP's signing certificates, and returns what the
 // signature covers.
+// ValidateIDPSignedElement checks that el carries a valid enveloped XML
+// signature by the IdP, made with one of the signing certificates of
+// IDPMetadata (or IDPCertificate, or the configured fingerprint), and that
+// the signature references el itself, as saml-core §5.4.2 requires. It
+// returns what the signature covers: el without its Signature, as parsed
+// from the canonical form that was digested. Use that, not el, to read the
+// message.
+//
+// It applies the same checks as the messages this package verifies,
+// including RejectSHA1Signatures and certificate validity. It is for code
+// that receives IdP messages this package does not handle itself, such as
+// an ArtifactResolve sent to the SP. It only checks the signature: the
+// caller must check the message's Issuer, IssueInstant and destination.
+func (sp *ServiceProvider) ValidateIDPSignedElement(el *etree.Element) (*etree.Element, error) {
+	if sp.IDPMetadata == nil {
+		return nil, errors.New("IDPMetadata is not set")
+	}
+	return sp.requireIDPSignature(el)
+}
+
 func (sp *ServiceProvider) requireIDPSignature(el *etree.Element) (*etree.Element, error) {
 	signed, err := sp.verifySignedElement(el, sp.getIDPSigningCerts)
 	if err == errSignatureElementNotPresent {
