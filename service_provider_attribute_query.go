@@ -5,7 +5,6 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/beevik/etree"
@@ -175,8 +174,8 @@ func (sp *ServiceProvider) SignAttributeQuery(req *AttributeQuery) error {
 // been validated with ParseXMLAttributeQueryResponse.
 //
 // The query is made with MakeAttributeQuery and sent with the SAML SOAP
-// binding to the IdP's SOAP AttributeService, using HTTPClient (or
-// http.DefaultClient) and ctx. The response body is limited to
+// binding to the IdP's SOAP AttributeService, using HTTPClient (see
+// ServiceProvider.HTTPClient) and ctx. The response body is limited to
 // MaxAttributeQueryResponseSize bytes. The AttributeService must be https
 // unless AllowInsecureSOAPEndpoints is set.
 //
@@ -195,17 +194,14 @@ func (sp *ServiceProvider) QueryAttributes(ctx context.Context, nameID NameID, a
 }
 
 // postSOAP sends envelope to location with the SAML SOAP binding, using
-// HTTPClient (or http.DefaultClient), and returns the body of the response,
+// HTTPClient (see ServiceProvider.HTTPClient), and returns the body of the response,
 // which may be at most limit bytes. location must be https unless
 // AllowInsecureSOAPEndpoints is set.
 func (sp *ServiceProvider) postSOAP(ctx context.Context, location string, envelope *etree.Element, limit int64) ([]byte, error) {
 	if err := checkSOAPEndpoint(location, sp.AllowInsecureSOAPEndpoints); err != nil {
 		return nil, err
 	}
-	httpClient := sp.HTTPClient
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
+	httpClient := soapHTTPClient(sp.HTTPClient, sp.AllowInsecureSOAPEndpoints)
 	return postSOAPMessage(ctx, httpClient, location, envelope, limit)
 }
 

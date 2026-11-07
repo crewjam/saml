@@ -119,8 +119,11 @@ type ServiceProvider struct {
 	// the metadata.
 	DecryptionKeys []*rsa.PrivateKey
 
-	// HTTPClient to use during SAML artifact resolution and attribute
-	// queries (QueryAttributes). If nil, http.DefaultClient is used.
+	// HTTPClient to use for SOAP exchanges with the IdP: SAML artifact
+	// resolution, attribute queries (QueryAttributes) and SOAP single logout.
+	// If nil, a client with a 10 second timeout that follows no redirects is
+	// used. Whichever client is used, a redirect to a location that is not
+	// https (or http, with AllowInsecureSOAPEndpoints) is not followed.
 	HTTPClient *http.Client
 
 	// AllowInsecureSOAPEndpoints lets the service provider send SOAP
@@ -1354,10 +1357,7 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 	req.Header.Set("SOAPAction", soapActionSAML)
 	setNoCacheHeaders(req.Header)
 
-	httpClient := sp.HTTPClient
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
+	httpClient := soapHTTPClient(sp.HTTPClient, sp.AllowInsecureSOAPEndpoints)
 	response, err := httpClient.Do(req) //nolint:gosec // G704: the URL is the IdP's ArtifactResolutionService from its metadata, not from the request
 	if err != nil {
 		retErr.PrivateErr = classify(fmt.Errorf("cannot resolve artifact: %w", err), ErrArtifactResolution)

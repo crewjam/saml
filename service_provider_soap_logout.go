@@ -276,8 +276,8 @@ func (sp *ServiceProvider) MakeSOAPLogoutRequest(nameID NameID, opts ...LogoutRe
 }
 
 // SendSOAPLogoutRequest sends req, made by MakeSOAPLogoutRequest, to its
-// Destination with the SAML SOAP binding, using HTTPClient (or
-// http.DefaultClient) and ctx, and returns the IdP's LogoutResponse once
+// Destination with the SAML SOAP binding, using HTTPClient (see
+// ServiceProvider.HTTPClient) and ctx, and returns the IdP's LogoutResponse once
 // ParseXMLSOAPLogoutResponse has validated it. The response body is limited
 // to MaxSOAPLogoutMessageSize bytes. The Destination must be https unless
 // AllowInsecureSOAPEndpoints is set (see ErrInsecureSOAPEndpoint).

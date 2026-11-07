@@ -44,6 +44,33 @@ var defaultSOAPHTTPClient = &http.Client{
 	},
 }
 
+// soapHTTPClient returns the HTTP client to send a SOAP message with:
+// defaultSOAPHTTPClient when client is nil, and otherwise a copy of client
+// whose redirect policy also refuses to follow a redirect to a location that
+// checkSOAPEndpoint would refuse. Without that, a 307 or 308 from an https
+// endpoint to a plain http one would re-send the message, with the NameID,
+// attributes or assertion it carries, in the clear.
+func soapHTTPClient(client *http.Client, allowInsecure bool) *http.Client {
+	if client == nil {
+		return defaultSOAPHTTPClient
+	}
+	c := *client
+	next := client.CheckRedirect
+	c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if err := checkSOAPEndpoint(req.URL.String(), allowInsecure); err != nil {
+			return fmt.Errorf("refusing to follow redirect: %w", err)
+		}
+		if next != nil {
+			return next(req, via)
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &c
+}
+
 // ErrInsecureSOAPEndpoint is returned when a SAML SOAP message would be sent
 // to an endpoint whose Location is not an https URL. SOAP messages go
 // server to server and carry the user's NameID, attributes or a whole
