@@ -94,6 +94,14 @@ type ServiceProvider struct {
 	// key is an RSA key.
 	EncryptionCertificate *x509.Certificate
 
+	// DecryptionKeys are further private keys that decrypt encrypted
+	// assertions, tried in order after EncryptionKey (or Key, if
+	// EncryptionKey is unset). Set them while rotating the SP encryption key,
+	// so that an assertion the IdP encrypted to either the old or the new key
+	// is accepted. They are never used for signing, and are not advertised in
+	// the metadata.
+	DecryptionKeys []*rsa.PrivateKey
+
 	// HTTPClient to use during SAML artifact resolution
 	HTTPClient *http.Client
 
@@ -1198,21 +1206,29 @@ func (sp *ServiceProvider) decryptElement(encryptedEl *etree.Element) (*etree.El
 	}
 
 	var decryptionKey interface{} = sp.Key
+	decryptionKeyName := "Key"
 	if sp.EncryptionKey != nil {
 		decryptionKey = sp.EncryptionKey
+		decryptionKeyName = "EncryptionKey"
 	}
 
-	key := decryptionKey
-	keyEl := encryptedEl.FindElement("./EncryptedKey")
-	if keyEl != nil {
-		var err error
-		key, err = xmlenc.Decrypt(decryptionKey, keyEl)
+	plaintextEl, err := decryptWithKey(decryptionKey, encryptedEl, encryptedDataEl)
+	if err != nil && len(sp.DecryptionKeys) > 0 {
+		// Key transport is RSA-OAEP only, which fails the same way for every
+		// wrong key, so trying several keys reveals no more than trying one.
+		errs := []error{fmt.Errorf("%s: %w", decryptionKeyName, err)}
+		for i, k := range sp.DecryptionKeys {
+			var keyErr error
+			if plaintextEl, keyErr = decryptWithKey(k, encryptedEl, encryptedDataEl); keyErr == nil {
+				err = nil
+				break
+			}
+			errs = append(errs, fmt.Errorf("DecryptionKeys[%d]: %w", i, keyErr))
+		}
 		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt key from response: %s", err)
+			err = fmt.Errorf("no decryption key could decrypt it: %w", errors.Join(errs...))
 		}
 	}
-
-	plaintextEl, err := xmlenc.Decrypt(key, encryptedDataEl)
 	if err != nil {
 		return nil, err
 	}
@@ -1229,6 +1245,22 @@ func (sp *ServiceProvider) decryptElement(encryptedEl *etree.Element) (*etree.El
 		return nil, errors.New("plaintext response contains no root element")
 	}
 	return doc.Root(), nil
+}
+
+// decryptWithKey decrypts encryptedDataEl, the EncryptedData child of
+// encryptedEl, with decryptionKey. The content key is wrapped in an
+// EncryptedKey either beside the EncryptedData or inside its KeyInfo.
+func decryptWithKey(decryptionKey interface{}, encryptedEl, encryptedDataEl *etree.Element) ([]byte, error) {
+	key := decryptionKey
+	keyEl := encryptedEl.FindElement("./EncryptedKey")
+	if keyEl != nil {
+		var err error
+		key, err = xmlenc.Decrypt(decryptionKey, keyEl)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt key from response: %s", err)
+		}
+	}
+	return xmlenc.Decrypt(key, encryptedDataEl)
 }
 
 func (sp *ServiceProvider) parseAssertion(assertionEl *etree.Element, possibleRequestIDs []string, now time.Time, signatureRequirement signatureRequirement) (*Assertion, error) {
