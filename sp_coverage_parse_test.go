@@ -336,7 +336,7 @@ func spcovArtifactRequest(artifact string) *http.Request {
 
 func TestSpcovParseResponseArtifact(t *testing.T) {
 	e := spcovSetup(t)
-	srv := httptest.NewServer(e.artifactHandler(t))
+	srv := httptest.NewTLSServer(e.artifactHandler(t))
 	t.Cleanup(srv.Close)
 	e.sp.IDPMetadata.IDPSSODescriptors[0].ArtifactResolutionServices[0].Location = srv.URL + "/artifact"
 	e.sp.HTTPClient = srv.Client()
@@ -377,7 +377,7 @@ func TestSpcovHandleArtifactRequestTransportErrors(t *testing.T) {
 		sp.IDPMetadata = spcovIDPMetadata(e.idpCert)
 		sp.IDPMetadata.IDPSSODescriptors[0].ArtifactResolutionServices[0].Location = "http://bad host/"
 		_, err := sp.handleArtifactRequest(ctx, "the-artifact", nil)
-		assert.Error(t, spcovPrivateErr(t, err), `parse "http://bad host/": invalid character " " in host name`)
+		assert.Error(t, spcovPrivateErr(t, err), `cannot resolve artifact: invalid SOAP endpoint "http://bad host/": parse "http://bad host/": invalid character " " in host name`)
 	})
 
 	t.Run("default client, no resolution service", func(t *testing.T) {
@@ -386,7 +386,7 @@ func TestSpcovHandleArtifactRequestTransportErrors(t *testing.T) {
 		sp.IDPMetadata = spcovIDPMetadata(e.idpCert)
 		sp.IDPMetadata.IDPSSODescriptors[0].ArtifactResolutionServices = nil
 		_, err := sp.handleArtifactRequest(ctx, "the-artifact", nil)
-		assert.Error(t, spcovPrivateErr(t, err), `cannot resolve artifact: Post "": unsupported protocol scheme ""`)
+		assert.Check(t, is.ErrorIs(spcovPrivateErr(t, err), ErrInsecureSOAPEndpoint))
 	})
 
 	transportErr := errors.New("connection refused by test")

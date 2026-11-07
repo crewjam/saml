@@ -26,7 +26,7 @@ func TestArtifactResponseSizeLimit(t *testing.T) {
 	// bodySize is the exact size of the response the IDP sends: a valid
 	// signed ArtifactResponse, padded with trailing whitespace.
 	var bodySize int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		doc := etree.NewDocument()
 		if _, err := doc.ReadFrom(r.Body); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)

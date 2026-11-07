@@ -34,12 +34,36 @@ type soapParticipant struct {
 	respond func(sp *ServiceProvider, req *LogoutRequest) []byte
 }
 
-// addSOAPParticipant adds to pt an SP that lists a SOAP SingleLogoutService
-// after the given front-channel bindings.
+// addSOAPParticipant adds to pt an SP that lists an https SOAP
+// SingleLogoutService after the given front-channel bindings. Unless pt.idp
+// already has an HTTPClient, it is given one that trusts the test server
+// certificate (which every httptest TLS server shares) and otherwise behaves
+// like the default one.
 func (pt *propagationTest) addSOAPParticipant(t *testing.T, frontChannelBindings ...string) *soapParticipant {
+	p := &soapParticipant{}
+	p.server = httptest.NewTLSServer(http.HandlerFunc(p.serveSOAP))
+	t.Cleanup(p.server.Close)
+	if pt.idp.HTTPClient == nil {
+		pt.idp.HTTPClient = &http.Client{
+			Transport:     p.server.Client().Transport,
+			Timeout:       defaultSOAPHTTPClient.Timeout,
+			CheckRedirect: defaultSOAPHTTPClient.CheckRedirect,
+		}
+	}
+	return pt.addSOAPParticipantAt(p, frontChannelBindings)
+}
+
+// addHTTPSOAPParticipant is addSOAPParticipant with a plain http SOAP
+// SingleLogoutService, which the IdP ignores unless
+// AllowInsecureSOAPEndpoints is set.
+func (pt *propagationTest) addHTTPSOAPParticipant(t *testing.T, frontChannelBindings ...string) *soapParticipant {
 	p := &soapParticipant{}
 	p.server = httptest.NewServer(http.HandlerFunc(p.serveSOAP))
 	t.Cleanup(p.server.Close)
+	return pt.addSOAPParticipantAt(p, frontChannelBindings)
+}
+
+func (pt *propagationTest) addSOAPParticipantAt(p *soapParticipant, frontChannelBindings []string) *soapParticipant {
 
 	template := pt.sps[0]
 	p.sp = &ServiceProvider{
@@ -379,9 +403,11 @@ func TestIDPAcceptsSOAPLogoutResponses(t *testing.T) {
 // not follow redirects.
 func TestIDPSOAPLogoutHTTPClient(t *testing.T) {
 	t.Run("redirect not followed", func(t *testing.T) {
+		// Plain http servers, so that the default client is used.
 		pt := newPropagationTest(t)
-		target := pt.addSOAPParticipant(t)
-		redirecting := pt.addSOAPParticipant(t)
+		pt.idp.AllowInsecureSOAPEndpoints = true
+		target := pt.addHTTPSOAPParticipant(t)
+		redirecting := pt.addHTTPSOAPParticipant(t)
 		redirecting.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, target.sp.SloURL.String(), http.StatusTemporaryRedirect)
 		})
@@ -395,9 +421,10 @@ func TestIDPSOAPLogoutHTTPClient(t *testing.T) {
 		pt := newPropagationTest(t)
 		soapSP := pt.addSOAPParticipant(t)
 		var used bool
+		transport := soapSP.server.Client().Transport
 		pt.idp.HTTPClient = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 			used = true
-			return http.DefaultTransport.RoundTrip(r)
+			return transport.RoundTrip(r)
 		})}
 		pt.login(t, soapSP.sp)
 
@@ -420,3 +447,65 @@ func TestIDPSOAPLogoutHTTPClient(t *testing.T) {
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// A SOAP SingleLogoutService that is not https is ignored, so that the
+// LogoutRequest with the user's NameID does not cross the network in the
+// clear: the participant is logged out through the browser if it lists a
+// front-channel endpoint, and is reported as not logged out if it does not.
+// AllowInsecureSOAPEndpoints lets the IdP use the http endpoint.
+func TestIDPIgnoresInsecureSOAPLogoutEndpoint(t *testing.T) {
+	t.Run("front-channel fallback", func(t *testing.T) {
+		pt := newPropagationTest(t)
+		soapSP := pt.addHTTPSOAPParticipant(t, HTTPRedirectBinding)
+		pt.login(t, soapSP.sp)
+
+		w := pt.startLogout(propagationReturnURL)
+		assert.Check(t, is.Len(soapSP.requests(), 0))
+		assert.Check(t, is.Equal(http.StatusFound, w.Code))
+		assert.Check(t, strings.HasPrefix(w.Header().Get("Location"), soapSP.sp.SloURL.String()), w.Header().Get("Location"))
+	})
+	t.Run("no front channel", func(t *testing.T) {
+		pt := newPropagationTest(t)
+		soapSP := pt.addHTTPSOAPParticipant(t)
+		pt.login(t, soapSP.sp)
+
+		w := pt.startLogout("")
+		assert.Check(t, is.Len(soapSP.requests(), 0))
+		assert.Check(t, is.Contains(w.Body.String(), soapSP.sp.MetadataURL.String()))
+	})
+	t.Run("allowed", func(t *testing.T) {
+		pt := newPropagationTest(t)
+		pt.idp.AllowInsecureSOAPEndpoints = true
+		soapSP := pt.addHTTPSOAPParticipant(t, HTTPRedirectBinding)
+		pt.login(t, soapSP.sp)
+
+		w := pt.startLogout(propagationReturnURL)
+		assert.Check(t, is.Len(soapSP.requests(), 1))
+		assert.Check(t, is.Equal(propagationReturnURL, w.Header().Get("Location")))
+		soapSP.checkNoErrors(t)
+	})
+}
+
+func TestCheckSOAPEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		location      string
+		allowInsecure bool
+		wantErr       bool
+	}{
+		{"https://idp.example.com/soap", false, false},
+		{"HTTPS://idp.example.com/soap", false, false},
+		{"http://idp.example.com/soap", false, true},
+		{"http://idp.example.com/soap", true, false},
+		{"ftp://idp.example.com/soap", true, true},
+		{"/soap", true, true},
+		{"", false, true},
+	} {
+		err := checkSOAPEndpoint(tc.location, tc.allowInsecure)
+		if tc.wantErr {
+			assert.Check(t, is.ErrorIs(err, ErrInsecureSOAPEndpoint), "%q", tc.location)
+		} else {
+			assert.Check(t, is.Nil(err), "%q", tc.location)
+		}
+	}
+	assert.Check(t, is.ErrorContains(checkSOAPEndpoint("http://[::1", true), "invalid SOAP endpoint"))
+}

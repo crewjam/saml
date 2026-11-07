@@ -329,7 +329,7 @@ type soapLogoutIDPServer struct {
 func newSOAPLogoutIDPServer(t *testing.T, e *spcovEnv) *soapLogoutIDPServer {
 	t.Helper()
 	s := &soapLogoutIDPServer{status: http.StatusOK}
-	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.Server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		s.bodies = append(s.bodies, body)
 		s.headers = append(s.headers, r.Header.Clone())
