@@ -28,6 +28,16 @@ type JWTSessionCodec struct {
 	// the MaxAge of the CookieSessionProvider that stores the token.
 	MaxAge time.Duration
 	Key    crypto.Signer
+
+	// KeyAttributesByName, if true, keys the session's Attributes by each
+	// SAML attribute's Name. By default they are keyed by FriendlyName, or
+	// Name when FriendlyName is empty. saml-core §2.7.3.1 says FriendlyName
+	// "MUST NOT be used as a basis for formally identifying SAML
+	// attributes": two attributes with different Names but the same
+	// FriendlyName are merged under one key, and a FriendlyName can equal
+	// another attribute's Name, so an attribute can stand in for another.
+	// Set this when attribute values are used for authorization.
+	KeyAttributesByName bool
 }
 
 var _ SessionCodec = JWTSessionCodec{}
@@ -66,7 +76,7 @@ func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
 	for _, attributeStatement := range assertion.AttributeStatements {
 		for _, attr := range attributeStatement.Attributes {
 			claimName := attr.FriendlyName
-			if claimName == "" {
+			if claimName == "" || c.KeyAttributesByName {
 				claimName = attr.Name
 			}
 			for _, value := range attr.Values {

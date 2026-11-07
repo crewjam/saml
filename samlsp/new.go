@@ -116,6 +116,11 @@ type Options struct {
 	// LogoutBindings.)
 	LogoutBinding string
 
+	// KeyAttributesByName keys the session's attributes by their SAML Name
+	// rather than their FriendlyName (JWTSessionCodec.KeyAttributesByName).
+	// It is off by default.
+	KeyAttributesByName bool
+
 	// SignLogout signs the LogoutRequests and LogoutResponses the
 	// middleware sends with Key, even if SignRequest is not set
 	// (saml.ServiceProvider.LogoutSignatureMethod). The single logout
@@ -219,6 +224,8 @@ func DefaultSessionCodec(opts Options) JWTSessionCodec {
 		Issuer:        opts.URL.String(),
 		MaxAge:        defaultSessionMaxAge,
 		Key:           key,
+
+		KeyAttributesByName: opts.KeyAttributesByName,
 	}
 }
 
