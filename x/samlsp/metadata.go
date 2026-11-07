@@ -20,7 +20,7 @@ import (
 //
 // Config calls it every time it builds or verifies a message, with that
 // call's context, so it must be cheap and safe for concurrent use. Use
-// StaticMetadata, ParseMetadata or RemoteMetadata, or write your own: for
+// StaticMetadata, StaticMetadataBytes or RemoteMetadata, or write your own: for
 // example, to read metadata from a database, or to pick the IdP of a tenant
 // named in ctx.
 //
@@ -37,7 +37,7 @@ func StaticMetadata(md *saml.EntityDescriptor) MetadataFunc {
 	}
 }
 
-// MetadataOption configures ParseMetadata and RemoteMetadata.
+// MetadataOption configures StaticMetadataBytes and RemoteMetadata.
 type MetadataOption func(*metadataOptions)
 
 type metadataOptions struct {
@@ -83,15 +83,23 @@ const DefaultMetadataRefreshInterval = time.Hour
 // it could not refresh before it tries again.
 const metadataRetryInterval = time.Minute
 
-// ParseMetadata parses identity provider metadata in data, such as metadata
-// loaded from a file, and returns a MetadataFunc that returns it.
-func ParseMetadata(data []byte, opts ...MetadataOption) (MetadataFunc, error) {
-	o := newMetadataOptions(opts)
-	md, err := parseMetadata(data, o)
-	if err != nil {
-		return nil, err
+// StaticMetadataBytes returns a MetadataFunc that always returns the
+// identity provider metadata in data, such as a file the IdP administrator
+// sent or one embedded with go:embed. The options WithIdentityProviderEntityID
+// and WithMetadataSigners apply; the others are for RemoteMetadata.
+//
+// data is parsed once, now. If it is not valid metadata, every call of the
+// MetadataFunc returns the error, so every Config method that uses it fails.
+func StaticMetadataBytes(data []byte, opts ...MetadataOption) MetadataFunc {
+	md, err := parseMetadata(data, newMetadataOptions(opts))
+	if err == nil {
+		err = checkIDPMetadata(md)
 	}
-	return StaticMetadata(md), nil
+	if err != nil {
+		err = fmt.Errorf("samlsp: invalid identity provider metadata: %w", err)
+		return func(context.Context) (*saml.EntityDescriptor, error) { return nil, err }
+	}
+	return StaticMetadata(md)
 }
 
 func newMetadataOptions(opts []MetadataOption) metadataOptions {

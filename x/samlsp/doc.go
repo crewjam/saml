@@ -30,8 +30,8 @@
 //
 // The first argument is a MetadataFunc that supplies the identity
 // provider's metadata. Every method calls it with its context.
-// RemoteMetadata fetches and caches metadata from a URL, ParseMetadata and
-// StaticMetadata use metadata the application already has, and an
+// RemoteMetadata fetches and caches metadata from a URL, StaticMetadata and
+// StaticMetadataBytes use metadata the application already has, and an
 // application can supply its own function: for example, one that reads
 // metadata from a database, or picks the IdP for the tenant named in the
 // context.

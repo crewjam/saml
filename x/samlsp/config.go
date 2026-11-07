@@ -45,7 +45,7 @@ type Config struct {
 //
 // identityProvider supplies the metadata of the IdP that the SP trusts.
 // It is called with the context of each method. See RemoteMetadata,
-// ParseMetadata and StaticMetadata.
+// StaticMetadata and StaticMetadataBytes.
 //
 // The entity ID is conventionally the URL where the SP serves its metadata
 // (see ServeMetadata), such as "https://sp.example.com/saml/metadata". The

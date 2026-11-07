@@ -593,22 +593,29 @@ func TestLogoutUnsupported(t *testing.T) {
 	}
 }
 
-func TestParseMetadata(t *testing.T) {
+func TestStaticMetadataBytes(t *testing.T) {
 	ti := newTestIDP(t)
 	buf, err := xml.Marshal(ti.idp.Metadata())
 	if err != nil {
 		t.Fatal(err)
 	}
-	f, err := samlsp.ParseMetadata(buf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	md, err := f(t.Context())
+	md, err := samlsp.StaticMetadataBytes(buf)(t.Context())
 	if err != nil || md.EntityID != "https://idp.example.com/metadata" {
 		t.Fatalf("got %v, %v", md, err)
 	}
-	if _, err := samlsp.ParseMetadata([]byte("<nope/>")); err == nil {
-		t.Error("expected an error for bad metadata")
+
+	// Invalid metadata fails every call, and so every Config method.
+	for _, bad := range [][]byte{[]byte("<nope/>"), []byte(`<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="sp"/>`)} {
+		f := samlsp.StaticMetadataBytes(bad)
+		for range 2 {
+			if _, err := f(t.Context()); err == nil {
+				t.Errorf("%s: expected an error", bad)
+			}
+		}
+		cfg := newTestConfigWithIDP(t, ti, f)
+		if _, err := cfg.AuthnRequest(t.Context(), "s"); err == nil {
+			t.Errorf("%s: AuthnRequest succeeded", bad)
+		}
 	}
 }
 

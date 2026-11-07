@@ -16,7 +16,7 @@ import (
 
 // exampleIDP returns the metadata of an identity provider with
 // HTTP-Redirect and HTTP-POST single sign-on and single logout endpoints.
-// Real applications get it from RemoteMetadata or ParseMetadata.
+// Real applications get it from RemoteMetadata or StaticMetadataBytes.
 func exampleIDP() samlsp.MetadataFunc {
 	endpoints := func(location string) []saml.Endpoint {
 		return []saml.Endpoint{
