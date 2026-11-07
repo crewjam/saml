@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/beevik/etree"
+
 	"github.com/crewjam/saml"
 )
 
@@ -146,6 +148,10 @@ type LogoutRequest struct {
 	// NameID identifies the user whose sessions to end.
 	NameID saml.NameID
 
+	// BaseID identifies the user instead of NameID, with AcceptBaseID; its
+	// meaning depends on its xsi:type. It is nil otherwise.
+	BaseID *etree.Element
+
 	// SessionIndexes, if not empty, name the sessions to end. If it is
 	// empty, end all of the user's sessions.
 	SessionIndexes []string
@@ -234,6 +240,7 @@ func (c *Config) ParseLogoutRequest(ctx context.Context, r *http.Request, opts .
 	if req.NameID != nil {
 		out.NameID = *req.NameID
 	}
+	out.BaseID = req.BaseID
 	for _, si := range req.AllSessionIndexes() {
 		out.SessionIndexes = append(out.SessionIndexes, si.Value)
 	}
