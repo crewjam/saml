@@ -524,9 +524,12 @@ func (sp *ServiceProvider) MakeRedirectAuthenticationRequest(relayState string) 
 
 // Redirect returns a URL suitable for using the redirect binding with the request.
 // If sp.SignatureMethod is set, the query string is signed as described in
-// saml-bindings-2.0-os section 3.4.4.1.
+// saml-bindings-2.0-os section 3.4.4.1. Any enveloped XML signature is omitted,
+// as required by the HTTP-Redirect binding.
 func (r *AuthnRequest) Redirect(relayState string, sp *ServiceProvider) (*url.URL, error) {
-	encoded, err := deflateAndEncode(r.Element())
+	unsigned := *r
+	unsigned.Signature = nil
+	encoded, err := deflateAndEncode(unsigned.Element())
 	if err != nil {
 		return nil, err
 	}
@@ -2225,13 +2228,16 @@ func (sp *ServiceProvider) RedirectLogoutRequestURL(req *LogoutRequest, relaySta
 
 // Redirect returns a URL suitable for using the redirect binding with the
 // request. The URL carries no query string signature; use
-// ServiceProvider.MakeRedirectLogoutRequest to produce a signed one.
+// ServiceProvider.MakeRedirectLogoutRequest to produce a signed one. Any
+// enveloped XML signature is omitted, as required by the HTTP-Redirect binding.
 func (r *LogoutRequest) Redirect(relayState string) *url.URL {
 	w := &bytes.Buffer{}
 	w1 := base64.NewEncoder(base64.StdEncoding, w)
 	w2, _ := flate.NewWriter(w1, 9)
 	doc := etree.NewDocument()
-	doc.SetRoot(r.Element())
+	unsigned := *r
+	unsigned.Signature = nil
+	doc.SetRoot(unsigned.Element())
 	if _, err := doc.WriteTo(w2); err != nil {
 		panic(err)
 	}
@@ -2362,13 +2368,16 @@ func (sp *ServiceProvider) MakeRedirectLogoutResponse(logoutRequestID, relayStat
 
 // Redirect returns a URL suitable for using the redirect binding with the
 // LogoutResponse. The URL carries no query string signature; use
-// ServiceProvider.MakeRedirectLogoutResponse to produce a signed one.
+// ServiceProvider.MakeRedirectLogoutResponse to produce a signed one. Any
+// enveloped XML signature is omitted, as required by the HTTP-Redirect binding.
 func (r *LogoutResponse) Redirect(relayState string) *url.URL {
 	w := &bytes.Buffer{}
 	w1 := base64.NewEncoder(base64.StdEncoding, w)
 	w2, _ := flate.NewWriter(w1, 9)
 	doc := etree.NewDocument()
-	doc.SetRoot(r.Element())
+	unsigned := *r
+	unsigned.Signature = nil
+	doc.SetRoot(unsigned.Element())
 	if _, err := doc.WriteTo(w2); err != nil {
 		panic(err)
 	}
