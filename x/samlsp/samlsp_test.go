@@ -232,6 +232,11 @@ func TestLogin(t *testing.T) {
 			if err := a.DecodeAttributes(&user); err != nil {
 				t.Fatal(err)
 			}
+			for _, at := range a.Attributes {
+				if len(at.Types) != len(at.Values) || at.Types[0] != "xs:string" {
+					t.Errorf("attribute %s: Types %q for Values %q", at.Name, at.Types, at.Values)
+				}
+			}
 			if user.UID != "alice" || len(user.Groups) != 2 || user.ByFriendlyName != "" || user.Absent != "" {
 				t.Errorf("decoded attributes = %+v (from %+v)", user, a.Attributes)
 			}

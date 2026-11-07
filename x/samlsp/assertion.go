@@ -1,8 +1,6 @@
 package samlsp
 
 import (
-	"fmt"
-	"reflect"
 	"time"
 
 	"github.com/crewjam/saml"
@@ -96,6 +94,7 @@ func newAssertion(a *saml.Assertion) *Assertion {
 	for _, st := range a.AttributeStatements {
 		for _, attr := range st.Attributes {
 			values := make([]string, 0, len(attr.Values))
+			types := make([]string, 0, len(attr.Values))
 			for _, v := range attr.Values {
 				switch {
 				case v.Nil:
@@ -105,12 +104,14 @@ func newAssertion(a *saml.Assertion) *Assertion {
 				default:
 					values = append(values, v.Value)
 				}
+				types = append(types, v.Type)
 			}
 			out.Attributes = append(out.Attributes, Attribute{
 				Name:         attr.Name,
 				FriendlyName: attr.FriendlyName,
 				NameFormat:   attr.NameFormat,
 				Values:       values,
+				Types:        types,
 			})
 		}
 	}
@@ -131,7 +132,16 @@ type Attribute struct {
 	// by it.
 	FriendlyName string
 
+	// Values are the attribute's values, as text. A value that is a NameID,
+	// such as that of eduPersonTargetedID, is its text content. Values that
+	// are null (xsi:nil) are left out.
 	Values []string
+
+	// Types are the declared types (xsi:type) of Values, index for index,
+	// as written: for example "xs:string" or "xsd:boolean". A type is ""
+	// when it is not declared, which many IdPs do. DecodeAttributes does
+	// not consult them.
+	Types []string
 }
 
 // Attributes are the attributes of an assertion.
@@ -156,51 +166,4 @@ func (as Attributes) Get(name string) string {
 		return v[0]
 	}
 	return ""
-}
-
-// DecodeAttributes stores the assertion's attributes in the struct that v
-// points to. Each field to set has a tag with the Name of its attribute
-// (not its FriendlyName, which does not identify it):
-//
-//	var user struct {
-//		Email  string   `saml:"urn:oid:0.9.2342.19200300.100.1.3"`
-//		Name   string   `saml:"urn:oid:2.16.840.1.113730.3.1.241"`
-//		Groups []string `saml:"http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"`
-//	}
-//	err := assertion.DecodeAttributes(&user)
-//
-// A string field receives the first value, and a []string field receives
-// all values. A field whose attribute is absent is left unchanged.
-func (a *Assertion) DecodeAttributes(v any) error {
-	rv := reflect.ValueOf(v)
-	if rv.Kind() != reflect.Pointer || rv.IsNil() || rv.Elem().Kind() != reflect.Struct {
-		return fmt.Errorf("samlsp: DecodeAttributes needs a non-nil pointer to a struct, not %T", v)
-	}
-	rv = rv.Elem()
-	rt := rv.Type()
-	for i := 0; i < rt.NumField(); i++ {
-		f := rt.Field(i)
-		name, ok := f.Tag.Lookup("saml")
-		if !ok || name == "" || name == "-" || !f.IsExported() {
-			continue
-		}
-		values := a.Attributes.Values(name)
-		if len(values) == 0 {
-			continue
-		}
-		fv := rv.Field(i)
-		switch {
-		case fv.Kind() == reflect.String:
-			fv.SetString(values[0])
-		case fv.Kind() == reflect.Slice && fv.Type().Elem().Kind() == reflect.String:
-			s := reflect.MakeSlice(fv.Type(), len(values), len(values))
-			for j, value := range values {
-				s.Index(j).SetString(value)
-			}
-			fv.Set(s)
-		default:
-			return fmt.Errorf("samlsp: DecodeAttributes: field %s has type %s, not string or []string", f.Name, f.Type)
-		}
-	}
-	return nil
 }
