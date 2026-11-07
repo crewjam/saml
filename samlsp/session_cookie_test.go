@@ -120,7 +120,7 @@ func TestDefaultSessionProviderCookieDomain(t *testing.T) {
 
 			resp = httptest.NewRecorder()
 			req = httptest.NewRequest(http.MethodGet, "/", nil)
-			req.AddCookie(&http.Cookie{Name: "token", Value: "abc"})
+			req.AddCookie(&http.Cookie{Name: "token", Value: "abc", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 			assert.Assert(t, sp.DeleteSession(resp, req))
 			check(t, resp.Result().Cookies(), tc.wantDelete)
 		})
