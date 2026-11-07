@@ -1184,7 +1184,7 @@ type Subject struct {
 	//
 	// When the service provider accepts an assertion whose Subject has an
 	// EncryptedID, it decrypts it with its decryption keys and sets NameID
-	// to the NameID it holds, leaving EncryptedID as received.
+	// to the NameID it holds, then clears EncryptedID.
 	EncryptedID *etree.Element `xml:"urn:oasis:names:tc:SAML:2.0:assertion EncryptedID"`
 
 	SubjectConfirmations []SubjectConfirmation `xml:"urn:oasis:names:tc:SAML:2.0:assertion SubjectConfirmation"`

@@ -1511,8 +1511,10 @@ func (sp *ServiceProvider) parseAssertion(assertionEl *etree.Element, possibleRe
 // decryptEncryptedIDs sets the NameID of subject, and of each of its
 // SubjectConfirmations, that is given as an EncryptedID (saml-core §2.2.4)
 // to the NameID the EncryptedID holds, decrypted with the SP's decryption
-// keys. The EncryptedID is left as received. It is called after the
-// assertion's signature, which covers the EncryptedID, has been checked.
+// keys. The EncryptedID is then cleared, since NameID and EncryptedID are
+// alternatives and an assertion that is marshalled again must hold only one.
+// It is called after the assertion's signature, which covers the
+// EncryptedID, has been checked.
 func (sp *ServiceProvider) decryptEncryptedIDs(subject *Subject) error {
 	if subject == nil {
 		return nil
@@ -1522,6 +1524,7 @@ func (sp *ServiceProvider) decryptEncryptedIDs(subject *Subject) error {
 		return fmt.Errorf("assertion Subject: %w", err)
 	}
 	subject.NameID = nameID
+	subject.EncryptedID = nil
 	for i := range subject.SubjectConfirmations {
 		subjectConfirmation := &subject.SubjectConfirmations[i]
 		nameID, err := sp.decryptEncryptedID(subjectConfirmation.NameID, subjectConfirmation.EncryptedID)
@@ -1529,6 +1532,7 @@ func (sp *ServiceProvider) decryptEncryptedIDs(subject *Subject) error {
 			return fmt.Errorf("assertion SubjectConfirmation: %w", err)
 		}
 		subjectConfirmation.NameID = nameID
+		subjectConfirmation.EncryptedID = nil
 	}
 	return nil
 }

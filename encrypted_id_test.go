@@ -140,7 +140,12 @@ func TestSPDecryptsSubjectEncryptedID(t *testing.T) {
 			assert.NilError(t, err)
 			assert.Assert(t, got.Subject.NameID != nil)
 			assert.Check(t, is.DeepEqual(*got.Subject.NameID, eidNameID))
-			assert.Check(t, got.Subject.EncryptedID != nil)
+			assert.Check(t, is.Nil(got.Subject.EncryptedID))
+
+			// Marshalled again, the Subject holds only the NameID.
+			subjectEl := got.Subject.Element()
+			assert.Check(t, subjectEl.FindElement("./NameID") != nil)
+			assert.Check(t, is.Nil(subjectEl.FindElement("./EncryptedID")))
 		})
 	}
 }
@@ -169,6 +174,7 @@ func TestSPDecryptsSubjectConfirmationEncryptedID(t *testing.T) {
 	assert.Check(t, is.Equal(got.Subject.NameID.Value, "alice@example.com"))
 	assert.Assert(t, got.Subject.SubjectConfirmations[0].NameID != nil)
 	assert.Check(t, is.Equal(got.Subject.SubjectConfirmations[0].NameID.Value, "presenter"))
+	assert.Check(t, is.Nil(got.Subject.SubjectConfirmations[0].EncryptedID))
 }
 
 func TestSPRejectsBadSubjectEncryptedID(t *testing.T) {
