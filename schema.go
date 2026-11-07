@@ -234,7 +234,7 @@ func (r *LogoutRequest) Element() *etree.Element {
 }
 
 // MarshalXML implements xml.Marshaler
-func (r *LogoutRequest) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
+func (r LogoutRequest) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias LogoutRequest
 	aux := &struct {
 		IssueInstant RelaxedTime  `xml:",attr"`
@@ -259,7 +259,7 @@ func (r *LogoutRequest) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 		NameID:         r.NameID,
 		EncryptedID:    (*etreeElementXML)(r.EncryptedID),
 		SessionIndexes: r.AllSessionIndexes(),
-		Alias:          (*Alias)(r),
+		Alias:          (*Alias)(&r),
 	}
 	return e.Encode(aux)
 }
@@ -387,7 +387,7 @@ func (r *AuthnRequest) Element() *etree.Element {
 }
 
 // MarshalXML implements xml.Marshaler
-func (r *AuthnRequest) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
+func (r AuthnRequest) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias AuthnRequest
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
@@ -400,7 +400,7 @@ func (r *AuthnRequest) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 		IssueInstant: RelaxedTime(r.IssueInstant),
 		Issuer:       r.Issuer,
 		Signature:    (*etreeElementXML)(r.Signature),
-		Alias:        (*Alias)(r),
+		Alias:        (*Alias)(&r),
 	}
 	return e.Encode(aux)
 }
@@ -606,7 +606,7 @@ func (r *ArtifactResolve) SoapRequest() *etree.Element {
 }
 
 // MarshalXML implements xml.Marshaler
-func (r *ArtifactResolve) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
+func (r ArtifactResolve) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias ArtifactResolve
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
@@ -619,7 +619,7 @@ func (r *ArtifactResolve) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 		IssueInstant: RelaxedTime(r.IssueInstant),
 		Issuer:       r.Issuer,
 		Signature:    (*etreeElementXML)(r.Signature),
-		Alias:        (*Alias)(r),
+		Alias:        (*Alias)(&r),
 	}
 	return e.Encode(aux)
 }
@@ -707,7 +707,7 @@ func (r *AttributeQuery) SoapRequest() *etree.Element {
 }
 
 // MarshalXML implements xml.Marshaler
-func (r *AttributeQuery) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
+func (r AttributeQuery) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias AttributeQuery
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
@@ -720,7 +720,7 @@ func (r *AttributeQuery) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 		IssueInstant: RelaxedTime(r.IssueInstant),
 		Issuer:       r.Issuer,
 		Signature:    (*etreeElementXML)(r.Signature),
-		Alias:        (*Alias)(r),
+		Alias:        (*Alias)(&r),
 	}
 	return e.Encode(aux)
 }
@@ -789,7 +789,7 @@ func (r *ArtifactResponse) Element() *etree.Element {
 }
 
 // MarshalXML implements xml.Marshaler
-func (r *ArtifactResponse) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
+func (r ArtifactResponse) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias ArtifactResponse
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
@@ -802,7 +802,7 @@ func (r *ArtifactResponse) MarshalXML(e *xml.Encoder, _ xml.StartElement) error 
 		IssueInstant: RelaxedTime(r.IssueInstant),
 		Issuer:       r.Issuer,
 		Signature:    (*etreeElementXML)(r.Signature),
-		Alias:        (*Alias)(r),
+		Alias:        (*Alias)(&r),
 	}
 	return e.Encode(aux)
 }
@@ -891,7 +891,7 @@ func (r *Response) Element() *etree.Element {
 }
 
 // MarshalXML implements xml.Marshaler
-func (r *Response) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
+func (r Response) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias Response
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
@@ -909,7 +909,7 @@ func (r *Response) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 		Signature:          (*etreeElementXML)(r.Signature),
 		Status:             r.Status,
 		EncryptedAssertion: (*etreeElementXML)(r.EncryptedAssertion),
-		Alias:              (*Alias)(r),
+		Alias:              (*Alias)(&r),
 	}
 	return e.Encode(aux)
 }
@@ -1199,18 +1199,20 @@ func (a *Assertion) Element() *etree.Element {
 }
 
 // MarshalXML implements xml.Marshaler
-func (a *Assertion) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
+func (a Assertion) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias Assertion
 	aux := &struct {
 		// Issuer is repeated so that it is written before Signature, as
 		// the schema requires.
-		Issuer    Issuer           `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
-		Signature *etreeElementXML `xml:"Signature"`
+		IssueInstant RelaxedTime      `xml:",attr"`
+		Issuer       Issuer           `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
+		Signature    *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
-		Issuer:    a.Issuer,
-		Signature: (*etreeElementXML)(a.Signature),
-		Alias:     (*Alias)(a),
+		IssueInstant: RelaxedTime(a.IssueInstant),
+		Issuer:       a.Issuer,
+		Signature:    (*etreeElementXML)(a.Signature),
+		Alias:        (*Alias)(&a),
 	}
 	return e.Encode(aux)
 }
@@ -1281,7 +1283,7 @@ func (a *Subject) Element() *etree.Element {
 }
 
 // MarshalXML implements xml.Marshaler
-func (a *Subject) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
+func (a Subject) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias Subject
 	aux := &struct {
 		// BaseID, NameID and EncryptedID are repeated so that they are
@@ -1294,7 +1296,7 @@ func (a *Subject) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 		BaseID:      (*etreeElementXML)(a.BaseID),
 		NameID:      a.NameID,
 		EncryptedID: (*etreeElementXML)(a.EncryptedID),
-		Alias:       (*Alias)(a),
+		Alias:       (*Alias)(&a),
 	}
 	return e.Encode(aux)
 }
@@ -1400,14 +1402,14 @@ func (a *SubjectConfirmation) Element() *etree.Element {
 }
 
 // MarshalXML implements xml.Marshaler
-func (a *SubjectConfirmation) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+func (a SubjectConfirmation) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type Alias SubjectConfirmation
 	aux := &struct {
 		EncryptedID *etreeElementXML `xml:"urn:oasis:names:tc:SAML:2.0:assertion EncryptedID"`
 		*Alias
 	}{
 		EncryptedID: (*etreeElementXML)(a.EncryptedID),
-		Alias:       (*Alias)(a),
+		Alias:       (*Alias)(&a),
 	}
 	return e.EncodeElement(aux, start)
 }
@@ -1461,7 +1463,7 @@ func (s *SubjectConfirmationData) Element() *etree.Element {
 }
 
 // MarshalXML implements xml.Marshaler
-func (s *SubjectConfirmationData) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+func (s SubjectConfirmationData) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type Alias SubjectConfirmationData
 	aux := &struct {
 		NotBefore    *RelaxedTime `xml:",attr,omitempty"`
@@ -1470,7 +1472,7 @@ func (s *SubjectConfirmationData) MarshalXML(e *xml.Encoder, start xml.StartElem
 	}{
 		NotBefore:    optionalRelaxedTime(s.NotBefore),
 		NotOnOrAfter: optionalRelaxedTime(s.NotOnOrAfter),
-		Alias:        (*Alias)(s),
+		Alias:        (*Alias)(&s),
 	}
 	return e.EncodeElement(aux, start)
 }
@@ -1536,7 +1538,7 @@ func (c *Conditions) Element() *etree.Element {
 }
 
 // MarshalXML implements xml.Marshaler
-func (c *Conditions) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+func (c Conditions) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type Alias Conditions
 	aux := &struct {
 		NotBefore    *RelaxedTime `xml:",attr,omitempty"`
@@ -1545,7 +1547,7 @@ func (c *Conditions) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	}{
 		NotBefore:    optionalRelaxedTime(c.NotBefore),
 		NotOnOrAfter: optionalRelaxedTime(c.NotOnOrAfter),
-		Alias:        (*Alias)(c),
+		Alias:        (*Alias)(&c),
 	}
 	return e.EncodeElement(aux, start)
 }
@@ -1609,7 +1611,7 @@ type audienceRestrictionXML struct {
 }
 
 // MarshalXML implements xml.Marshaler
-func (a *AudienceRestriction) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+func (a AudienceRestriction) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	return e.EncodeElement(audienceRestrictionXML{Audiences: a.AllAudiences()}, start)
 }
 
@@ -1702,7 +1704,7 @@ func (a *AuthnStatement) Element() *etree.Element {
 }
 
 // MarshalXML implements xml.Marshaler
-func (a *AuthnStatement) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+func (a AuthnStatement) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type Alias AuthnStatement
 	aux := &struct {
 		AuthnInstant        RelaxedTime  `xml:",attr"`
@@ -1711,7 +1713,7 @@ func (a *AuthnStatement) MarshalXML(e *xml.Encoder, start xml.StartElement) erro
 	}{
 		AuthnInstant:        RelaxedTime(a.AuthnInstant),
 		SessionNotOnOrAfter: (*RelaxedTime)(a.SessionNotOnOrAfter),
-		Alias:               (*Alias)(a),
+		Alias:               (*Alias)(&a),
 	}
 	return e.EncodeElement(aux, start)
 }
@@ -1950,7 +1952,7 @@ func (r *LogoutResponse) Element() *etree.Element {
 }
 
 // MarshalXML implements xml.Marshaler
-func (r *LogoutResponse) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
+func (r LogoutResponse) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias LogoutResponse
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
@@ -1963,7 +1965,7 @@ func (r *LogoutResponse) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 		IssueInstant: RelaxedTime(r.IssueInstant),
 		Issuer:       r.Issuer,
 		Signature:    (*etreeElementXML)(r.Signature),
-		Alias:        (*Alias)(r),
+		Alias:        (*Alias)(&r),
 	}
 	return e.Encode(aux)
 }
