@@ -107,21 +107,21 @@ func TestGetIDPEncryptionCertUnspecifiedUse(t *testing.T) {
 		{Use: "signing", KeyInfo: keyInfo(test.IDP.Certificate.Raw)},
 		{KeyInfo: keyInfo(cert.Raw)},
 	}
-	got, err := test.SP.getIDPEncryptionCert()
+	got, _, err := test.SP.getIDPEncryptionCert()
 	assert.NilError(t, err)
 	assert.Check(t, got.Equal(cert))
 
 	test.SP.IDPMetadata.IDPSSODescriptors[0].KeyDescriptors = append(
 		test.SP.IDPMetadata.IDPSSODescriptors[0].KeyDescriptors,
 		KeyDescriptor{Use: "encryption", KeyInfo: keyInfo(test.IDP.Certificate.Raw)})
-	got, err = test.SP.getIDPEncryptionCert()
+	got, _, err = test.SP.getIDPEncryptionCert()
 	assert.NilError(t, err)
 	assert.Check(t, got.Equal(test.IDP.Certificate))
 
 	test.SP.IDPMetadata.IDPSSODescriptors[0].KeyDescriptors = []KeyDescriptor{
 		{Use: "encryption", KeyInfo: KeyInfo{X509Data: X509Data{X509Certificates: []X509Certificate{{Data: "not base64!"}}}}},
 	}
-	_, err = test.SP.getIDPEncryptionCert()
+	_, _, err = test.SP.getIDPEncryptionCert()
 	assert.Check(t, errors.Is(err, ErrInvalidCertificate), "%v", err)
 }
 

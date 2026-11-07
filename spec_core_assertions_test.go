@@ -91,6 +91,75 @@ func TestSpecCore_2_4_1_2_ConfirmationWithinConditions(t *testing.T) {
 	}
 }
 
+// saml-core §1.3.3 (lines 311-312): SAML time values "MUST be expressed in
+// UTC form, with no time zone component". Every time a message or assertion
+// writes is converted to UTC, whatever the zone of the time.Time it holds:
+// one taken from a request (Conditions NotBefore is the AuthnRequest's
+// IssueInstant) or from the application (AuthnInstant is
+// Session.CreateTime).
+func TestSpecCore_1_3_3_TimesInOtherZonesWrittenAsUTC(t *testing.T) {
+	east := time.FixedZone("UTC+5", 5*3600)
+	west := time.FixedZone("UTC-7", -7*3600)
+	at := time.Date(2015, 12, 1, 1, 57, 9, 0, time.UTC)
+	inEast, inWest := at.In(east), at.In(west)
+	const want = "2015-12-01T01:57:09Z"
+
+	checkTimes := func(t *testing.T, el *etree.Element) {
+		t.Helper()
+		seen := 0
+		var walk func(el *etree.Element)
+		walk = func(el *etree.Element) {
+			for _, attr := range el.Attr {
+				switch attr.Key {
+				case "IssueInstant", "NotBefore", "NotOnOrAfter", "AuthnInstant", "SessionNotOnOrAfter":
+					seen++
+					assert.Check(t, strings.HasSuffix(attr.Value, "Z"), "%s/@%s = %s", el.Tag, attr.Key, attr.Value)
+				}
+			}
+			for _, child := range el.ChildElements() {
+				walk(child)
+			}
+		}
+		walk(el)
+		assert.Check(t, seen > 0)
+	}
+
+	t.Run("every message type", func(t *testing.T) {
+		for name, el := range map[string]*etree.Element{
+			"AuthnRequest":    (&AuthnRequest{IssueInstant: inEast}).Element(),
+			"LogoutRequest":   (&LogoutRequest{IssueInstant: inEast, NotOnOrAfter: &inWest}).Element(),
+			"LogoutResponse":  (&LogoutResponse{IssueInstant: inWest}).Element(),
+			"ArtifactResolve": (&ArtifactResolve{IssueInstant: inEast}).Element(),
+			"ArtifactResponse": (&ArtifactResponse{IssueInstant: inWest,
+				Response: Response{IssueInstant: inEast}}).Element(),
+			"AttributeQuery": (&AttributeQuery{IssueInstant: inEast,
+				Subject: &Subject{NameID: &NameID{Value: "alice"}}}).Element(),
+			"Assertion": (&Assertion{IssueInstant: inEast,
+				Subject: &Subject{SubjectConfirmations: []SubjectConfirmation{{
+					SubjectConfirmationData: &SubjectConfirmationData{NotBefore: inWest, NotOnOrAfter: inEast},
+				}}},
+				Conditions:      &Conditions{NotBefore: inWest, NotOnOrAfter: inEast},
+				AuthnStatements: []AuthnStatement{{AuthnInstant: inWest, SessionNotOnOrAfter: &inEast}},
+			}).Element(),
+		} {
+			t.Run(name, func(t *testing.T) {
+				checkTimes(t, el)
+				assert.Check(t, is.Equal(want, el.SelectAttrValue("IssueInstant", "")))
+			})
+		}
+	})
+
+	t.Run("IdP assertion from a request and session in other zones", func(t *testing.T) {
+		req := specCoreIDPRequest(t)
+		req.Request.IssueInstant = req.Request.IssueInstant.In(east)
+		session := &Session{ID: "x", NameID: "n", CreateTime: TimeNow().In(west)}
+		assert.NilError(t, DefaultAssertionMaker{}.MakeAssertion(req, session))
+		el := req.Assertion.Element()
+		checkTimes(t, el)
+		assert.Check(t, is.Equal("2015-12-01T01:57:09Z", el.FindElement("./Conditions").SelectAttrValue("NotBefore", "")))
+	})
+}
+
 // saml-core §1.3.1 (lines 280-283): "all elements in SAML documents that have
 // the XML Schema xs:string type ... MUST be compared using an exact binary
 // comparison. In particular, SAML implementations ... MUST NOT depend on
