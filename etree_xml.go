@@ -11,22 +11,23 @@ import (
 // xmlNamespaceURI is the namespace bound to the reserved "xml" prefix.
 const xmlNamespaceURI = "http://www.w3.org/XML/1998/namespace"
 
-// signatureXML lets encoding/xml read and write a ds:Signature held as an
-// *etree.Element.
+// etreeElementXML lets encoding/xml read and write an element, such as a
+// ds:Signature, held as an *etree.Element.
 //
 // encoding/xml cannot handle *etree.Element itself: it marshals the struct's
 // fields (<Space>, <Tag>, ...) and unmarshals any element into an empty
-// etree.Element. Types with a Signature field shadow it with this type in
-// their MarshalXML and UnmarshalXML methods. The shadowing field must be
-// tagged `xml:"Signature"`, with no namespace, or encoding/xml keeps both.
+// etree.Element. Types with such a field shadow it with this type in their
+// MarshalXML and UnmarshalXML methods. The shadowing field must have exactly
+// the same tag as the field it shadows (for Signature, `xml:"Signature"`,
+// with no namespace), or encoding/xml keeps both.
 //
 // Namespace prefixes are kept as written, not rewritten as encoding/xml would.
 // Exclusive canonicalization includes prefixes, so rewriting them would make
 // the signature's SignedInfo canonicalize differently and the signature fail.
-type signatureXML etree.Element
+type etreeElementXML etree.Element
 
 // MarshalXML implements xml.Marshaler.
-func (s *signatureXML) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
+func (s *etreeElementXML) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	return encodeEtreeElement(e, (*etree.Element)(s), nil)
 }
 
@@ -102,12 +103,12 @@ func namespaceDeclaration(prefix, uri string) xml.Attr {
 }
 
 // UnmarshalXML implements xml.Unmarshaler.
-func (s *signatureXML) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+func (s *etreeElementXML) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	el, err := decodeEtreeElement(d, start, nil)
 	if err != nil {
 		return err
 	}
-	*s = signatureXML(*el)
+	*s = etreeElementXML(*el)
 	return nil
 }
 

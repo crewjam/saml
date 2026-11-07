@@ -52,14 +52,14 @@ func (m EntitiesDescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error
 	}
 	type Alias EntitiesDescriptor
 	aux := &struct {
-		ValidUntil    *RelaxedTime  `xml:"validUntil,attr,omitempty"`
-		CacheDuration *Duration     `xml:"cacheDuration,attr,omitempty"`
-		Signature     *signatureXML `xml:"Signature"`
+		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
+		CacheDuration *Duration        `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		ValidUntil:    validUntil,
 		CacheDuration: cacheDuration,
-		Signature:     (*signatureXML)(m.Signature),
+		Signature:     (*etreeElementXML)(m.Signature),
 		Alias:         (*Alias)(&m),
 	}
 	return e.Encode(aux)
@@ -69,9 +69,9 @@ func (m EntitiesDescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error
 func (m *EntitiesDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias EntitiesDescriptor
 	aux := &struct {
-		ValidUntil    *RelaxedTime  `xml:"validUntil,attr,omitempty"`
-		CacheDuration *Duration     `xml:"cacheDuration,attr,omitempty"`
-		Signature     *signatureXML `xml:"Signature"`
+		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
+		CacheDuration *Duration        `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -140,13 +140,13 @@ func (m EntityDescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	aux := &struct {
 		ValidUntil      *RelaxedTime        `xml:"validUntil,attr,omitempty"`
 		CacheDuration   Duration            `xml:"cacheDuration,attr,omitempty"`
-		Signature       *signatureXML       `xml:"Signature"`
+		Signature       *etreeElementXML    `xml:"Signature"`
 		RoleDescriptors []roleDescriptorXML `xml:"RoleDescriptor"`
 		*Alias
 	}{
 		ValidUntil:      validUntil,
 		CacheDuration:   Duration(m.CacheDuration),
-		Signature:       (*signatureXML)(m.Signature),
+		Signature:       (*etreeElementXML)(m.Signature),
 		RoleDescriptors: roleDescriptors,
 		Alias:           (*Alias)(&m),
 	}
@@ -159,7 +159,7 @@ func (m *EntityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 	aux := &struct {
 		ValidUntil      RelaxedTime         `xml:"validUntil,attr,omitempty"`
 		CacheDuration   Duration            `xml:"cacheDuration,attr,omitempty"`
-		Signature       *signatureXML       `xml:"Signature"`
+		Signature       *etreeElementXML    `xml:"Signature"`
 		RoleDescriptors []roleDescriptorXML `xml:"RoleDescriptor"`
 		*Alias
 	}{
@@ -493,10 +493,10 @@ type roleDescriptorXML RoleDescriptor
 func (m roleDescriptorXML) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type Alias roleDescriptorXML
 	aux := &struct {
-		Signature *signatureXML `xml:"Signature"`
+		Signature *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
-		Signature: (*signatureXML)(m.Signature),
+		Signature: (*etreeElementXML)(m.Signature),
 		Alias:     (*Alias)(&m),
 	}
 	return e.EncodeElement(aux, start)
@@ -506,7 +506,7 @@ func (m roleDescriptorXML) MarshalXML(e *xml.Encoder, start xml.StartElement) er
 func (m *roleDescriptorXML) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias roleDescriptorXML
 	aux := &struct {
-		Signature *signatureXML `xml:"Signature"`
+		Signature *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -522,10 +522,10 @@ func (m *roleDescriptorXML) UnmarshalXML(d *xml.Decoder, start xml.StartElement)
 func (m IDPSSODescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias IDPSSODescriptor
 	aux := &struct {
-		Signature *signatureXML `xml:"Signature"`
+		Signature *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
-		Signature: (*signatureXML)(m.Signature),
+		Signature: (*etreeElementXML)(m.Signature),
 		Alias:     (*Alias)(&m),
 	}
 	return e.Encode(aux)
@@ -535,7 +535,7 @@ func (m IDPSSODescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 func (m *IDPSSODescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias IDPSSODescriptor
 	aux := &struct {
-		Signature *signatureXML `xml:"Signature"`
+		Signature *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -552,10 +552,10 @@ func (m *IDPSSODescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 func (m SPSSODescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias SPSSODescriptor
 	aux := &struct {
-		Signature *signatureXML `xml:"Signature"`
+		Signature *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
-		Signature: (*signatureXML)(m.Signature),
+		Signature: (*etreeElementXML)(m.Signature),
 		Alias:     (*Alias)(&m),
 	}
 	return e.Encode(aux)
@@ -565,7 +565,7 @@ func (m SPSSODescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 func (m *SPSSODescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias SPSSODescriptor
 	aux := &struct {
-		Signature *signatureXML `xml:"Signature"`
+		Signature *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -582,10 +582,10 @@ func (m *SPSSODescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) e
 func (m AuthnAuthorityDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type Alias AuthnAuthorityDescriptor
 	aux := &struct {
-		Signature *signatureXML `xml:"Signature"`
+		Signature *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
-		Signature: (*signatureXML)(m.Signature),
+		Signature: (*etreeElementXML)(m.Signature),
 		Alias:     (*Alias)(&m),
 	}
 	return e.EncodeElement(aux, start)
@@ -595,7 +595,7 @@ func (m AuthnAuthorityDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElem
 func (m *AuthnAuthorityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias AuthnAuthorityDescriptor
 	aux := &struct {
-		Signature *signatureXML `xml:"Signature"`
+		Signature *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -611,10 +611,10 @@ func (m *AuthnAuthorityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartE
 func (m PDPDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type Alias PDPDescriptor
 	aux := &struct {
-		Signature *signatureXML `xml:"Signature"`
+		Signature *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
-		Signature: (*signatureXML)(m.Signature),
+		Signature: (*etreeElementXML)(m.Signature),
 		Alias:     (*Alias)(&m),
 	}
 	return e.EncodeElement(aux, start)
@@ -624,7 +624,7 @@ func (m PDPDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElement) error 
 func (m *PDPDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias PDPDescriptor
 	aux := &struct {
-		Signature *signatureXML `xml:"Signature"`
+		Signature *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -640,10 +640,10 @@ func (m *PDPDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) err
 func (m AttributeAuthorityDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type Alias AttributeAuthorityDescriptor
 	aux := &struct {
-		Signature *signatureXML `xml:"Signature"`
+		Signature *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
-		Signature: (*signatureXML)(m.Signature),
+		Signature: (*etreeElementXML)(m.Signature),
 		Alias:     (*Alias)(&m),
 	}
 	return e.EncodeElement(aux, start)
@@ -653,7 +653,7 @@ func (m AttributeAuthorityDescriptor) MarshalXML(e *xml.Encoder, start xml.Start
 func (m *AttributeAuthorityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias AttributeAuthorityDescriptor
 	aux := &struct {
-		Signature *signatureXML `xml:"Signature"`
+		Signature *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -669,10 +669,10 @@ func (m *AttributeAuthorityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.St
 func (m AffiliationDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type Alias AffiliationDescriptor
 	aux := &struct {
-		Signature *signatureXML `xml:"Signature"`
+		Signature *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
-		Signature: (*signatureXML)(m.Signature),
+		Signature: (*etreeElementXML)(m.Signature),
 		Alias:     (*Alias)(&m),
 	}
 	return e.EncodeElement(aux, start)
@@ -682,7 +682,7 @@ func (m AffiliationDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElement
 func (m *AffiliationDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias AffiliationDescriptor
 	aux := &struct {
-		Signature *signatureXML `xml:"Signature"`
+		Signature *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
