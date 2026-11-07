@@ -347,6 +347,29 @@ type ServiceProvider struct {
 	// them.
 	IgnoreCertificateExpiry bool
 
+	// RejectExpiredIDPMetadata, if true, refuses to rely on IDPMetadata once
+	// it has expired: when the signing certificates for a Response,
+	// Assertion, ArtifactResponse, LogoutRequest, LogoutResponse or attribute
+	// query response are taken from IDPMetadata, and the validUntil of the
+	// EntityDescriptor, or of an IDPSSODescriptor (or, for attribute query
+	// responses, AttributeAuthorityDescriptor) they are taken from, has
+	// passed, the message is refused with an error matching ErrExpired (and
+	// ErrInvalidSignature, for XML signatures). saml-metadata-2.0-os §4.3.1
+	// says expired metadata must not be relied on and a fresh copy must be
+	// retrieved. When IDPCertificate or IDPCertificateFingerprint is set the
+	// certificates do not come from IDPMetadata, and it is not checked.
+	//
+	// Only validUntil is checked; cacheDuration is not, since the
+	// ServiceProvider does not know when IDPMetadata was retrieved. The
+	// samlsp Parse and Fetch metadata functions set the ValidUntil of the
+	// returned EntityDescriptor to the earliest validUntil of the entity and
+	// of the EntitiesDescriptor elements that enclose it.
+	//
+	// It is off by default, because metadata whose validUntil has passed is
+	// commonly kept in use, and enabling this rejects every login until the
+	// metadata is refreshed.
+	RejectExpiredIDPMetadata bool
+
 	// RejectSHA1Signatures, if true, refuses messages from the IDP that are
 	// signed with a SHA-1 based algorithm: an XML signature whose
 	// SignatureMethod or any DigestMethod is SHA-1 based (rsa-sha1,
@@ -699,6 +722,14 @@ func (sp *ServiceProvider) GetSLOBindingLocation(binding string) string {
 // getIDPSigningCerts returns the certificates which we can use to verify things
 // signed by the IDP in PEM format, or nil if no such certificate is found.
 func (sp *ServiceProvider) getIDPSigningCerts() ([]*x509.Certificate, error) {
+	if err := sp.checkIDPMetadataNotExpired(); err != nil {
+		return nil, err
+	}
+	for i := range sp.IDPMetadata.IDPSSODescriptors {
+		if err := sp.checkRoleNotExpired(&sp.IDPMetadata.IDPSSODescriptors[i].RoleDescriptor, "IDPSSODescriptor"); err != nil {
+			return nil, err
+		}
+	}
 	var keyDescriptors []KeyDescriptor
 	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
 		keyDescriptors = append(keyDescriptors, idpSSODescriptor.KeyDescriptors...)
@@ -711,6 +742,31 @@ func (sp *ServiceProvider) getIDPSigningCerts() ([]*x509.Certificate, error) {
 		return nil, errors.New("cannot find any signing certificate in the IDP SSO descriptor")
 	}
 	return certs, nil
+}
+
+// checkIDPMetadataNotExpired returns an error matching ErrExpired if
+// RejectExpiredIDPMetadata is set and the validUntil of the IDPMetadata
+// EntityDescriptor has passed.
+func (sp *ServiceProvider) checkIDPMetadataNotExpired() error {
+	if !sp.RejectExpiredIDPMetadata || sp.IDPMetadata.ValidUntil.IsZero() {
+		return nil
+	}
+	if now := sp.now(); !now.Before(sp.IDPMetadata.ValidUntil) {
+		return classify(fmt.Errorf("IDP metadata expired at %s", sp.IDPMetadata.ValidUntil.UTC().Format(time.RFC3339)), ErrExpired)
+	}
+	return nil
+}
+
+// checkRoleNotExpired is checkIDPMetadataNotExpired for a role descriptor
+// of the IDPMetadata, named kind.
+func (sp *ServiceProvider) checkRoleNotExpired(role *RoleDescriptor, kind string) error {
+	if !sp.RejectExpiredIDPMetadata || role.ValidUntil == nil || role.ValidUntil.IsZero() {
+		return nil
+	}
+	if now := sp.now(); !now.Before(*role.ValidUntil) {
+		return classify(fmt.Errorf("IDP metadata %s expired at %s", kind, role.ValidUntil.UTC().Format(time.RFC3339)), ErrExpired)
+	}
+	return nil
 }
 
 // signingCerts parses the certificates in keyDescriptors that may be used for
