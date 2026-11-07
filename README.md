@@ -161,6 +161,8 @@ func hello(w http.ResponseWriter, r *http.Request) {
 
 Each attribute is stored under its `FriendlyName`, or its `Name` when the IDP sends no `FriendlyName` (for example `urn:oid:0.9.2342.19200300.100.1.3` or `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress`). The IDP decides which attributes it sends and what they are called, so if one you expect is missing, check the IDP's attribute release settings. Listing every attribute as above shows exactly what you received. The `SessionIndex` attribute is added by this package, not sent as an attribute by the IDP.
 
+Attributes the IDP encrypts (`EncryptedAttribute`) are decrypted with the service provider's key, like an encrypted assertion, and read like the others; an assertion with one that cannot be decrypted is refused. An assertion's Subject must identify the user with a NameID (possibly encrypted). One whose Subject has no identifier is refused, and so is one identified by a `BaseID`, unless `ServiceProvider.AcceptAssertionBaseID` is set: the assertion's `Subject.BaseID` then holds the element, which your code must interpret, and the session has no NameID.
+
 ### Logging out
 
 The middleware serves the SAML Single Logout endpoint, `<root URL>/saml/slo`, alongside the metadata and ACS endpoints. To let users log out, route a path of your application to `HandleStartLogout`:

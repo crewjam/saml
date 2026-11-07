@@ -16,7 +16,7 @@ func validAssertion(now time.Time) *Assertion {
 		Version:      "2.0",
 		IssueInstant: now,
 		Issuer:       Issuer{Value: "https://idp.example.com/"},
-		Subject: &Subject{SubjectConfirmations: []SubjectConfirmation{{
+		Subject: &Subject{NameID: &NameID{Value: "alice"}, SubjectConfirmations: []SubjectConfirmation{{
 			Method: "urn:oasis:names:tc:SAML:2.0:cm:bearer",
 			SubjectConfirmationData: &SubjectConfirmationData{
 				InResponseTo: "id-1", Recipient: "https://sp.example.com/acs", NotOnOrAfter: now.Add(time.Minute),

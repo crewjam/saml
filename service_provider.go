@@ -463,6 +463,17 @@ type ServiceProvider struct {
 	// interpret the BaseID itself. If false, such a request is refused with
 	// an error matching ErrUnsupported.
 	AcceptLogoutRequestBaseID bool
+
+	// AcceptAssertionBaseID, if true, lets the SP accept an assertion whose
+	// Subject identifies the principal with a saml:BaseID (in the clear, or
+	// in an EncryptedID) rather than a NameID (saml-core-2.0-os §2.2.3 and
+	// §2.4.1). The returned assertion's Subject.BaseID then holds the
+	// element and its Subject.NameID is nil, so the caller must interpret
+	// the BaseID itself: samlsp, for one, takes the session subject from
+	// the NameID only. If false, such an assertion is refused with an error
+	// matching ErrUnsupported. An assertion whose Subject has none of
+	// BaseID, NameID and EncryptedID is always refused (ErrMissingElement).
+	AcceptAssertionBaseID bool
 }
 
 // AssertionReplayCache records the IDs of accepted assertions, so that each
@@ -1889,6 +1900,9 @@ func (sp *ServiceProvider) parseReceivedAssertion(assertionEl, receivedEl *etree
 	if err := sp.decryptEncryptedIDs(assertion.Subject); err != nil {
 		return nil, err
 	}
+	if err := sp.decryptEncryptedAttributes(assertionEl, &assertion); err != nil {
+		return nil, err
+	}
 
 	if err := sp.validateAssertion(&assertion, possibleRequestIDs, now); err != nil {
 		return nil, err
@@ -1900,20 +1914,29 @@ func (sp *ServiceProvider) parseReceivedAssertion(assertionEl, receivedEl *etree
 // decryptEncryptedIDs sets the NameID of subject, and of each of its
 // SubjectConfirmations, that is given as an EncryptedID (saml-core §2.2.4)
 // to the NameID the EncryptedID holds, decrypted with the SP's decryption
-// keys. The EncryptedID is then cleared, since NameID and EncryptedID are
-// alternatives and an assertion that is marshalled again must hold only one.
-// It is called after the assertion's signature, which covers the
-// EncryptedID, has been checked.
+// keys. If AcceptAssertionBaseID is set, the EncryptedID of subject may
+// also hold a BaseID, which is then set as subject.BaseID; otherwise that
+// is refused (ErrUnsupported). The EncryptedID is then cleared, since BaseID, NameID
+// and EncryptedID are alternatives and an assertion that is marshalled
+// again must hold only one. It is called after the assertion's signature,
+// which covers the EncryptedID, has been checked.
 func (sp *ServiceProvider) decryptEncryptedIDs(subject *Subject) error {
 	if subject == nil {
 		return nil
 	}
-	nameID, err := sp.decryptEncryptedID(subject.NameID, subject.EncryptedID)
-	if err != nil {
-		return fmt.Errorf("assertion Subject: %w", err)
+	switch {
+	case subject.BaseID != nil && (subject.NameID != nil || subject.EncryptedID != nil):
+		return classify(errors.New("assertion Subject has a BaseID and a NameID or EncryptedID"), ErrMalformedMessage)
+	case subject.NameID != nil && subject.EncryptedID != nil:
+		return classify(errors.New("assertion Subject: has both a NameID and an EncryptedID"), ErrMalformedMessage)
+	case subject.EncryptedID != nil:
+		nameID, baseID, err := decryptIdentifier(subject.EncryptedID, sp.decryptElement, sp.AcceptAssertionBaseID)
+		if err != nil {
+			return fmt.Errorf("assertion Subject: %w", err)
+		}
+		subject.NameID, subject.BaseID = nameID, baseID
+		subject.EncryptedID = nil
 	}
-	subject.NameID = nameID
-	subject.EncryptedID = nil
 	for i := range subject.SubjectConfirmations {
 		subjectConfirmation := &subject.SubjectConfirmations[i]
 		nameID, err := sp.decryptEncryptedID(subjectConfirmation.NameID, subjectConfirmation.EncryptedID)
@@ -1938,6 +1961,105 @@ func (sp *ServiceProvider) decryptEncryptedID(nameID *NameID, encryptedID *etree
 		return nil, classify(errors.New("has both a NameID and an EncryptedID"), ErrMalformedMessage)
 	}
 	return decryptNameID(encryptedID, sp.decryptElement)
+}
+
+// validateSubjectIdentifier makes sure subject identifies the principal.
+// The Subject of a login assertion is the principal the SP establishes a
+// session for (saml-core §2.4.1, saml-profiles §4.1.4.2), so one with no
+// identifier is refused rather than accepted with a nil NameID. (A NameID
+// with an empty value is still accepted: this package's own IdP issues one
+// for a Session with no NameID.) A BaseID is accepted only if AcceptAssertionBaseID is
+// set, since its content is defined by an extension this package does not
+// interpret. It expects decryptEncryptedIDs to have replaced an EncryptedID
+// by what it holds.
+func (sp *ServiceProvider) validateSubjectIdentifier(subject *Subject) error {
+	switch {
+	case subject.BaseID != nil:
+		if !sp.AcceptAssertionBaseID {
+			return classify(errors.New("assertion Subject identifies the principal with a BaseID, which is not accepted"), ErrUnsupported)
+		}
+		return nil
+	case subject.EncryptedID != nil:
+		return classify(errors.New("assertion Subject EncryptedID has not been decrypted"), ErrMalformedMessage)
+	case subject.NameID == nil:
+		return classify(errors.New("assertion Subject has no BaseID, NameID or EncryptedID"), ErrMissingElement)
+	}
+	return nil
+}
+
+// decryptEncryptedAttributes decrypts each saml:EncryptedAttribute
+// (saml-core §2.7.3.2) of the AttributeStatements of assertionEl with the
+// SP's decryption keys and puts the saml:Attribute it holds into the
+// matching AttributeStatement of assertion, in document order among the
+// statement's plaintext Attributes. assertion is what assertionEl
+// unmarshals to. An EncryptedAttribute that cannot be decrypted
+// (ErrDecryptionFailed), or that does not hold a saml:Attribute, makes the
+// assertion refused rather than silently ignored. It is called after the
+// assertion's signature, which covers the EncryptedAttributes, has been
+// checked.
+func (sp *ServiceProvider) decryptEncryptedAttributes(assertionEl *etree.Element, assertion *Assertion) error {
+	statementEls, err := findChildren(assertionEl, samlAssertionNamespace, "AttributeStatement")
+	if err != nil {
+		return err
+	}
+	if len(statementEls) != len(assertion.AttributeStatements) {
+		return classify(errors.New("cannot match the AttributeStatement elements of the assertion"), ErrMalformedMessage)
+	}
+	for i, statementEl := range statementEls {
+		encryptedEls, err := findChildren(statementEl, samlAssertionNamespace, "EncryptedAttribute")
+		if err != nil {
+			return err
+		}
+		if len(encryptedEls) == 0 {
+			continue
+		}
+		attributeEls, err := findChildren(statementEl, samlAssertionNamespace, "Attribute")
+		if err != nil {
+			return err
+		}
+		statement := &assertion.AttributeStatements[i]
+		if len(attributeEls) != len(statement.Attributes) {
+			return classify(errors.New("cannot match the Attribute elements of an AttributeStatement"), ErrMalformedMessage)
+		}
+		isEncrypted := make(map[*etree.Element]bool, len(encryptedEls))
+		for _, el := range encryptedEls {
+			isEncrypted[el] = true
+		}
+		attributes := make([]Attribute, 0, len(attributeEls)+len(encryptedEls))
+		next := 0 // the index of the next plaintext Attribute
+		for _, childEl := range statementEl.ChildElements() {
+			switch {
+			case isEncrypted[childEl]:
+				attribute, err := sp.decryptEncryptedAttribute(childEl)
+				if err != nil {
+					return err
+				}
+				attributes = append(attributes, *attribute)
+			case next < len(attributeEls) && childEl == attributeEls[next]:
+				attributes = append(attributes, statement.Attributes[next])
+				next++
+			}
+		}
+		statement.Attributes = attributes
+	}
+	return nil
+}
+
+// decryptEncryptedAttribute returns the saml:Attribute held by encryptedEl,
+// a saml:EncryptedAttribute, decrypted with the SP's decryption keys.
+func (sp *ServiceProvider) decryptEncryptedAttribute(encryptedEl *etree.Element) (*Attribute, error) {
+	plaintext, err := sp.decryptElement(encryptedEl)
+	if err != nil {
+		return nil, classify(fmt.Errorf("cannot decrypt EncryptedAttribute: %w", err), ErrDecryptionFailed)
+	}
+	if plaintext.NamespaceURI() != samlAssertionNamespace || plaintext.Tag != "Attribute" {
+		return nil, classify(fmt.Errorf("EncryptedAttribute holds a %s element, not a saml:Attribute", plaintext.FullTag()), ErrMalformedMessage)
+	}
+	var attribute Attribute
+	if err := unmarshalElement(plaintext, &attribute); err != nil {
+		return nil, err
+	}
+	return &attribute, nil
 }
 
 // validateAssertion checks that the conditions specified in assertion match
@@ -1970,6 +2092,9 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	}
 	if assertion.Subject == nil {
 		return classify(fmt.Errorf("assertion has no Subject"), ErrMissingElement)
+	}
+	if err := sp.validateSubjectIdentifier(assertion.Subject); err != nil {
+		return err
 	}
 	if assertion.Conditions == nil {
 		return classify(fmt.Errorf("assertion has no Conditions"), ErrMissingElement)

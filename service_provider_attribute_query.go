@@ -491,6 +491,9 @@ func (sp *ServiceProvider) attributeQueryAssertion(assertionEl, receivedEl *etre
 	if err := sp.decryptEncryptedIDs(assertion.Subject); err != nil {
 		return nil, fmt.Errorf("assertion %q: %w", assertion.ID, err)
 	}
+	if err := sp.decryptEncryptedAttributes(assertionEl, &assertion); err != nil {
+		return nil, fmt.Errorf("assertion %q: %w", assertion.ID, err)
+	}
 	if err := sp.validateAttributeQueryAssertion(&assertion, query, now); err != nil {
 		return nil, fmt.Errorf("assertion %q: %w", assertion.ID, err)
 	}
