@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 
+	dsig "github.com/russellhaering/goxmldsig"
+
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/logger"
 )
@@ -79,6 +81,12 @@ type Options struct {
 	// If empty (the default), service provider metadata is accepted
 	// without checking any signature it carries.
 	SPMetadataCertificates []*x509.Certificate
+
+	// Clock, if non-nil, is the time source of the server: it is set as
+	// the Clock of the IdentityProvider (see saml.IdentityProvider.Clock),
+	// and sets the creation and expiry times of login sessions. If nil, the
+	// real clock is used.
+	Clock *dsig.Clock
 }
 
 // Server represents an IDP server. The server provides the following URLs:
@@ -153,6 +161,7 @@ func New(opts Options) (*Server, error) {
 			ExtraCertificates: opts.ExtraCertificates,
 			MetadataScopes:    opts.MetadataScopes,
 			NameIDFormats:     defaultNameIDFormats(),
+			Clock:             opts.Clock,
 		},
 		logger:            logr,
 		Store:             opts.Store,

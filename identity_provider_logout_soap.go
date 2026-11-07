@@ -122,7 +122,7 @@ func (idp *IdentityProvider) parseSOAPLogoutResponse(body []byte, serviceProvide
 	if err := checkEnvelopedSignatureNotSHA1(idp.RejectSHA1Signatures, el); err != nil {
 		return nil, fmt.Errorf("logout response from %s: %w", serviceProviderID, err)
 	}
-	signed, err := verifiedEnvelopedElement(el, certs, Clock)
+	signed, err := verifiedEnvelopedElement(el, certs, idp.dsigClock())
 	if err != nil {
 		return nil, fmt.Errorf("cannot verify signature of logout response from %s: %w", serviceProviderID, err)
 	}
@@ -136,7 +136,7 @@ func (idp *IdentityProvider) parseSOAPLogoutResponse(body []byte, serviceProvide
 		return nil, fmt.Errorf("signed logout response is not from %s", serviceProviderID)
 	}
 
-	if err := validateLogoutResponseAnswer(&resp, requestID); err != nil {
+	if err := validateLogoutResponseAnswer(&resp, requestID, idp.now()); err != nil {
 		return nil, err
 	}
 	switch resp.Destination {

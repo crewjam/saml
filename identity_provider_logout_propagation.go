@@ -189,7 +189,7 @@ func (idp *IdentityProvider) StartLogout(w http.ResponseWriter, r *http.Request,
 		}
 	}
 	idp.continueLogout(w, r, &logoutState{
-		Expires:   TimeNow().Add(LogoutStateLifetime),
+		Expires:   idp.now().Add(LogoutStateLifetime),
 		Pending:   participants,
 		ReturnURL: returnURL,
 	})
@@ -200,7 +200,7 @@ func (idp *IdentityProvider) StartLogout(w http.ResponseWriter, r *http.Request,
 // of participants before answering req (saml-profiles-2.0-os §4.4.4.2).
 func (idp *IdentityProvider) propagateLogout(w http.ResponseWriter, r *http.Request, req *IdpLogoutRequest, participants []SessionParticipant) {
 	idp.continueLogout(w, r, &logoutState{
-		Expires: TimeNow().Add(LogoutStateLifetime),
+		Expires: idp.now().Add(LogoutStateLifetime),
 		Pending: participants,
 		Initiator: &logoutInitiator{
 			ServiceProviderID: req.ServiceProviderMetadata.EntityID,
@@ -327,7 +327,7 @@ func (idp *IdentityProvider) participantLogoutRequest(participant SessionPartici
 	logoutRequest := &LogoutRequest{
 		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
 		Version:      "2.0",
-		IssueInstant: TimeNow(),
+		IssueInstant: idp.now(),
 		Destination:  destination,
 		Issuer: &Issuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
@@ -503,7 +503,7 @@ func (idp *IdentityProvider) finishLogout(w http.ResponseWriter, r *http.Request
 			RelayState:  in.RelayState,
 			Request:     LogoutRequest{ID: in.RequestID},
 			SLOEndpoint: &endpoint,
-			Now:         TimeNow(),
+			Now:         idp.now(),
 		}
 		if err := req.WriteLogoutResponse(w, makeLogoutResponseWithStatus(req, len(state.Failed) > 0)); err != nil {
 			idp.Logger.Printf("failed to write logout response to %s: %s", in.ServiceProviderID, err)
@@ -624,9 +624,9 @@ func (idp *IdentityProvider) validateLogoutResponse(r *http.Request, state *logo
 	}
 	var signed *etree.Element
 	if redirectMessage != nil && redirectMessage.SignedContent != nil {
-		err = checkRedirectBindingSignature(redirectMessage, func() ([]*x509.Certificate, error) { return certs, nil }, TimeNow(), true)
+		err = checkRedirectBindingSignature(redirectMessage, func() ([]*x509.Certificate, error) { return certs, nil }, idp.now(), true)
 	} else {
-		signed, err = verifiedEnvelopedElement(doc.Root(), certs, Clock)
+		signed, err = verifiedEnvelopedElement(doc.Root(), certs, idp.dsigClock())
 	}
 	if err != nil {
 		return nil, fmt.Errorf("cannot verify signature of logout response from %s: %w", serviceProviderID, err)
@@ -649,7 +649,7 @@ func (idp *IdentityProvider) validateLogoutResponse(r *http.Request, state *logo
 // LogoutResponse that answers the LogoutRequest requestID, which was sent
 // through the browser: its Destination must be LogoutURL.
 func (idp *IdentityProvider) validateLogoutResponseFields(resp *LogoutResponse, requestID string) error {
-	if err := validateLogoutResponseAnswer(resp, requestID); err != nil {
+	if err := validateLogoutResponseAnswer(resp, requestID, idp.now()); err != nil {
 		return err
 	}
 	if resp.Destination != idp.LogoutURL.String() {
@@ -660,9 +660,8 @@ func (idp *IdentityProvider) validateLogoutResponseFields(resp *LogoutResponse, 
 
 // validateLogoutResponseAnswer checks the fields of an authenticated
 // LogoutResponse, other than its Issuer and Destination, as an answer to the
-// LogoutRequest requestID.
-func validateLogoutResponseAnswer(resp *LogoutResponse, requestID string) error {
-	now := TimeNow()
+// LogoutRequest requestID, at the time now.
+func validateLogoutResponseAnswer(resp *LogoutResponse, requestID string, now time.Time) error {
 	switch {
 	case resp.InResponseTo != requestID:
 		return fmt.Errorf("logout response InResponseTo %q does not match the outstanding request", resp.InResponseTo)
@@ -775,7 +774,7 @@ func (idp *IdentityProvider) decodeLogoutState(value string) (*logoutState, erro
 	if err := json.Unmarshal(payload, state); err != nil {
 		return nil, fmt.Errorf("malformed logout state: %w", err)
 	}
-	if !TimeNow().Before(state.Expires) {
+	if !idp.now().Before(state.Expires) {
 		return nil, fmt.Errorf("logout state expired at %s", state.Expires)
 	}
 	return state, nil
@@ -821,7 +820,7 @@ func (idp *IdentityProvider) setLogoutStateCookie(w http.ResponseWriter, r *http
 	if err != nil {
 		return err
 	}
-	maxAge := int(state.Expires.Sub(TimeNow()).Seconds()) + 1
+	maxAge := int(state.Expires.Sub(idp.now()).Seconds()) + 1
 	if maxAge < 1 {
 		maxAge = 1
 	}

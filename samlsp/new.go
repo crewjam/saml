@@ -209,6 +209,14 @@ type Options struct {
 	// which serves a single process only. Applications served by several
 	// processes must set a store they share; see SessionRevocationStore.
 	SessionRevocations SessionRevocationStore
+
+	// Clock, if non-nil, is the time source of the middleware: it is set
+	// as the Clock of the ServiceProvider, the session provider and codec,
+	// the request trackers' codecs and the default SessionRevocations store.
+	// It is not set on ReplayCache or SessionRevocations when they are
+	// given; set their clock yourself (MemoryReplayCache.Clock,
+	// MemorySessionRevocationStore.Clock). If nil, the real clock is used.
+	Clock *dsig.Clock
 }
 
 // sessionKey returns the key that signs session and tracked-request JWTs.
@@ -254,6 +262,7 @@ func DefaultSessionCodec(opts Options) JWTSessionCodec {
 		Key:           key,
 
 		KeyAttributesByName: opts.KeyAttributesByName,
+		Clock:               opts.Clock,
 	}
 }
 
@@ -268,7 +277,9 @@ func DefaultSessionProvider(opts Options) CookieSessionProvider {
 	}
 	revocations := opts.SessionRevocations
 	if revocations == nil {
-		revocations = NewMemorySessionRevocationStore(DefaultMaxSessionRevocations)
+		store := NewMemorySessionRevocationStore(DefaultMaxSessionRevocations)
+		store.Clock = opts.Clock
+		revocations = store
 	}
 	return CookieSessionProvider{
 		Name:         cookieName,
@@ -279,6 +290,7 @@ func DefaultSessionProvider(opts Options) CookieSessionProvider {
 		SameSite:     opts.CookieSameSite,
 		Codec:        DefaultSessionCodec(opts),
 		Revocations:  revocations,
+		Clock:        opts.Clock,
 		legacyDomain: legacySessionCookieDomain(opts),
 	}
 }
@@ -309,6 +321,7 @@ func DefaultTrackedRequestCodec(opts Options) JWTTrackedRequestCodec {
 		Issuer:        opts.URL.String(),
 		MaxAge:        saml.MaxIssueDelay,
 		Key:           key,
+		Clock:         opts.Clock,
 	}
 }
 
@@ -405,6 +418,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		SignMetadata:                     opts.SignMetadata,
 		RequireStandardArtifacts:         opts.RequireStandardArtifacts,
 		ReplayCache:                      opts.ReplayCache,
+		Clock:                            opts.Clock,
 	}
 }
 

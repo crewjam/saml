@@ -351,10 +351,10 @@ type ServiceProvider struct {
 	// checks, and certificate validity during XML and redirect binding
 	// signature validation.
 	//
-	// If nil, the package-level TimeNow and Clock are used. Setting this
-	// field instead of replacing those globals allows ServiceProviders with
-	// different clocks to be used concurrently, for example in parallel
-	// tests.
+	// If nil, the real clock is used (through the deprecated package-level
+	// TimeNow and Clock). Setting this field instead of replacing those
+	// globals allows ServiceProviders with different clocks to be used
+	// concurrently, for example in parallel tests.
 	Clock *dsig.Clock
 
 	// IgnoreCertificateExpiry, if true, disables the check that the IDP's
@@ -523,19 +523,13 @@ var ErrAssertionReplayed = errors.New("assertion has already been used")
 
 // now returns the current time as seen by this ServiceProvider.
 func (sp *ServiceProvider) now() time.Time {
-	if sp.Clock != nil {
-		return sp.Clock.Now().UTC()
-	}
-	return TimeNow()
+	return clockNow(sp.Clock)
 }
 
 // dsigClock returns the clock to use for signature validation. It may be
 // nil, in which case dsig uses the real clock.
 func (sp *ServiceProvider) dsigClock() *dsig.Clock {
-	if sp.Clock != nil {
-		return sp.Clock
-	}
-	return Clock
+	return dsigClockOrDefault(sp.Clock)
 }
 
 // MaxIssueDelay is the longest allowed time between when a SAML assertion is

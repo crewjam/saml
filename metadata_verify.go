@@ -58,7 +58,7 @@ func VerifyMetadataSignature(data []byte, certs []*x509.Certificate) ([]byte, er
 		return nil, classify(fmt.Errorf("expected an EntityDescriptor or EntitiesDescriptor in %s, not %s", metadataNamespace, root.Tag), ErrMalformedMessage)
 	}
 
-	signed, err := verifiedEnvelopedElement(root, certs, Clock)
+	signed, err := verifiedEnvelopedElement(root, certs, nil)
 	if err != nil {
 		if errors.Is(err, errSignatureElementNotPresent) {
 			return nil, classify(errors.New("metadata is not signed"), ErrInvalidSignature)

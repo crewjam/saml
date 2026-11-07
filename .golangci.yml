@@ -52,6 +52,12 @@ linters:
     rules:
       - path: (.+)\.go$
         text: G104 # 'Errors unhandled. (gosec)
+      # Tests may still replace the deprecated saml.TimeNow and saml.Clock,
+      # which remain the fallback when no Clock field is set.
+      - path: _test\.go$
+        linters:
+          - staticcheck
+        text: "SA1019: (github\\.com/crewjam/)?saml\\.(TimeNow|Clock) is deprecated"
     paths:
       - example/.*\.go$
 formatters:

@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"time"
 
+	dsig "github.com/russellhaering/goxmldsig"
+
 	"github.com/crewjam/saml"
 )
 
@@ -55,6 +57,12 @@ type CookieSessionProvider struct {
 	// ErrSessionTerminationUnsupported. DefaultSessionProvider sets it.
 	Revocations SessionRevocationStore
 
+	// Clock, if non-nil, is the time source for limiting the cookie to the
+	// IdP session (SessionNotOnOrAfter) and for the revocation records of
+	// TerminateSessions. It should be the Clock of Codec. If nil, the real
+	// clock is used (through the deprecated saml.TimeNow).
+	Clock *dsig.Clock
+
 	// legacyDomain, if set, is the Domain of a session cookie set by an
 	// earlier version of DefaultSessionProvider. CreateSession and
 	// DeleteSession expire that cookie too, so that a browser does not keep
@@ -79,7 +87,7 @@ func (c CookieSessionProvider) CreateSession(w http.ResponseWriter, r *http.Requ
 	// The cookie lasts no longer than the IdP session (SessionNotOnOrAfter).
 	maxAge := c.MaxAge
 	if end, ok := sessionEnd(assertion); ok {
-		remaining := end.Sub(saml.TimeNow())
+		remaining := end.Sub(clockNow(c.Clock))
 		if remaining < time.Second {
 			return fmt.Errorf("%w: the IdP session ends at %s (SessionNotOnOrAfter)", ErrSessionEnded, end)
 		}
