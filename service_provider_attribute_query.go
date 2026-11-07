@@ -451,17 +451,19 @@ func (sp *ServiceProvider) attributeQueryAssertions(responseEl *etree.Element, q
 }
 
 func (sp *ServiceProvider) attributeQueryAssertion(assertionEl *etree.Element, query *AttributeQuery, now time.Time, signatureRequired bool) (*Assertion, error) {
-	if signatureRequired {
-		signed, err := sp.verifySignedElement(assertionEl, sp.attributeAuthoritySigningCerts)
-		switch err {
-		case nil:
-			// Read the assertion from what the signature covers.
-			assertionEl = signed
-		case errSignatureElementNotPresent:
+	// A signature that is present must be valid even when the Response is
+	// signed (saml-core §2.3.3).
+	signed, err := sp.verifySignedElement(assertionEl, sp.attributeAuthoritySigningCerts)
+	switch err {
+	case nil:
+		// Read the assertion from what the signature covers.
+		assertionEl = signed
+	case errSignatureElementNotPresent:
+		if signatureRequired {
 			return nil, errors.New("neither the Response nor its Assertion is signed")
-		default:
-			return nil, err
 		}
+	default:
+		return nil, err
 	}
 	var assertion Assertion
 	if err := unmarshalElement(assertionEl, &assertion); err != nil {

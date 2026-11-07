@@ -1469,6 +1469,17 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 			return nil, err
 		}
 		signatureRequirement = signatureNotRequired
+	case signatureNotRequired:
+		// The enclosing ArtifactResponse is signed, but a signature the
+		// Response carries must still be valid.
+		signed, err := sp.validatedElement(responseEl)
+		switch err {
+		case nil:
+			responseEl = signed
+		case errSignatureElementNotPresent:
+		default:
+			return nil, err
+		}
 	}
 
 	// validate request attributes
@@ -1663,13 +1674,17 @@ func decryptWithKey(decryptionKey interface{}, encryptedEl, encryptedDataEl *etr
 }
 
 func (sp *ServiceProvider) parseAssertion(assertionEl *etree.Element, possibleRequestIDs []string, now time.Time, signatureRequirement signatureRequirement) (*Assertion, error) {
-	if signatureRequirement == signatureRequired {
-		signed, sigErr := sp.validatedElement(assertionEl)
-		if sigErr != nil {
-			return nil, sigErr
-		}
+	// A signature that is present must be valid even when the enclosing
+	// Response is signed (saml-core §2.3.3, saml-profiles §4.1.4.3); only
+	// its absence is allowed then.
+	signed, sigErr := sp.validatedElement(assertionEl)
+	switch {
+	case sigErr == nil:
 		// Read the assertion from what the signature covers.
 		assertionEl = signed
+	case sigErr == errSignatureElementNotPresent && signatureRequirement != signatureRequired:
+	default:
+		return nil, sigErr
 	}
 
 	// parse the assertion we just validated
