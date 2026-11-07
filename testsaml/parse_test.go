@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"encoding/base64"
+	"errors"
 	"net/url"
 	"strings"
 	"testing"
@@ -66,6 +67,15 @@ func TestParseRedirect(t *testing.T) {
 
 			_, err = tc.parse(covURL(tc.param, base64.StdEncoding.EncodeToString([]byte(strings.Repeat("\xff", 16)))))
 			assert.Check(t, is.ErrorContains(err, "cannot decompress "+tc.kind))
+
+			// exactly at the limit is accepted
+			buf, err = tc.parse(covURL(tc.param, covDeflate(t, strings.Repeat("a", MaxDecompressedSize))))
+			assert.NilError(t, err)
+			assert.Check(t, is.Len(buf, MaxDecompressedSize))
+
+			// a decompression bomb is refused rather than inflated in full
+			_, err = tc.parse(covURL(tc.param, covDeflate(t, strings.Repeat("a", MaxDecompressedSize+1))))
+			assert.Check(t, errors.Is(err, ErrTooLarge))
 		})
 	}
 }
