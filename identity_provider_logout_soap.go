@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+
+	"github.com/beevik/etree"
 )
 
 // This file implements back-channel single logout at the IdP: the SAML
@@ -54,33 +56,65 @@ func (idp *IdentityProvider) soapLogoutEndpoint(metadata *EntityDescriptor) *End
 // returns errNoSOAPLogoutEndpoint if metadata lists no SOAP endpoint, or
 // only ones that are not https (see AllowInsecureSOAPEndpoints).
 func (idp *IdentityProvider) logoutParticipantSOAP(ctx context.Context, metadata *EntityDescriptor, participant SessionParticipant) error {
+	logout, err := idp.prepareSOAPLogout(metadata, participant)
+	if err != nil {
+		return err
+	}
+	return logout.send(ctx)
+}
+
+// soapLogout is a signed LogoutRequest ready to be sent to a participant
+// over the SOAP binding.
+type soapLogout struct {
+	idp         *IdentityProvider
+	metadata    *EntityDescriptor
+	participant SessionParticipant
+	location    string
+	requestID   string
+	signed      *etree.Element
+}
+
+// prepareSOAPLogout makes and signs the LogoutRequest logoutParticipantSOAP
+// sends. It uses RandReader, so it is not run concurrently.
+func (idp *IdentityProvider) prepareSOAPLogout(metadata *EntityDescriptor, participant SessionParticipant) (*soapLogout, error) {
 	endpoint := idp.soapLogoutEndpoint(metadata)
 	if endpoint == nil {
-		return errNoSOAPLogoutEndpoint
+		return nil, errNoSOAPLogoutEndpoint
 	}
 	logoutRequest, err := idp.participantLogoutRequest(participant, endpoint.Location, metadata)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	signingContext, err := idp.signingContext()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	signed, err := signingContext.SignEnveloped(logoutRequest.Element())
 	if err != nil {
-		return err
+		return nil, err
 	}
+	return &soapLogout{
+		idp:         idp,
+		metadata:    metadata,
+		participant: participant,
+		location:    endpoint.Location,
+		requestID:   logoutRequest.ID,
+		signed:      signed,
+	}, nil
+}
 
-	body, err := postSOAPMessage(ctx, idp.httpClient(), endpoint.Location, soapEnvelope(signed), MaxSOAPLogoutMessageSize)
+// send sends the LogoutRequest and checks the LogoutResponse.
+func (l *soapLogout) send(ctx context.Context) error {
+	body, err := postSOAPMessage(ctx, l.idp.httpClient(), l.location, soapEnvelope(l.signed), MaxSOAPLogoutMessageSize)
 	if err != nil {
-		return fmt.Errorf("logout request to %s: %w", endpoint.Location, err)
+		return fmt.Errorf("logout request to %s: %w", l.location, err)
 	}
-	resp, err := idp.parseSOAPLogoutResponse(body, participant.ServiceProviderID, metadata, logoutRequest.ID)
+	resp, err := l.idp.parseSOAPLogoutResponse(body, l.participant.ServiceProviderID, l.metadata, l.requestID)
 	if err != nil {
 		return err
 	}
 	if err := statusError(resp.Status); err != nil {
-		return fmt.Errorf("logout response from %s: %w", participant.ServiceProviderID, err)
+		return fmt.Errorf("logout response from %s: %w", l.participant.ServiceProviderID, err)
 	}
 	return nil
 }

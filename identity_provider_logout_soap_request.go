@@ -1,10 +1,13 @@
 package saml
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"slices"
+	"sync"
+	"time"
 
 	"github.com/beevik/etree"
 	dsig "github.com/russellhaering/goxmldsig"
@@ -113,26 +116,71 @@ func (idp *IdentityProvider) serveSOAPLogoutRequest(w http.ResponseWriter, r *ht
 	idp.writeSOAPLogoutResponse(w, req, makeLogoutResponseWithStatus(req, partial))
 }
 
+// BackChannelLogoutTimeout bounds how long ServeSLO spends logging the
+// other session participants out over the SOAP binding when it answers a
+// LogoutRequest that came over SOAP, so that it can answer before the
+// service provider that sent it gives up. A participant that has not
+// answered by then counts as not logged out (StatusPartialLogout). Each
+// request is also bounded by the IdP's HTTPClient timeout.
+var BackChannelLogoutTimeout = 15 * time.Second
+
+// backChannelLogoutConcurrency is how many participants logoutParticipantsSOAP
+// contacts at the same time.
+const backChannelLogoutConcurrency = 8
+
 // logoutParticipantsSOAP logs each of participants out over the SOAP binding
-// (see logoutParticipantSOAP), one at a time, and returns how many of them
-// could not be logged out. Without a browser, a participant whose metadata
-// lists no SOAP SingleLogoutService cannot be reached, and is one of them.
+// (see logoutParticipantSOAP), several at a time and within
+// BackChannelLogoutTimeout, and returns how many of them could not be
+// logged out. Without a browser, a participant whose metadata lists no SOAP
+// SingleLogoutService cannot be reached, and is one of them.
 func (idp *IdentityProvider) logoutParticipantsSOAP(r *http.Request, participants []SessionParticipant) int {
+	logFailure := func(participant SessionParticipant, err error) {
+		if errors.Is(err, errNoSOAPLogoutEndpoint) {
+			idp.Logger.Printf("cannot propagate a back-channel logout to %s: it has no SOAP SingleLogoutService", participant.ServiceProviderID)
+			return
+		}
+		idp.Logger.Printf("back-channel logout of %s failed: %s", participant.ServiceProviderID, err)
+	}
+
+	// The LogoutRequests are made one at a time, as making them reads
+	// RandReader; only sending them and waiting for the answers is done
+	// concurrently.
 	failed := 0
+	var logouts []*soapLogout
 	for _, participant := range participants {
 		metadata, err := idp.participantMetadata(r, participant)
+		var logout *soapLogout
 		if err == nil {
-			err = idp.logoutParticipantSOAP(r.Context(), metadata, participant)
+			logout, err = idp.prepareSOAPLogout(metadata, participant)
 		}
-		switch {
-		case err == nil:
+		if err != nil {
+			logFailure(participant, err)
+			failed++
 			continue
-		case errors.Is(err, errNoSOAPLogoutEndpoint):
-			idp.Logger.Printf("cannot propagate a back-channel logout to %s: it has no SOAP SingleLogoutService", participant.ServiceProviderID)
-		default:
-			idp.Logger.Printf("back-channel logout of %s failed: %s", participant.ServiceProviderID, err)
 		}
-		failed++
+		logouts = append(logouts, logout)
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), BackChannelLogoutTimeout)
+	defer cancel()
+	errs := make([]error, len(logouts))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, backChannelLogoutConcurrency)
+	for i, logout := range logouts {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			errs[i] = logout.send(ctx)
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			logFailure(logouts[i].participant, err)
+			failed++
+		}
 	}
 	return failed
 }
