@@ -979,7 +979,9 @@ func (s *StatusCode) Element() *etree.Element {
 
 // StatusSuccess means the request succeeded. Additional information MAY be returned in the <StatusMessage> and/or <StatusDetail> elements.
 //
-// TODO(ross): this value is mostly constant, but is mutated in tests. Fix the hacky test so this can be const.
+// It is a variable only so that tests can change it; it must not be
+// modified otherwise. Like TimeNow, it is read without synchronization by
+// every provider in the program.
 var StatusSuccess = "urn:oasis:names:tc:SAML:2.0:status:Success"
 
 const (
