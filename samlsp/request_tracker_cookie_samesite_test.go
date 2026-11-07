@@ -43,7 +43,7 @@ func TestCookieRequestTrackerSameSite(t *testing.T) {
 
 			// The cookie that deletes the tracked request carries the same attributes.
 			req := httptest.NewRequest(http.MethodPost, "/saml/acs", nil)
-			req.AddCookie(&http.Cookie{Name: c.Name, Value: c.Value})
+			req.AddCookie(&http.Cookie{Name: c.Name, Value: c.Value, Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 			rec = httptest.NewRecorder()
 			assert.Assert(t, tracker.StopTrackingRequest(rec, req, index))
 			c = rec.Result().Cookies()[0]
