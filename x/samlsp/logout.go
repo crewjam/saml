@@ -99,7 +99,7 @@ func (c *Config) LogoutRequest(ctx context.Context, nameID saml.NameID, relaySta
 	if err != nil {
 		return nil, err
 	}
-	binding, location, err := chooseBinding(o.binding, sp.GetSLOBindingLocation)
+	binding, location, err := pickBinding(o.messageOptions, sp.GetSLOBindingLocation)
 	if err != nil {
 		return nil, err
 	}
@@ -116,6 +116,15 @@ func (c *Config) LogoutRequest(ctx context.Context, nameID saml.NameID, relaySta
 	req, err := sp.MakeLogoutRequest(location, nameID.Value, samlOpts...)
 	if err != nil {
 		return nil, err
+	}
+
+	if o.custom != nil {
+		// MakeLogoutRequest has signed it, if the SP can sign.
+		return o.custom.Encode(ctx, &OutboundMessage{
+			ID: req.ID, Binding: binding, Destination: location, Param: "SAMLRequest",
+			RelayState: relayState, ScriptNonce: o.scriptNonce,
+			element: func() (*etree.Element, error) { return req.Element(), nil },
+		})
 	}
 
 	m := &Message{ID: req.ID, Binding: binding, Destination: location, RelayState: relayState, scriptHash: requestScriptHash}
@@ -278,7 +287,7 @@ func (c *Config) LogoutResponse(ctx context.Context, req *LogoutRequest, opts ..
 		}
 		return &Message{ID: resp.ID, Binding: saml.SOAPBinding, soapResponse: resp}, nil
 	}
-	binding, location, err := chooseBinding(o.binding, sp.GetSLOBindingLocation)
+	binding, location, err := pickBinding(o.messageOptions, sp.GetSLOBindingLocation)
 	if err != nil {
 		return nil, err
 	}
@@ -286,6 +295,13 @@ func (c *Config) LogoutResponse(ctx context.Context, req *LogoutRequest, opts ..
 	resp, err := sp.MakeLogoutResponseWithStatus(location, req.ID, status)
 	if err != nil {
 		return nil, err
+	}
+	if o.custom != nil {
+		return o.custom.Encode(ctx, &OutboundMessage{
+			ID: resp.ID, Binding: binding, Destination: location, Param: "SAMLResponse",
+			RelayState: req.RelayState, ScriptNonce: o.scriptNonce,
+			element: func() (*etree.Element, error) { return resp.Element(), nil },
+		})
 	}
 	m := &Message{ID: resp.ID, Binding: binding, Destination: location, RelayState: req.RelayState, scriptHash: responseScriptHash}
 	switch binding {
