@@ -610,7 +610,8 @@ func (idp *IdentityProvider) invalidateSession(w http.ResponseWriter, r *http.Re
 }
 
 // verifiedEnvelopedElement checks the enveloped XML signature of el, which
-// must be a direct child of el and reference it, against certs, and returns
+// must be a direct child of el and reference it as saml-core-2.0-os §5.4.2
+// asks (see checkSignatureReference), against certs, and returns
 // what the signature covers: el without its Signature, parsed from the
 // canonical bytes that were digested. The certificates' validity periods are
 // ignored. clock may be nil.
@@ -648,8 +649,17 @@ func verifiedEnvelopedElement(el *etree.Element, certs []*x509.Certificate, cloc
 	// See ServiceProvider.validateSignature: without a certificate in
 	// KeyInfo, dsig can only pick the certificate itself if it trusts
 	// exactly one.
+	var signed *etree.Element
 	if noCertInKeyInfo && len(certs) > 1 {
-		return validatedWithEachCert(validationContext, certs, el)
+		signed, err = validatedWithEachCert(validationContext, certs, el)
+	} else {
+		signed, err = validationContext.Validate(el)
 	}
-	return validationContext.Validate(el)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkSignatureReference(el); err != nil {
+		return nil, err
+	}
+	return signed, nil
 }

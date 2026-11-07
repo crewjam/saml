@@ -65,6 +65,20 @@ type Options struct {
 	// It also needs /slo to be reachable from the service providers'
 	// servers.
 	SOAPLogout bool
+
+	// SPMetadataCertificates, if set, are the certificates that service
+	// provider metadata registered through PUT or POST /services/:id must
+	// be signed with (saml-metadata-2.0-os §3, §4.3.3.2): the service
+	// providers' own metadata signing certificates, or their federation's,
+	// obtained from a source you trust. The root element of the metadata
+	// must then carry a valid enveloped signature made with one of them,
+	// and only the content the signature covers is stored; unsigned
+	// metadata, or metadata whose signature does not verify, is refused
+	// with 400 Bad Request. See saml.VerifyMetadataSignature.
+	//
+	// If empty (the default), service provider metadata is accepted
+	// without checking any signature it carries.
+	SPMetadataCertificates []*x509.Certificate
 }
 
 // Server represents an IDP server. The server provides the following URLs:
@@ -97,6 +111,11 @@ type Server struct {
 	// AdminMiddleware, if set, wraps the administrative endpoints. See
 	// Options.AdminMiddleware. Call InitializeHTTP after changing it.
 	AdminMiddleware func(http.Handler) http.Handler
+
+	// SPMetadataCertificates, if set, are the certificates that service
+	// provider metadata registered through /services/:id must be signed
+	// with. See Options.SPMetadataCertificates.
+	SPMetadataCertificates []*x509.Certificate
 }
 
 // New returns a new Server
@@ -138,6 +157,8 @@ func New(opts Options) (*Server, error) {
 		Store:             opts.Store,
 		LoginFormTemplate: opts.LoginFormTemplate,
 		AdminMiddleware:   opts.AdminMiddleware,
+
+		SPMetadataCertificates: opts.SPMetadataCertificates,
 	}
 
 	if opts.SOAPLogout {

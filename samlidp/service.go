@@ -71,10 +71,15 @@ func (s *Server) HandleGetService(w http.ResponseWriter, r *http.Request) {
 
 // HandlePutService handles the `PUT /shortcuts/:id` request. It accepts the XML-formatted
 // service metadata in the request body and stores it.
+//
+// If SPMetadataCertificates is set, the metadata must be signed with one of
+// them, and only the content the signature covers is stored; unsigned
+// metadata, or metadata whose signature does not verify, is refused with
+// 400 Bad Request.
 func (s *Server) HandlePutService(w http.ResponseWriter, r *http.Request) {
 	service := Service{}
 
-	metadata, err := getSPMetadata(r.Body)
+	metadata, err := getVerifiedSPMetadata(r.Body, s.SPMetadataCertificates)
 	if err != nil {
 		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)

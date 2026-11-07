@@ -57,6 +57,12 @@ type Options struct {
 	// single process sees (see SessionRevocations).
 	LogoutBindings []string
 
+	// RejectUnknownConditions sets
+	// saml.ServiceProvider.RejectUnknownConditions: if true, an assertion
+	// whose Conditions holds a condition this package does not understand is
+	// refused, as saml-core §2.5.1.1 requires. It is off by default.
+	RejectUnknownConditions bool
+
 	// LimitRelayStateLength sets saml.ServiceProvider.LimitRelayStateLength:
 	// if true, a RelayStateFunc result or other RelayState the middleware
 	// would send that is longer than saml.MaxRelayStateLength (80 bytes) is
@@ -111,9 +117,11 @@ type Options struct {
 	// or saml.HTTPPostSimpleSignBinding. If empty, or if the IDP metadata
 	// has no SingleLogoutService endpoint for it, HTTP-Redirect is used when
 	// the IDP supports it, HTTP-POST otherwise. The HTTP-POST-SimpleSign
-	// binding requires SignRequest. See Middleware.LogoutBinding. (The
-	// bindings this SP advertises for receiving logout messages are set by
-	// LogoutBindings.)
+	// binding requires SignRequest. saml.SOAPBinding sends the
+	// LogoutRequests of HandleStartLogout from the server (back-channel
+	// single logout) when the IDP supports it. See Middleware.LogoutBinding.
+	// (The bindings this SP advertises for receiving logout messages are set
+	// by LogoutBindings.)
 	LogoutBinding string
 
 	// KeyAttributesByName keys the session's attributes by their SAML Name
@@ -138,6 +146,11 @@ type Options struct {
 	// signing certificate outside its validity period. See
 	// saml.ServiceProvider.IgnoreCertificateExpiry.
 	IgnoreCertificateExpiry bool
+
+	// RejectExpiredIDPMetadata, if true, refuses messages from the IDP once
+	// the validUntil of IDPMetadata has passed. It is off by default. See
+	// saml.ServiceProvider.RejectExpiredIDPMetadata.
+	RejectExpiredIDPMetadata bool
 
 	// SignMetadata, if true, makes the metadata endpoint serve metadata
 	// signed with Key. See saml.ServiceProvider.SignMetadata.
@@ -347,30 +360,32 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 	}
 
 	return saml.ServiceProvider{
-		EntityID:              opts.EntityID,
-		Key:                   opts.Key,
-		Certificate:           opts.Certificate,
-		HTTPClient:            opts.HTTPClient,
-		Intermediates:         opts.Intermediates,
-		EncryptionKey:         opts.EncryptionKey,
-		EncryptionCertificate: opts.EncryptionCertificate,
-		DecryptionKeys:        opts.DecryptionKeys,
-		MetadataURL:           *metadataURL,
-		AcsURL:                *acsURL,
-		AcsIndex:              opts.AcsIndex,
-		SloURL:                *sloURL,
-		IDPMetadata:           opts.IDPMetadata,
-		ForceAuthn:            forceAuthn,
-		RequestedAuthnContext: opts.RequestedAuthnContext,
-		SignatureMethod:       signatureMethod,
-		LogoutSignatureMethod: logoutSignatureMethod,
-		AllowIDPInitiated:     opts.AllowIDPInitiated,
-		LimitRelayStateLength: opts.LimitRelayStateLength,
-		DefaultRedirectURI:    opts.DefaultRedirectURI,
-		LogoutBindings:        opts.LogoutBindings,
+		EntityID:                opts.EntityID,
+		Key:                     opts.Key,
+		Certificate:             opts.Certificate,
+		HTTPClient:              opts.HTTPClient,
+		Intermediates:           opts.Intermediates,
+		EncryptionKey:           opts.EncryptionKey,
+		EncryptionCertificate:   opts.EncryptionCertificate,
+		DecryptionKeys:          opts.DecryptionKeys,
+		MetadataURL:             *metadataURL,
+		AcsURL:                  *acsURL,
+		AcsIndex:                opts.AcsIndex,
+		SloURL:                  *sloURL,
+		IDPMetadata:             opts.IDPMetadata,
+		ForceAuthn:              forceAuthn,
+		RequestedAuthnContext:   opts.RequestedAuthnContext,
+		SignatureMethod:         signatureMethod,
+		LogoutSignatureMethod:   logoutSignatureMethod,
+		AllowIDPInitiated:       opts.AllowIDPInitiated,
+		LimitRelayStateLength:   opts.LimitRelayStateLength,
+		RejectUnknownConditions: opts.RejectUnknownConditions,
+		DefaultRedirectURI:      opts.DefaultRedirectURI,
+		LogoutBindings:          opts.LogoutBindings,
 
 		AssertionConsumerServiceBindings: opts.AssertionConsumerServiceBindings,
 		IgnoreCertificateExpiry:          opts.IgnoreCertificateExpiry,
+		RejectExpiredIDPMetadata:         opts.RejectExpiredIDPMetadata,
 		SignMetadata:                     opts.SignMetadata,
 		ReplayCache:                      opts.ReplayCache,
 	}
@@ -421,7 +436,7 @@ func applyBindingOptions(m *Middleware, opts Options) error {
 	m.Binding = opts.Binding
 
 	switch opts.LogoutBinding {
-	case "", saml.HTTPRedirectBinding, saml.HTTPPostBinding:
+	case "", saml.HTTPRedirectBinding, saml.HTTPPostBinding, saml.SOAPBinding:
 	case saml.HTTPPostSimpleSignBinding:
 		if !opts.SignRequest && !opts.SignLogout {
 			return errors.New("samlsp: the HTTP-POST-SimpleSign logout binding requires SignRequest or SignLogout")

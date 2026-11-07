@@ -1477,6 +1477,16 @@ type Conditions struct {
 	AudienceRestrictions []AudienceRestriction `xml:"urn:oasis:names:tc:SAML:2.0:assertion AudienceRestriction"`
 	OneTimeUse           *OneTimeUse           `xml:"urn:oasis:names:tc:SAML:2.0:assertion OneTimeUse"`
 	ProxyRestriction     *ProxyRestriction     `xml:"urn:oasis:names:tc:SAML:2.0:assertion ProxyRestriction"`
+
+	// UnknownConditions holds, in document order, the names of the child
+	// elements of an unmarshalled Conditions that this package does not
+	// understand: anything but AudienceRestriction, OneTimeUse and
+	// ProxyRestriction, including a saml:Condition extended with xsi:type.
+	// saml-core §2.5.1.1 makes such an assertion Indeterminate, so the
+	// ServiceProvider rejects it if RejectUnknownConditions is set (or
+	// ValidateUnknownConditions refuses it); otherwise they are ignored.
+	// Element and MarshalXML do not reproduce these elements.
+	UnknownConditions []xml.Name `xml:"-"`
 }
 
 // Element returns an etree.Element representing the object in XML form.
@@ -1521,6 +1531,9 @@ func (c *Conditions) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error 
 	aux := &struct {
 		NotBefore    RelaxedTime `xml:",attr"`
 		NotOnOrAfter RelaxedTime `xml:",attr"`
+		Unknown      []struct {
+			XMLName xml.Name
+		} `xml:",any"`
 		*Alias
 	}{
 		Alias: (*Alias)(c),
@@ -1530,6 +1543,10 @@ func (c *Conditions) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error 
 	}
 	c.NotBefore = time.Time(aux.NotBefore)
 	c.NotOnOrAfter = time.Time(aux.NotOnOrAfter)
+	c.UnknownConditions = nil
+	for _, el := range aux.Unknown {
+		c.UnknownConditions = append(c.UnknownConditions, el.XMLName)
+	}
 	return nil
 }
 
