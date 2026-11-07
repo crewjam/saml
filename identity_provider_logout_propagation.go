@@ -100,22 +100,37 @@ func (idp *IdentityProvider) recordSessionParticipant(r *http.Request, req *IdpA
 // match selects, leaving out those of the service provider exclude. tracked
 // is false if the SessionProvider does not track participants.
 func (idp *IdentityProvider) sessionParticipants(r *http.Request, match func(*Session) bool, exclude string) (participants []SessionParticipant, tracked bool, err error) {
+	participants, _, tracked, err = idp.sessionParticipantsOf(r, match, exclude)
+	return participants, tracked, err
+}
+
+// sessionParticipantsOf is sessionParticipants, and also reports whether
+// exclude may be a participant of the sessions match selects: false only
+// when the tracker lists participants for them and exclude is not one of
+// them. With no tracker, a tracker error or no participants recorded,
+// nothing is known, and isParticipant is true.
+func (idp *IdentityProvider) sessionParticipantsOf(r *http.Request, match func(*Session) bool, exclude string) (participants []SessionParticipant, isParticipant bool, tracked bool, err error) {
 	tracker, ok := idp.SessionProvider.(SessionParticipantTracker)
 	if !ok {
-		return nil, false, nil
+		return nil, true, false, nil
 	}
 	all, err := tracker.SessionParticipants(r, match)
 	if err != nil {
-		return nil, true, err
+		return nil, true, true, err
 	}
+	isParticipant = len(all) == 0
 	seen := map[string]bool{}
 	for _, participant := range all {
-		if participant.ServiceProviderID == "" || participant.ServiceProviderID == exclude {
+		if participant.ServiceProviderID == exclude && exclude != "" {
+			isParticipant = true
+			continue
+		}
+		if participant.ServiceProviderID == "" {
 			continue
 		}
 		key, err := json.Marshal(participant)
 		if err != nil {
-			return nil, true, err
+			return nil, true, true, err
 		}
 		if seen[string(key)] {
 			continue
@@ -123,7 +138,7 @@ func (idp *IdentityProvider) sessionParticipants(r *http.Request, match func(*Se
 		seen[string(key)] = true
 		participants = append(participants, participant)
 	}
-	return participants, true, nil
+	return participants, isParticipant, true, nil
 }
 
 // participantsUnknown reports whether a logout cannot reach every other

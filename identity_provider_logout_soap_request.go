@@ -94,10 +94,15 @@ func (idp *IdentityProvider) serveSOAPLogoutRequest(w http.ResponseWriter, r *ht
 	}
 
 	// Find the other participants before the sessions are ended.
-	participants, tracked, participantsErr := idp.sessionParticipants(r, req.MatchesSession, req.ServiceProviderMetadata.EntityID)
+	participants, isParticipant, tracked, participantsErr := idp.sessionParticipantsOf(r, req.MatchesSession, req.ServiceProviderMetadata.EntityID)
 	if participantsErr != nil {
 		idp.Logger.Printf("cannot find the session participants to propagate logout request %s from %s to: %s",
 			req.Request.ID, req.ServiceProviderMetadata.EntityID, participantsErr)
+	}
+	if !isParticipant {
+		idp.refuseNonParticipantLogout(req)
+		idp.writeSOAPLogoutResponse(w, req, req.MakeLogoutResponse(StatusRequester))
+		return
 	}
 	if statusCode := idp.invalidateSession(w, r, req); statusCode != StatusSuccess {
 		idp.writeSOAPLogoutResponse(w, req, req.MakeLogoutResponse(statusCode))

@@ -368,6 +368,14 @@ func logoutResponseLocation(endpoint Endpoint) string {
 // to terminate: its NameID must be the request's NameID and, if the request
 // carries any SessionIndex, its Index must be equal to one of them
 // (saml-core-2.0-os §3.7.1). Call it only after Validate has succeeded.
+//
+// The NameID's Format, NameQualifier and SPNameQualifier are not compared:
+// Session does not record the qualifiers, and service providers, including
+// those built with this package (ServiceProvider.MakeLogoutRequest), often
+// send their configured NameID format rather than the one they were
+// issued. ServeSLO instead refuses a request from a service provider that
+// is not a participant of the sessions it names, when the SessionProvider
+// tracks participants.
 func (req *IdpLogoutRequest) MatchesSession(session *Session) bool {
 	if session == nil || req.Request.NameID == nil || req.Request.NameID.Value == "" {
 		return false
@@ -504,6 +512,13 @@ func (req *IdpLogoutRequest) writePostLogoutResponse(w http.ResponseWriter, resp
 // described in IdpLogoutRequest.Validate. An invalid request, or one already
 // recorded in ReplayCache, is answered with HTTP 400 and no LogoutResponse.
 //
+// If the SessionProvider implements SessionParticipantTracker and it lists
+// participants for the sessions the request names, but the service provider
+// that sent it is not one of them, the request is refused: no session is
+// ended, and it is answered with StatusRequester. Otherwise any service
+// provider that can name a user's NameID could end that user's sessions,
+// and have the logout propagated to every service provider they use.
+//
 // For a valid request, the IdP session is terminated by calling
 // InvalidateSession if the SessionProvider implements SessionInvalidator.
 // Then a signed LogoutResponse is sent to the service provider's
@@ -570,10 +585,19 @@ func (idp *IdentityProvider) ServeSLO(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Find the other participants before the sessions are ended.
-	participants, tracked, participantsErr := idp.sessionParticipants(r, req.MatchesSession, req.ServiceProviderMetadata.EntityID)
+	participants, isParticipant, tracked, participantsErr := idp.sessionParticipantsOf(r, req.MatchesSession, req.ServiceProviderMetadata.EntityID)
 	if participantsErr != nil {
 		idp.Logger.Printf("cannot find the session participants to propagate logout request %s from %s to: %s",
 			req.Request.ID, req.ServiceProviderMetadata.EntityID, participantsErr)
+	}
+
+	if !isParticipant {
+		idp.refuseNonParticipantLogout(req)
+		if err := req.WriteLogoutResponse(w, req.MakeLogoutResponse(StatusRequester)); err != nil {
+			idp.Logger.Printf("failed to write logout response: %s", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		}
+		return
 	}
 
 	statusCode := idp.invalidateSession(w, r, req)
@@ -591,6 +615,14 @@ func (idp *IdentityProvider) ServeSLO(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+}
+
+// refuseNonParticipantLogout logs that req, a valid LogoutRequest, is
+// refused because its service provider is not a participant of the sessions
+// it names. The caller answers it with StatusRequester.
+func (idp *IdentityProvider) refuseNonParticipantLogout(req *IdpLogoutRequest) {
+	idp.Logger.Printf("refusing logout request %s from %s: it is not a participant of the sessions it names",
+		req.Request.ID, req.ServiceProviderMetadata.EntityID)
 }
 
 // invalidateSession ends the IdP sessions the valid LogoutRequest req refers
