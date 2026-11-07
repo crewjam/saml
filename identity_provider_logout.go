@@ -457,6 +457,7 @@ func (req *IdpLogoutRequest) writeRedirectLogoutResponse(w http.ResponseWriter, 
 	if err != nil {
 		return err
 	}
+	setNoCacheHeaders(w.Header())
 	http.Redirect(w, req.HTTPRequest, u.String(), http.StatusFound) //nolint:gosec // the destination is the SingleLogoutService location from the SP metadata (http/https only); the request only contributes the query-escaped RelayState
 	return nil
 }
@@ -487,6 +488,7 @@ func (req *IdpLogoutRequest) writePostLogoutResponse(w http.ResponseWriter, resp
 		return err
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	setNoCacheHeaders(w.Header())
 	_, err = io.Copy(w, out)
 	return err
 }

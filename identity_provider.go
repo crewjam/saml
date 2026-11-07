@@ -1358,6 +1358,7 @@ var defaultResponseFormTemplate = template.Must(template.New("saml-post-form").P
 // IdentityProvider.SimpleSignResponseFormTemplate. Otherwise it is the
 // HTTP-POST form PostBinding describes, rendered with ResponseFormTemplate.
 func (req *IdpAuthnRequest) WriteResponse(w http.ResponseWriter) error {
+	setNoCacheHeaders(w.Header())
 	if req.ACSEndpoint != nil && req.ACSEndpoint.Binding == HTTPPostSimpleSignBinding {
 		return req.writeSimpleSignResponse(w)
 	}

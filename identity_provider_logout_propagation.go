@@ -434,6 +434,7 @@ func (idp *IdentityProvider) logoutRequestWriter(logoutRequest *LogoutRequest, b
 			return nil, err
 		}
 		return func(w http.ResponseWriter, r *http.Request) {
+			setNoCacheHeaders(w.Header())
 			http.Redirect(w, r, u.String(), http.StatusFound) //nolint:gosec // the destination is the SingleLogoutService location from the SP metadata (http/https only)
 		}, nil
 	default: // HTTPPostBinding
@@ -456,6 +457,7 @@ func (idp *IdentityProvider) logoutRequestWriter(logoutRequest *LogoutRequest, b
 		}
 		return func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			setNoCacheHeaders(w.Header())
 			_, _ = io.Copy(w, out)
 		}, nil
 	}

@@ -166,6 +166,7 @@ func writeSOAPLogoutResponse(w http.ResponseWriter, resp *LogoutResponse, signin
 		return err
 	}
 	w.Header().Set("Content-Type", soapContentType)
+	setNoCacheHeaders(w.Header())
 	_, err = w.Write(buf)
 	return err
 }

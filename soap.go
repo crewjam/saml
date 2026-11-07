@@ -56,6 +56,17 @@ func soapEnvelope(el *etree.Element) *etree.Element {
 	return envelope
 }
 
+// setNoCacheHeaders sets the headers the SAML bindings ask of every HTTP
+// message that carries a SAML message or artifact, so that neither the
+// browser nor a proxy keeps a copy: "Include a Cache-Control header field
+// set to "no-cache, no-store". Include a Pragma header field set to
+// "no-cache"." (saml-bindings-2.0-os §3.2.3.2, §3.2.3.3, §3.4.5.1, §3.5.5.1
+// and §3.6.5.1).
+func setNoCacheHeaders(h http.Header) {
+	h.Set("Cache-Control", "no-cache, no-store")
+	h.Set("Pragma", "no-cache")
+}
+
 // postSOAPMessage sends envelope to location with the SAML SOAP binding,
 // using httpClient and ctx, and returns the body of the response, which must
 // have status 200 and be at most limit bytes.
@@ -70,6 +81,7 @@ func postSOAPMessage(ctx context.Context, httpClient *http.Client, location stri
 	}
 	req.Header.Set("Content-Type", soapContentType)
 	req.Header.Set("SOAPAction", soapActionSAML)
+	setNoCacheHeaders(req.Header)
 
 	resp, err := httpClient.Do(req) //nolint:gosec // G704: location is an endpoint from the peer's metadata, never from the request being served
 	if err != nil {
