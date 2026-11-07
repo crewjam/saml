@@ -37,8 +37,9 @@ var errSLOUnexpectedMessage = errors.New("saml: single logout endpoint received 
 
 // HandleStartLogout starts SP initiated single logout. It deletes the local
 // session and sends the browser to the IDP with a LogoutRequest for the
-// session's NameID (and SessionIndex, if known), using the HTTP-Redirect
-// binding if the IDP supports it and the HTTP-POST binding otherwise. The
+// session's NameID (and SessionIndex, if known), using LogoutBinding if it
+// is set and the IDP supports it, otherwise the HTTP-Redirect binding if the
+// IDP supports it and the HTTP-POST binding otherwise. The
 // request is tracked with LogoutRequestTracker, and its index is the
 // RelayState. The IDP answers with a LogoutResponse to
 // ServiceProvider.SloURL, which ServeHTTP handles (see ServeSLO).
@@ -106,22 +107,43 @@ func (m *Middleware) HandleStartLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if binding == saml.HTTPRedirectBinding {
+	m.sendLogoutRequest(w, r, binding, logoutRequest, relayState)
+}
+
+// sendLogoutRequest sends logoutRequest to the IDP with binding.
+func (m *Middleware) sendLogoutRequest(w http.ResponseWriter, r *http.Request, binding string, logoutRequest *saml.LogoutRequest, relayState string) {
+	switch binding {
+	case saml.HTTPRedirectBinding:
 		redirectURL, err := m.ServiceProvider.RedirectLogoutRequestURL(logoutRequest, relayState)
 		if err != nil {
 			m.OnError(w, r, err)
 			return
 		}
 		http.Redirect(w, r, redirectURL.String(), http.StatusFound)
-		return
+	case saml.HTTPPostSimpleSignBinding:
+		// The SimpleSign signature replaces the enveloped XML signature, as
+		// in ServiceProvider.MakeSimpleSignLogoutRequest.
+		logoutRequest.Signature = nil
+		form, err := logoutRequest.SimpleSignWithNonce(relayState, m.scriptNonce(r), &m.ServiceProvider)
+		if err != nil {
+			m.OnError(w, r, err)
+			return
+		}
+		// Same auto-submit script, so the same hash, as the HTTP-POST form.
+		m.writePostForm(w, postRequestScriptHash, form)
+	default:
+		m.writePostForm(w, postRequestScriptHash, logoutRequest.PostWithNonce(relayState, m.scriptNonce(r)))
 	}
-	m.writePostForm(w, postRequestScriptHash, logoutRequest.PostWithNonce(relayState, m.scriptNonce(r)))
 }
 
 // sloBinding returns the binding to send logout messages to the IDP with:
+// LogoutBinding if it is set and the IDP supports it, otherwise
 // HTTP-Redirect if the IDP supports it, otherwise HTTP-POST if it supports
 // that, otherwise "".
 func (m *Middleware) sloBinding() string {
+	if m.LogoutBinding != "" && m.ServiceProvider.GetSLOBindingLocation(m.LogoutBinding) != "" {
+		return m.LogoutBinding
+	}
 	for _, binding := range []string{saml.HTTPRedirectBinding, saml.HTTPPostBinding} {
 		if m.ServiceProvider.GetSLOBindingLocation(binding) != "" {
 			return binding
@@ -131,8 +153,8 @@ func (m *Middleware) sloBinding() string {
 }
 
 // ServeSLO handles requests for the SAML SingleLogoutService endpoint,
-// ServiceProvider.SloURL, using either the HTTP-Redirect or the HTTP-POST
-// binding.
+// ServiceProvider.SloURL, using the HTTP-Redirect, HTTP-POST or
+// HTTP-POST-SimpleSign binding.
 //
 // A LogoutResponse is the IDP's answer to a LogoutRequest sent by
 // HandleStartLogout. It is accepted only if its InResponseTo is the ID of a
@@ -215,7 +237,7 @@ func (m *Middleware) serveSLORequest(w http.ResponseWriter, r *http.Request) {
 	// The RelayState of the request must be returned unchanged with the
 	// response (saml-bindings-2.0-os sections 3.4.3 and 3.5.3).
 	relayState := r.Form.Get("RelayState")
-	switch m.sloBinding() {
+	switch binding := m.sloBinding(); binding {
 	case saml.HTTPRedirectBinding:
 		redirectURL, err := m.ServiceProvider.MakeRedirectLogoutResponse(logoutRequest.ID, relayState)
 		if err != nil {
@@ -223,17 +245,37 @@ func (m *Middleware) serveSLORequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Redirect(w, r, redirectURL.String(), http.StatusFound) //nolint:gosec // the target is the IDP's SLO location from its metadata; the RelayState is only a query parameter
-	case saml.HTTPPostBinding:
-		resp, err := m.ServiceProvider.MakeLogoutResponse(
-			m.ServiceProvider.GetSLOBindingLocation(saml.HTTPPostBinding), logoutRequest.ID)
-		if err != nil {
-			m.OnError(w, r, err)
-			return
-		}
-		m.writePostForm(w, postResponseScriptHash, resp.PostWithNonce(relayState, m.scriptNonce(r)))
+	case saml.HTTPPostBinding, saml.HTTPPostSimpleSignBinding:
+		m.postLogoutResponse(w, r, binding, logoutRequest.ID, relayState)
 	default:
 		// The IDP sent a LogoutRequest but lists no endpoint for the
 		// response; there is nowhere to answer it.
 		http.Redirect(w, r, "/", http.StatusFound)
 	}
+}
+
+// postLogoutResponse sends the IDP a LogoutResponse to the LogoutRequest
+// logoutRequestID in an auto-submitting form, with the HTTP-POST or the
+// HTTP-POST-SimpleSign binding.
+func (m *Middleware) postLogoutResponse(w http.ResponseWriter, r *http.Request, binding, logoutRequestID, relayState string) {
+	resp, err := m.ServiceProvider.MakeLogoutResponse(
+		m.ServiceProvider.GetSLOBindingLocation(binding), logoutRequestID)
+	if err != nil {
+		m.OnError(w, r, err)
+		return
+	}
+	if binding != saml.HTTPPostSimpleSignBinding {
+		m.writePostForm(w, postResponseScriptHash, resp.PostWithNonce(relayState, m.scriptNonce(r)))
+		return
+	}
+	// The SimpleSign signature replaces the enveloped XML signature, as in
+	// ServiceProvider.MakeSimpleSignLogoutResponse.
+	resp.Signature = nil
+	form, err := resp.SimpleSignWithNonce(relayState, m.scriptNonce(r), &m.ServiceProvider)
+	if err != nil {
+		m.OnError(w, r, err)
+		return
+	}
+	// Same auto-submit script, so the same hash, as the HTTP-POST form.
+	m.writePostForm(w, postResponseScriptHash, form)
 }
