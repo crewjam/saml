@@ -79,3 +79,13 @@ func TestNewCanAcceptEndpointPaths(t *testing.T) {
 		})
 	}
 }
+
+func TestDefaultServiceProviderAcsIndex(t *testing.T) {
+	sp := DefaultServiceProvider(Options{URL: url.URL{Scheme: "https", Host: "sp.example.com"}})
+	assert.Assert(t, sp.AcsIndex == nil)
+
+	index := 2
+	sp = DefaultServiceProvider(Options{URL: url.URL{Scheme: "https", Host: "sp.example.com"}, AcsIndex: &index})
+	assert.Assert(t, sp.AcsIndex != nil)
+	assert.Equal(t, 2, *sp.AcsIndex)
+}

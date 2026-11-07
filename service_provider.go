@@ -17,9 +17,11 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/beevik/etree"
@@ -113,6 +115,16 @@ type ServiceProvider struct {
 	// on this host, i.e. https://example.com/saml/acs
 	AcsURL url.URL
 
+	// AcsIndex, if set, makes authentication requests carry
+	// AssertionConsumerServiceIndex with this value, instead of
+	// AssertionConsumerServiceURL and ProtocolBinding (SAML core §3.4.1
+	// does not allow both). The IdP then sends the response to the
+	// AssertionConsumerService endpoint with this index in the SP metadata it
+	// has on file, using that endpoint's binding. That endpoint's Location
+	// must still be AcsURL, because responses are only accepted there. If nil,
+	// requests carry AssertionConsumerServiceURL and ProtocolBinding.
+	AcsIndex *int
+
 	// SloURL is the full URL to the SAML Single Logout endpoint on this host.
 	// i.e. https://example.com/saml/slo
 	SloURL url.URL
@@ -155,6 +167,18 @@ type ServiceProvider struct {
 	// context in authentication requests
 	RequestedAuthnContext *RequestedAuthnContext
 
+	// ValidateAuthnContextClassRef, if true, requires an assertion to carry
+	// an AuthnStatement whose AuthnContextClassRef is one of the classes in
+	// RequestedAuthnContext. It has no effect if RequestedAuthnContext is
+	// nil or names no class.
+	//
+	// Only the "exact" Comparison (or an empty one, which means "exact") is
+	// supported. The ordering that "minimum", "better" and "maximum" refer
+	// to is defined by each deployment, not by the SAML specification
+	// (saml-core §3.3.2.2.1), so with any other Comparison every assertion
+	// is rejected rather than accepted unchecked.
+	ValidateAuthnContextClassRef bool
+
 	// AllowIDPInitiated accepts unsolicited (IdP-initiated) responses, which
 	// have no InResponseTo. A response or assertion that does carry an
 	// InResponseTo must still match a request this SP made; set
@@ -180,6 +204,11 @@ type ServiceProvider struct {
 	// dsig.ECDSASHA256SignatureMethod, dsig.ECDSASHA384SignatureMethod, or
 	// dsig.ECDSASHA512SignatureMethod.
 	SignatureMethod string
+
+	// SignMetadata, if true, asks that the SP metadata be published with an
+	// enveloped XML signature made with Key; samlsp.Middleware.ServeMetadata
+	// honors it. See SignedMetadata.
+	SignMetadata bool
 
 	// LogoutBindings specify the bindings available for SLO endpoint. If empty,
 	// HTTP-POST binding is used.
@@ -308,12 +337,13 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 	}
 
 	var keyDescriptors []KeyDescriptor
+	// Metadata publishes only the SP's own certificate. Intermediates belong
+	// in signatures' KeyInfo, not here: consumers treat each certificate in
+	// a KeyDescriptor as a key the SP uses, and appending their DER to the
+	// leaf's made the certificate unparseable.
 	var certBytes []byte
 	if sp.Certificate != nil {
 		certBytes = sp.Certificate.Raw
-		for _, intermediate := range sp.Intermediates {
-			certBytes = append(certBytes, intermediate.Raw...)
-		}
 	}
 
 	// Advertise a key for encryption only if it is one the IdP can encrypt
@@ -642,6 +672,15 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding stri
 		ForceAuthn:            sp.ForceAuthn,
 		RequestedAuthnContext: sp.RequestedAuthnContext,
 	}
+	if sp.AcsIndex != nil {
+		// AssertionConsumerServiceIndex is an xs:unsignedShort.
+		if *sp.AcsIndex < 0 || *sp.AcsIndex > math.MaxUint16 {
+			return nil, fmt.Errorf("AcsIndex %d is not between 0 and %d", *sp.AcsIndex, math.MaxUint16)
+		}
+		req.AssertionConsumerServiceIndex = strconv.Itoa(*sp.AcsIndex)
+		req.AssertionConsumerServiceURL = ""
+		req.ProtocolBinding = ""
+	}
 	// We don't need to sign the XML document if the IDP uses HTTP-Redirect binding
 	if len(sp.SignatureMethod) > 0 && binding == HTTPPostBinding {
 		if err := sp.SignAuthnRequest(&req); err != nil {
@@ -651,36 +690,63 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding stri
 	return &req, nil
 }
 
+// SignedMetadata returns the SP metadata as an XML element carrying an
+// enveloped signature made with Key and Certificate (saml-metadata-2.0-os §3).
+//
+// It signs with SignatureMethod, or, when that is empty, with SHA-256 for the
+// key type; signing metadata does not require request signing to be enabled.
+// The signature references the EntityDescriptor by its ID attribute; one is
+// generated if the metadata does not have one. The returned element must be
+// serialized as-is: re-indenting it changes the signed content.
+func (sp *ServiceProvider) SignedMetadata() (*etree.Element, error) {
+	signatureMethod := sp.SignatureMethod
+	if signatureMethod == "" && !signerutil.IsNil(sp.Key) {
+		signatureMethod = defaultSignatureMethod(sp.Key.Public())
+	}
+	signingContext, err := sp.signingContext(signatureMethod)
+	if err != nil {
+		return nil, err
+	}
+	return signMetadata(sp.Metadata(), signingContext)
+}
+
 // GetSigningContext returns a dsig.SigningContext initialized based on the Service Provider's configuration
 func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
+	return sp.signingContext(sp.SignatureMethod)
+}
+
+// signingContext returns a signing context for the SP's key and certificate
+// that signs with signatureMethod.
+func (sp *ServiceProvider) signingContext(signatureMethod string) (*dsig.SigningContext, error) {
 	if signerutil.IsNil(sp.Key) {
-		return nil, fmt.Errorf("signature method %s requires a non-nil private key", sp.SignatureMethod)
+		return nil, fmt.Errorf("signature method %s requires a non-nil private key", signatureMethod)
 	}
 	if sp.Certificate == nil {
 		return nil, errors.New("cannot sign: ServiceProvider.Certificate is nil")
 	}
 
+	// The chain, leaf first, is placed in each signature's KeyInfo so that a
+	// verifier can build a path from the SP certificate to a trusted root.
 	keyPair := tls.Certificate{
 		Certificate: [][]byte{sp.Certificate.Raw},
 		PrivateKey:  sp.Key,
 		Leaf:        sp.Certificate,
 	}
-	// TODO: add intermediates for SP
-	// for _, cert := range sp.Intermediates {
-	// 	keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
-	// }
+	for _, cert := range sp.Intermediates {
+		keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
+	}
 
 	// Validate that the key type matches the signature method.
 	// We check the public key type to support crypto.Signer implementations
 	// (like KMS/HSM signers) that aren't literal *rsa.PrivateKey or *ecdsa.PrivateKey.
 	pubKey := sp.Key.Public()
-	switch sp.SignatureMethod {
+	switch signatureMethod {
 	case dsig.RSASHA1SignatureMethod,
 		dsig.RSASHA256SignatureMethod,
 		dsig.RSASHA384SignatureMethod,
 		dsig.RSASHA512SignatureMethod:
 		if _, ok := pubKey.(*rsa.PublicKey); !ok {
-			return nil, fmt.Errorf("signature method %s requires an RSA key, got %T", sp.SignatureMethod, pubKey)
+			return nil, fmt.Errorf("signature method %s requires an RSA key, got %T", signatureMethod, pubKey)
 		}
 
 	case dsig.ECDSASHA1SignatureMethod,
@@ -688,10 +754,10 @@ func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 		dsig.ECDSASHA384SignatureMethod,
 		dsig.ECDSASHA512SignatureMethod:
 		if _, ok := pubKey.(*ecdsa.PublicKey); !ok {
-			return nil, fmt.Errorf("signature method %s requires an ECDSA key, got %T", sp.SignatureMethod, pubKey)
+			return nil, fmt.Errorf("signature method %s requires an ECDSA key, got %T", signatureMethod, pubKey)
 		}
 	default:
-		return nil, fmt.Errorf("invalid signing method %s", sp.SignatureMethod)
+		return nil, fmt.Errorf("invalid signing method %s", signatureMethod)
 	}
 
 	keyStore := dsig.TLSCertKeyStore(keyPair)
@@ -704,7 +770,7 @@ func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 		return nil, err
 	}
 	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
-	if err := signingContext.SetSignatureMethod(sp.SignatureMethod); err != nil {
+	if err := signingContext.SetSignatureMethod(signatureMethod); err != nil {
 		return nil, err
 	}
 
@@ -1360,6 +1426,13 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 		if subjectConfirmation.SubjectConfirmationData.Recipient != sp.AcsURL.String() {
 			return fmt.Errorf("assertion SubjectConfirmation Recipient is not %s", sp.AcsURL.String())
 		}
+		// saml-profiles §4.1.4.2 says a bearer SubjectConfirmationData MUST
+		// NOT carry NotBefore, but some IdPs send one anyway; accept it as
+		// long as it is not in the future (saml-core §2.4.1.2). An omitted
+		// NotBefore is the zero time, which always passes.
+		if subjectConfirmation.SubjectConfirmationData.NotBefore.Add(-MaxClockSkew).After(now) {
+			return fmt.Errorf("assertion SubjectConfirmationData is not yet valid")
+		}
 		if skewedDeadline(subjectConfirmation.SubjectConfirmationData.NotOnOrAfter).Before(now) {
 			return fmt.Errorf("assertion SubjectConfirmationData is expired")
 		}
@@ -1377,7 +1450,40 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if err := sp.validateAudienceRestriction(assertion); err != nil {
 		return err
 	}
+	if err := sp.validateAuthnContextClassRef(assertion); err != nil {
+		return err
+	}
 	return nil
+}
+
+// validateAuthnContextClassRef checks, if ValidateAuthnContextClassRef is
+// set, that one of the assertion's AuthnStatements has an
+// AuthnContextClassRef listed in RequestedAuthnContext.
+func (sp *ServiceProvider) validateAuthnContextClassRef(assertion *Assertion) error {
+	if !sp.ValidateAuthnContextClassRef || sp.RequestedAuthnContext == nil {
+		return nil
+	}
+	requested := sp.RequestedAuthnContext.ClassRefs()
+	if len(requested) == 0 {
+		return nil
+	}
+	if comparison := sp.RequestedAuthnContext.Comparison; comparison != "" && comparison != "exact" {
+		return fmt.Errorf("cannot validate AuthnContextClassRef for RequestedAuthnContext Comparison %q: only \"exact\" is supported", comparison)
+	}
+	var got []string
+	for _, authnStatement := range assertion.AuthnStatements {
+		classRef := authnStatement.AuthnContext.AuthnContextClassRef
+		if classRef == nil {
+			continue
+		}
+		for _, want := range requested {
+			if classRef.Value == want {
+				return nil
+			}
+		}
+		got = append(got, classRef.Value)
+	}
+	return fmt.Errorf("assertion AuthnContextClassRef %q is not one of the requested %q", got, requested)
 }
 
 // validateAssertionInResponseTo checks the InResponseTo of an assertion's
@@ -1541,6 +1647,40 @@ func unboundedParentContext(el *etree.Element) (etreeutils.NSContext, error) {
 	return ctx.SubContext(parent)
 }
 
+// stripKeyInfoWithoutCertificate removes the KeyInfo from el's Signature
+// when it carries no X509Certificate, so that dsig verifies against the
+// trusted certificates instead, and reports whether it had none.
+func stripKeyInfoWithoutCertificate(el *etree.Element) bool {
+	if el.FindElement("./Signature/KeyInfo/X509Data/X509Certificate") != nil {
+		return false
+	}
+	if sigEl := el.FindElement("./Signature"); sigEl != nil {
+		if keyInfo := sigEl.FindElement("KeyInfo"); keyInfo != nil {
+			sigEl.RemoveChild(keyInfo)
+		}
+	}
+	return true
+}
+
+// validateWithEachCert validates the signature on el against each of certs
+// in turn, with a copy of base that trusts only that certificate, and
+// returns nil as soon as one of them verifies it. Otherwise it returns the
+// error from the last certificate tried.
+func validateWithEachCert(base *dsig.ValidationContext, certs []*x509.Certificate, el *etree.Element) error {
+	var err error
+	for _, cert := range certs {
+		ctx := dsig.NewDefaultValidationContext(&dsig.MemoryX509CertificateStore{
+			Roots: []*x509.Certificate{cert},
+		})
+		ctx.IdAttribute = base.IdAttribute
+		ctx.Clock = base.Clock
+		if _, err = ctx.Validate(el); err == nil {
+			return nil
+		}
+	}
+	return err
+}
+
 // validateSignature returns nil iff the Signature embedded in the element is valid
 func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	sigEl, err := findChild(el, "http://www.w3.org/2000/09/xmldsig#", "Signature")
@@ -1598,13 +1738,7 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	//
 	// The best course of action is to just remove the KeyInfo so that dsig falls back to
 	// verifying against the public key provided in the metadata.
-	if el.FindElement("./Signature/KeyInfo/X509Data/X509Certificate") == nil {
-		if sigEl := el.FindElement("./Signature"); sigEl != nil {
-			if keyInfo := sigEl.FindElement("KeyInfo"); keyInfo != nil {
-				sigEl.RemoveChild(keyInfo)
-			}
-		}
-	}
+	noCertInKeyInfo := stripKeyInfoWithoutCertificate(el)
 
 	tag := el.Tag
 	ctx, err := unboundedParentContext(el)
@@ -1623,6 +1757,22 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 
 	if sp.SignatureVerifier != nil {
 		return sp.SignatureVerifier.VerifySignature(validationContext, el)
+	}
+
+	// Without a certificate in KeyInfo, dsig can only pick the signing
+	// certificate itself when it trusts exactly one ("Missing x509 Element"
+	// otherwise), so an IdP that lists several signing certificates in its
+	// metadata, for example during key rollover, and signs without
+	// X509Certificate would always be rejected. In that case validate
+	// against each trusted certificate on its own. Each attempt is a full
+	// dsig validation of the same element that trusts only that
+	// certificate, so this accepts exactly what one of them would accept
+	// had the IdP named it in KeyInfo.
+	if noCertInKeyInfo && len(certs) > 1 {
+		if err := validateWithEachCert(validationContext, certs, el); err != nil {
+			return fmt.Errorf("cannot validate signature on %s: %v", tag, err)
+		}
+		return nil
 	}
 
 	if _, err := validationContext.Validate(el); err != nil {

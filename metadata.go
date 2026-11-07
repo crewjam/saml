@@ -1,12 +1,16 @@
 package saml
 
 import (
+	"crypto"
+	"crypto/ecdsa"
 	"encoding/xml"
 	"fmt"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/beevik/etree"
+	dsig "github.com/russellhaering/goxmldsig"
 )
 
 // HTTPPostBinding is the official URN for the HTTP-POST binding (transport)
@@ -41,6 +45,7 @@ type EntitiesDescriptor struct {
 	CacheDuration       *time.Duration `xml:"cacheDuration,attr,omitempty"`
 	Name                *string        `xml:",attr,omitempty"`
 	Signature           *etree.Element
+	Extensions          *Extensions          `xml:"urn:oasis:names:tc:SAML:2.0:metadata Extensions,omitempty"`
 	EntitiesDescriptors []EntitiesDescriptor `xml:"urn:oasis:names:tc:SAML:2.0:metadata EntitiesDescriptor"`
 	EntityDescriptors   []EntityDescriptor   `xml:"urn:oasis:names:tc:SAML:2.0:metadata EntityDescriptor"`
 }
@@ -59,12 +64,14 @@ func (m EntitiesDescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error
 	}
 	type Alias EntitiesDescriptor
 	aux := &struct {
-		ValidUntil    *RelaxedTime `xml:"validUntil,attr,omitempty"`
-		CacheDuration *Duration    `xml:"cacheDuration,attr,omitempty"`
+		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
+		CacheDuration *Duration        `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		ValidUntil:    validUntil,
 		CacheDuration: cacheDuration,
+		Signature:     (*etreeElementXML)(m.Signature),
 		Alias:         (*Alias)(&m),
 	}
 	return e.Encode(aux)
@@ -74,8 +81,9 @@ func (m EntitiesDescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error
 func (m *EntitiesDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias EntitiesDescriptor
 	aux := &struct {
-		ValidUntil    *RelaxedTime `xml:"validUntil,attr,omitempty"`
-		CacheDuration *Duration    `xml:"cacheDuration,attr,omitempty"`
+		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
+		CacheDuration *Duration        `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -83,6 +91,7 @@ func (m *EntitiesDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement
 	if err := d.DecodeElement(aux, &start); err != nil {
 		return err
 	}
+	m.Signature = (*etree.Element)(aux.Signature)
 	if aux.ValidUntil != nil {
 		t := time.Time(*aux.ValidUntil)
 		m.ValidUntil = &t
@@ -113,6 +122,7 @@ type EntityDescriptor struct {
 	ValidUntil                    time.Time     `xml:"validUntil,attr,omitempty"`
 	CacheDuration                 time.Duration `xml:"cacheDuration,attr,omitempty"`
 	Signature                     *etree.Element
+	Extensions                    *Extensions                    `xml:"urn:oasis:names:tc:SAML:2.0:metadata Extensions,omitempty"`
 	RoleDescriptors               []RoleDescriptor               `xml:"RoleDescriptor"`
 	IDPSSODescriptors             []IDPSSODescriptor             `xml:"IDPSSODescriptor"`
 	SPSSODescriptors              []SPSSODescriptor              `xml:"SPSSODescriptor"`
@@ -135,15 +145,23 @@ func (m EntityDescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 		vu := RelaxedTime(m.ValidUntil)
 		validUntil = &vu
 	}
+	roleDescriptors := make([]roleDescriptorXML, len(m.RoleDescriptors))
+	for i := range m.RoleDescriptors {
+		roleDescriptors[i] = roleDescriptorXML(m.RoleDescriptors[i])
+	}
 	type Alias EntityDescriptor
 	aux := &struct {
-		ValidUntil    *RelaxedTime `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration     `xml:"cacheDuration,attr,omitempty"`
+		ValidUntil      *RelaxedTime        `xml:"validUntil,attr,omitempty"`
+		CacheDuration   Duration            `xml:"cacheDuration,attr,omitempty"`
+		Signature       *etreeElementXML    `xml:"Signature"`
+		RoleDescriptors []roleDescriptorXML `xml:"RoleDescriptor"`
 		*Alias
 	}{
-		ValidUntil:    validUntil,
-		CacheDuration: Duration(m.CacheDuration),
-		Alias:         (*Alias)(&m),
+		ValidUntil:      validUntil,
+		CacheDuration:   Duration(m.CacheDuration),
+		Signature:       (*etreeElementXML)(m.Signature),
+		RoleDescriptors: roleDescriptors,
+		Alias:           (*Alias)(&m),
 	}
 	return e.Encode(aux)
 }
@@ -152,8 +170,10 @@ func (m EntityDescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 func (m *EntityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias EntityDescriptor
 	aux := &struct {
-		ValidUntil    RelaxedTime `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration    `xml:"cacheDuration,attr,omitempty"`
+		ValidUntil      RelaxedTime         `xml:"validUntil,attr,omitempty"`
+		CacheDuration   Duration            `xml:"cacheDuration,attr,omitempty"`
+		Signature       *etreeElementXML    `xml:"Signature"`
+		RoleDescriptors []roleDescriptorXML `xml:"RoleDescriptor"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -161,9 +181,59 @@ func (m *EntityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 	if err := d.DecodeElement(aux, &start); err != nil {
 		return err
 	}
+	m.Signature = (*etree.Element)(aux.Signature)
+	for _, rd := range aux.RoleDescriptors {
+		m.RoleDescriptors = append(m.RoleDescriptors, RoleDescriptor(rd))
+	}
 	m.ValidUntil = time.Time(aux.ValidUntil)
 	m.CacheDuration = time.Duration(aux.CacheDuration)
 	return nil
+}
+
+// signMetadata returns ed as an XML element carrying an enveloped signature
+// made with signingContext (saml-metadata-2.0-os §3).
+//
+// The signature references the EntityDescriptor by its ID attribute; one is
+// generated if ed does not have one. ed itself is not modified. The returned
+// element must be serialized as-is: re-indenting it changes the signed
+// content.
+func signMetadata(ed *EntityDescriptor, signingContext *dsig.SigningContext) (*etree.Element, error) {
+	unsigned := *ed
+	unsigned.Signature = nil
+	if unsigned.ID == "" {
+		unsigned.ID = fmt.Sprintf("id-%x", randomBytes(20))
+	}
+
+	buf, err := xml.Marshal(unsigned)
+	if err != nil {
+		return nil, err
+	}
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(buf); err != nil {
+		return nil, err
+	}
+
+	el := doc.Root()
+	sigEl, err := signingContext.ConstructSignature(el, true)
+	if err != nil {
+		return nil, err
+	}
+
+	// The metadata schema requires ds:Signature to be the first child of
+	// EntityDescriptor. The enveloped-signature transform removes it before
+	// the digest is computed, so its position does not affect validity.
+	el.InsertChildAt(0, sigEl)
+	return el, nil
+}
+
+// defaultSignatureMethod returns the signature method used when none is
+// configured: SHA-256 with ECDSA for an ECDSA key, and with RSA otherwise.
+// SHA-1 based methods are deprecated for XML signatures.
+func defaultSignatureMethod(publicKey crypto.PublicKey) string {
+	if _, ok := publicKey.(*ecdsa.PublicKey); ok {
+		return dsig.ECDSASHA256SignatureMethod
+	}
+	return dsig.RSASHA256SignatureMethod
 }
 
 // Organization represents the SAML Organization object.
@@ -213,6 +283,7 @@ type RoleDescriptor struct {
 	ProtocolSupportEnumeration string        `xml:"protocolSupportEnumeration,attr"`
 	ErrorURL                   string        `xml:"errorURL,attr,omitempty"`
 	Signature                  *etree.Element
+	Extensions                 *Extensions     `xml:"urn:oasis:names:tc:SAML:2.0:metadata Extensions,omitempty"`
 	KeyDescriptors             []KeyDescriptor `xml:"KeyDescriptor,omitempty"`
 	Organization               *Organization   `xml:"Organization,omitempty"`
 	ContactPeople              []ContactPerson `xml:"ContactPerson,omitempty"`
@@ -258,6 +329,96 @@ type KeyDescriptor struct {
 // EncryptionMethod represents the XMLSEC object of the same name
 type EncryptionMethod struct {
 	Algorithm string `xml:"Algorithm,attr"`
+	// KeySize is the optional xenc:KeySize child, which states the key size
+	// in bits for algorithms that allow more than one.
+	KeySize *int `xml:"http://www.w3.org/2001/04/xmlenc# KeySize,omitempty"`
+}
+
+// AlgSupportNamespace is the namespace of the SAML V2.0 Metadata Profile for
+// Algorithm Support.
+//
+// See https://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-metadata-algsupport-v1.0-cs01.html
+const AlgSupportNamespace = "urn:oasis:names:tc:SAML:metadata:algsupport"
+
+// Extensions represents the SAML metadata element md:Extensions, which holds
+// extension elements from namespaces other than the SAML metadata namespace.
+//
+// Elements this package knows are decoded into their own fields. Any other
+// element is kept in Other, so that it is not lost when metadata is parsed and
+// then written out again. Elements are written in field order, so the order
+// of elements in Other relative to the known elements is not preserved.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-metadata-2.0-os.pdf §2.3.1
+type Extensions struct {
+	XMLName xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:metadata Extensions"`
+
+	// SigningMethods and DigestMethods are the alg:SigningMethod and
+	// alg:DigestMethod elements of the Metadata Profile for Algorithm Support.
+	SigningMethods []SigningMethod `xml:"urn:oasis:names:tc:SAML:metadata:algsupport SigningMethod"`
+	DigestMethods  []DigestMethod  `xml:"urn:oasis:names:tc:SAML:metadata:algsupport DigestMethod"`
+
+	// Other holds the extension elements that have no field of their own.
+	Other []ExtensionElement `xml:",any"`
+}
+
+// SigningMethod represents the alg:SigningMethod element: an XML Signature
+// algorithm the entity supports, with optional bounds on the key size, in
+// bits, it supports for that algorithm.
+//
+// See https://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-metadata-algsupport-v1.0-cs01.html §2.4
+type SigningMethod struct {
+	XMLName    xml.Name `xml:"urn:oasis:names:tc:SAML:metadata:algsupport SigningMethod"`
+	Algorithm  string   `xml:"Algorithm,attr"`
+	MinKeySize int      `xml:"MinKeySize,attr,omitempty"`
+	MaxKeySize int      `xml:"MaxKeySize,attr,omitempty"`
+}
+
+// DigestMethod represents the alg:DigestMethod element: an XML Signature
+// digest algorithm the entity supports.
+//
+// See https://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-metadata-algsupport-v1.0-cs01.html §2.3
+type DigestMethod struct {
+	XMLName   xml.Name `xml:"urn:oasis:names:tc:SAML:metadata:algsupport DigestMethod"`
+	Algorithm string   `xml:"Algorithm,attr"`
+}
+
+// ExtensionElement is a generic XML element, used for extension elements
+// that this package does not model. Names are kept with their namespace URIs
+// rather than their prefixes, so the element can be written out again with
+// its namespaces intact. Character data is kept, but its position relative to
+// child elements (mixed content) is not.
+type ExtensionElement struct {
+	XMLName  xml.Name
+	Attrs    []xml.Attr         `xml:",any,attr"`
+	CharData string             `xml:",chardata"`
+	Children []ExtensionElement `xml:",any"`
+}
+
+// UnmarshalXML implements xml.Unmarshaler
+func (m *ExtensionElement) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	type Alias ExtensionElement
+	if err := d.DecodeElement((*Alias)(m), &start); err != nil {
+		return err
+	}
+	// Drop namespace declarations. The decoder has already resolved names
+	// to namespace URIs, and the encoder declares the namespaces it needs;
+	// re-encoding the declarations as attributes would produce bogus ones.
+	attrs := m.Attrs[:0]
+	for _, attr := range m.Attrs {
+		if attr.Name.Space == "xmlns" || (attr.Name.Space == "" && attr.Name.Local == "xmlns") {
+			continue
+		}
+		attrs = append(attrs, attr)
+	}
+	m.Attrs = attrs
+	if len(m.Attrs) == 0 {
+		m.Attrs = nil
+	}
+	// Whitespace between child elements is indentation, not content.
+	if len(m.Children) > 0 && strings.TrimSpace(m.CharData) == "" {
+		m.CharData = ""
+	}
+	return nil
 }
 
 // KeyInfo represents the XMLSEC object of the same name
@@ -433,12 +594,14 @@ func (m IDPSSODescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias IDPSSODescriptor
 	validUntil, cacheDuration := marshalRoleDescriptorAttrs(&m.RoleDescriptor)
 	aux := &struct {
-		ValidUntil    *RelaxedTime `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration     `xml:"cacheDuration,attr,omitempty"`
+		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
+		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		ValidUntil:    validUntil,
 		CacheDuration: cacheDuration,
+		Signature:     (*etreeElementXML)(m.Signature),
 		Alias:         (*Alias)(&m),
 	}
 	return e.Encode(aux)
@@ -451,9 +614,10 @@ func (m *IDPSSODescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 	// because encoding/xml does not populate an XMLName field promoted
 	// from an embedded struct when decoding.
 	aux := &struct {
-		XMLName       xml.Name     `xml:"urn:oasis:names:tc:SAML:2.0:metadata IDPSSODescriptor"`
-		ValidUntil    *RelaxedTime `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration     `xml:"cacheDuration,attr,omitempty"`
+		XMLName       xml.Name         `xml:"urn:oasis:names:tc:SAML:2.0:metadata IDPSSODescriptor"`
+		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
+		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -463,6 +627,7 @@ func (m *IDPSSODescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 	}
 	m.XMLName = aux.XMLName
 	unmarshalRoleDescriptorAttrs(&m.RoleDescriptor, aux.ValidUntil, aux.CacheDuration)
+	m.Signature = (*etree.Element)(aux.Signature)
 	return nil
 }
 
@@ -483,12 +648,14 @@ func (m SPSSODescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias SPSSODescriptor
 	validUntil, cacheDuration := marshalRoleDescriptorAttrs(&m.RoleDescriptor)
 	aux := &struct {
-		ValidUntil    *RelaxedTime `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration     `xml:"cacheDuration,attr,omitempty"`
+		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
+		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		ValidUntil:    validUntil,
 		CacheDuration: cacheDuration,
+		Signature:     (*etreeElementXML)(m.Signature),
 		Alias:         (*Alias)(&m),
 	}
 	return e.Encode(aux)
@@ -501,9 +668,10 @@ func (m *SPSSODescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) e
 	// because encoding/xml does not populate an XMLName field promoted
 	// from an embedded struct when decoding.
 	aux := &struct {
-		XMLName       xml.Name     `xml:"urn:oasis:names:tc:SAML:2.0:metadata SPSSODescriptor"`
-		ValidUntil    *RelaxedTime `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration     `xml:"cacheDuration,attr,omitempty"`
+		XMLName       xml.Name         `xml:"urn:oasis:names:tc:SAML:2.0:metadata SPSSODescriptor"`
+		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
+		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -513,6 +681,7 @@ func (m *SPSSODescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) e
 	}
 	m.XMLName = aux.XMLName
 	unmarshalRoleDescriptorAttrs(&m.RoleDescriptor, aux.ValidUntil, aux.CacheDuration)
+	m.Signature = (*etree.Element)(aux.Signature)
 	return nil
 }
 
@@ -550,12 +719,14 @@ func (m AuthnAuthorityDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElem
 	type Alias AuthnAuthorityDescriptor
 	validUntil, cacheDuration := marshalRoleDescriptorAttrs(&m.RoleDescriptor)
 	aux := &struct {
-		ValidUntil    *RelaxedTime `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration     `xml:"cacheDuration,attr,omitempty"`
+		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
+		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		ValidUntil:    validUntil,
 		CacheDuration: cacheDuration,
+		Signature:     (*etreeElementXML)(m.Signature),
 		Alias:         (*Alias)(&m),
 	}
 	return e.EncodeElement(aux, start)
@@ -565,8 +736,9 @@ func (m AuthnAuthorityDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElem
 func (m *AuthnAuthorityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias AuthnAuthorityDescriptor
 	aux := &struct {
-		ValidUntil    *RelaxedTime `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration     `xml:"cacheDuration,attr,omitempty"`
+		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
+		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -575,6 +747,7 @@ func (m *AuthnAuthorityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartE
 		return err
 	}
 	unmarshalRoleDescriptorAttrs(&m.RoleDescriptor, aux.ValidUntil, aux.CacheDuration)
+	m.Signature = (*etree.Element)(aux.Signature)
 	return nil
 }
 
@@ -593,12 +766,14 @@ func (m PDPDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElement) error 
 	type Alias PDPDescriptor
 	validUntil, cacheDuration := marshalRoleDescriptorAttrs(&m.RoleDescriptor)
 	aux := &struct {
-		ValidUntil    *RelaxedTime `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration     `xml:"cacheDuration,attr,omitempty"`
+		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
+		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		ValidUntil:    validUntil,
 		CacheDuration: cacheDuration,
+		Signature:     (*etreeElementXML)(m.Signature),
 		Alias:         (*Alias)(&m),
 	}
 	return e.EncodeElement(aux, start)
@@ -608,8 +783,9 @@ func (m PDPDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElement) error 
 func (m *PDPDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias PDPDescriptor
 	aux := &struct {
-		ValidUntil    *RelaxedTime `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration     `xml:"cacheDuration,attr,omitempty"`
+		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
+		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -618,6 +794,7 @@ func (m *PDPDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) err
 		return err
 	}
 	unmarshalRoleDescriptorAttrs(&m.RoleDescriptor, aux.ValidUntil, aux.CacheDuration)
+	m.Signature = (*etree.Element)(aux.Signature)
 	return nil
 }
 
@@ -638,12 +815,14 @@ func (m AttributeAuthorityDescriptor) MarshalXML(e *xml.Encoder, start xml.Start
 	type Alias AttributeAuthorityDescriptor
 	validUntil, cacheDuration := marshalRoleDescriptorAttrs(&m.RoleDescriptor)
 	aux := &struct {
-		ValidUntil    *RelaxedTime `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration     `xml:"cacheDuration,attr,omitempty"`
+		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
+		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		ValidUntil:    validUntil,
 		CacheDuration: cacheDuration,
+		Signature:     (*etreeElementXML)(m.Signature),
 		Alias:         (*Alias)(&m),
 	}
 	return e.EncodeElement(aux, start)
@@ -653,8 +832,9 @@ func (m AttributeAuthorityDescriptor) MarshalXML(e *xml.Encoder, start xml.Start
 func (m *AttributeAuthorityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias AttributeAuthorityDescriptor
 	aux := &struct {
-		ValidUntil    *RelaxedTime `xml:"validUntil,attr,omitempty"`
-		CacheDuration Duration     `xml:"cacheDuration,attr,omitempty"`
+		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
+		CacheDuration Duration         `xml:"cacheDuration,attr,omitempty"`
+		Signature     *etreeElementXML `xml:"Signature"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -663,6 +843,7 @@ func (m *AttributeAuthorityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.St
 		return err
 	}
 	unmarshalRoleDescriptorAttrs(&m.RoleDescriptor, aux.ValidUntil, aux.CacheDuration)
+	m.Signature = (*etree.Element)(aux.Signature)
 	return nil
 }
 
@@ -675,6 +856,70 @@ type AffiliationDescriptor struct {
 	ValidUntil         time.Time     `xml:"validUntil,attr,omitempty"`
 	CacheDuration      time.Duration `xml:"cacheDuration,attr"`
 	Signature          *etree.Element
+	Extensions         *Extensions     `xml:"urn:oasis:names:tc:SAML:2.0:metadata Extensions,omitempty"`
 	AffiliateMembers   []string        `xml:"AffiliateMember"`
 	KeyDescriptors     []KeyDescriptor `xml:"KeyDescriptor"`
+}
+
+// roleDescriptorXML encodes a RoleDescriptor, which cannot have MarshalXML
+// and UnmarshalXML methods itself: they would be inherited by the
+// descriptors that embed it.
+type roleDescriptorXML RoleDescriptor
+
+// MarshalXML implements xml.Marshaler, writing Signature as XML.
+func (m roleDescriptorXML) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	type Alias roleDescriptorXML
+	aux := &struct {
+		Signature *etreeElementXML `xml:"Signature"`
+		*Alias
+	}{
+		Signature: (*etreeElementXML)(m.Signature),
+		Alias:     (*Alias)(&m),
+	}
+	return e.EncodeElement(aux, start)
+}
+
+// UnmarshalXML implements xml.Unmarshaler, reading Signature as XML.
+func (m *roleDescriptorXML) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	type Alias roleDescriptorXML
+	aux := &struct {
+		Signature *etreeElementXML `xml:"Signature"`
+		*Alias
+	}{
+		Alias: (*Alias)(m),
+	}
+	if err := d.DecodeElement(aux, &start); err != nil {
+		return err
+	}
+	m.Signature = (*etree.Element)(aux.Signature)
+	return nil
+}
+
+// MarshalXML implements xml.Marshaler, writing Signature as XML.
+func (m AffiliationDescriptor) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	type Alias AffiliationDescriptor
+	aux := &struct {
+		Signature *etreeElementXML `xml:"Signature"`
+		*Alias
+	}{
+		Signature: (*etreeElementXML)(m.Signature),
+		Alias:     (*Alias)(&m),
+	}
+	return e.EncodeElement(aux, start)
+}
+
+// UnmarshalXML implements xml.Unmarshaler, reading Signature as XML.
+func (m *AffiliationDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	type Alias AffiliationDescriptor
+	aux := &struct {
+		Signature *etreeElementXML `xml:"Signature"`
+		*Alias
+	}{
+		Alias: (*Alias)(m),
+	}
+	if err := d.DecodeElement(aux, &start); err != nil {
+		return err
+	}
+	m.Signature = (*etree.Element)(aux.Signature)
+	return nil
 }

@@ -21,6 +21,7 @@ func TestOAEP11RoundTrip(t *testing.T) {
 		mgfURI string
 	}{
 		"OAEP_SHA256":     {OAEP_SHA256(), "http://www.w3.org/2009/xmlenc11#mgf1sha256"},
+		"OAEP_SHA384":     {OAEP_SHA384(), "http://www.w3.org/2009/xmlenc11#mgf1sha384"},
 		"OAEP_SHA512":     {OAEP_SHA512(), "http://www.w3.org/2009/xmlenc11#mgf1sha512"},
 		"OAEP_SHA256/GCM": {func() RSA { e := OAEP_SHA256(); e.BlockCipher = AES256GCM; return e }(), "http://www.w3.org/2009/xmlenc11#mgf1sha256"},
 		"SHA1 digest":     {func() RSA { e := OAEP_SHA256(); e.DigestMethod = SHA1; return e }(), "http://www.w3.org/2009/xmlenc11#mgf1sha1"},
@@ -103,6 +104,17 @@ func TestOAEPDecryptsSpecShapedDocuments(t *testing.T) {
 			opts:      rsa.OAEPOptions{Hash: crypto.SHA512, MGFHash: crypto.SHA384},
 			digestURI: SHA512.Algorithm(),
 			mgfURI:    "http://www.w3.org/2009/xmlenc11#mgf1sha384",
+		},
+		"rsa-oaep sha384 mgf1sha384": {
+			algorithm: algorithmRSAOAEP11,
+			opts:      rsa.OAEPOptions{Hash: crypto.SHA384, MGFHash: crypto.SHA384},
+			digestURI: "http://www.w3.org/2001/04/xmldsig-more#sha384",
+			mgfURI:    "http://www.w3.org/2009/xmlenc11#mgf1sha384",
+		},
+		"rsa-oaep-mgf1p sha384": {
+			algorithm: algorithmRSAOAEPMGF1P,
+			opts:      rsa.OAEPOptions{Hash: crypto.SHA384, MGFHash: crypto.SHA1},
+			digestURI: "http://www.w3.org/2001/04/xmldsig-more#sha384",
 		},
 		"rsa-oaep default digest and mgf": {
 			algorithm: algorithmRSAOAEP11,
