@@ -133,6 +133,33 @@ func TestSpecProfile_4_4_3_4_SignedLogoutResponseToIdP(t *testing.T) {
 	assert.Check(t, is.Equal(lt.m.ServiceProvider.Metadata().EntityID, logoutResponse.Issuer.Value))
 }
 
+// saml-profiles §4.4.3.1: "The <LogoutRequest> message MUST be signed if the
+// HTTP POST or Redirect binding is used." Options.SignLogout signs the
+// middleware's logout messages without SignRequest, which would also sign
+// AuthnRequests; it is off by default.
+func TestSpecProfile_4_4_3_1_SignLogoutOption(t *testing.T) {
+	opts := Options{URL: mustParseURL("https://sp.example.com/"), Key: specMiddlewareTest(t).Key}
+	sp := DefaultServiceProvider(opts)
+	assert.Check(t, is.Equal("", sp.SignatureMethod))
+	assert.Check(t, is.Equal("", sp.LogoutSignatureMethod), "off by default")
+
+	opts.SignLogout = true
+	sp = DefaultServiceProvider(opts)
+	assert.Check(t, is.Equal("", sp.SignatureMethod), "AuthnRequests stay unsigned")
+	assert.Check(t, is.Equal(dsig.RSASHA256SignatureMethod, sp.LogoutSignatureMethod))
+
+	lt := newLogoutTest(t, saml.HTTPRedirectBinding)
+	lt.m.ServiceProvider.LogoutSignatureMethod = sp.LogoutSignatureMethod
+	req := httptest.NewRequest(http.MethodGet, "https://sp.example.com/logout", nil)
+	req.AddCookie(lt.sessionCookie(t, "session-index-1"))
+	resp := httptest.NewRecorder()
+	lt.m.HandleStartLogout(resp, req)
+	location, err := url.Parse(resp.Header().Get("Location"))
+	assert.NilError(t, err)
+	assert.Check(t, location.Query().Get("Signature") != "", "HTTP-Redirect LogoutRequest is signed")
+	assert.Check(t, is.Equal(dsig.RSASHA256SignatureMethod, location.Query().Get("SigAlg")))
+}
+
 // saml-profiles §4.1.4.3 (lines 588-591): "If an <AuthnStatement> used to
 // establish a security context for the principal contains a
 // SessionNotOnOrAfter attribute, the security context SHOULD be discarded

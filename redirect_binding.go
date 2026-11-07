@@ -345,19 +345,20 @@ func checkRelayState(limit bool, relayState string) error {
 }
 
 // redirectBindingURL returns destination with the HTTP-Redirect binding
-// parameters for encodedMessage appended. If sp.SignatureMethod is set the
-// query is signed as described in saml-bindings-2.0-os section 3.4.4.1. The
+// parameters for encodedMessage appended. If signatureMethod is set the
+// query is signed with it as described in saml-bindings-2.0-os section
+// 3.4.4.1. The
 // signature covers only the SAML parameters, not any query parameters already
 // present in destination.
-func (sp *ServiceProvider) redirectBindingURL(destination, messageParam, encodedMessage, relayState string) (*url.URL, error) {
-	if sp.SignatureMethod == "" {
+func (sp *ServiceProvider) redirectBindingURL(destination, messageParam, encodedMessage, relayState, signatureMethod string) (*url.URL, error) {
+	if signatureMethod == "" {
 		return signedRedirectBindingURL(destination, messageParam, encodedMessage, relayState, "", nil)
 	}
-	signingContext, err := GetSigningContext(sp)
+	signingContext, err := sp.signingContext(signatureMethod)
 	if err != nil {
 		return nil, err
 	}
-	return signedRedirectBindingURL(destination, messageParam, encodedMessage, relayState, sp.SignatureMethod, signingContext)
+	return signedRedirectBindingURL(destination, messageParam, encodedMessage, relayState, signatureMethod, signingContext)
 }
 
 // signedRedirectBindingURL returns destination with the HTTP-Redirect binding

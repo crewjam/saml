@@ -732,3 +732,38 @@ func specProfXSIType(el *etree.Element) string {
 	}
 	return ""
 }
+
+// saml-profiles §4.4.3.1 and §4.4.3.4: the LogoutRequest and LogoutResponse
+// "MUST be signed if the HTTP POST or Redirect binding is used". With
+// LogoutSignatureMethod set and SignatureMethod empty, the SP signs its
+// logout messages with every binding, while AuthnRequests stay unsigned.
+func TestSpecProfile_4_4_3_LogoutSignatureMethodSignsOnlyLogout(t *testing.T) {
+	e := spcovSetup(t)
+	e.sp.SignatureMethod = ""
+	e.sp.LogoutSignatureMethod = dsig.RSASHA256SignatureMethod
+
+	authn, err := e.sp.MakeRedirectAuthenticationRequest("relay")
+	assert.NilError(t, err)
+	assert.Check(t, is.Equal("", authn.Query().Get("Signature")), "AuthnRequest stays unsigned")
+
+	req, err := e.sp.MakeLogoutRequest("https://idp.example.com/slo/post", "alice@example.com")
+	assert.NilError(t, err)
+	assert.Check(t, req.Signature != nil, "HTTP-POST LogoutRequest")
+
+	u, err := e.sp.MakeRedirectLogoutRequest("alice@example.com", "relay")
+	assert.NilError(t, err)
+	assert.Check(t, u.Query().Get("Signature") != "", "HTTP-Redirect LogoutRequest")
+	assert.Check(t, is.Equal(dsig.RSASHA256SignatureMethod, u.Query().Get("SigAlg")))
+
+	resp, err := e.sp.MakeLogoutResponse("https://idp.example.com/slo/post", "id-logout-request")
+	assert.NilError(t, err)
+	assert.Check(t, resp.Signature != nil, "HTTP-POST LogoutResponse")
+
+	u, err = e.sp.MakeRedirectLogoutResponse("id-logout-request", "relay")
+	assert.NilError(t, err)
+	assert.Check(t, u.Query().Get("Signature") != "", "HTTP-Redirect LogoutResponse")
+
+	form, err := e.sp.MakeSimpleSignLogoutResponse("id-logout-request", "relay")
+	assert.NilError(t, err)
+	assert.Check(t, is.Contains(string(form), `name="Signature"`), "HTTP-POST-SimpleSign LogoutResponse")
+}

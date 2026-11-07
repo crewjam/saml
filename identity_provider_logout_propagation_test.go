@@ -228,7 +228,7 @@ func spSendLogoutResponse(t *testing.T, sp *ServiceProvider, resp *LogoutRespons
 	if binding == HTTPRedirectBinding {
 		encoded, err := deflateAndEncode(resp.Element())
 		assert.NilError(t, err)
-		u, err := sp.redirectBindingURL(resp.Destination, redirectParamSAMLResponse, encoded, "")
+		u, err := sp.redirectBindingURL(resp.Destination, redirectParamSAMLResponse, encoded, "", sp.logoutSignatureMethod())
 		assert.NilError(t, err)
 		return httptest.NewRequest(http.MethodGet, u.String(), nil)
 	}
