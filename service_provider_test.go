@@ -1280,6 +1280,29 @@ func TestSPInvalidAssertions(t *testing.T) {
 	assertion = Assertion{}
 	assert.Check(t, xml.Unmarshal(assertionBuf, &assertion))
 
+	// SubjectConfirmationData NotBefore: omitted, past or within MaxClockSkew
+	// is accepted; further in the future is rejected.
+	for _, tc := range []struct {
+		notBefore time.Time
+		wantErr   string
+	}{
+		{notBefore: time.Time{}},
+		{notBefore: TimeNow().Add(-time.Hour)},
+		{notBefore: TimeNow().Add(MaxClockSkew - time.Second)},
+		{notBefore: TimeNow().Add(MaxClockSkew + time.Second), wantErr: "assertion SubjectConfirmationData is not yet valid"},
+		{notBefore: TimeNow().Add(time.Hour), wantErr: "assertion SubjectConfirmationData is not yet valid"},
+	} {
+		assertion.Subject.SubjectConfirmations[0].SubjectConfirmationData.NotBefore = tc.notBefore
+		err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
+		if tc.wantErr == "" {
+			assert.Check(t, err, "NotBefore %s", tc.notBefore)
+		} else {
+			assert.Check(t, is.Error(err, tc.wantErr), "NotBefore %s", tc.notBefore)
+		}
+		assertion = Assertion{}
+		assert.Check(t, xml.Unmarshal(assertionBuf, &assertion))
+	}
+
 	assertion.Conditions.NotBefore = TimeNow().Add(time.Hour)
 	err = s.validateAssertion(&assertion, []string{"id-9e61753d64e928af5a7a341a97f420c9"}, TimeNow())
 	assert.Check(t, is.Error(err, "assertion Conditions is not yet valid"))
