@@ -223,6 +223,17 @@ type IdentityProvider struct {
 	// SignedMetadata.
 	SignMetadata bool
 
+	// RejectSHA1Signatures, if true, refuses messages from service
+	// providers that are signed with a SHA-1 based algorithm: an XML
+	// signature whose SignatureMethod or any DigestMethod is SHA-1 based
+	// (rsa-sha1, ecdsa-sha1, dsa-sha1, hmac-sha1 or sha1), and an
+	// HTTP-Redirect or HTTP-POST-SimpleSign signature whose SigAlg is. It
+	// applies to the signatures the IdP verifies: those of LogoutRequests
+	// and of LogoutResponses to the IdP's own LogoutRequests (ServeSLO),
+	// and of AuthnRequests sent with the HTTP-POST-SimpleSign binding. The error matches ErrUnsupported. If false, SHA-1 is
+	// accepted.
+	RejectSHA1Signatures bool
+
 	// LogoutBindings are the bindings advertised in the IdP metadata for the
 	// SingleLogoutService at LogoutURL. When empty, only HTTP-Redirect is
 	// advertised, as before. ServeSLO accepts LogoutRequests with both the
@@ -230,6 +241,15 @@ type IdentityProvider struct {
 	// []string{HTTPRedirectBinding, HTTPPostBinding} when LogoutURL is served
 	// by ServeSLO.
 	LogoutBindings []string
+
+	// ReplayCache, if set, records the ID of each LogoutRequest that
+	// IdpLogoutRequest.Validate (and so ServeSLO) accepts, and refuses a
+	// LogoutRequest whose ID it has already recorded, so that a captured
+	// request cannot be replayed while it is still current. IDs are recorded
+	// under the key "LogoutRequest:" followed by the ID, until the last
+	// moment the request would be accepted. If nil, LogoutRequests are not
+	// checked for replay.
+	ReplayCache AssertionReplayCache
 }
 
 // Metadata returns the metadata structure for this identity provider.
@@ -466,6 +486,10 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to make assertion: %w", err))
 		return
 	}
+	if err := idp.recordSessionParticipant(r, req, session); err != nil {
+		idp.onError(w, r, http.StatusInternalServerError, err)
+		return
+	}
 	if err := idp.responseWriter().WriteResponse(w, req); err != nil {
 		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to write response: %w", err))
 		return
@@ -505,6 +529,10 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 	}
 	if err := assertionMaker.MakeAssertion(req, session); err != nil {
 		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to make assertion: %w", err))
+		return
+	}
+	if err := idp.recordSessionParticipant(r, req, session); err != nil {
+		idp.onError(w, r, http.StatusInternalServerError, err)
 		return
 	}
 

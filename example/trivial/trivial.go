@@ -1,8 +1,17 @@
 // Package main contains an example service provider implementation.
+//
+// The IdP metadata names the certificates trusted to sign assertions, so it
+// is loaded from a file you downloaded and checked once, not fetched from
+// the network at every start:
+//
+//	curl -o idp-metadata.xml https://www.samltest.dev/apps/<APP_ID>/metadata
+//	go run ./example/trivial -idp-metadata idp-metadata.xml
+//
+// To fetch it at start-up instead, use samlsp.FetchSignedMetadata with the
+// IdP's metadata signing certificate.
 package main
 
 import (
-	"context"
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
@@ -11,6 +20,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 
 	"github.com/crewjam/saml/samlsp"
@@ -23,11 +33,11 @@ func hello(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	idpMetadataURLFlag := flag.String("idp-metadata-url", "",
-		"IDP metadata URL, e.g. https://www.samltest.dev/apps/<APP_ID>/metadata")
+	idpMetadataPath := flag.String("idp-metadata", "",
+		"file holding the IDP metadata, downloaded e.g. from https://www.samltest.dev/apps/<APP_ID>/metadata")
 	flag.Parse()
-	if *idpMetadataURLFlag == "" {
-		log.Fatal("-idp-metadata-url is required")
+	if *idpMetadataPath == "" {
+		log.Fatal("-idp-metadata is required")
 	}
 
 	keyPair, err := tls.LoadX509KeyPair("myservice.cert", "myservice.key")
@@ -39,12 +49,11 @@ func main() {
 		panic(err) // TODO handle error
 	}
 
-	idpMetadataURL, err := url.Parse(*idpMetadataURLFlag)
+	idpMetadataXML, err := os.ReadFile(*idpMetadataPath)
 	if err != nil {
 		panic(err) // TODO handle error
 	}
-	idpMetadata, err := samlsp.FetchMetadata(context.Background(), http.DefaultClient,
-		*idpMetadataURL)
+	idpMetadata, err := samlsp.ParseMetadata(idpMetadataXML)
 	if err != nil {
 		panic(err) // TODO handle error
 	}

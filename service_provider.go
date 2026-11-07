@@ -163,6 +163,14 @@ type ServiceProvider struct {
 	// authentication requests
 	AuthnNameIDFormat NameIDFormat
 
+	// SendUnspecifiedNameIDFormat, when true and AuthnNameIDFormat is
+	// UnspecifiedNameIDFormat, sends the full unspecified URI as the Format
+	// of the AuthnRequest NameIDPolicy and the LogoutRequest NameID. By
+	// default the Format is left off, which the spec reads as unspecified
+	// (SAML Core §2.2.2, §3.4.1.1), but some IdPs (e.g. Keycloak) reject a
+	// request without it.
+	SendUnspecifiedNameIDFormat bool
+
 	// Scoping, when set, is sent in authentication requests. Proxying identity
 	// providers (gateways) use its IDPList to choose which identity provider to
 	// delegate authentication to.
@@ -300,11 +308,28 @@ type ServiceProvider struct {
 	// them.
 	IgnoreCertificateExpiry bool
 
+	// RejectSHA1Signatures, if true, refuses messages from the IDP that are
+	// signed with a SHA-1 based algorithm: an XML signature whose
+	// SignatureMethod or any DigestMethod is SHA-1 based (rsa-sha1,
+	// ecdsa-sha1, dsa-sha1, hmac-sha1 or sha1), and an HTTP-Redirect or
+	// HTTP-POST-SimpleSign signature whose SigAlg is. The check applies to
+	// every signature the ServiceProvider verifies, including those checked
+	// by SignatureVerifier, and the error matches ErrUnsupported (and, for
+	// XML signatures, ErrInvalidSignature). If false, SHA-1 is accepted.
+	RejectSHA1Signatures bool
+
 	// ReplayCache, if set, records the ID of the assertion each accepted
 	// response is accepted for, and refuses a response whose assertion it
 	// has already recorded. Without it, a captured assertion is accepted
 	// again until it expires, and an IdP-initiated one has no request ID to
 	// tie it to a single use. If nil, assertions are not checked for replay.
+	//
+	// It also records the ID of each LogoutRequest that ValidateLogoutRequest
+	// (and the other LogoutRequest validation methods) accept, and refuses a
+	// LogoutRequest whose ID it has already recorded. These IDs are recorded
+	// under the key "LogoutRequest:" followed by the ID, so they cannot
+	// collide with assertion IDs, which are recorded as is and, being
+	// xs:ID values, contain no colon.
 	ReplayCache AssertionReplayCache
 }
 
@@ -312,6 +337,10 @@ type ServiceProvider struct {
 // is accepted only once. Implementations must be safe for concurrent use, and
 // should be shared by every server that accepts assertions for the same
 // service provider.
+//
+// ServiceProvider.ReplayCache and IdentityProvider.ReplayCache also record
+// the IDs of accepted LogoutRequests in it, under keys prefixed with
+// "LogoutRequest:".
 type AssertionReplayCache interface {
 	// Consume atomically records assertionID as used until expiresAt, the
 	// last moment the ServiceProvider would accept the assertion; after
@@ -415,7 +444,14 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 					},
 				},
 			},
+			// In order of preference. AES-GCM comes first: CBC has no
+			// integrity check, so a sender of modified ciphertexts can learn
+			// about the plaintext from whether it decrypts to valid XML. CBC
+			// stays listed for IdPs that cannot use GCM.
 			EncryptionMethods: []EncryptionMethod{
+				{Algorithm: xmlenc.AES256GCM.Algorithm()},
+				{Algorithm: xmlenc.AES128GCM.Algorithm()},
+				{Algorithm: xmlenc.AES192GCM.Algorithm()},
 				{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
 				{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
 				{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
@@ -1204,7 +1240,8 @@ func (sp *ServiceProvider) parseArtifactResponse(artifactResponseEl *etree.Eleme
 //
 // This function handles decrypting the message, verifying the digital
 // signature on the assertion, and verifying that the specified conditions
-// and properties are met.
+// and properties are met. A Subject identified by an EncryptedID is given
+// the NameID it holds, decrypted like an EncryptedAssertion.
 //
 // If the function fails it will return an InvalidResponseError whose
 // properties are useful in describing which part of the parsing process
@@ -1484,7 +1521,12 @@ func (sp *ServiceProvider) decryptElement(encryptedEl *etree.Element) (*etree.El
 	if err != nil {
 		return nil, err
 	}
+	return parsePlaintext(plaintextEl)
+}
 
+// parsePlaintext parses the plaintext of a decrypted element and returns its
+// root element.
+func parsePlaintext(plaintextEl []byte) (*etree.Element, error) {
 	// Whether a modified ciphertext decrypts to well-formed XML is what the
 	// attacks on XML Encryption in CBC mode (Jager and Somorovsky, 2011)
 	// learn from, so plaintext that is not a well-formed element gets the
@@ -1534,12 +1576,69 @@ func (sp *ServiceProvider) parseAssertion(assertionEl *etree.Element, possibleRe
 	if err := unmarshalElement(assertionEl, &assertion); err != nil {
 		return nil, err
 	}
+	if err := sp.decryptEncryptedIDs(assertion.Subject); err != nil {
+		return nil, err
+	}
 
 	if err := sp.validateAssertion(&assertion, possibleRequestIDs, now); err != nil {
 		return nil, err
 	}
 
 	return &assertion, nil
+}
+
+// decryptEncryptedIDs sets the NameID of subject, and of each of its
+// SubjectConfirmations, that is given as an EncryptedID (saml-core §2.2.4)
+// to the NameID the EncryptedID holds, decrypted with the SP's decryption
+// keys. The EncryptedID is then cleared, since NameID and EncryptedID are
+// alternatives and an assertion that is marshalled again must hold only one.
+// It is called after the assertion's signature, which covers the
+// EncryptedID, has been checked.
+func (sp *ServiceProvider) decryptEncryptedIDs(subject *Subject) error {
+	if subject == nil {
+		return nil
+	}
+	nameID, err := sp.decryptEncryptedID(subject.NameID, subject.EncryptedID)
+	if err != nil {
+		return fmt.Errorf("assertion Subject: %w", err)
+	}
+	subject.NameID = nameID
+	subject.EncryptedID = nil
+	for i := range subject.SubjectConfirmations {
+		subjectConfirmation := &subject.SubjectConfirmations[i]
+		nameID, err := sp.decryptEncryptedID(subjectConfirmation.NameID, subjectConfirmation.EncryptedID)
+		if err != nil {
+			return fmt.Errorf("assertion SubjectConfirmation: %w", err)
+		}
+		subjectConfirmation.NameID = nameID
+		subjectConfirmation.EncryptedID = nil
+	}
+	return nil
+}
+
+// decryptEncryptedID returns the NameID held by encryptedID, or nameID if
+// encryptedID is nil. The two are alternatives, so an element with both is
+// rejected, and an EncryptedID must hold a saml:NameID; other identifiers
+// (such as a BaseID) are not supported.
+func (sp *ServiceProvider) decryptEncryptedID(nameID *NameID, encryptedID *etree.Element) (*NameID, error) {
+	if encryptedID == nil {
+		return nameID, nil
+	}
+	if nameID != nil {
+		return nil, classify(errors.New("has both a NameID and an EncryptedID"), ErrMalformedMessage)
+	}
+	nameIDEl, err := sp.decryptElement(encryptedID)
+	if err != nil {
+		return nil, classify(fmt.Errorf("failed to decrypt EncryptedID: %w", err), ErrDecryptionFailed)
+	}
+	if nameIDEl.Tag != "NameID" || nameIDEl.NamespaceURI() != "urn:oasis:names:tc:SAML:2.0:assertion" {
+		return nil, classify(fmt.Errorf("EncryptedID holds a %s element, only saml:NameID is supported", nameIDEl.FullTag()), ErrUnsupported)
+	}
+	var decrypted NameID
+	if err := unmarshalElement(nameIDEl, &decrypted); err != nil {
+		return nil, err
+	}
+	return &decrypted, nil
 }
 
 // validateAssertion checks that the conditions specified in assertion match
@@ -1717,6 +1816,38 @@ func (sp *ServiceProvider) consumeAssertion(assertion *Assertion) error {
 	return nil
 }
 
+// logoutRequestReplayKeyPrefix is prepended to the ID of a LogoutRequest to
+// form the key it is recorded under in an AssertionReplayCache. It keeps
+// LogoutRequest IDs apart from assertion IDs, which are recorded as is and,
+// being xs:ID values, cannot contain a colon.
+const logoutRequestReplayKeyPrefix = "LogoutRequest:"
+
+// logoutRequestAcceptableUntil returns the last moment a LogoutRequest is
+// accepted: IssueInstant plus MaxIssueDelay or, if it is earlier, the
+// NotOnOrAfter time allowing for clock skew.
+func logoutRequestAcceptableUntil(req *LogoutRequest) time.Time {
+	deadline := req.IssueInstant.Add(MaxIssueDelay)
+	if req.NotOnOrAfter != nil {
+		deadline = earliest(deadline, skewedDeadline(*req.NotOnOrAfter))
+	}
+	return deadline
+}
+
+// consumeLogoutRequest records the ID of req in cache, if cache is not nil,
+// refusing req if it was recorded before. req must already be validated.
+func consumeLogoutRequest(cache AssertionReplayCache, req *LogoutRequest) error {
+	if cache == nil {
+		return nil
+	}
+	if req.ID == "" {
+		return classify(errors.New("logout request has no ID to check for replay"), ErrMissingElement)
+	}
+	if err := cache.Consume(logoutRequestReplayKeyPrefix+req.ID, logoutRequestAcceptableUntil(req)); err != nil {
+		return fmt.Errorf("logout request %q: %w", req.ID, err)
+	}
+	return nil
+}
+
 // bearerSubjectConfirmationMethod is the SubjectConfirmation Method of the
 // SAML web browser SSO profile.
 const bearerSubjectConfirmationMethod = "urn:oasis:names:tc:SAML:2.0:cm:bearer" //nolint:gosec // not a credential
@@ -1875,38 +2006,6 @@ func (sp *ServiceProvider) verifySignedElement(el *etree.Element, metadataCerts 
 	return nil, classify(err, ErrInvalidSignature)
 }
 
-// signatureCerts returns the certificates trusted to sign el: the IdP's
-// certificates from metadataCerts, the one whose fingerprint is
-// IDPCertificateFingerprint, or IDPCertificate, depending on which is set.
-func (sp *ServiceProvider) signatureCerts(el *etree.Element, metadataCerts func() ([]*x509.Certificate, error)) ([]*x509.Certificate, error) {
-	var certs []*x509.Certificate
-	var err error
-	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate == nil {
-		certs, err = metadataCerts()
-		if err != nil {
-			return nil, fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
-		}
-	}
-	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint != nil && sp.IDPCertificateFingerprintAlgorithm != nil && sp.IDPCertificate == nil {
-		certs, err = sp.getCertBasedOnFingerprint(el)
-		if err != nil {
-			return nil, fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
-		}
-	}
-	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate != nil {
-		cert, err := parseCert(*sp.IDPCertificate)
-		if err != nil {
-			return nil, fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
-		}
-		certs = append(certs, cert)
-	}
-	if len(certs) == 0 {
-		return nil, fmt.Errorf("cannot validate signature on %s: saml config not set up properly, specify either idp metadata url, fingerprints or actual certificate", el.Tag)
-	}
-
-	return certs, nil
-}
-
 func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element, metadataCerts func() ([]*x509.Certificate, error)) (*etree.Element, error) {
 	original := el
 	sigEl, err := findChild(el, "http://www.w3.org/2000/09/xmldsig#", "Signature")
@@ -1916,8 +2015,11 @@ func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element, meta
 	if sigEl == nil {
 		return nil, errSignatureElementNotPresent
 	}
+	if err := checkXMLSignatureNotSHA1(sp.RejectSHA1Signatures, sigEl); err != nil {
+		return nil, fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
+	}
 
-	certs, err := sp.signatureCerts(el, metadataCerts)
+	certs, err := sp.signatureVerificationCerts(el, metadataCerts)
 	if err != nil {
 		return nil, err
 	}
@@ -2028,6 +2130,37 @@ func withSignature(signed, sig *etree.Element, index int) *etree.Element {
 	return signed
 }
 
+// signatureVerificationCerts returns the IdP certificates that a signature on
+// el may be made with: from the IdP metadata, the configured fingerprint or
+// the configured certificate.
+func (sp *ServiceProvider) signatureVerificationCerts(el *etree.Element, metadataCerts func() ([]*x509.Certificate, error)) ([]*x509.Certificate, error) {
+	var certs []*x509.Certificate
+	var err error
+	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate == nil {
+		certs, err = metadataCerts()
+		if err != nil {
+			return nil, fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
+		}
+	}
+	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint != nil && sp.IDPCertificateFingerprintAlgorithm != nil && sp.IDPCertificate == nil {
+		certs, err = sp.getCertBasedOnFingerprint(el)
+		if err != nil {
+			return nil, fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
+		}
+	}
+	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate != nil {
+		cert, err := parseCert(*sp.IDPCertificate)
+		if err != nil {
+			return nil, fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
+		}
+		certs = append(certs, cert)
+	}
+	if len(certs) == 0 {
+		return nil, fmt.Errorf("cannot validate signature on %s: saml config not set up properly, specify either idp metadata url, fingerprints or actual certificate", el.Tag)
+	}
+	return certs, nil
+}
+
 // SignLogoutRequest adds the `Signature` element to the `LogoutRequest`.
 func (sp *ServiceProvider) SignLogoutRequest(req *LogoutRequest) error {
 	signingContext, err := GetSigningContext(sp)
@@ -2059,10 +2192,27 @@ type LogoutRequestOption func(*LogoutRequest)
 func WithSessionIndex(sessionIndex string) LogoutRequestOption {
 	return func(req *LogoutRequest) {
 		if sessionIndex == "" {
-			req.SessionIndex = nil
+			req.setSessionIndexes(nil)
 			return
 		}
-		req.SessionIndex = &SessionIndex{Value: sessionIndex}
+		req.setSessionIndexes([]SessionIndex{{Value: sessionIndex}})
+	}
+}
+
+// WithSessionIndexes sets the SessionIndex elements of a LogoutRequest, one
+// for each non-empty value, in order (saml-core-2.0-os section 3.7.1). Use it
+// instead of WithSessionIndex to end several sessions of the principal at the
+// IDP with one request. Without any non-empty value, the request carries no
+// SessionIndex.
+func WithSessionIndexes(sessionIndexes ...string) LogoutRequestOption {
+	return func(req *LogoutRequest) {
+		indexes := make([]SessionIndex, 0, len(sessionIndexes))
+		for _, sessionIndex := range sessionIndexes {
+			if sessionIndex != "" {
+				indexes = append(indexes, SessionIndex{Value: sessionIndex})
+			}
+		}
+		req.setSessionIndexes(indexes)
 	}
 }
 
@@ -2384,7 +2534,11 @@ func (sp *ServiceProvider) nameIDFormat() string {
 		// To maintain library back-compat, use "transient" if unset.
 		nameIDFormat = string(TransientNameIDFormat)
 	case UnspecifiedNameIDFormat:
-		// Spec defines an empty value as "unspecified" so don't set one.
+		// Spec defines an empty value as "unspecified" so don't set one,
+		// unless the IdP needs it spelled out.
+		if sp.SendUnspecifiedNameIDFormat {
+			nameIDFormat = string(UnspecifiedNameIDFormat)
+		}
 	default:
 		nameIDFormat = string(sp.AuthnNameIDFormat)
 	}
@@ -2610,6 +2764,10 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 // ValidateLogoutRequest validates a LogoutRequest sent by the IDP (IDP
 // initiated single logout), using the HTTP-Redirect, HTTP-POST or
 // HTTP-POST-SimpleSign binding. It returns the request only if it is valid.
+// If the request identifies the principal with an EncryptedID rather than a
+// NameID, it is decrypted with the service provider's decryption keys (as
+// for encrypted assertions) and NameID is set to the result. All the
+// request's SessionIndexes are returned by its AllSessionIndexes method.
 //
 // The request must be signed by the IDP. With the HTTP-Redirect binding that
 // is either a query string signature (SigAlg and Signature parameters) or an
@@ -2617,6 +2775,9 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 // signature. A posted form that carries a SigAlg or Signature field is an
 // HTTP-POST-SimpleSign message and must have a valid SimpleSign signature
 // (an enveloped XML signature it also carries must be valid too).
+//
+// If ReplayCache is set, the request's ID is recorded in it once the request
+// is otherwise valid, and a request whose ID is already recorded is refused.
 //
 // The caller should end the session identified by the returned request's
 // NameID (and SessionIndex, if present) and then answer the IDP, for example
@@ -2718,6 +2879,10 @@ func (sp *ServiceProvider) unmarshalAndValidateLogoutRequest(root *etree.Element
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
+	if err := consumeLogoutRequest(sp.ReplayCache, &req); err != nil {
+		retErr.PrivateErr = err
+		return nil, retErr
+	}
 	return &req, nil
 }
 
@@ -2740,11 +2905,7 @@ func (sp *ServiceProvider) validateLogoutRequest(req *LogoutRequest) error {
 	if req.Issuer == nil || req.Issuer.Value != sp.IDPMetadata.EntityID {
 		return classify(fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
 	}
-	if req.NameID == nil || req.NameID.Value == "" {
-		return classify(errors.New("request does not contain a NameID"), ErrMissingElement)
-	}
-
-	return nil
+	return resolveLogoutRequestNameID(req, sp.decryptElement)
 }
 
 func firstSet(a, b string) string {

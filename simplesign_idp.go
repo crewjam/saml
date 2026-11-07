@@ -24,6 +24,9 @@ func (req *IdpAuthnRequest) verifySimpleSignSignature() error {
 	m.RelayState = req.RelayState
 	m.HasRelayState = m.HasRelayState || req.RelayState != ""
 
+	if err := checkSigAlgNotSHA1(req.IDP.RejectSHA1Signatures, m.SigAlg); err != nil {
+		return err
+	}
 	algorithm, signature, err := decodeDetachedSignature(m.SigAlg, m.Signature, simpleSignBase64)
 	if err != nil {
 		return err
