@@ -48,8 +48,8 @@ func WithQueriedAttributes(names ...string) QueryOption {
 //
 // It returns an error matching ErrNoEndpoint if the IdP metadata has no
 // SOAP AttributeService, and one matching saml.ErrBadStatus if the IdP
-// refused the query. The query is sent with the HTTP client from
-// ClientContext, to an https endpoint only, and signed with the key of
+// refused the query. The query is sent with the HTTP client of
+// WithHTTPClient, to an https endpoint only, and signed with the key of
 // WithKey, by which most attribute authorities decide what to release.
 func (c *Config) QueryAttributes(ctx context.Context, nameID saml.NameID, opts ...QueryOption) (Attributes, error) {
 	var o queryOptions
@@ -60,6 +60,7 @@ func (c *Config) QueryAttributes(ctx context.Context, nameID saml.NameID, opts .
 	if err != nil {
 		return nil, err
 	}
+	signWithLogoutMethod(sp)
 	result, err := sp.QueryAttributes(ctx, nameID, o.attributes...)
 	if errors.Is(err, saml.ErrNoAttributeService) {
 		return nil, fmt.Errorf("%w %s for attribute queries", ErrNoEndpoint, saml.SOAPBinding)

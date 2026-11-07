@@ -118,8 +118,8 @@ func TestBackChannelLogoutSend(t *testing.T) {
 	ti.idp.LogoutURL = mustURL(srv.URL + "/slo")
 	ti.idp.LogoutBindings = append(ti.idp.LogoutBindings, saml.SOAPBinding)
 
-	cfg := newTestConfig(t, ti, samlsp.BackChannelLogout)
-	ctx := samlsp.ClientContext(t.Context(), srv.Client())
+	cfg := newTestConfig(t, ti, samlsp.BackChannelLogout, samlsp.WithHTTPClient(srv.Client()))
+	ctx := t.Context()
 	resp, err := cfg.SendLogoutRequest(ctx, saml.NameID{Format: string(saml.EmailAddressNameIDFormat), Value: "alice@example.com"},
 		samlsp.WithSessionIndex("index-1"))
 	if err != nil {

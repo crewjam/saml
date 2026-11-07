@@ -38,7 +38,13 @@ func StaticMetadata(md *saml.EntityDescriptor) MetadataFunc {
 }
 
 // MetadataOption configures StaticMetadataBytes and RemoteMetadata.
-type MetadataOption func(*metadataOptions)
+type MetadataOption interface {
+	applyMetadata(*metadataOptions)
+}
+
+type metadataOptionFunc func(*metadataOptions)
+
+func (f metadataOptionFunc) applyMetadata(o *metadataOptions) { f(o) }
 
 type metadataOptions struct {
 	entityID        string
@@ -51,28 +57,39 @@ type metadataOptions struct {
 // metadata that is an EntitiesDescriptor aggregate, such as a federation
 // feed. It is required when the aggregate holds more than one IdP.
 func WithIdentityProviderEntityID(entityID string) MetadataOption {
-	return func(o *metadataOptions) { o.entityID = entityID }
+	return metadataOptionFunc(func(o *metadataOptions) { o.entityID = entityID })
 }
 
 // WithMetadataSigners makes metadata acceptable only if it carries a valid
 // XML signature by one of certs. Use it whenever the metadata comes over a
 // channel that is not otherwise trusted.
 func WithMetadataSigners(certs ...*x509.Certificate) MetadataOption {
-	return func(o *metadataOptions) { o.certs = append(o.certs, certs...) }
+	return metadataOptionFunc(func(o *metadataOptions) { o.certs = append(o.certs, certs...) })
 }
 
-// WithHTTPClient sets the HTTP client that RemoteMetadata fetches metadata
-// with. The default client times out after two minutes.
-func WithHTTPClient(client *http.Client) MetadataOption {
-	return func(o *metadataOptions) { o.client = client }
-}
+// HTTPClientOption is the option that WithHTTPClient returns. It is both an
+// Option, for New, and a MetadataOption, for RemoteMetadata.
+type HTTPClientOption struct{ client *http.Client }
+
+// WithHTTPClient sets the HTTP client for requests to the IdP. Passed to
+// New, it is used to resolve HTTP-Artifact responses, for back-channel
+// logout and for attribute queries; passed to RemoteMetadata, to fetch
+// metadata. Use it for timeouts, proxies, or a TLS client certificate.
+//
+// Without it, New uses http.DefaultClient, and RemoteMetadata a client
+// that times out after two minutes.
+func WithHTTPClient(client *http.Client) HTTPClientOption { return HTTPClientOption{client} }
+
+func (h HTTPClientOption) applyMetadata(o *metadataOptions) { o.client = h.client }
+
+func (h HTTPClientOption) applyConfig(c *Config, _ *configOptions) { c.httpClient = h.client }
 
 // WithRefreshInterval sets how long RemoteMetadata keeps metadata before it
 // fetches it again. The default is DefaultMetadataRefreshInterval. A
 // shorter cacheDuration or an earlier validUntil in the metadata takes
 // precedence.
 func WithRefreshInterval(d time.Duration) MetadataOption {
-	return func(o *metadataOptions) { o.refreshInterval = d }
+	return metadataOptionFunc(func(o *metadataOptions) { o.refreshInterval = d })
 }
 
 // DefaultMetadataRefreshInterval is how long RemoteMetadata keeps metadata
@@ -105,7 +122,7 @@ func StaticMetadataBytes(data []byte, opts ...MetadataOption) MetadataFunc {
 func newMetadataOptions(opts []MetadataOption) metadataOptions {
 	o := metadataOptions{refreshInterval: DefaultMetadataRefreshInterval}
 	for _, opt := range opts {
-		opt(&o)
+		opt.applyMetadata(&o)
 	}
 	return o
 }
@@ -211,22 +228,4 @@ func checkIDPMetadata(md *saml.EntityDescriptor) error {
 		return fmt.Errorf("samlsp: metadata for %q has no IDPSSODescriptor", md.EntityID)
 	}
 	return nil
-}
-
-type clientContextKey struct{}
-
-// ClientContext returns a copy of ctx that carries client. Config.ParseResponse
-// uses client to resolve HTTP-Artifact responses with the IdP (the artifact
-// resolution protocol). To set the client that RemoteMetadata uses, pass
-// WithHTTPClient.
-func ClientContext(ctx context.Context, client *http.Client) context.Context {
-	return context.WithValue(ctx, clientContextKey{}, client)
-}
-
-func clientFromContext(ctx context.Context) *http.Client {
-	if ctx == nil {
-		return nil
-	}
-	c, _ := ctx.Value(clientContextKey{}).(*http.Client)
-	return c
 }

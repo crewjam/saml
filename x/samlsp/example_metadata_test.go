@@ -152,20 +152,24 @@ func ExampleMetadataFunc() {
 	}))
 }
 
-// ClientContext sets the HTTP client that ParseResponse resolves
-// HTTP-Artifact responses with: here, one that authenticates to the IdP
-// with a TLS client certificate.
-func ExampleClientContext() {
-	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
-		samlsp.WithKey(spKey, spCert))
+// WithHTTPClient sets the HTTP client for the requests the SP makes to the
+// IdP: here, one that authenticates with a TLS client certificate, to
+// resolve HTTP-Artifact responses. The same option sets the client of
+// RemoteMetadata.
+func ExampleWithHTTPClient() {
+	var mtlsClient *http.Client // configured with the SP's client certificate
+
+	config, err := samlsp.New(
+		samlsp.RemoteMetadata("https://idp.example.com/metadata", samlsp.WithHTTPClient(mtlsClient)),
+		"https://sp.example.com/saml/metadata",
+		samlsp.WithKey(spKey, spCert),
+		samlsp.WithHTTPClient(mtlsClient))
 	if err != nil {
 		log.Fatal(err)
 	}
-	var mtlsClient *http.Client // configured with the SP's client certificate
 
 	http.HandleFunc("/saml/acs", func(w http.ResponseWriter, r *http.Request) {
-		ctx := samlsp.ClientContext(r.Context(), mtlsClient)
-		assertion, err := config.ParseResponse(ctx, r, samlsp.WithRequestID(takePendingRequest(r)))
+		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(takePendingRequest(r)))
 		if err != nil {
 			http.Error(w, "login failed", http.StatusForbidden)
 			return

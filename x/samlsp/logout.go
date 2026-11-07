@@ -264,6 +264,7 @@ func (c *Config) LogoutResponse(ctx context.Context, req *LogoutRequest, opts ..
 		status = *o.status
 	}
 	if req.Binding == saml.SOAPBinding {
+		signWithLogoutMethod(sp)
 		resp, err := sp.MakeSOAPLogoutResponse(req.ID, status)
 		if err != nil {
 			return nil, err
@@ -337,8 +338,8 @@ func (c *Config) ParseLogoutResponse(ctx context.Context, r *http.Request, opts 
 //
 // It returns an error matching ErrNoEndpoint if the IdP has no SOAP
 // SingleLogoutService, and one matching saml.ErrBadStatus if the IdP could
-// not end the sessions. The request is sent with the HTTP client from
-// ClientContext, to an https endpoint only.
+// not end the sessions. The request is sent with the HTTP client of
+// WithHTTPClient, to an https endpoint only.
 func (c *Config) SendLogoutRequest(ctx context.Context, nameID saml.NameID, opts ...LogoutOption) (*saml.LogoutResponse, error) {
 	if !c.backChannel {
 		return nil, errors.New("samlsp: SendLogoutRequest needs BackChannelLogout")
@@ -351,6 +352,7 @@ func (c *Config) SendLogoutRequest(ctx context.Context, nameID saml.NameID, opts
 	if err != nil {
 		return nil, err
 	}
+	signWithLogoutMethod(sp)
 	req, err := sp.MakeSOAPLogoutRequest(nameID, o.requestOptions()...)
 	if errors.Is(err, saml.ErrNoSOAPSingleLogoutService) {
 		return nil, fmt.Errorf("%w %s", ErrNoEndpoint, saml.SOAPBinding)

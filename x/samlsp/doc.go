@@ -100,8 +100,8 @@
 //
 // ParseResponse returns a verified Assertion. It accepts the HTTP-POST,
 // HTTP-POST-SimpleSign and HTTP-Artifact bindings. For HTTP-Artifact it
-// resolves the artifact with the IdP, using the HTTP client from
-// ClientContext. It accepts an unsolicited (IdP-initiated) Response only
+// resolves the artifact with the IdP, using the HTTP client of
+// WithHTTPClient. It accepts an unsolicited (IdP-initiated) Response only
 // when AllowUnsolicited is passed.
 //
 // # Single Logout
