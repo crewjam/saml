@@ -48,10 +48,33 @@ func (e ErrIncorrectKeyType) Error() string {
 	return fmt.Sprintf("expected key to be %s", string(e))
 }
 
+// ErrKeyAlgorithmNotAllowed is returned by Decrypt for an xenc:EncryptedKey
+// whose EncryptionMethod names a block cipher such as aes128-cbc or
+// aes256-gcm. An EncryptedKey carries a content key, which must be
+// transported with a key-transport algorithm (RSA-OAEP) or wrapped with a
+// key-wrap algorithm.
+//
+// Accepting a block cipher there would let a sender nest a captured,
+// legitimately wrapped content key inside an EncryptedKey of its own and have
+// the recipient decrypt ciphertext of the sender's choosing under that key:
+// a CBC padding oracle that the uniform errors of the data decryption do not
+// cover.
+type ErrKeyAlgorithmNotAllowed string
+
+func (e ErrKeyAlgorithmNotAllowed) Error() string {
+	return "algorithm is not allowed for an EncryptedKey: " + string(e)
+}
+
 // Decrypt decrypts the encrypted data using the provided key. If the
 // data are encrypted using AES, then the key should be a []byte.
 // If the data are encrypted with RSA-OAEP-MGF1P or RSA-OAEP then key
 // should be a *rsa.PrivateKey.
+//
+// The algorithm is the one the EncryptionMethod of ciphertextEl names, among
+// those registered with RegisterDecrypter. For an xenc:EncryptedKey it must
+// not be a block cipher (a Decrypter that is also a BlockCipher), so that an
+// EncryptedKey is never followed into another EncryptedKey: see
+// ErrKeyAlgorithmNotAllowed.
 func Decrypt(key interface{}, ciphertextEl *etree.Element) ([]byte, error) {
 	encryptionMethodEl := ciphertextEl.FindElement("./EncryptionMethod")
 	if encryptionMethodEl == nil {
@@ -61,6 +84,11 @@ func Decrypt(key interface{}, ciphertextEl *etree.Element) ([]byte, error) {
 	decrypter, ok := decrypters[algorithm]
 	if !ok {
 		return nil, ErrAlgorithmNotImplemented(algorithm)
+	}
+	if ciphertextEl.Tag == "EncryptedKey" {
+		if _, isBlockCipher := decrypter.(BlockCipher); isBlockCipher {
+			return nil, ErrKeyAlgorithmNotAllowed(algorithm)
+		}
 	}
 	return decrypter.Decrypt(key, ciphertextEl)
 }
