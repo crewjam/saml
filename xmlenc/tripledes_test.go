@@ -26,11 +26,11 @@ func TestTripleDESMatchesCryptoDES(t *testing.T) {
 	iv := []byte("initvect")
 	plaintext := []byte("sixteen byte msg")
 
-	block, err := des.NewTripleDESCipher(key)
+	block, err := des.NewTripleDESCipher(key) //nolint:gosec // known-answer test for the legacy tripledes-cbc algorithm
 	assert.NilError(t, err)
 	padded := appendPadding(append([]byte{}, plaintext...), block.BlockSize())
 	ciphertext := make([]byte, len(padded))
-	cipher.NewCBCEncrypter(block, iv).CryptBlocks(ciphertext, padded)
+	cipher.NewCBCEncrypter(block, iv).CryptBlocks(ciphertext, padded) //nolint:gosec // fixed IV for a deterministic test vector
 
 	el := encryptedData(TripleDES.Algorithm(), 0)
 	el.FindElement("./CipherData/CipherValue").
@@ -42,9 +42,9 @@ func TestTripleDESMatchesCryptoDES(t *testing.T) {
 
 	// Single DES under the first subkey, which is what the old 8 byte key
 	// meant, gives different ciphertext.
-	single, err := des.NewCipher(key[:8])
+	single, err := des.NewCipher(key[:8]) //nolint:gosec // single DES on purpose, to show it differs from 3DES
 	assert.NilError(t, err)
 	singleCiphertext := make([]byte, len(padded))
-	cipher.NewCBCEncrypter(single, iv).CryptBlocks(singleCiphertext, padded)
+	cipher.NewCBCEncrypter(single, iv).CryptBlocks(singleCiphertext, padded) //nolint:gosec // fixed IV for a deterministic test vector
 	assert.Check(t, !bytes.Equal(ciphertext, singleCiphertext))
 }
