@@ -22,6 +22,11 @@ import (
 // Note: this is needed because IDP metadata is sometimes wrapped in
 // an <EntitiesDescriptor>, and sometimes the top level element is an
 // <EntityDescriptor>.
+//
+// An <EntitiesDescriptor> must hold exactly one entity with an
+// IDPSSODescriptor (nested <EntitiesDescriptor> elements included):
+// ParseMetadata cannot tell which of several IDPs the caller means to
+// trust. Use ParseMetadataByEntityID to pick one out of an aggregate.
 func ParseMetadata(data []byte) (*saml.EntityDescriptor, error) {
 	entity := &saml.EntityDescriptor{}
 
@@ -38,6 +43,9 @@ func ParseMetadata(data []byte) (*saml.EntityDescriptor, error) {
 			return nil, err
 		}
 
+		if n := countIDPEntities(entities); n > 1 {
+			return nil, fmt.Errorf("metadata holds %d entities with an IDPSSODescriptor; use ParseMetadataByEntityID to choose one", n)
+		}
 		for i, e := range entities.EntityDescriptors {
 			if len(e.IDPSSODescriptors) > 0 {
 				return &entities.EntityDescriptors[i], nil
@@ -89,6 +97,21 @@ func ParseMetadataByEntityID(data []byte, entityID string) (*saml.EntityDescript
 		}
 	}
 	return nil, fmt.Errorf("no entity found with entityID %q", entityID)
+}
+
+// countIDPEntities returns the number of entities with an IDPSSODescriptor
+// in entities and in any EntitiesDescriptor nested in it.
+func countIDPEntities(entities *saml.EntitiesDescriptor) int {
+	n := 0
+	for _, e := range entities.EntityDescriptors {
+		if len(e.IDPSSODescriptors) > 0 {
+			n++
+		}
+	}
+	for i := range entities.EntitiesDescriptors {
+		n += countIDPEntities(&entities.EntitiesDescriptors[i])
+	}
+	return n
 }
 
 // metadataRootElement returns the name of the root element of data.

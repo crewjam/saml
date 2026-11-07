@@ -73,12 +73,11 @@ const testAggregateMetadata = `<?xml version="1.0" encoding="UTF-8"?>
 
 func TestParseMetadataByEntityID(t *testing.T) {
 	t.Run("aggregate, not the first IDP", func(t *testing.T) {
-		// ParseMetadata can only return the first IDP in an aggregate
-		md, err := ParseMetadata([]byte(testAggregateMetadata))
-		assert.Assert(t, err)
-		assert.Check(t, is.Equal("https://idp1.example.org/idp", md.EntityID))
+		// ParseMetadata cannot tell which of the two IDPs is meant
+		_, err := ParseMetadata([]byte(testAggregateMetadata))
+		assert.Check(t, is.Error(err, "metadata holds 2 entities with an IDPSSODescriptor; use ParseMetadataByEntityID to choose one"))
 
-		md, err = ParseMetadataByEntityID([]byte(testAggregateMetadata), "https://idp2.example.org/idp")
+		md, err := ParseMetadataByEntityID([]byte(testAggregateMetadata), "https://idp2.example.org/idp")
 		assert.Assert(t, err)
 		assert.Check(t, is.Equal("https://idp2.example.org/idp", md.EntityID))
 		assert.Assert(t, is.Len(md.IDPSSODescriptors, 1))
