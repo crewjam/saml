@@ -47,10 +47,10 @@ type metadataOptions struct {
 	refreshInterval time.Duration
 }
 
-// WithEntityID selects the identity provider with this entityID from
+// WithIdentityProviderEntityID selects the identity provider with this entityID from
 // metadata that is an EntitiesDescriptor aggregate, such as a federation
 // feed. It is required when the aggregate holds more than one IdP.
-func WithEntityID(entityID string) MetadataOption {
+func WithIdentityProviderEntityID(entityID string) MetadataOption {
 	return func(o *metadataOptions) { o.entityID = entityID }
 }
 

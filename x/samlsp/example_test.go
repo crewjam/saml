@@ -4,6 +4,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -39,13 +40,14 @@ func Example() {
 		cert *x509.Certificate // and certificate
 	)
 
-	config := &samlsp.Config{
-		IdentityProviderMetadata: samlsp.RemoteMetadata("https://idp.example.com/metadata"),
-		EntityID:                 "https://sp.example.com/saml/metadata",
-		MetadataURL:              "https://sp.example.com/saml/metadata",
-		ACSURL:                   "https://sp.example.com/saml/acs",
-		Key:                      key,
-		Certificate:              cert,
+	config, err := samlsp.New(
+		samlsp.RemoteMetadata("https://idp.example.com/metadata"),
+		"https://sp.example.com/saml/metadata",
+		"https://sp.example.com/saml/acs",
+		samlsp.WithKey(key, cert),
+	)
+	if err != nil {
+		log.Fatal(err)
 	}
 	pending := &pendingRequests{ids: map[string]string{}}
 

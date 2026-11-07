@@ -14,30 +14,29 @@
 //
 // # Setup
 //
-//	config := &samlsp.Config{
-//		IdentityProviderMetadata: samlsp.RemoteMetadata("https://idp.example.com/metadata"),
-//		EntityID:                 "https://sp.example.com/saml/metadata",
-//		MetadataURL:              "https://sp.example.com/saml/metadata",
-//		ACSURL:                   "https://sp.example.com/saml/acs",
-//		SLOURL:                   "https://sp.example.com/saml/slo",
-//		Key:                      key,
-//		Certificate:              cert,
-//	}
+//	config, err := samlsp.New(
+//		samlsp.RemoteMetadata("https://idp.example.com/metadata"),
+//		"https://sp.example.com/saml/metadata", // the SP's entity ID
+//		"https://sp.example.com/saml/acs",      // the SP's ACS URL
+//		samlsp.WithKey(key, cert),
+//		samlsp.WithSLOURL("https://sp.example.com/saml/slo"),
+//	)
 //	http.HandleFunc("/saml/metadata", config.ServeMetadata)
 //
-// IdentityProviderMetadata is a MetadataFunc. Every method calls it with
-// its context. RemoteMetadata fetches and caches metadata from a URL,
-// ParseMetadata and StaticMetadata use metadata the application already
-// has, and an application can supply its own function: for example, one
-// that reads metadata from a database, or picks the IdP for the tenant
-// named in the context.
+// The first argument is a MetadataFunc that supplies the identity
+// provider's metadata. Every method calls it with its context.
+// RemoteMetadata fetches and caches metadata from a URL, ParseMetadata and
+// StaticMetadata use metadata the application already has, and an
+// application can supply its own function: for example, one that reads
+// metadata from a database, or picks the IdP for the tenant named in the
+// context.
 //
-// Settings that Config does not expose are reached with
-// ServiceProviderOptions, which adjust the saml.ServiceProvider that each
-// method builds. Set them on Config.ServiceProviderOptions for every call,
-// or pass them to a single call alongside its other options:
+// Settings that have no Option of their own are reached with a
+// ServiceProviderOption, which adjusts the saml.ServiceProvider that each
+// method builds. Pass it to New for every call, or to a single call
+// alongside its other options:
 //
-//	config.ServiceProviderOptions = append(config.ServiceProviderOptions, samlsp.SignMetadata)
+//	config, err := samlsp.New(idp, entityID, acsURL, samlsp.SignMetadata)
 //	config.ParseResponse(ctx, r, samlsp.WithRequestID(id), samlsp.RejectUnknownConditions)
 //
 // # Web Browser SSO

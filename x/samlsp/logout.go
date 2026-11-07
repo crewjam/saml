@@ -51,7 +51,7 @@ func WithStatus(status saml.Status) LogoutOption {
 // does not support single logout, LogoutRequest returns an error matching
 // ErrNoEndpoint.
 //
-// The request is signed if Key can sign.
+// The request is signed if the key of WithKey can sign.
 func (c *Config) LogoutRequest(ctx context.Context, nameID saml.NameID, relayState string, opts ...LogoutOption) (*Message, error) {
 	var o logoutOptions
 	for _, opt := range opts {
@@ -92,7 +92,7 @@ func (c *Config) LogoutRequest(ctx context.Context, nameID saml.NameID, relaySta
 		m.form = req.PostWithNonce(relayState, o.scriptNonce)
 	case saml.HTTPPostSimpleSignBinding:
 		if sp.LogoutSignatureMethod == "" {
-			return nil, errors.New("samlsp: the HTTP-POST-SimpleSign binding needs an RSA or ECDSA Key")
+			return nil, errors.New("samlsp: the HTTP-POST-SimpleSign binding needs an RSA or ECDSA key (see WithKey)")
 		}
 		// The SimpleSign signature replaces the enveloped one.
 		req.Signature = nil
@@ -203,7 +203,7 @@ func (c *Config) LogoutResponse(ctx context.Context, req *LogoutRequest, opts ..
 		m.form = resp.PostWithNonce(req.RelayState, o.scriptNonce)
 	case saml.HTTPPostSimpleSignBinding:
 		if sp.LogoutSignatureMethod == "" {
-			return nil, errors.New("samlsp: the HTTP-POST-SimpleSign binding needs an RSA or ECDSA Key")
+			return nil, errors.New("samlsp: the HTTP-POST-SimpleSign binding needs an RSA or ECDSA key (see WithKey)")
 		}
 		resp.Signature = nil
 		if m.form, err = resp.SimpleSignWithNonce(req.RelayState, o.scriptNonce, sp); err != nil {
