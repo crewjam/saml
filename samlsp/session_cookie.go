@@ -1,6 +1,7 @@
 package samlsp
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -10,6 +11,19 @@ import (
 )
 
 const defaultSessionCookieName = "token"
+
+// maxSessionCookieSize is the largest cookie, counting its name and value,
+// that browsers reliably store. Chrome and Firefox silently drop a cookie whose
+// name and value together exceed 4096 bytes.
+const maxSessionCookieSize = 4096
+
+// ErrSessionCookieTooLarge is returned (wrapped) by
+// CookieSessionProvider.CreateSession when the encoded session does not fit in
+// a cookie. Browsers silently drop such a cookie, so the user would come back
+// without a session and be sent to the IdP again, in a loop. This usually means
+// the IdP sends more attributes than fit in a cookie; filter them with a custom
+// SessionCodec, or store sessions server side with a custom SessionProvider.
+var ErrSessionCookieTooLarge = errors.New("saml: session cookie too large")
 
 var _ SessionProvider = CookieSessionProvider{}
 
@@ -48,6 +62,10 @@ func (c CookieSessionProvider) CreateSession(w http.ResponseWriter, r *http.Requ
 	value, err := c.Codec.Encode(session)
 	if err != nil {
 		return err
+	}
+	if size := len(c.Name) + len(value); size > maxSessionCookieSize {
+		return fmt.Errorf("%w: cookie %q is %d bytes, browsers accept at most %d",
+			ErrSessionCookieTooLarge, c.Name, size, maxSessionCookieSize)
 	}
 
 	path := c.Path
