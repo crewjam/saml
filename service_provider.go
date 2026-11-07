@@ -1410,16 +1410,20 @@ func (sp *ServiceProvider) decryptElement(encryptedEl *etree.Element) (*etree.El
 		return nil, err
 	}
 
+	// Whether a modified ciphertext decrypts to well-formed XML is what the
+	// attacks on XML Encryption in CBC mode (Jager and Somorovsky, 2011)
+	// learn from, so plaintext that is not a well-formed element gets the
+	// same error as a ciphertext with bad padding, without detail.
 	if err := xrv.Validate(bytes.NewReader(plaintextEl)); err != nil {
-		return nil, classify(fmt.Errorf("plaintext response contains invalid XML: %w", err), ErrMalformedMessage)
+		return nil, xmlenc.ErrDecryptionFailed
 	}
 
 	doc := etree.NewDocument()
 	if err := doc.ReadFromBytes(plaintextEl); err != nil {
-		return nil, classify(fmt.Errorf("cannot parse plaintext response %w", err), ErrMalformedMessage)
+		return nil, xmlenc.ErrDecryptionFailed
 	}
 	if doc.Root() == nil {
-		return nil, classify(errors.New("plaintext response contains no root element"), ErrMalformedMessage)
+		return nil, xmlenc.ErrDecryptionFailed
 	}
 	return doc.Root(), nil
 }

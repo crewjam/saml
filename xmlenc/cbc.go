@@ -180,19 +180,31 @@ func appendPadding(buf []byte, blockSize int) []byte {
 	return append(buf, padding...)
 }
 
+// ErrDecryptionFailed is returned for a ciphertext whose decrypted bytes
+// are not valid: in CBC mode, when the padding is not. It carries no detail,
+// so that a caller that also rejects plaintext it cannot parse (as the
+// saml package does) can report that with the same error, and a sender of
+// modified ciphertexts cannot tell the two failures apart from the error.
+//
+// CBC without an integrity check remains malleable whatever the padding
+// check: the XML Encryption attacks of Jager and Somorovsky (2011) need only
+// learn whether a modified ciphertext decrypts to well-formed XML. Use
+// AES-GCM where the sender supports it.
+var ErrDecryptionFailed = errors.New("xmlenc: decryption failed")
+
 // stripPadding removes XML Encryption padding (section 5.2): the last byte
 // holds the number of padding bytes, between 1 and the block size, and the
-// other padding bytes are arbitrary.
+// other padding bytes are arbitrary. They are not checked: unlike PKCS#7,
+// XML Encryption lets them take any value, and common senders (Apache
+// Santuario, .NET's EncryptedXml) use ISO 10126 padding, whose other bytes
+// are random. Every failure returns ErrDecryptionFailed.
 func stripPadding(buf []byte, blockSize int) ([]byte, error) {
 	if len(buf) < 1 {
-		return nil, errors.New("buffer is too short for padding")
+		return nil, ErrDecryptionFailed
 	}
 	paddingBytes := int(buf[len(buf)-1])
-	if paddingBytes > len(buf) || paddingBytes > blockSize {
-		return nil, errors.New("buffer is too short for padding")
-	}
-	if paddingBytes < 1 {
-		return nil, errors.New("padding must be at least one byte")
+	if paddingBytes < 1 || paddingBytes > len(buf) || paddingBytes > blockSize {
+		return nil, ErrDecryptionFailed
 	}
 	return buf[:len(buf)-paddingBytes], nil
 }
