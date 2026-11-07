@@ -234,6 +234,8 @@ With the `samlsp` middleware, `samlSP.QueryAttributes(r, attributes...)` queries
 
 Please see `example/idp/` for a substantially complete example of how to use the library and helpers to be an identity provider.
 
+`samlidp` registers service providers from the metadata sent to `PUT /services/:id`, and does not check signatures on it by default. Set `samlidp.Options.SPMetadataCertificates` to the service providers' (or their federation's) metadata signing certificates to accept only metadata signed with one of them; only what the signature covers is stored. A service provider served by this package signs its metadata with `ServiceProvider.SignedMetadata`.
+
 ### Single logout
 
 `IdentityProvider.ServeSLO` handles SP initiated single logout: serve it at `LogoutURL`, and set `LogoutBindings` to `[]string{saml.HTTPRedirectBinding, saml.HTTPPostBinding}` so that the metadata advertises both bindings it accepts. (`IdentityProvider.Handler` serves it at `LogoutURL` for you; `samlidp` serves it at `/slo`.)
