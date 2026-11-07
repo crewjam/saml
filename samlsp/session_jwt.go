@@ -60,7 +60,7 @@ func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
 				claimName = attr.Name
 			}
 			for _, value := range attr.Values {
-				claims.Attributes[claimName] = append(claims.Attributes[claimName], value.Value)
+				claims.Attributes[claimName] = append(claims.Attributes[claimName], attributeValueString(value))
 			}
 		}
 	}
@@ -72,6 +72,18 @@ func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
 	}
 
 	return claims, nil
+}
+
+// attributeValueString returns the string form of a SAML AttributeValue.
+//
+// Some attributes, such as eduPersonTargetedID, carry a <saml:NameID> element
+// rather than text. For those, the NameID's value is used; the AttributeValue's
+// own character data is only whitespace around the child element.
+func attributeValueString(value saml.AttributeValue) string {
+	if value.NameID != nil {
+		return value.NameID.Value
+	}
+	return value.Value
 }
 
 // Encode returns a serialized version of the Session.
