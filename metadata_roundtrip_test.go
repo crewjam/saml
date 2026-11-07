@@ -17,8 +17,9 @@ func metadataChildTags(t *testing.T, buf []byte, path string) []string {
 	assert.NilError(t, doc.ReadFromBytes(buf))
 	el := doc.FindElement(path)
 	assert.Assert(t, el != nil, "no element at %s in %s", path, buf)
-	var tags []string
-	for _, child := range el.ChildElements() {
+	children := el.ChildElements()
+	tags := make([]string, 0, len(children))
+	for _, child := range children {
 		tags = append(tags, child.Tag)
 	}
 	return tags
