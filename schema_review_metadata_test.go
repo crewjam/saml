@@ -56,3 +56,29 @@ func TestEndpointLocationWhitespace(t *testing.T) {
 	assert.Check(t, is.Equal(sp.SingleLogoutServices[0].ResponseLocation, "https://sp.example.com/slo/response"))
 	assert.Check(t, is.Equal(sp.AssertionConsumerServices[0].Location, "https://sp.example.com/acs"))
 }
+
+// TestSubjectConfirmationDataNotBeforeRelaxed checks that NotBefore is read
+// with RelaxedTime like NotOnOrAfter, and that unset times are left out by
+// MarshalXML as they are by Element.
+func TestSubjectConfirmationDataNotBeforeRelaxed(t *testing.T) {
+	const in = `<SubjectConfirmationData xmlns="urn:oasis:names:tc:SAML:2.0:assertion" ` +
+		`NotBefore="2030-01-01T00:00:00" NotOnOrAfter="2030-01-01T00:05:00" Recipient="https://sp.example.com/acs"/>`
+	var scd SubjectConfirmationData
+	assert.NilError(t, xml.Unmarshal([]byte(in), &scd))
+	assert.Check(t, scd.NotBefore.Equal(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)))
+	assert.Check(t, scd.NotOnOrAfter.Equal(time.Date(2030, 1, 1, 0, 5, 0, 0, time.UTC)))
+
+	out, err := xml.Marshal(&SubjectConfirmationData{Recipient: "https://sp.example.com/acs"})
+	assert.NilError(t, err)
+	assert.Check(t, !strings.Contains(string(out), "NotBefore"), string(out))
+	assert.Check(t, !strings.Contains(string(out), "NotOnOrAfter"), string(out))
+
+	out, err = xml.Marshal(&Conditions{})
+	assert.NilError(t, err)
+	assert.Check(t, !strings.Contains(string(out), "NotBefore"), string(out))
+	assert.Check(t, !strings.Contains(string(out), "NotOnOrAfter"), string(out))
+
+	out, err = xml.Marshal(&Conditions{NotOnOrAfter: time.Date(2030, 1, 1, 0, 5, 0, 0, time.UTC)})
+	assert.NilError(t, err)
+	assert.Check(t, is.Contains(string(out), `NotOnOrAfter="2030-01-01T00:05:00Z"`))
+}

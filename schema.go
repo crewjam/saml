@@ -1464,10 +1464,12 @@ func (s *SubjectConfirmationData) Element() *etree.Element {
 func (s *SubjectConfirmationData) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type Alias SubjectConfirmationData
 	aux := &struct {
-		NotOnOrAfter RelaxedTime `xml:",attr"`
+		NotBefore    *RelaxedTime `xml:",attr,omitempty"`
+		NotOnOrAfter *RelaxedTime `xml:",attr,omitempty"`
 		*Alias
 	}{
-		NotOnOrAfter: RelaxedTime(s.NotOnOrAfter),
+		NotBefore:    optionalRelaxedTime(s.NotBefore),
+		NotOnOrAfter: optionalRelaxedTime(s.NotOnOrAfter),
 		Alias:        (*Alias)(s),
 	}
 	return e.EncodeElement(aux, start)
@@ -1477,6 +1479,7 @@ func (s *SubjectConfirmationData) MarshalXML(e *xml.Encoder, start xml.StartElem
 func (s *SubjectConfirmationData) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias SubjectConfirmationData
 	aux := &struct {
+		NotBefore    RelaxedTime `xml:",attr"`
 		NotOnOrAfter RelaxedTime `xml:",attr"`
 		*Alias
 	}{
@@ -1485,6 +1488,7 @@ func (s *SubjectConfirmationData) UnmarshalXML(d *xml.Decoder, start xml.StartEl
 	if err := d.DecodeElement(&aux, &start); err != nil {
 		return err
 	}
+	s.NotBefore = time.Time(aux.NotBefore)
 	s.NotOnOrAfter = time.Time(aux.NotOnOrAfter)
 	return nil
 }
@@ -1535,12 +1539,12 @@ func (c *Conditions) Element() *etree.Element {
 func (c *Conditions) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type Alias Conditions
 	aux := &struct {
-		NotBefore    RelaxedTime `xml:",attr"`
-		NotOnOrAfter RelaxedTime `xml:",attr"`
+		NotBefore    *RelaxedTime `xml:",attr,omitempty"`
+		NotOnOrAfter *RelaxedTime `xml:",attr,omitempty"`
 		*Alias
 	}{
-		NotBefore:    RelaxedTime(c.NotBefore),
-		NotOnOrAfter: RelaxedTime(c.NotOnOrAfter),
+		NotBefore:    optionalRelaxedTime(c.NotBefore),
+		NotOnOrAfter: optionalRelaxedTime(c.NotOnOrAfter),
 		Alias:        (*Alias)(c),
 	}
 	return e.EncodeElement(aux, start)
