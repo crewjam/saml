@@ -274,6 +274,13 @@ func FetchSignedMetadataByEntityID(ctx context.Context, httpClient *http.Client,
 	return ParseSignedMetadataByEntityID(data, entityID, certs)
 }
 
+// MaxMetadataSize is the size in bytes of the largest metadata document that
+// FetchMetadata and the other Fetch functions read. A larger response is
+// refused rather than read into memory in full. The default leaves room for
+// federation aggregates, which run to tens of megabytes; lower it when
+// fetching a single IDP's metadata.
+var MaxMetadataSize int64 = 256 << 20
+
 func fetchMetadataBytes(ctx context.Context, httpClient *http.Client, metadataURL url.URL) ([]byte, error) {
 	req, err := http.NewRequest("GET", metadataURL.String(), nil)
 	if err != nil {
@@ -294,5 +301,13 @@ func fetchMetadataBytes(ctx context.Context, httpClient *http.Client, metadataUR
 		return nil, fmt.Errorf("failed to fetch metadata: unexpected status code %d", resp.StatusCode)
 	}
 
-	return io.ReadAll(resp.Body)
+	limit := MaxMetadataSize
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("failed to fetch metadata: response is larger than %d bytes (MaxMetadataSize)", limit)
+	}
+	return data, nil
 }
