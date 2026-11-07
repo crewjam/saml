@@ -444,12 +444,20 @@ func (idp *IdentityProvider) ServeSLO(w http.ResponseWriter, r *http.Request) {
 // must be a direct child of el and reference it, against certs. The
 // certificates' validity periods are ignored. clock may be nil.
 func verifyEnvelopedSignature(el *etree.Element, certs []*x509.Certificate, clock *dsig.Clock) error {
+	_, err := verifiedEnvelopedElement(el, certs, clock)
+	return err
+}
+
+// verifiedEnvelopedElement is verifyEnvelopedSignature, returning what the
+// signature covers: el without its Signature, parsed from the canonical
+// bytes that were digested.
+func verifiedEnvelopedElement(el *etree.Element, certs []*x509.Certificate, clock *dsig.Clock) (*etree.Element, error) {
 	sigEl, err := findChild(el, "http://www.w3.org/2000/09/xmldsig#", "Signature")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if sigEl == nil {
-		return errSignatureElementNotPresent
+		return nil, errSignatureElementNotPresent
 	}
 
 	certs = withoutValidityPeriod(certs)
@@ -463,23 +471,22 @@ func verifyEnvelopedSignature(el *etree.Element, certs []*x509.Certificate, cloc
 
 	ctx, err := unboundedParentContext(el)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	ctx, err = ctx.SubContext(el)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	el, err = etreeutils.NSDetatch(ctx, el)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// See ServiceProvider.validateSignature: without a certificate in
 	// KeyInfo, dsig can only pick the certificate itself if it trusts
 	// exactly one.
 	if noCertInKeyInfo && len(certs) > 1 {
-		return validateWithEachCert(validationContext, certs, el)
+		return validatedWithEachCert(validationContext, certs, el)
 	}
-	_, err = validationContext.Validate(el)
-	return err
+	return validationContext.Validate(el)
 }
