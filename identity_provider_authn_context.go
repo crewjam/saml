@@ -4,7 +4,7 @@ import "fmt"
 
 // authnContextPasswordProtectedTransport is the authentication context class
 // the IdP asserts when the Session does not say which one was achieved.
-const authnContextPasswordProtectedTransport = "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport"
+const authnContextPasswordProtectedTransport = "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport" //nolint:gosec // G101: an authentication context class URI, not a credential
 
 const authnContextClassPrefix = "urn:oasis:names:tc:SAML:2.0:ac:classes:"
 

@@ -11,7 +11,7 @@ import (
 
 const (
 	racPPT          = "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport"
-	racPassword     = "urn:oasis:names:tc:SAML:2.0:ac:classes:Password"
+	racPassword     = "urn:oasis:names:tc:SAML:2.0:ac:classes:Password" //nolint:gosec // G101: an authentication context class URI, not a credential
 	racX509         = "urn:oasis:names:tc:SAML:2.0:ac:classes:X509"
 	racSmartcardPKI = "urn:oasis:names:tc:SAML:2.0:ac:classes:SmartcardPKI"
 	racUnspecified  = "urn:oasis:names:tc:SAML:2.0:ac:classes:unspecified"
@@ -24,7 +24,7 @@ const (
 func racServeSSO(t *testing.T, test *IdentityProviderTest, requested *RequestedAuthnContext, achieved string) *httptest.ResponseRecorder {
 	t.Helper()
 	test.SP.RequestedAuthnContext = requested
-	test.IDP.SessionProvider = &mockSessionProvider{GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
+	test.IDP.SessionProvider = &mockSessionProvider{GetSessionFunc: func(_ http.ResponseWriter, _ *http.Request, req *IdpAuthnRequest) *Session {
 		return &Session{ID: "f00df00df00d", UserName: "alice", AuthnContextClassRef: achieved}
 	}}
 	test.IDP.OnError = func(w http.ResponseWriter, r *http.Request, status int, err error) {
