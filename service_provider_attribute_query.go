@@ -454,6 +454,20 @@ func (sp *ServiceProvider) attributeQueryAssertions(responseEl *etree.Element, q
 	if err != nil {
 		return nil, err
 	}
+	plaintextAssertionEls, err := findChildren(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "Assertion")
+	if err != nil {
+		return nil, err
+	}
+
+	// As for a login response: each assertion of an unsigned Response is
+	// decrypted and its signature checked, which costs more per assertion,
+	// so an unsigned Response may carry only one. Count before decrypting.
+	if signatureRequired {
+		if n := len(encryptedAssertionEls) + len(plaintextAssertionEls); n > 1 {
+			return nil, classify(fmt.Errorf("an unsigned Response must contain exactly one Assertion or EncryptedAssertion, not %d", n), ErrMalformedMessage)
+		}
+	}
+
 	for _, encryptedAssertionEl := range encryptedAssertionEls {
 		assertionEl, err := sp.decryptElement(encryptedAssertionEl)
 		if err != nil {
@@ -465,10 +479,6 @@ func (sp *ServiceProvider) attributeQueryAssertions(responseEl *etree.Element, q
 		assertionEls = append(assertionEls, assertionEl)
 	}
 
-	plaintextAssertionEls, err := findChildren(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "Assertion")
-	if err != nil {
-		return nil, err
-	}
 	assertionEls = append(assertionEls, plaintextAssertionEls...)
 
 	assertions := make([]Assertion, 0, len(assertionEls))
