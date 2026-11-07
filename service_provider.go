@@ -17,9 +17,11 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/beevik/etree"
@@ -112,6 +114,16 @@ type ServiceProvider struct {
 	// AcsURL is the full URL to the SAML Assertion Customer Service endpoint
 	// on this host, i.e. https://example.com/saml/acs
 	AcsURL url.URL
+
+	// AcsIndex, if set, makes authentication requests carry
+	// AssertionConsumerServiceIndex with this value, instead of
+	// AssertionConsumerServiceURL and ProtocolBinding (SAML core §3.4.1
+	// does not allow both). The IdP then sends the response to the
+	// AssertionConsumerService endpoint with this index in the SP metadata it
+	// has on file, using that endpoint's binding. That endpoint's Location
+	// must still be AcsURL, because responses are only accepted there. If nil,
+	// requests carry AssertionConsumerServiceURL and ProtocolBinding.
+	AcsIndex *int
 
 	// SloURL is the full URL to the SAML Single Logout endpoint on this host.
 	// i.e. https://example.com/saml/slo
@@ -641,6 +653,15 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding stri
 		},
 		ForceAuthn:            sp.ForceAuthn,
 		RequestedAuthnContext: sp.RequestedAuthnContext,
+	}
+	if sp.AcsIndex != nil {
+		// AssertionConsumerServiceIndex is an xs:unsignedShort.
+		if *sp.AcsIndex < 0 || *sp.AcsIndex > math.MaxUint16 {
+			return nil, fmt.Errorf("AcsIndex %d is not between 0 and %d", *sp.AcsIndex, math.MaxUint16)
+		}
+		req.AssertionConsumerServiceIndex = strconv.Itoa(*sp.AcsIndex)
+		req.AssertionConsumerServiceURL = ""
+		req.ProtocolBinding = ""
 	}
 	// We don't need to sign the XML document if the IDP uses HTTP-Redirect binding
 	if len(sp.SignatureMethod) > 0 && binding == HTTPPostBinding {

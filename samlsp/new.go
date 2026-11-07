@@ -73,6 +73,11 @@ type Options struct {
 	// error.
 	AssertionConsumerServiceBindings []string
 
+	// AcsIndex, if set, makes authentication requests name the
+	// AssertionConsumerService endpoint by its index in the SP metadata
+	// instead of by URL and binding. See saml.ServiceProvider.AcsIndex.
+	AcsIndex *int
+
 	// IgnoreCertificateExpiry, if true, accepts signatures made with an IDP
 	// signing certificate outside its validity period. See
 	// saml.ServiceProvider.IgnoreCertificateExpiry.
@@ -219,6 +224,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		DecryptionKeys:        opts.DecryptionKeys,
 		MetadataURL:           *metadataURL,
 		AcsURL:                *acsURL,
+		AcsIndex:              opts.AcsIndex,
 		SloURL:                *sloURL,
 		IDPMetadata:           opts.IDPMetadata,
 		ForceAuthn:            forceAuthn,
