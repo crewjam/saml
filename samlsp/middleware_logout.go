@@ -204,9 +204,12 @@ func (m *Middleware) sloBinding() string {
 // SessionIndexes or, if it has none, every session of its NameID issued
 // before it. A session provider that cannot do that
 // (ErrSessionTerminationUnsupported) only has the browser's session
-// deleted, as before; any other error ending them is passed to OnError,
-// whose response is discarded, and the IDP is still answered with Success,
-// since the session of the browser it sent has ended.
+// deleted and the IDP is answered with Success, as before: the session of
+// the browser it sent has ended, and the provider never promised more. Any
+// other error ending them is passed to OnError, whose response is
+// discarded, and the IDP is answered with Success and the second-level
+// status PartialLogout (saml-core-2.0-os §3.7.3.2): the browser's session
+// has ended, but other copies of it may still be accepted.
 //
 // A POST with Content-Type text/xml is a LogoutRequest sent with the SOAP
 // binding (back-channel single logout, saml-profiles §4.4): the IDP sends it
@@ -288,14 +291,14 @@ func (m *Middleware) serveSLORequest(w http.ResponseWriter, r *http.Request) {
 		m.OnError(w, r, err)
 		return
 	}
-	m.terminateFrontChannelSessions(r, logoutRequest)
+	status := m.terminateFrontChannelSessions(r, logoutRequest)
 
 	// The RelayState of the request must be returned unchanged with the
 	// response (saml-bindings-2.0-os sections 3.4.3 and 3.5.3).
 	relayState := r.Form.Get("RelayState")
 	switch binding := m.sloBinding(); binding {
 	case saml.HTTPRedirectBinding:
-		redirectURL, err := m.ServiceProvider.MakeRedirectLogoutResponse(logoutRequest.ID, relayState)
+		redirectURL, err := m.ServiceProvider.MakeRedirectLogoutResponseWithStatus(logoutRequest.ID, relayState, status)
 		if err != nil {
 			m.OnError(w, r, err)
 			return
@@ -303,7 +306,7 @@ func (m *Middleware) serveSLORequest(w http.ResponseWriter, r *http.Request) {
 		setNoCacheHeaders(w.Header())
 		http.Redirect(w, r, redirectURL.String(), http.StatusFound) //nolint:gosec // the target is the IDP's SLO location from its metadata; the RelayState is only a query parameter
 	case saml.HTTPPostBinding, saml.HTTPPostSimpleSignBinding:
-		m.postLogoutResponse(w, r, binding, logoutRequest.ID, relayState)
+		m.postLogoutResponse(w, r, binding, logoutRequest.ID, relayState, status)
 	default:
 		// The IDP sent a LogoutRequest but lists no endpoint for the
 		// response; there is nowhere to answer it.
@@ -312,11 +315,11 @@ func (m *Middleware) serveSLORequest(w http.ResponseWriter, r *http.Request) {
 }
 
 // postLogoutResponse sends the IDP a LogoutResponse to the LogoutRequest
-// logoutRequestID in an auto-submitting form, with the HTTP-POST or the
-// HTTP-POST-SimpleSign binding.
-func (m *Middleware) postLogoutResponse(w http.ResponseWriter, r *http.Request, binding, logoutRequestID, relayState string) {
-	resp, err := m.ServiceProvider.MakeLogoutResponse(
-		m.ServiceProvider.GetSLOBindingLocation(binding), logoutRequestID)
+// logoutRequestID, with status, in an auto-submitting form, with the
+// HTTP-POST or the HTTP-POST-SimpleSign binding.
+func (m *Middleware) postLogoutResponse(w http.ResponseWriter, r *http.Request, binding, logoutRequestID, relayState string, status saml.Status) {
+	resp, err := m.ServiceProvider.MakeLogoutResponseWithStatus(
+		m.ServiceProvider.GetSLOBindingLocation(binding), logoutRequestID, status)
 	if err != nil {
 		m.OnError(w, r, err)
 		return
