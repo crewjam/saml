@@ -331,8 +331,14 @@ func soapResponseElement(soapResponseXML []byte) (*etree.Element, error) {
 // attribute query responses: those of its AttributeAuthorityDescriptors, or
 // if they have none, those of its IDPSSODescriptors.
 func (sp *ServiceProvider) attributeAuthoritySigningCerts() ([]*x509.Certificate, error) {
+	if err := sp.checkIDPMetadataNotExpired(); err != nil {
+		return nil, err
+	}
 	var keyDescriptors []KeyDescriptor
-	for _, attributeAuthority := range sp.IDPMetadata.AttributeAuthorityDescriptors {
+	for i, attributeAuthority := range sp.IDPMetadata.AttributeAuthorityDescriptors {
+		if err := sp.checkRoleNotExpired(&sp.IDPMetadata.AttributeAuthorityDescriptors[i].RoleDescriptor, "AttributeAuthorityDescriptor"); err != nil {
+			return nil, err
+		}
 		keyDescriptors = append(keyDescriptors, attributeAuthority.KeyDescriptors...)
 	}
 	certs, err := signingCerts(keyDescriptors)

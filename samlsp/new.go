@@ -139,6 +139,11 @@ type Options struct {
 	// saml.ServiceProvider.IgnoreCertificateExpiry.
 	IgnoreCertificateExpiry bool
 
+	// RejectExpiredIDPMetadata, if true, refuses messages from the IDP once
+	// the validUntil of IDPMetadata has passed. It is off by default. See
+	// saml.ServiceProvider.RejectExpiredIDPMetadata.
+	RejectExpiredIDPMetadata bool
+
 	// SignMetadata, if true, makes the metadata endpoint serve metadata
 	// signed with Key. See saml.ServiceProvider.SignMetadata.
 	SignMetadata bool
@@ -371,6 +376,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 
 		AssertionConsumerServiceBindings: opts.AssertionConsumerServiceBindings,
 		IgnoreCertificateExpiry:          opts.IgnoreCertificateExpiry,
+		RejectExpiredIDPMetadata:         opts.RejectExpiredIDPMetadata,
 		SignMetadata:                     opts.SignMetadata,
 		ReplayCache:                      opts.ReplayCache,
 	}
