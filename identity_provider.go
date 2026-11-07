@@ -511,7 +511,7 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 	}
 
 	ed := &EntityDescriptor{
-		EntityID:      idp.MetadataURL.String(),
+		EntityID:      idp.entityID(),
 		ValidUntil:    idp.now().Add(validDuration),
 		CacheDuration: validDuration,
 		IDPSSODescriptors: []IDPSSODescriptor{
@@ -613,6 +613,12 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 	}
 
 	return ed
+}
+
+// entityID returns the IdP's entity ID, the EntityID of its metadata,
+// without building the whole metadata (which encodes every certificate).
+func (idp *IdentityProvider) entityID() string {
+	return idp.MetadataURL.String()
 }
 
 // Handler returns an http.Handler that serves the metadata and SSO
@@ -1491,7 +1497,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 		Version:      "2.0",
 		Issuer: Issuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
-			Value:  req.IDP.Metadata().EntityID,
+			Value:  req.IDP.entityID(),
 		},
 		Subject: &Subject{
 			NameID: nameID,
