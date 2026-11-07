@@ -229,8 +229,8 @@ type IdentityProvider struct {
 	// (rsa-sha1, ecdsa-sha1, dsa-sha1, hmac-sha1 or sha1), and an
 	// HTTP-Redirect or HTTP-POST-SimpleSign signature whose SigAlg is. It
 	// applies to the signatures the IdP verifies: those of LogoutRequests
-	// (ServeSLO) and of AuthnRequests sent with the HTTP-POST-SimpleSign
-	// binding. The error matches ErrUnsupported. If false, SHA-1 is
+	// and of LogoutResponses to the IdP's own LogoutRequests (ServeSLO),
+	// and of AuthnRequests sent with the HTTP-POST-SimpleSign binding. The error matches ErrUnsupported. If false, SHA-1 is
 	// accepted.
 	RejectSHA1Signatures bool
 

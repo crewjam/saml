@@ -570,3 +570,38 @@ func TestIDPServeSLOLogoutResponseWithoutLogoutInProgress(t *testing.T) {
 	assert.Check(t, is.Equal(http.StatusBadRequest, w.Code))
 	assert.Check(t, is.Equal(0, test.sessions.calls))
 }
+
+func TestIDPRejectSHA1LogoutResponses(t *testing.T) {
+	for _, binding := range []string{HTTPRedirectBinding, HTTPPostBinding} {
+		for _, reject := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s reject=%v", binding, reject), func(t *testing.T) {
+				pt := newPropagationTest(t)
+				pt.idp.RejectSHA1Signatures = reject
+				pt.login(t, pt.sps[0], pt.sps[1])
+				w := pt.startLogout("")
+				pt.keepCookies(w)
+
+				r := next(t, w)
+				sp := pt.spForURL(r.URL)
+				req, err := sp.ValidateLogoutRequest(r)
+				assert.NilError(t, err)
+
+				sha1SP := *sp
+				sha1SP.SignatureMethod = dsig.RSASHA1SignatureMethod
+				w = pt.serveIDP(spLogoutResponse(t, &sha1SP, req.ID, StatusSuccess, binding))
+				if !reject {
+					r = next(t, w)
+					assert.Check(t, is.Equal(pt.sps[1].SloURL.Host, r.URL.Host))
+					return
+				}
+				assert.Check(t, is.Equal(http.StatusBadRequest, w.Code))
+				assert.Check(t, is.Len(w.Result().Cookies(), 0), "the logout state is unchanged")
+
+				// The same answer signed with SHA-256 is accepted.
+				w = pt.serveIDP(spLogoutResponse(t, sp, req.ID, StatusSuccess, binding))
+				r = next(t, w)
+				assert.Check(t, is.Equal(pt.sps[1].SloURL.Host, r.URL.Host))
+			})
+		}
+	}
+}

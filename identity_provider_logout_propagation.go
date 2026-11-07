@@ -19,9 +19,9 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
-	xrv "github.com/mattermost/xml-roundtrip-validator"
 
 	"github.com/crewjam/saml/internal/signerutil"
+	"github.com/crewjam/saml/internal/xmlroundtrip"
 )
 
 // SessionParticipant is a service provider that an IdP session was used to
@@ -472,7 +472,7 @@ func (idp *IdentityProvider) validateLogoutResponse(r *http.Request, state *logo
 	if err != nil {
 		return nil, err
 	}
-	if err := xrv.Validate(bytes.NewReader(buf)); err != nil {
+	if err := xmlroundtrip.Validate(buf); err != nil {
 		return nil, fmt.Errorf("logout response contains invalid XML: %w", err)
 	}
 	doc := etree.NewDocument()
@@ -483,7 +483,7 @@ func (idp *IdentityProvider) validateLogoutResponse(r *http.Request, state *logo
 		return nil, errors.New("cannot parse logout response: no root element")
 	}
 	var resp LogoutResponse
-	if err := xml.Unmarshal(buf, &resp); err != nil { //nolint:gosec // parsing the untrusted response is the point; it was validated by xrv above
+	if err := xml.Unmarshal(buf, &resp); err != nil { //nolint:gosec // parsing the untrusted response is the point; it was checked by xmlroundtrip.Validate above
 		return nil, fmt.Errorf("cannot parse logout response: %w", err)
 	}
 
@@ -498,6 +498,14 @@ func (idp *IdentityProvider) validateLogoutResponse(r *http.Request, state *logo
 	certs, err := spSigningCerts(metadata)
 	if err != nil {
 		return nil, err
+	}
+	if redirectMessage != nil && redirectMessage.SignedContent != nil {
+		err = checkSigAlgNotSHA1(idp.RejectSHA1Signatures, redirectMessage.SigAlg)
+	} else {
+		err = checkEnvelopedSignatureNotSHA1(idp.RejectSHA1Signatures, doc.Root())
+	}
+	if err != nil {
+		return nil, fmt.Errorf("logout response from %s: %w", serviceProviderID, err)
 	}
 	if redirectMessage != nil && redirectMessage.SignedContent != nil {
 		err = checkRedirectBindingSignature(redirectMessage, func() ([]*x509.Certificate, error) { return certs, nil }, TimeNow(), true)
