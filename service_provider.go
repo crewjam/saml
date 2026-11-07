@@ -1393,6 +1393,13 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 		if subjectConfirmation.SubjectConfirmationData.Recipient != sp.AcsURL.String() {
 			return fmt.Errorf("assertion SubjectConfirmation Recipient is not %s", sp.AcsURL.String())
 		}
+		// saml-profiles §4.1.4.2 says a bearer SubjectConfirmationData MUST
+		// NOT carry NotBefore, but some IdPs send one anyway; accept it as
+		// long as it is not in the future (saml-core §2.4.1.2). An omitted
+		// NotBefore is the zero time, which always passes.
+		if subjectConfirmation.SubjectConfirmationData.NotBefore.Add(-MaxClockSkew).After(now) {
+			return fmt.Errorf("assertion SubjectConfirmationData is not yet valid")
+		}
 		if skewedDeadline(subjectConfirmation.SubjectConfirmationData.NotOnOrAfter).Before(now) {
 			return fmt.Errorf("assertion SubjectConfirmationData is expired")
 		}
