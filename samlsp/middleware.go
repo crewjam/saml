@@ -99,6 +99,14 @@ type Middleware struct {
 	// LogoutResponses to IDP initiated logout are then sent with the
 	// default front-channel binding.
 	LogoutBinding string
+
+	// RequirePOSTToStartLogout makes HandleStartLogout refuse any method
+	// but POST with 405 Method Not Allowed. Logging out changes state, and
+	// a GET handler lets any other site log the user out with a link or an
+	// image (logout CSRF). It is off by default because applications
+	// commonly link to their logout URL; when setting it, start logout
+	// from a form that POSTs to it.
+	RequirePOSTToStartLogout bool
 }
 
 // ServeHTTP implements http.Handler and serves the SAML-specific HTTP endpoints
