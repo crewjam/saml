@@ -654,15 +654,16 @@ func (sp *ServiceProvider) signingContext(signatureMethod string) (*dsig.Signing
 		return nil, errors.New("cannot sign: ServiceProvider.Certificate is nil")
 	}
 
+	// The chain, leaf first, is placed in each signature's KeyInfo so that a
+	// verifier can build a path from the SP certificate to a trusted root.
 	keyPair := tls.Certificate{
 		Certificate: [][]byte{sp.Certificate.Raw},
 		PrivateKey:  sp.Key,
 		Leaf:        sp.Certificate,
 	}
-	// TODO: add intermediates for SP
-	// for _, cert := range sp.Intermediates {
-	// 	keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
-	// }
+	for _, cert := range sp.Intermediates {
+		keyPair.Certificate = append(keyPair.Certificate, cert.Raw)
+	}
 
 	// Validate that the key type matches the signature method.
 	// We check the public key type to support crypto.Signer implementations

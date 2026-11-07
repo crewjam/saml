@@ -1,11 +1,16 @@
 package saml
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
+	"math/big"
 	"testing"
+	"time"
 
 	"github.com/beevik/etree"
 	dsig "github.com/russellhaering/goxmldsig"
@@ -105,5 +110,95 @@ func TestSPSignedMetadata(t *testing.T) {
 		sp.Certificate = nil
 		_, err := sp.SignedMetadata()
 		assert.Check(t, err != nil)
+	})
+}
+
+// issueCert creates a certificate for key, signed by parentKey as parent, or
+// self-signed when parent is nil.
+func issueCert(t *testing.T, serial int64, name string, isCA bool, key crypto.Signer, parent *x509.Certificate, parentKey crypto.Signer) *x509.Certificate {
+	t.Helper()
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(serial),
+		Subject:               pkix.Name{CommonName: name},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  isCA,
+		BasicConstraintsValid: true,
+	}
+	if isCA {
+		tmpl.KeyUsage = x509.KeyUsageCertSign
+	}
+	if parent == nil {
+		parent, parentKey = tmpl, key
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, key.Public(), parentKey)
+	assert.NilError(t, err)
+	cert, err := x509.ParseCertificate(der)
+	assert.NilError(t, err)
+	return cert
+}
+
+func TestSPSignaturesIncludeIntermediates(t *testing.T) {
+	NewServiceProviderTest(t)
+	newKey := func() *ecdsa.PrivateKey {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		assert.NilError(t, err)
+		return key
+	}
+	rootKey, intermediateKey, leafKey := newKey(), newKey(), newKey()
+	root := issueCert(t, 1, "root", true, rootKey, nil, nil)
+	intermediate := issueCert(t, 2, "intermediate", true, intermediateKey, root, rootKey)
+	leaf := issueCert(t, 3, "sp.example.com", false, leafKey, intermediate, intermediateKey)
+
+	sp := &ServiceProvider{
+		Key:             leafKey,
+		Certificate:     leaf,
+		Intermediates:   []*x509.Certificate{intermediate},
+		SignatureMethod: dsig.ECDSASHA256SignatureMethod,
+		MetadataURL:     mustParseURL("https://sp.example.com/saml2/metadata"),
+		AcsURL:          mustParseURL("https://sp.example.com/saml2/acs"),
+		IDPMetadata:     &EntityDescriptor{},
+	}
+
+	// assertChain checks that sig's KeyInfo carries the leaf, then the
+	// intermediate.
+	assertChain := func(t *testing.T, sig *etree.Element) {
+		t.Helper()
+		assert.Assert(t, sig != nil)
+		certEls := sig.FindElements("./KeyInfo/X509Data/X509Certificate")
+		assert.Assert(t, is.Len(certEls, 2))
+		for i, want := range []*x509.Certificate{leaf, intermediate} {
+			got, err := base64.StdEncoding.DecodeString(certEls[i].Text())
+			assert.NilError(t, err)
+			assert.Check(t, is.DeepEqual(want.Raw, got), "certificate %d", i)
+		}
+	}
+
+	t.Run("AuthnRequest", func(t *testing.T) {
+		req, err := sp.MakeAuthenticationRequest("https://idp.example.com/sso", HTTPPostBinding, HTTPPostBinding)
+		assert.NilError(t, err)
+		assertChain(t, req.Signature)
+	})
+
+	t.Run("LogoutRequest", func(t *testing.T) {
+		req, err := sp.MakeLogoutRequest("https://idp.example.com/slo", "alice")
+		assert.NilError(t, err)
+		assertChain(t, req.Signature)
+	})
+
+	t.Run("metadata", func(t *testing.T) {
+		el, err := sp.SignedMetadata()
+		assert.NilError(t, err)
+		// validates against the leaf, which comes first in KeyInfo
+		root := validateSignedMetadata(t, el, leaf)
+		assertChain(t, root.FindElement("./Signature"))
+	})
+
+	t.Run("no intermediates", func(t *testing.T) {
+		noChain := *sp
+		noChain.Intermediates = nil
+		req, err := noChain.MakeAuthenticationRequest("https://idp.example.com/sso", HTTPPostBinding, HTTPPostBinding)
+		assert.NilError(t, err)
+		assert.Check(t, is.Len(req.Signature.FindElements("./KeyInfo/X509Data/X509Certificate"), 1))
 	})
 }
