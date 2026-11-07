@@ -1541,6 +1541,25 @@ func unboundedParentContext(el *etree.Element) (etreeutils.NSContext, error) {
 	return ctx.SubContext(parent)
 }
 
+// validateWithEachCert validates the signature on el against each of certs
+// in turn, with a copy of base that trusts only that certificate, and
+// returns nil as soon as one of them verifies it. Otherwise it returns the
+// error from the last certificate tried.
+func validateWithEachCert(base *dsig.ValidationContext, certs []*x509.Certificate, el *etree.Element) error {
+	var err error
+	for _, cert := range certs {
+		ctx := dsig.NewDefaultValidationContext(&dsig.MemoryX509CertificateStore{
+			Roots: []*x509.Certificate{cert},
+		})
+		ctx.IdAttribute = base.IdAttribute
+		ctx.Clock = base.Clock
+		if _, err = ctx.Validate(el); err == nil {
+			return nil
+		}
+	}
+	return err
+}
+
 // validateSignature returns nil iff the Signature embedded in the element is valid
 func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	sigEl, err := findChild(el, "http://www.w3.org/2000/09/xmldsig#", "Signature")
@@ -1636,17 +1655,10 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	// certificate, so this accepts exactly what one of them would accept
 	// had the IdP named it in KeyInfo.
 	if noCertInKeyInfo && len(certs) > 1 {
-		for _, cert := range certs {
-			certValidationContext := dsig.NewDefaultValidationContext(&dsig.MemoryX509CertificateStore{
-				Roots: []*x509.Certificate{cert},
-			})
-			certValidationContext.IdAttribute = validationContext.IdAttribute
-			certValidationContext.Clock = validationContext.Clock
-			if _, err = certValidationContext.Validate(el); err == nil {
-				return nil
-			}
+		if err := validateWithEachCert(validationContext, certs, el); err != nil {
+			return fmt.Errorf("cannot validate signature on %s: %v", tag, err)
 		}
-		return fmt.Errorf("cannot validate signature on %s: %v", tag, err)
+		return nil
 	}
 
 	if _, err := validationContext.Validate(el); err != nil {
