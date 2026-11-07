@@ -138,7 +138,10 @@ func (req *IdpAuthnRequest) SimpleSignBinding() (IdpAuthnRequestSimpleSignForm, 
 // defaultSimpleSignResponseFormTemplate is defaultResponseFormTemplate with
 // the SimpleSign signature fields. RelayState is only included when it is
 // not empty, because a RelayState field, even an empty one, is signed.
-var defaultSimpleSignResponseFormTemplate = template.Must(template.New("saml-simplesign-form").Parse(`<html>` +
+var defaultSimpleSignResponseFormTemplate = template.Must(template.New("saml-simplesign-form").Parse(`` +
+	`<html xmlns="http://www.w3.org/1999/xhtml">` +
+	`<head><title>Continue</title></head>` +
+	`<body>` +
 	`<form method="post" action="{{.URL}}" id="SAMLResponseForm">` +
 	`<input type="hidden" name="SAMLResponse" value="{{.SAMLResponse}}" />` +
 	`{{if .RelayState}}<input type="hidden" name="RelayState" value="{{.RelayState}}" />{{end}}` +
@@ -148,6 +151,7 @@ var defaultSimpleSignResponseFormTemplate = template.Must(template.New("saml-sim
 	`</form>` +
 	`<script>document.getElementById('SAMLSubmitButton').style.visibility='hidden';</script>` +
 	`<script>document.getElementById('SAMLResponseForm').submit();</script>` +
+	`</body>` +
 	`</html>`))
 
 // writeSimpleSignResponse writes the auto-submitting HTML form that sends

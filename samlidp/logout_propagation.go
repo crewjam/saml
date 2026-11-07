@@ -81,7 +81,10 @@ func (s *Server) deleteSession(id string) error {
 	return nil
 }
 
-const logoutPageTemplate = `<html><p>You are not logged in.</p></html>`
+const logoutPageTemplate = `<html xmlns="http://www.w3.org/1999/xhtml">` +
+	`<head><title>Logged out</title></head>` +
+	`<body><p>You are not logged in.</p></body>` +
+	`</html>`
 
 // HandleLogout handles `GET /logout` and `POST /logout`: IdP-initiated single
 // logout of the browser's session. The session cookie is expired, the
