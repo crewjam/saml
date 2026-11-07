@@ -115,10 +115,12 @@ func (c *Config) ServiceProvider(ctx context.Context, opts ...ServiceProviderOpt
 	return c.serviceProvider(ctx, opts)
 }
 
-// SignElement returns el with an enveloped XML signature made with the key
-// of WithKey and the method of WithSignatureMethod (by default SHA-256).
-// The signature references el by its ID attribute, which el must have.
-// el is not modified.
+// SignElement returns a copy of el with an enveloped XML signature made
+// with the key of WithKey and the method of WithSignatureMethod (by
+// default SHA-256). The signature references el by its ID attribute, which
+// el must have. It is placed right after el's Issuer child, if el has one,
+// as the SAML schema requires of protocol messages and assertions, and
+// last otherwise. el is not modified.
 func (c *Config) SignElement(el *etree.Element) (*etree.Element, error) {
 	if signatureMethod(c.key) == "" {
 		return nil, errors.New("samlsp: SignElement needs an RSA or ECDSA key (see WithKey)")
@@ -129,5 +131,15 @@ func (c *Config) SignElement(el *etree.Element) (*etree.Element, error) {
 	if err != nil {
 		return nil, err
 	}
-	return signingContext.SignEnveloped(el.Copy())
+	signed := el.Copy()
+	sig, err := signingContext.ConstructSignature(signed, true)
+	if err != nil {
+		return nil, err
+	}
+	at := len(signed.Child)
+	if first := signed.ChildElements(); len(first) > 0 && first[0].Tag == "Issuer" {
+		at = first[0].Index() + 1
+	}
+	signed.InsertChildAt(at, sig)
+	return signed, nil
 }
