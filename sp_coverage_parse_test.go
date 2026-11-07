@@ -165,17 +165,17 @@ func TestSpcovDecryptElement(t *testing.T) {
 
 	t.Run("plaintext rejected by round trip validator", func(t *testing.T) {
 		_, err := e.sp.decryptElement(e.encryptedAssertion(t, []byte("<a>\x01</a>")))
-		assert.Error(t, err, "plaintext response contains invalid XML: XML syntax error on line 1: illegal character code U+0001")
+		assert.Error(t, err, "xmlenc: decryption failed")
 	})
 
 	t.Run("plaintext rejected by etree", func(t *testing.T) {
 		_, err := e.sp.decryptElement(e.encryptedAssertion(t, []byte("<a>")))
-		assert.Error(t, err, "cannot parse plaintext response etree: invalid XML format")
+		assert.Error(t, err, "xmlenc: decryption failed")
 	})
 
 	t.Run("plaintext without root element", func(t *testing.T) {
 		_, err := e.sp.decryptElement(e.encryptedAssertion(t, []byte("<!-- nothing -->")))
-		assert.Error(t, err, "plaintext response contains no root element")
+		assert.Error(t, err, "xmlenc: decryption failed")
 	})
 
 	// Regression: an EncryptedAssertion whose plaintext has no root element used to
@@ -185,7 +185,7 @@ func TestSpcovDecryptElement(t *testing.T) {
 		el := e.response().Element()
 		el.AddChild(e.encryptedAssertion(t, []byte("<!-- nothing -->")))
 		_, err := e.sp.ParseXMLResponse(spcovSerialize(t, el), []string{spcovRequestID}, e.sp.AcsURL)
-		assert.Error(t, spcovPrivateErr(t, err), "failed to decrypt EncryptedAssertion: plaintext response contains no root element")
+		assert.Error(t, spcovPrivateErr(t, err), "failed to decrypt EncryptedAssertion: xmlenc: decryption failed")
 	})
 }
 
