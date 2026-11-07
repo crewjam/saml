@@ -44,90 +44,143 @@ func isBcryptHash(hash []byte) bool {
 // password was invalid.
 //
 // If a session cookie already exists and represents a valid session,
-// then the session is returned
+// then the session is returned, unless the AuthnRequest has
+// ForceAuthn="true": the user must then authenticate again, so the login
+// form is sent and the assertion that follows carries a new AuthnInstant
+// (saml-core §3.4.1).
 //
-// If neither credentials nor a valid session cookie exist, this function
-// sends a login form and returns nil.
+// If neither credentials nor a usable session exist, this function sends a
+// login form and returns nil. If the AuthnRequest has IsPassive="true", it
+// sends no login form: it answers with a SAML error Response with the
+// status Responder and the second-level status NoPassive instead
+// (saml-core §3.4.1 and §3.2.2.2). A passive request with a usable session
+// gets that session as usual.
 func (s *Server) GetSession(w http.ResponseWriter, r *http.Request, req *saml.IdpAuthnRequest) *saml.Session {
 	// if we received login credentials then maybe we can create a session
 	if r.Method == "POST" && r.PostForm.Get("user") != "" {
-		user := User{}
-		lookupErr := s.Store.Get(fmt.Sprintf("/users/%s", r.PostForm.Get("user")), &user)
+		return s.authenticate(w, r, req)
+	}
 
-		// Always perform exactly one bcrypt comparison, whether or not the user
-		// exists or has a usable password, so that response timing does not
-		// reveal which usernames are valid.
-		hash := user.HashedPassword
-		if lookupErr != nil || !isBcryptHash(hash) {
-			hash = dummyPasswordHash
-		}
-		compareErr := compareHashAndPassword(hash, []byte(r.PostForm.Get("password")))
-
-		if lookupErr != nil {
-			s.logger.Printf("ERROR: User '%s' doesn't exists", r.PostForm.Get("user"))
-			s.sendLoginForm(w, req, "Invalid username or password")
-			return nil
-		}
-		if compareErr != nil || !isBcryptHash(user.HashedPassword) {
-			s.logger.Printf("ERROR: Invalid password for user '%s'", r.PostForm.Get("user"))
-			s.sendLoginForm(w, req, "Invalid username or password")
-			return nil
-		}
-
-		session := &saml.Session{
-			ID:           base64.StdEncoding.EncodeToString(randomBytes(32)),
-			NameID:       user.Email,
-			NameIDFormat: nameIDFormatForEmail(user.Email),
-			CreateTime:   saml.TimeNow(),
-			ExpireTime:   saml.TimeNow().Add(sessionMaxAge),
-			Index:        hex.EncodeToString(randomBytes(32)),
-			UserName:     user.Name,
-			// nolint:gocritic // Groups should be a slice here.
-			Groups:                user.Groups[:],
-			UserEmail:             user.Email,
-			UserCommonName:        user.CommonName,
-			UserSurname:           user.Surname,
-			UserGivenName:         user.GivenName,
-			UserScopedAffiliation: user.ScopedAffiliation,
-		}
-		if err := s.Store.Put(fmt.Sprintf("/sessions/%s", session.ID), &session); err != nil {
+	if !isTrue(req.Request.ForceAuthn) {
+		session, err := s.lookupSession(r)
+		if err != nil {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return nil
 		}
-
-		http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure is set when served over https
-			Name:     sessionCookieName,
-			Value:    session.ID,
-			MaxAge:   int(sessionMaxAge.Seconds()),
-			HttpOnly: true,
-			Secure:   r.TLS != nil || r.URL.Scheme == "https",
-			Path:     "/",
-		})
-
-		s.logger.Printf("User '%s' authenticated successfully", r.PostForm.Get("user"))
-		return session
+		if session != nil {
+			return session
+		}
 	}
 
-	if sessionCookie, err := r.Cookie(sessionCookieName); err == nil {
-		session := &saml.Session{}
-		if err := s.Store.Get(fmt.Sprintf("/sessions/%s", sessionCookie.Value), session); err != nil {
-			if err == ErrNotFound {
-				s.sendLoginForm(w, req, "")
-				return nil
-			}
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return nil
-		}
-
-		if saml.TimeNow().After(session.ExpireTime) {
-			s.sendLoginForm(w, req, "")
-			return nil
-		}
-		return session
-	}
-
-	s.sendLoginForm(w, req, "")
+	s.promptLogin(w, req, "")
 	return nil
+}
+
+// authenticate checks the username and password posted in r and, if they
+// are valid, creates a session, sets the session cookie and returns the
+// session. Otherwise it prompts the user to log in again and returns nil.
+func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, req *saml.IdpAuthnRequest) *saml.Session {
+	user := User{}
+	lookupErr := s.Store.Get(fmt.Sprintf("/users/%s", r.PostForm.Get("user")), &user)
+
+	// Always perform exactly one bcrypt comparison, whether or not the user
+	// exists or has a usable password, so that response timing does not
+	// reveal which usernames are valid.
+	hash := user.HashedPassword
+	if lookupErr != nil || !isBcryptHash(hash) {
+		hash = dummyPasswordHash
+	}
+	compareErr := compareHashAndPassword(hash, []byte(r.PostForm.Get("password")))
+
+	if lookupErr != nil {
+		s.logger.Printf("ERROR: User '%s' doesn't exists", r.PostForm.Get("user"))
+		s.promptLogin(w, req, "Invalid username or password")
+		return nil
+	}
+	if compareErr != nil || !isBcryptHash(user.HashedPassword) {
+		s.logger.Printf("ERROR: Invalid password for user '%s'", r.PostForm.Get("user"))
+		s.promptLogin(w, req, "Invalid username or password")
+		return nil
+	}
+
+	session := &saml.Session{
+		ID:           base64.StdEncoding.EncodeToString(randomBytes(32)),
+		NameID:       user.Email,
+		NameIDFormat: nameIDFormatForEmail(user.Email),
+		CreateTime:   saml.TimeNow(),
+		ExpireTime:   saml.TimeNow().Add(sessionMaxAge),
+		Index:        hex.EncodeToString(randomBytes(32)),
+		UserName:     user.Name,
+		// nolint:gocritic // Groups should be a slice here.
+		Groups:                user.Groups[:],
+		UserEmail:             user.Email,
+		UserCommonName:        user.CommonName,
+		UserSurname:           user.Surname,
+		UserGivenName:         user.GivenName,
+		UserScopedAffiliation: user.ScopedAffiliation,
+	}
+	if err := s.Store.Put(fmt.Sprintf("/sessions/%s", session.ID), &session); err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return nil
+	}
+
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure is set when served over https
+		Name:     sessionCookieName,
+		Value:    session.ID,
+		MaxAge:   int(sessionMaxAge.Seconds()),
+		HttpOnly: true,
+		Secure:   r.TLS != nil || r.URL.Scheme == "https",
+		Path:     "/",
+	})
+
+	s.logger.Printf("User '%s' authenticated successfully", r.PostForm.Get("user"))
+	return session
+}
+
+// lookupSession returns the unexpired session named by the session cookie
+// in r, or nil if there is no such cookie, no such session or the session
+// has expired. It returns an error only if the store fails.
+func (s *Server) lookupSession(r *http.Request) (*saml.Session, error) {
+	sessionCookie, err := r.Cookie(sessionCookieName)
+	if err != nil {
+		return nil, nil
+	}
+	session := &saml.Session{}
+	if err := s.Store.Get(fmt.Sprintf("/sessions/%s", sessionCookie.Value), session); err != nil {
+		if err == ErrNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if saml.TimeNow().After(session.ExpireTime) {
+		return nil, nil
+	}
+	return session, nil
+}
+
+// promptLogin asks the user to log in with the login form, showing toast.
+// If the AuthnRequest has IsPassive="true", the identity provider must not
+// interact with the user, so it answers with a SAML error Response with the
+// status Responder and NoPassive instead.
+func (s *Server) promptLogin(w http.ResponseWriter, req *saml.IdpAuthnRequest, toast string) {
+	if !isTrue(req.Request.IsPassive) {
+		s.sendLoginForm(w, req, toast)
+		return
+	}
+	err := req.IDP.SendErrorResponse(w, req, &saml.StatusError{
+		TopLevel:    saml.StatusResponder,
+		SecondLevel: saml.StatusNoPassive,
+		Message:     "the user cannot be authenticated passively",
+	})
+	if err != nil {
+		s.logger.Printf("ERROR: cannot answer a passive request: %s", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+	}
+}
+
+// isTrue reports whether an optional boolean attribute is present and true.
+func isTrue(b *bool) bool {
+	return b != nil && *b
 }
 
 var defaultLoginFormTemplate = template.Must(template.New("saml-post-form").Parse(`` +

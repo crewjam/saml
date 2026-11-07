@@ -52,12 +52,36 @@ type Session struct {
 	UserScopedAffiliation  string
 	EduPersonPrincipalName string `json:",omitempty"`
 
+	// AuthnContextClassRef is the authentication context class the user
+	// was actually authenticated with, such as
+	// "urn:oasis:names:tc:SAML:2.0:ac:classes:X509". DefaultAssertionMaker
+	// asserts it in the AuthnStatement. When empty, PasswordProtectedTransport
+	// is asserted, as before. See IdentityProvider.EnforceRequestedAuthnContext.
+	AuthnContextClassRef string `json:",omitempty"`
+
 	CustomAttributes []Attribute
 }
 
 // SessionProvider is an interface used by IdentityProvider to determine the
 // Session associated with a request. For an example implementation, see
 // GetSession in the samlidp package.
+//
+// IdentityProvider does not act on the ForceAuthn and IsPassive attributes
+// of the AuthnRequest (req.Request.ForceAuthn and req.Request.IsPassive):
+// implementations are responsible for honouring them (saml-core §3.4.1,
+// saml-profiles §4.1.3.4).
+//
+//   - ForceAuthn="true": the user must be authenticated directly, so an
+//     existing session must not be returned. Authenticate the user again
+//     and return a session whose CreateTime, which becomes the assertion's
+//     AuthnInstant, is the time of that new authentication.
+//   - IsPassive="true": the identity provider must not visibly interact with
+//     the user. If a usable session exists, return it as usual. Otherwise do
+//     not prompt the user; answer with a SAML error Response with the status
+//     StatusResponder and the second-level status StatusNoPassive, by calling
+//     IdentityProvider.SendErrorResponse with a *StatusError, and return nil.
+//     This also applies when ForceAuthn is "true" as well and the user cannot
+//     be authenticated again without interaction.
 type SessionProvider interface {
 	// GetSession returns the remote user session associated with the http.Request.
 	//
@@ -373,6 +397,30 @@ type IdentityProvider struct {
 	//
 	// If false, the NameIDPolicy is ignored, as before.
 	EnforceNameIDPolicy bool
+
+	// EnforceRequestedAuthnContext, if true, makes DefaultAssertionMaker
+	// check the AuthnContextClassRef it asserts (Session.AuthnContextClassRef,
+	// or PasswordProtectedTransport when that is empty) against the
+	// RequestedAuthnContext of the AuthnRequest, with the "exact" (or
+	// omitted), "minimum", "maximum" and "better" Comparisons of saml-core
+	// §3.3.2.2.1 as amended by errata E65. When it does not satisfy any of
+	// the requested classes, MakeAssertion returns a *StatusError, and
+	// ServeSSO answers with a Response with the status Responder and the
+	// second-level status NoAuthnContext and no assertion. An unknown
+	// Comparison is answered with Requester. Only AuthnContextClassRefs are
+	// evaluated; a request that names none is always satisfied.
+	//
+	// If false, the default, the RequestedAuthnContext is ignored and the
+	// assertion is made whatever the service provider asked for, as before.
+	EnforceRequestedAuthnContext bool
+
+	// AuthnContextClassStrengths ranks authentication context classes for
+	// the "minimum", "maximum" and "better" Comparisons, when
+	// EnforceRequestedAuthnContext is set: a higher number is stronger, and
+	// classes with the same number are equally strong. A class that is not
+	// in the map is not ranked, and only satisfies a request that names it.
+	// If nil, DefaultAuthnContextClassStrengths is used.
+	AuthnContextClassStrengths map[string]int
 }
 
 // Metadata returns the metadata structure for this identity provider.
@@ -1099,40 +1147,14 @@ type DefaultAssertionMaker struct {
 // MakeAssertion implements AssertionMaker. It produces a SAML assertion from the
 // given request and assigns it to req.Assertion.
 func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Session) error {
+	authnContextClassRef, err := req.authnContextClassRef(session)
+	if err != nil {
+		return err
+	}
+
 	attributes := []Attribute{}
 
-	var attributeConsumingService *AttributeConsumingService
-	for _, acs := range req.SPSSODescriptor.AttributeConsumingServices {
-		if acs.IsDefault != nil && *acs.IsDefault {
-			// explicitly copy loop iterator variables
-			//
-			// c.f. https://github.com/golang/go/wiki/CommonMistakes#using-reference-to-loop-iterator-variable
-			//
-			// (note that I'm pretty sure this isn't strictly necessary because we break out of the loop immediately,
-			// but it certainly doesn't hurt anything and may prevent bugs in the future.)
-			acs := acs
-
-			attributeConsumingService = &acs
-			break
-		}
-	}
-	if attributeConsumingService == nil {
-		for _, acs := range req.SPSSODescriptor.AttributeConsumingServices {
-			// explicitly copy loop iterator variables
-			//
-			// c.f. https://github.com/golang/go/wiki/CommonMistakes#using-reference-to-loop-iterator-variable
-			//
-			// (note that I'm pretty sure this isn't strictly necessary because we break out of the loop immediately,
-			// but it certainly doesn't hurt anything and may prevent bugs in the future.)
-			acs := acs
-
-			attributeConsumingService = &acs
-			break
-		}
-	}
-	if attributeConsumingService == nil {
-		attributeConsumingService = &AttributeConsumingService{}
-	}
+	attributeConsumingService := defaultAttributeConsumingService(req.SPSSODescriptor)
 
 	for _, requestedAttribute := range attributeConsumingService.RequestedAttributes {
 		if requestedAttribute.NameFormat == "urn:oasis:names:tc:SAML:2.0:attrname-format:basic" || requestedAttribute.NameFormat == "urn:oasis:names:tc:SAML:2.0:attrname-format:unspecified" {
@@ -1376,7 +1398,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 				},
 				AuthnContext: AuthnContext{
 					AuthnContextClassRef: &AuthnContextClassRef{
-						Value: "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport",
+						Value: authnContextClassRef,
 					},
 				},
 			},
@@ -1675,4 +1697,20 @@ func (idp *IdentityProvider) signingContext() (*dsig.SigningContext, error) {
 	}
 
 	return signingContext, nil
+}
+
+// defaultAttributeConsumingService returns the SP's AttributeConsumingService
+// marked isDefault, else its first one, else an empty one.
+func defaultAttributeConsumingService(spSSODescriptor *SPSSODescriptor) *AttributeConsumingService {
+	if spSSODescriptor == nil || len(spSSODescriptor.AttributeConsumingServices) == 0 {
+		return &AttributeConsumingService{}
+	}
+	for i := range spSSODescriptor.AttributeConsumingServices {
+		acs := spSSODescriptor.AttributeConsumingServices[i]
+		if acs.IsDefault != nil && *acs.IsDefault {
+			return &acs
+		}
+	}
+	acs := spSSODescriptor.AttributeConsumingServices[0]
+	return &acs
 }
