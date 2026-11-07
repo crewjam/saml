@@ -1,5 +1,11 @@
 // Package samlidp a rudimentary SAML identity provider suitable for
 // testing or as a starting point for a more complex service.
+//
+// The administrative endpoints (/services, /users, /sessions and /shortcuts)
+// are not authenticated: anyone who can reach the server can read and change
+// its users, service providers, sessions and shortcuts. Set
+// Options.AdminMiddleware to protect them, or do not expose the server to
+// untrusted clients.
 package samlidp
 
 import (
@@ -24,6 +30,13 @@ type Options struct {
 	Certificate       *x509.Certificate
 	Store             Store
 	LoginFormTemplate *template.Template
+
+	// AdminMiddleware, if set, wraps the handlers of the administrative
+	// endpoints (/services, /users, /sessions and /shortcuts), for example to
+	// require authentication. It is not applied to /metadata, /sso and
+	// /login, which must stay reachable by browsers and service providers.
+	// If nil, the administrative endpoints are unauthenticated.
+	AdminMiddleware func(http.Handler) http.Handler
 }
 
 // Server represents an IDP server. The server provides the following URLs:
@@ -36,6 +49,9 @@ type Options struct {
 //	/users        - RESTful interface to User objects
 //	/sessions     - RESTful interface to Session objects
 //	/shortcuts    - RESTful interface to Shortcut objects
+//
+// The RESTful interfaces are administrative endpoints. They are only
+// protected if AdminMiddleware is set.
 type Server struct {
 	http.Handler
 	idpConfigMu       sync.RWMutex // protects calls into the IDP
@@ -44,6 +60,10 @@ type Server struct {
 	IDP               saml.IdentityProvider // the underlying IDP
 	Store             Store                 // the data store
 	LoginFormTemplate *template.Template
+
+	// AdminMiddleware, if set, wraps the administrative endpoints. See
+	// Options.AdminMiddleware. Call InitializeHTTP after changing it.
+	AdminMiddleware func(http.Handler) http.Handler
 }
 
 // New returns a new Server
@@ -75,6 +95,7 @@ func New(opts Options) (*Server, error) {
 		logger:            logr,
 		Store:             opts.Store,
 		LoginFormTemplate: opts.LoginFormTemplate,
+		AdminMiddleware:   opts.AdminMiddleware,
 	}
 
 	s.IDP.SessionProvider = s
@@ -107,23 +128,32 @@ func (s *Server) InitializeHTTP() {
 	mux.HandleFunc("/login/{shortcut}", s.HandleIDPInitiated)
 	mux.HandleFunc("/login/{shortcut}/{suffix}", s.HandleIDPInitiated)
 
-	mux.HandleFunc("GET /services/", s.HandleListServices)
-	mux.HandleFunc("GET /services/{id}", s.HandleGetService)
-	mux.HandleFunc("PUT /services/{id}", s.HandlePutService)
-	mux.HandleFunc("POST /services/{id}", s.HandlePutService)
-	mux.HandleFunc("DELETE /services/{id}", s.HandleDeleteService)
+	// The administrative endpoints are wrapped by AdminMiddleware, if set.
+	admin := func(pattern string, handler http.HandlerFunc) {
+		if s.AdminMiddleware == nil {
+			mux.Handle(pattern, handler)
+			return
+		}
+		mux.Handle(pattern, s.AdminMiddleware(handler))
+	}
 
-	mux.HandleFunc("GET /users/", s.HandleListUsers)
-	mux.HandleFunc("GET /users/{id}", s.HandleGetUser)
-	mux.HandleFunc("PUT /users/{id}", s.HandlePutUser)
-	mux.HandleFunc("DELETE /users/{id}", s.HandleDeleteUser)
+	admin("GET /services/", s.HandleListServices)
+	admin("GET /services/{id}", s.HandleGetService)
+	admin("PUT /services/{id}", s.HandlePutService)
+	admin("POST /services/{id}", s.HandlePutService)
+	admin("DELETE /services/{id}", s.HandleDeleteService)
 
-	mux.HandleFunc("GET /sessions/", s.HandleListSessions)
-	mux.HandleFunc("GET /sessions/{id}", s.HandleGetSession)
-	mux.HandleFunc("DELETE /sessions/{id}", s.HandleDeleteSession)
+	admin("GET /users/", s.HandleListUsers)
+	admin("GET /users/{id}", s.HandleGetUser)
+	admin("PUT /users/{id}", s.HandlePutUser)
+	admin("DELETE /users/{id}", s.HandleDeleteUser)
 
-	mux.HandleFunc("GET /shortcuts/", s.HandleListShortcuts)
-	mux.HandleFunc("GET /shortcuts/{id}", s.HandleGetShortcut)
-	mux.HandleFunc("PUT /shortcuts/{id}", s.HandlePutShortcut)
-	mux.HandleFunc("DELETE /shortcuts/{id}", s.HandleDeleteShortcut)
+	admin("GET /sessions/", s.HandleListSessions)
+	admin("GET /sessions/{id}", s.HandleGetSession)
+	admin("DELETE /sessions/{id}", s.HandleDeleteSession)
+
+	admin("GET /shortcuts/", s.HandleListShortcuts)
+	admin("GET /shortcuts/{id}", s.HandleGetShortcut)
+	admin("PUT /shortcuts/{id}", s.HandlePutShortcut)
+	admin("DELETE /shortcuts/{id}", s.HandleDeleteShortcut)
 }
