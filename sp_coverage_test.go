@@ -75,6 +75,23 @@ func TestSpcovMetadataValidDurationAndIntermediates(t *testing.T) {
 	}
 }
 
+func TestSpcovMetadataOmitValidUntil(t *testing.T) {
+	e := spcovSetup(t)
+	e.sp.MetadataValidDuration = time.Hour
+	e.sp.MetadataOmitValidUntil = true
+
+	md := e.sp.Metadata()
+	assert.Check(t, md.ValidUntil.IsZero())
+	assert.Check(t, is.Nil(md.SPSSODescriptors[0].ValidUntil))
+	// The root element must carry validUntil or cacheDuration (§2.3.1).
+	assert.Equal(t, DefaultCacheDuration, md.CacheDuration)
+
+	buf, err := xml.Marshal(md)
+	assert.NilError(t, err)
+	assert.Check(t, !strings.Contains(string(buf), "validUntil"))
+	assert.Check(t, is.Contains(string(buf), `cacheDuration="PT24H"`))
+}
+
 func TestSpcovBindingLocationsMissing(t *testing.T) {
 	e := spcovSetup(t)
 	assert.Equal(t, "", e.sp.GetSSOBindingLocation(SOAPBinding))
