@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"encoding/xml"
+	"fmt"
 	"sort"
 	"strconv"
 	"time"
@@ -1168,8 +1169,24 @@ type Assertion struct {
 	AttributeStatements []AttributeStatement `xml:"urn:oasis:names:tc:SAML:2.0:assertion AttributeStatement"`
 }
 
-// Element returns an etree.Element representing the object in XML form.
+// Element returns an etree.Element representing the object in XML form,
+// in exclusive canonical form.
+//
+// It panics if the assertion cannot be canonicalized, which happens when an
+// element supplied as an *etree.Element (such as Signature, Subject.BaseID
+// or an EncryptedID) uses a namespace prefix that it does not declare. Use
+// CanonicalElement to get an error instead.
 func (a *Assertion) Element() *etree.Element {
+	el, err := a.CanonicalElement()
+	if err != nil {
+		panic(err)
+	}
+	return el
+}
+
+// CanonicalElement is like Element, but returns an error instead of
+// panicking if the assertion cannot be canonicalized.
+func (a *Assertion) CanonicalElement() (*etree.Element, error) {
 	el := etree.NewElement("saml:Assertion")
 	el.CreateAttr("xmlns:saml", "urn:oasis:names:tc:SAML:2.0:assertion")
 	el.CreateAttr("Version", "2.0")
@@ -1191,11 +1208,10 @@ func (a *Assertion) Element() *etree.Element {
 	for _, attributeStatement := range a.AttributeStatements {
 		el.AddChild(attributeStatement.Element())
 	}
-	err := etreeutils.TransformExcC14n(el, canonicalizerPrefixList, false)
-	if err != nil {
-		panic(err)
+	if err := etreeutils.TransformExcC14n(el, canonicalizerPrefixList, false); err != nil {
+		return nil, fmt.Errorf("cannot canonicalize assertion: %w", err)
 	}
-	return el
+	return el, nil
 }
 
 // MarshalXML implements xml.Marshaler
