@@ -638,7 +638,9 @@ func (idp *IdentityProvider) onError(w http.ResponseWriter, r *http.Request, sta
 //
 // If the AssertionMaker returns a *StatusError, a SAML Response with that
 // status and no assertion is sent to the assertion consumer service instead
-// (see SendErrorResponse). If the assertion cannot otherwise be created or
+// (see SendErrorResponse). So is one when the request has a
+// <saml:Subject> that the assertion's Subject does not strongly match, as
+// saml-core §3.4.1.4 requires (see CheckRequestSubject). If the assertion cannot otherwise be created or
 // returned, a StatusInternalServerError response is sent.
 //
 // Set OnError to handle these failures differently.
@@ -679,6 +681,10 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to make assertion: %w", err))
+		return
+	}
+	if statusErr := req.requestSubjectStatusError(); statusErr != nil {
+		idp.sendStatusError(w, r, req, statusErr)
 		return
 	}
 	if err := idp.recordSessionParticipant(r, req, session); err != nil {
