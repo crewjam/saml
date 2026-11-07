@@ -109,9 +109,16 @@ type Options struct {
 // protected if AdminMiddleware is set.
 type Server struct {
 	http.Handler
-	idpConfigMu       sync.RWMutex // protects calls into the IDP
-	logger            logger.Interface
-	serviceProviders  map[string]*saml.EntityDescriptor
+	idpConfigMu      sync.RWMutex // protects calls into the IDP
+	logger           logger.Interface
+	serviceProviders map[string]*saml.EntityDescriptor // by entity ID; protected by idpConfigMu
+
+	// servicesMu serialises the changes to the stored services, so that
+	// the store and serviceProviders change in the same order.
+	servicesMu sync.Mutex
+	// services holds the metadata of each stored service by its store ID
+	// (the :id of /services/:id). Protected by idpConfigMu.
+	services          map[string]*saml.EntityDescriptor
 	IDP               saml.IdentityProvider // the underlying IDP
 	Store             Store                 // the data store
 	LoginFormTemplate *template.Template
@@ -145,6 +152,7 @@ func New(opts Options) (*Server, error) {
 
 	s := &Server{
 		serviceProviders: map[string]*saml.EntityDescriptor{},
+		services:         map[string]*saml.EntityDescriptor{},
 		IDP: saml.IdentityProvider{
 			Key:         opts.Key,
 			Signer:      opts.Signer,
