@@ -276,12 +276,13 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 	}
 
 	var keyDescriptors []KeyDescriptor
+	// Metadata publishes only the SP's own certificate. Intermediates belong
+	// in signatures' KeyInfo, not here: consumers treat each certificate in
+	// a KeyDescriptor as a key the SP uses, and appending their DER to the
+	// leaf's made the certificate unparseable.
 	var certBytes []byte
 	if sp.Certificate != nil {
 		certBytes = sp.Certificate.Raw
-		for _, intermediate := range sp.Intermediates {
-			certBytes = append(certBytes, intermediate.Raw...)
-		}
 	}
 
 	// Advertise a key for encryption only if it is one the IdP can encrypt
