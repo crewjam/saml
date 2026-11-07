@@ -426,9 +426,26 @@ func TestParseXMLAttributeQueryResponseSignatures(t *testing.T) {
 		extra.ID = "id-injected"
 		el.AddChild(extra.Element())
 		_, err := e.sp.ParseXMLAttributeQueryResponse(spcovSerialize(t, spcovSOAPEnvelope(el)), query)
-		assert.Check(t, is.ErrorContains(spcovPrivateErr(t, err), "neither the Response nor its Assertion is signed"))
+		// The unsigned Response carries two assertions, so it is refused before either is looked at.
+		assert.Check(t, is.ErrorContains(spcovPrivateErr(t, err), "an unsigned Response must contain exactly one Assertion or EncryptedAssertion, not 2"))
 	})
 }
+
+// Each assertion of an unsigned response costs an RSA decryption or a
+// signature check, so an unsigned response with many is refused before any
+// of them is decrypted.
+func TestParseXMLAttributeQueryResponseUnsignedWithManyAssertions(t *testing.T) {
+	e := aqSetup(t)
+	query := e.aqQuery(t)
+	el := e.aqResponseEl(t, query, aqOptions{noAssertion: true})
+	encrypted := e.encryptedAssertion(t, spcovSerialize(t, e.aqAssertion(query).Element()))
+	for i := 0; i < 200; i++ {
+		el.AddChild(encrypted.Copy())
+	}
+	_, err := e.sp.ParseXMLAttributeQueryResponse(spcovSerialize(t, spcovSOAPEnvelope(el)), query)
+	assert.Check(t, is.Error(spcovPrivateErr(t, err), "an unsigned Response must contain exactly one Assertion or EncryptedAssertion, not 200"))
+}
+
 
 // aqKeyPair returns a new RSA key and a certificate for it that is valid at
 // spcovNow.
