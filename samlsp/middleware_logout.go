@@ -44,6 +44,19 @@ var errSLOUnexpectedMessage = errors.New("saml: single logout endpoint received 
 // RelayState. The IDP answers with a LogoutResponse to
 // ServiceProvider.SloURL, which ServeHTTP handles (see ServeSLO).
 //
+// If LogoutBinding is saml.SOAPBinding, the IDP metadata lists a SOAP
+// SingleLogoutService and the session knows the full NameID of its user (see
+// SessionWithSAMLNameID), the LogoutRequest is instead sent to the IDP from
+// the server, with ServiceProvider.SendSOAPLogoutRequest and the request's
+// context (back-channel single logout, saml-profiles §4.4). The local
+// session is then deleted and the browser redirected to "/", as after a
+// LogoutResponse. If the IDP cannot be reached or does not answer Success,
+// the error is passed to OnError (whose response is discarded), the local
+// session is still deleted, and the browser is sent to the IDP with a
+// LogoutRequest over a front-channel binding, if the IDP supports one, so
+// that the IDP can still end its session with the browser's help;
+// otherwise it is redirected to "/".
+//
 // If the request has no session, or the IDP metadata lists no
 // SingleLogoutService, only the local session is ended and the browser is
 // redirected to "/".
@@ -77,12 +90,26 @@ func (m *Middleware) HandleStartLogout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if soapNameID, ok := m.soapLogoutNameID(session); ok {
+		m.startSOAPLogout(w, r, soapNameID, opts)
+		return
+	}
+	m.startFrontChannelLogout(w, r, nameID, opts, true)
+}
+
+// startFrontChannelLogout sends the browser to the IDP with a LogoutRequest
+// for nameID, over the binding sloBinding picks, and deletes the local
+// session first if deleteSession is set. If the IDP supports no such
+// binding, the browser is redirected to "/".
+func (m *Middleware) startFrontChannelLogout(w http.ResponseWriter, r *http.Request, nameID string, opts []saml.LogoutRequestOption, deleteSession bool) {
 	binding := m.sloBinding()
 	if binding == "" {
 		// The IDP does not support single logout; end the local session only.
-		if err := m.Session.DeleteSession(w, r); err != nil {
-			m.OnError(w, r, err)
-			return
+		if deleteSession {
+			if err := m.Session.DeleteSession(w, r); err != nil {
+				m.OnError(w, r, err)
+				return
+			}
 		}
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
@@ -104,9 +131,11 @@ func (m *Middleware) HandleStartLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := m.Session.DeleteSession(w, r); err != nil {
-		m.OnError(w, r, err)
-		return
+	if deleteSession {
+		if err := m.Session.DeleteSession(w, r); err != nil {
+			m.OnError(w, r, err)
+			return
+		}
 	}
 
 	m.sendLogoutRequest(w, r, binding, logoutRequest, relayState)
@@ -139,12 +168,13 @@ func (m *Middleware) sendLogoutRequest(w http.ResponseWriter, r *http.Request, b
 	}
 }
 
-// sloBinding returns the binding to send logout messages to the IDP with:
-// LogoutBinding if it is set and the IDP supports it, otherwise
-// HTTP-Redirect if the IDP supports it, otherwise HTTP-POST if it supports
-// that, otherwise "".
+// sloBinding returns the binding to send logout messages to the IDP with
+// through the browser: LogoutBinding if it is set, is not the SOAP binding,
+// and the IDP supports it, otherwise HTTP-Redirect if the IDP supports it,
+// otherwise HTTP-POST if it supports that, otherwise "".
 func (m *Middleware) sloBinding() string {
-	if m.LogoutBinding != "" && m.ServiceProvider.GetSLOBindingLocation(m.LogoutBinding) != "" {
+	if m.LogoutBinding != "" && m.LogoutBinding != saml.SOAPBinding &&
+		m.ServiceProvider.GetSLOBindingLocation(m.LogoutBinding) != "" {
 		return m.LogoutBinding
 	}
 	for _, binding := range []string{saml.HTTPRedirectBinding, saml.HTTPPostBinding} {
@@ -167,10 +197,16 @@ func (m *Middleware) sloBinding() string {
 //
 // A LogoutRequest is IDP initiated single logout. Once it is validated, the
 // session of the requesting browser is deleted and the browser is sent back
-// to the IDP with a LogoutResponse. A SessionProvider that keeps sessions on
-// the server, rather than in a cookie, should also end the sessions of the
-// request's NameID; such applications can handle SloURL themselves with
-// ServiceProvider.ValidateLogoutRequest.
+// to the IDP with a LogoutResponse. If Session implements
+// SessionTerminator, the sessions the request names are also ended there,
+// as for a request sent with the SOAP binding, so that other copies of the
+// session, in other browsers, are refused too: those with one of its
+// SessionIndexes or, if it has none, every session of its NameID issued
+// before it. A session provider that cannot do that
+// (ErrSessionTerminationUnsupported) only has the browser's session
+// deleted, as before; any other error ending them is passed to OnError,
+// whose response is discarded, and the IDP is still answered with Success,
+// since the session of the browser it sent has ended.
 //
 // A POST with Content-Type text/xml is a LogoutRequest sent with the SOAP
 // binding (back-channel single logout, saml-profiles §4.4): the IDP sends it
@@ -252,6 +288,7 @@ func (m *Middleware) serveSLORequest(w http.ResponseWriter, r *http.Request) {
 		m.OnError(w, r, err)
 		return
 	}
+	m.terminateFrontChannelSessions(r, logoutRequest)
 
 	// The RelayState of the request must be returned unchanged with the
 	// response (saml-bindings-2.0-os sections 3.4.3 and 3.5.3).

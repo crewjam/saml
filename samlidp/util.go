@@ -1,6 +1,7 @@
 package samlidp
 
 import (
+	"crypto/x509"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -27,7 +28,16 @@ var MaxServiceMetadataSize int64 = 10 << 20
 // getSPMetadata reads service provider metadata from r: an EntityDescriptor,
 // or an EntitiesDescriptor holding exactly one entity with an
 // SPSSODescriptor. With several, it cannot tell which one is meant.
-func getSPMetadata(r io.Reader) (spMetadata *saml.EntityDescriptor, err error) {
+func getSPMetadata(r io.Reader) (*saml.EntityDescriptor, error) {
+	return getVerifiedSPMetadata(r, nil)
+}
+
+// getVerifiedSPMetadata is getSPMetadata, except that when certs is not
+// empty the root element of the metadata must carry a valid enveloped XML
+// signature made with one of certs, and only the content the signature
+// covers is parsed (see saml.VerifyMetadataSignature). Unsigned metadata is
+// then refused.
+func getVerifiedSPMetadata(r io.Reader, certs []*x509.Certificate) (spMetadata *saml.EntityDescriptor, err error) {
 	limit := MaxServiceMetadataSize
 	var data []byte
 	if data, err = io.ReadAll(io.LimitReader(r, limit+1)); err != nil {
@@ -35,6 +45,12 @@ func getSPMetadata(r io.Reader) (spMetadata *saml.EntityDescriptor, err error) {
 	}
 	if int64(len(data)) > limit {
 		return nil, fmt.Errorf("metadata is larger than %d bytes (MaxServiceMetadataSize)", limit)
+	}
+
+	if len(certs) > 0 {
+		if data, err = saml.VerifyMetadataSignature(data, certs); err != nil {
+			return nil, err
+		}
 	}
 
 	spMetadata = &saml.EntityDescriptor{}

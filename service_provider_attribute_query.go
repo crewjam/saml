@@ -239,7 +239,9 @@ func (sp *ServiceProvider) postSOAP(ctx context.Context, location string, envelo
 //     NameQualifier or SPNameQualifier means the IdP or this service
 //     provider;
 //   - it has Conditions that are currently valid and an AudienceRestriction
-//     naming this service provider (or passes ValidateAudienceRestriction);
+//     naming this service provider (or passes ValidateAudienceRestriction),
+//     and, with RejectUnknownConditions, no condition this package does not
+//     understand (or passes ValidateUnknownConditions);
 //   - any SubjectConfirmationData is currently valid, and, if it has an
 //     InResponseTo, is InResponseTo query.ID.
 //
@@ -331,8 +333,14 @@ func soapResponseElement(soapResponseXML []byte) (*etree.Element, error) {
 // attribute query responses: those of its AttributeAuthorityDescriptors, or
 // if they have none, those of its IDPSSODescriptors.
 func (sp *ServiceProvider) attributeAuthoritySigningCerts() ([]*x509.Certificate, error) {
+	if err := sp.checkIDPMetadataNotExpired(); err != nil {
+		return nil, err
+	}
 	var keyDescriptors []KeyDescriptor
-	for _, attributeAuthority := range sp.IDPMetadata.AttributeAuthorityDescriptors {
+	for i, attributeAuthority := range sp.IDPMetadata.AttributeAuthorityDescriptors {
+		if err := sp.checkRoleNotExpired(&sp.IDPMetadata.AttributeAuthorityDescriptors[i].RoleDescriptor, "AttributeAuthorityDescriptor"); err != nil {
+			return nil, err
+		}
 		keyDescriptors = append(keyDescriptors, attributeAuthority.KeyDescriptors...)
 	}
 	certs, err := signingCerts(keyDescriptors)
@@ -507,6 +515,9 @@ func (sp *ServiceProvider) validateAttributeQueryAssertion(assertion *Assertion,
 	}
 	if !assertion.Conditions.NotOnOrAfter.IsZero() && pastDeadline(assertion.Conditions.NotOnOrAfter, now) {
 		return errors.New("assertion Conditions is expired")
+	}
+	if err := sp.validateUnknownConditions(assertion); err != nil {
+		return err
 	}
 	return sp.validateAudienceRestriction(assertion)
 }

@@ -296,6 +296,26 @@ type ServiceProvider struct {
 	// §2.5.1.4).
 	ValidateAudienceRestriction func(assertion *Assertion) error
 
+	// RejectUnknownConditions, if true, refuses an assertion whose
+	// Conditions has child elements this package does not understand, named
+	// in Conditions.UnknownConditions: anything but AudienceRestriction,
+	// OneTimeUse and ProxyRestriction, such as a saml:Condition extended
+	// with xsi:type. saml-core §2.5.1.1 makes such an assertion
+	// Indeterminate, and says it MUST be rejected; the error matches
+	// ErrUnsupported. It is off by default, so such conditions are ignored,
+	// because some IdPs send extension conditions (delegation restrictions,
+	// for example) that refusing would break. ValidateUnknownConditions, if
+	// set, decides instead.
+	RejectUnknownConditions bool
+
+	// ValidateUnknownConditions, if set, decides an assertion whose
+	// Conditions has child elements this package does not understand (see
+	// RejectUnknownConditions), whatever RejectUnknownConditions says:
+	// return nil to accept the assertion, or an error to refuse it. It is
+	// called only when there are unknown conditions, and for login and
+	// attribute query assertions alike.
+	ValidateUnknownConditions func(assertion *Assertion) error
+
 	// ValidateRequestID allows you to override the default request ID validation.
 	// If nil, the default request ID validation is used. With AllowIDPInitiated
 	// set, it also decides a non-empty assertion SubjectConfirmationData
@@ -326,6 +346,29 @@ type ServiceProvider struct {
 	// certificates as a result. Enabling this allows interoperating with
 	// them.
 	IgnoreCertificateExpiry bool
+
+	// RejectExpiredIDPMetadata, if true, refuses to rely on IDPMetadata once
+	// it has expired: when the signing certificates for a Response,
+	// Assertion, ArtifactResponse, LogoutRequest, LogoutResponse or attribute
+	// query response are taken from IDPMetadata, and the validUntil of the
+	// EntityDescriptor, or of an IDPSSODescriptor (or, for attribute query
+	// responses, AttributeAuthorityDescriptor) they are taken from, has
+	// passed, the message is refused with an error matching ErrExpired (and
+	// ErrInvalidSignature, for XML signatures). saml-metadata-2.0-os §4.3.1
+	// says expired metadata must not be relied on and a fresh copy must be
+	// retrieved. When IDPCertificate or IDPCertificateFingerprint is set the
+	// certificates do not come from IDPMetadata, and it is not checked.
+	//
+	// Only validUntil is checked; cacheDuration is not, since the
+	// ServiceProvider does not know when IDPMetadata was retrieved. The
+	// samlsp Parse and Fetch metadata functions set the ValidUntil of the
+	// returned EntityDescriptor to the earliest validUntil of the entity and
+	// of the EntitiesDescriptor elements that enclose it.
+	//
+	// It is off by default, because metadata whose validUntil has passed is
+	// commonly kept in use, and enabling this rejects every login until the
+	// metadata is refreshed.
+	RejectExpiredIDPMetadata bool
 
 	// RejectSHA1Signatures, if true, refuses messages from the IDP that are
 	// signed with a SHA-1 based algorithm: an XML signature whose
@@ -665,7 +708,20 @@ func (sp *ServiceProvider) GetSSOBindingLocation(binding string) string {
 // specified type
 func (sp *ServiceProvider) GetArtifactBindingLocation(binding string) string {
 	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
+		// The deprecated IDPSSODescriptor.ArtifactResolutionServices is
+		// consulted first, so that a caller that changed it after parsing
+		// the metadata gets what it set. The indexed endpoints are used when
+		// it is empty, as it is when the descriptor was built in code with
+		// only SSODescriptor.ArtifactResolutionServices.
 		for _, artifactResolutionService := range idpSSODescriptor.ArtifactResolutionServices {
+			if artifactResolutionService.Binding == binding {
+				return artifactResolutionService.Location
+			}
+		}
+		if len(idpSSODescriptor.ArtifactResolutionServices) > 0 {
+			continue
+		}
+		for _, artifactResolutionService := range idpSSODescriptor.SSODescriptor.ArtifactResolutionServices {
 			if artifactResolutionService.Binding == binding {
 				return artifactResolutionService.Location
 			}
@@ -690,6 +746,14 @@ func (sp *ServiceProvider) GetSLOBindingLocation(binding string) string {
 // getIDPSigningCerts returns the certificates which we can use to verify things
 // signed by the IDP in PEM format, or nil if no such certificate is found.
 func (sp *ServiceProvider) getIDPSigningCerts() ([]*x509.Certificate, error) {
+	if err := sp.checkIDPMetadataNotExpired(); err != nil {
+		return nil, err
+	}
+	for i := range sp.IDPMetadata.IDPSSODescriptors {
+		if err := sp.checkRoleNotExpired(&sp.IDPMetadata.IDPSSODescriptors[i].RoleDescriptor, "IDPSSODescriptor"); err != nil {
+			return nil, err
+		}
+	}
 	var keyDescriptors []KeyDescriptor
 	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
 		keyDescriptors = append(keyDescriptors, idpSSODescriptor.KeyDescriptors...)
@@ -702,6 +766,31 @@ func (sp *ServiceProvider) getIDPSigningCerts() ([]*x509.Certificate, error) {
 		return nil, errors.New("cannot find any signing certificate in the IDP SSO descriptor")
 	}
 	return certs, nil
+}
+
+// checkIDPMetadataNotExpired returns an error matching ErrExpired if
+// RejectExpiredIDPMetadata is set and the validUntil of the IDPMetadata
+// EntityDescriptor has passed.
+func (sp *ServiceProvider) checkIDPMetadataNotExpired() error {
+	if !sp.RejectExpiredIDPMetadata || sp.IDPMetadata.ValidUntil.IsZero() {
+		return nil
+	}
+	if now := sp.now(); !now.Before(sp.IDPMetadata.ValidUntil) {
+		return classify(fmt.Errorf("IDP metadata expired at %s", sp.IDPMetadata.ValidUntil.UTC().Format(time.RFC3339)), ErrExpired)
+	}
+	return nil
+}
+
+// checkRoleNotExpired is checkIDPMetadataNotExpired for a role descriptor
+// of the IDPMetadata, named kind.
+func (sp *ServiceProvider) checkRoleNotExpired(role *RoleDescriptor, kind string) error {
+	if !sp.RejectExpiredIDPMetadata || role.ValidUntil == nil || role.ValidUntil.IsZero() {
+		return nil
+	}
+	if now := sp.now(); !now.Before(*role.ValidUntil) {
+		return classify(fmt.Errorf("IDP metadata %s expired at %s", kind, role.ValidUntil.UTC().Format(time.RFC3339)), ErrExpired)
+	}
+	return nil
 }
 
 // signingCerts parses the certificates in keyDescriptors that may be used for
@@ -1656,7 +1745,7 @@ func (sp *ServiceProvider) decryptElement(encryptedEl *etree.Element) (*etree.El
 	for i, k := range sp.DecryptionKeys {
 		keys = append(keys, namedDecryptionKey{fmt.Sprintf("DecryptionKeys[%d]", i), k})
 	}
-	return decryptWithKeys(encryptedEl, keys)
+	return decryptWithKeys(encryptedEl, keys, sp.entityID())
 }
 
 // parsePlaintext parses the plaintext of a decrypted element and returns its
@@ -1681,16 +1770,26 @@ func parsePlaintext(plaintextEl []byte) (*etree.Element, error) {
 }
 
 // decryptWithKey decrypts encryptedDataEl, the EncryptedData child of
-// encryptedEl, with decryptionKey. The content key is wrapped in an
-// EncryptedKey either beside the EncryptedData or inside its KeyInfo.
-func decryptWithKey(decryptionKey interface{}, encryptedEl, encryptedDataEl *etree.Element) ([]byte, error) {
-	key := decryptionKey
-	keyEl := encryptedEl.FindElement("./EncryptedKey")
-	if keyEl != nil {
-		var err error
-		key, err = xmlenc.Decrypt(decryptionKey, keyEl)
-		if err != nil {
+// encryptedEl, with decryptionKey. If encryptedKeyEl is not nil, it is an
+// EncryptedKey, beside the EncryptedData or inside its KeyInfo, that holds
+// the content key wrapped with decryptionKey.
+func decryptWithKey(decryptionKey interface{}, encryptedEl, encryptedKeyEl, encryptedDataEl *etree.Element) ([]byte, error) {
+	if encryptedKeyEl == nil {
+		return xmlenc.Decrypt(decryptionKey, encryptedDataEl)
+	}
+	key, err := xmlenc.Decrypt(decryptionKey, encryptedKeyEl)
+	if err != nil {
+		if encryptedKeyEl.Parent() == encryptedEl {
 			return nil, classify(fmt.Errorf("failed to decrypt key from response: %w", err), ErrDecryptionFailed)
+		}
+		return nil, err
+	}
+	// The block ciphers unwrap an EncryptedKey in KeyInfo themselves, so
+	// hand them the EncryptedData without one, now that the key is known.
+	if encryptedDataEl.FindElement("./KeyInfo/EncryptedKey") != nil {
+		encryptedDataEl = encryptedDataEl.Copy()
+		for _, el := range encryptedDataEl.FindElements("./KeyInfo/EncryptedKey") {
+			el.Parent().RemoveChild(el)
 		}
 	}
 	return xmlenc.Decrypt(key, encryptedDataEl)
@@ -1819,6 +1918,9 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if !assertion.Conditions.NotOnOrAfter.IsZero() && pastDeadline(assertion.Conditions.NotOnOrAfter, now) {
 		return classify(fmt.Errorf("assertion Conditions is expired"), ErrExpired)
 	}
+	if err := sp.validateUnknownConditions(assertion); err != nil {
+		return err
+	}
 
 	if err := sp.validateAudienceRestriction(assertion); err != nil {
 		return err
@@ -1827,6 +1929,30 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 		return err
 	}
 	return nil
+}
+
+// validateUnknownConditions decides an assertion whose Conditions has a
+// child element this package does not understand. Its validity cannot be
+// determined, and an Indeterminate assertion MUST be rejected (saml-core
+// §2.5.1.1, lines 872-881), so with RejectUnknownConditions it is refused;
+// otherwise the conditions are ignored. ValidateUnknownConditions, if set,
+// decides instead.
+func (sp *ServiceProvider) validateUnknownConditions(assertion *Assertion) error {
+	unknown := assertion.Conditions.UnknownConditions
+	if len(unknown) == 0 {
+		return nil
+	}
+	if sp.ValidateUnknownConditions != nil {
+		return sp.ValidateUnknownConditions(assertion)
+	}
+	if !sp.RejectUnknownConditions {
+		return nil
+	}
+	names := make([]string, len(unknown))
+	for i, name := range unknown {
+		names[i] = "{" + name.Space + "}" + name.Local
+	}
+	return classify(fmt.Errorf("assertion Conditions has unrecognised conditions %q: the assertion is Indeterminate", names), ErrUnsupported)
 }
 
 // validateAuthnContextClassRef checks, if ValidateAuthnContextClassRef is
@@ -2194,8 +2320,15 @@ func (sp *ServiceProvider) validatedElement(el *etree.Element) (*etree.Element, 
 // set). Its errors are classified as validateSignature's are.
 func (sp *ServiceProvider) verifySignedElement(el *etree.Element, metadataCerts func() ([]*x509.Certificate, error)) (*etree.Element, error) {
 	signed, err := sp.validateSignatureUnclassified(el, metadataCerts)
-	if err == nil || err == errSignatureElementNotPresent {
-		return signed, err
+	if err == errSignatureElementNotPresent {
+		return nil, err
+	}
+	if err == nil {
+		// el still carries its Signature (and ID); signed may not.
+		if err = checkSignatureReference(el); err == nil {
+			return signed, nil
+		}
+		err = fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
 	}
 	return nil, classify(err, ErrInvalidSignature)
 }

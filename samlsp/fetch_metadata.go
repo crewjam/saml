@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/crewjam/saml/internal/xmlroundtrip"
 
@@ -29,6 +30,16 @@ import (
 // is returned: ParseMetadata cannot tell which of several IDPs the caller
 // means to trust. Use ParseMetadataByEntityID to pick one out of an
 // aggregate.
+//
+// When the entity is taken from an <EntitiesDescriptor>, the validUntil and
+// cacheDuration of the enclosing <EntitiesDescriptor> elements are carried
+// down to it, since the caching policy of a parent element takes precedence
+// (saml-metadata-2.0-os §4.3.1): the returned ValidUntil is the earliest
+// validUntil of the entity and of the aggregates that enclose it, and
+// CacheDuration the shortest cacheDuration, among those that are set.
+// ParseMetadataByEntityID and the signed and Fetch variants do the same.
+// See saml.ServiceProvider.RejectExpiredIDPMetadata to refuse to rely on
+// metadata whose validUntil has passed.
 //
 // ParseMetadata does not check a signature on the metadata, so the
 // metadata must come from a source the caller trusts. See
@@ -78,6 +89,9 @@ func ParseMetadata(data []byte) (*saml.EntityDescriptor, error) {
 // ParseMetadata, which returns the first entity with an IDPSSODescriptor, this
 // lets the caller pick a specific IDP out of an aggregate.
 //
+// Like ParseMetadata, it carries the validUntil and cacheDuration of the
+// enclosing <EntitiesDescriptor> elements down to the returned entity.
+//
 // It returns an error if no entity with that entityID is found.
 func ParseMetadataByEntityID(data []byte, entityID string) (*saml.EntityDescriptor, error) {
 	if err := xmlroundtrip.Validate(data); err != nil {
@@ -94,7 +108,7 @@ func ParseMetadataByEntityID(data []byte, entityID string) (*saml.EntityDescript
 		if err := xml.Unmarshal(data, entities); err != nil {
 			return nil, err
 		}
-		if entity := findEntityByID(entities, entityID); entity != nil {
+		if entity := findEntityByID(entities, entityID, metadataValidity{}); entity != nil {
 			return entity, nil
 		}
 	} else {
@@ -163,19 +177,84 @@ func metadataRootElement(data []byte) (xml.Name, error) {
 }
 
 // findEntityByID returns the first EntityDescriptor in entities, or in any
-// EntitiesDescriptor nested in it, whose entityID is entityID.
-func findEntityByID(entities *saml.EntitiesDescriptor, entityID string) *saml.EntityDescriptor {
+// EntitiesDescriptor nested in it, whose entityID is entityID, with the
+// validity of entities and of the aggregates enclosing it (outer) applied.
+func findEntityByID(entities *saml.EntitiesDescriptor, entityID string, outer metadataValidity) *saml.EntityDescriptor {
+	validity := outer.narrow(entities.ValidUntil, entities.CacheDuration)
 	for i := range entities.EntityDescriptors {
 		if entities.EntityDescriptors[i].EntityID == entityID {
-			return &entities.EntityDescriptors[i]
+			entity := &entities.EntityDescriptors[i]
+			validity.applyTo(entity)
+			return entity
 		}
 	}
 	for i := range entities.EntitiesDescriptors {
-		if entity := findEntityByID(&entities.EntitiesDescriptors[i], entityID); entity != nil {
+		if entity := findEntityByID(&entities.EntitiesDescriptors[i], entityID, validity); entity != nil {
 			return entity
 		}
 	}
 	return nil
+}
+
+// metadataValidity is the caching policy that enclosing EntitiesDescriptor
+// elements impose on the entities in them: the earliest validUntil and the
+// shortest cacheDuration among them, nil where none sets one.
+type metadataValidity struct {
+	validUntil    *time.Time
+	cacheDuration *time.Duration
+}
+
+// narrow returns v further restricted by an EntitiesDescriptor's
+// validUntil and cacheDuration, either of which may be nil.
+func (v metadataValidity) narrow(validUntil *time.Time, cacheDuration *time.Duration) metadataValidity {
+	if validUntil != nil && !validUntil.IsZero() && (v.validUntil == nil || validUntil.Before(*v.validUntil)) {
+		v.validUntil = validUntil
+	}
+	if cacheDuration != nil && *cacheDuration > 0 && (v.cacheDuration == nil || *cacheDuration < *v.cacheDuration) {
+		v.cacheDuration = cacheDuration
+	}
+	return v
+}
+
+// applyTo sets entity's ValidUntil and CacheDuration to the earliest and
+// shortest of its own and v's, so that the parent's policy takes
+// precedence (saml-metadata-2.0-os §4.3.1).
+func (v metadataValidity) applyTo(entity *saml.EntityDescriptor) {
+	if v.validUntil != nil && (entity.ValidUntil.IsZero() || v.validUntil.Before(entity.ValidUntil)) {
+		entity.ValidUntil = *v.validUntil
+	}
+	if v.cacheDuration != nil && (entity.CacheDuration <= 0 || *v.cacheDuration < entity.CacheDuration) {
+		entity.CacheDuration = *v.cacheDuration
+	}
+}
+
+// entitiesDescriptorValidity reads the validUntil and cacheDuration
+// attributes of an <EntitiesDescriptor> start element.
+func entitiesDescriptorValidity(start xml.StartElement) (*time.Time, *time.Duration, error) {
+	var validUntil *time.Time
+	var cacheDuration *time.Duration
+	for _, attr := range start.Attr {
+		if attr.Name.Space != "" {
+			continue
+		}
+		switch attr.Name.Local {
+		case "validUntil":
+			var t saml.RelaxedTime
+			if err := t.UnmarshalText([]byte(attr.Value)); err != nil {
+				return nil, nil, err
+			}
+			vu := time.Time(t)
+			validUntil = &vu
+		case "cacheDuration":
+			var d saml.Duration
+			if err := d.UnmarshalText([]byte(attr.Value)); err != nil {
+				return nil, nil, err
+			}
+			cd := time.Duration(d)
+			cacheDuration = &cd
+		}
+	}
+	return validUntil, cacheDuration, nil
 }
 
 // metadataNamespace is the SAML 2.0 metadata namespace.
@@ -183,14 +262,17 @@ const metadataNamespace = "urn:oasis:names:tc:SAML:2.0:metadata"
 
 // firstIDPEntity returns the first <EntityDescriptor> with an
 // IDPSSODescriptor in the <EntitiesDescriptor> aggregate data, or in any
-// <EntitiesDescriptor> nested in it, in document order. It returns nil if
-// there is none.
+// <EntitiesDescriptor> nested in it, in document order, with the validUntil
+// and cacheDuration of the aggregates enclosing it applied (see
+// metadataValidity). It returns nil if there is none.
 //
 // EntitiesDescriptor keeps nested aggregates and entities in separate
 // slices, which loses their relative order, so data is walked token by
 // token instead.
 func firstIDPEntity(data []byte) (*saml.EntityDescriptor, error) {
 	decoder := xml.NewDecoder(bytes.NewReader(data))
+	// validity[i] is the policy of the i+1 enclosing EntitiesDescriptors.
+	validity := []metadataValidity{{}}
 	for {
 		token, err := decoder.Token()
 		if err == io.EOF {
@@ -198,6 +280,14 @@ func firstIDPEntity(data []byte) (*saml.EntityDescriptor, error) {
 		}
 		if err != nil {
 			return nil, err
+		}
+		if end, ok := token.(xml.EndElement); ok {
+			// Other elements are skipped or decoded whole, so only the
+			// end of an EntitiesDescriptor is seen here.
+			if end.Name.Space == metadataNamespace && end.Name.Local == "EntitiesDescriptor" && len(validity) > 1 {
+				validity = validity[:len(validity)-1]
+			}
+			continue
 		}
 		start, ok := token.(xml.StartElement)
 		if !ok {
@@ -212,12 +302,18 @@ func firstIDPEntity(data []byte) (*saml.EntityDescriptor, error) {
 		switch start.Name.Local {
 		case "EntitiesDescriptor":
 			// descend into the aggregate
+			validUntil, cacheDuration, err := entitiesDescriptorValidity(start)
+			if err != nil {
+				return nil, err
+			}
+			validity = append(validity, validity[len(validity)-1].narrow(validUntil, cacheDuration))
 		case "EntityDescriptor":
 			entity := &saml.EntityDescriptor{}
 			if err := decoder.DecodeElement(entity, &start); err != nil {
 				return nil, err
 			}
 			if len(entity.IDPSSODescriptors) > 0 {
+				validity[len(validity)-1].applyTo(entity)
 				return entity, nil
 			}
 		default:

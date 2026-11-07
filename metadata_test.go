@@ -380,7 +380,7 @@ func TestAffiliationDescriptorOmitsUnsetDurations(t *testing.T) {
 	buf, err := xml.Marshal(ad)
 	assert.NilError(t, err)
 	assert.Check(t, is.Equal(string(buf),
-		`<AffiliationDescriptor affiliationOwnerID="https://example.com/owner" ID=""></AffiliationDescriptor>`))
+		`<AffiliationDescriptor affiliationOwnerID="https://example.com/owner"></AffiliationDescriptor>`))
 
 	var ad2 AffiliationDescriptor
 	assert.NilError(t, xml.Unmarshal(buf, &ad2))

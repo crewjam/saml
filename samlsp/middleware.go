@@ -92,6 +92,12 @@ type Middleware struct {
 	// supports it, HTTP-POST otherwise. The HTTP-POST-SimpleSign binding
 	// signs messages with ServiceProvider.Key and SignatureMethod, which
 	// must be set.
+	//
+	// saml.SOAPBinding makes HandleStartLogout send its LogoutRequest from
+	// the server, signed with ServiceProvider.Key, when the IDP metadata has
+	// a SOAP SingleLogoutService endpoint (see HandleStartLogout). The
+	// LogoutResponses to IDP initiated logout are then sent with the
+	// default front-channel binding.
 	LogoutBinding string
 }
 
@@ -325,7 +331,10 @@ func (m *Middleware) writePostForm(w http.ResponseWriter, scriptHash string, for
 	w.Header().Add("Content-type", "text/html")
 	setNoCacheHeaders(w.Header())
 	var buf bytes.Buffer
-	buf.WriteString(`<!DOCTYPE html><html><body>`)
+	buf.WriteString(`<!DOCTYPE html>` +
+		`<html xmlns="http://www.w3.org/1999/xhtml">` +
+		`<head><title>Continue</title></head>` +
+		`<body>`)
 	buf.Write(form)
 	buf.WriteString(`</body></html>`)
 	if _, err := w.Write(buf.Bytes()); err != nil {
