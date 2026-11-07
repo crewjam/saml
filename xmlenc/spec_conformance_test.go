@@ -43,7 +43,7 @@ func TestSpecSig_Conformance_4_2_MandatoryEncryptionAlgorithms(t *testing.T) {
 		_, registered := decrypters[alg]
 		assert.Assert(t, !registered)
 		RegisterDecrypter(PKCS1v15())
-		t.Cleanup(func() { delete(decrypters, alg) })
+		t.Cleanup(func() { UnregisterDecrypter(alg) })
 
 		el, err := PKCS1v15().Encrypt(cert, plaintext, nil)
 		assert.NilError(t, err)

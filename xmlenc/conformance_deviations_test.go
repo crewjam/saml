@@ -41,7 +41,7 @@ func TestConformanceDeviation_OptInDecrypters(t *testing.T) {
 			_, registered := decrypters[alg]
 			assert.Assert(t, !registered)
 			RegisterDecrypter(tc.decrypter)
-			t.Cleanup(func() { delete(decrypters, alg) })
+			t.Cleanup(func() { UnregisterDecrypter(alg) })
 
 			got, err := Decrypt(key, el)
 			assert.NilError(t, err, "decrypted once registered")

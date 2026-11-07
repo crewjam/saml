@@ -6,6 +6,7 @@ package xmlenc
 import (
 	"crypto/rand"
 	"hash"
+	"sync"
 
 	"github.com/beevik/etree"
 )
@@ -37,21 +38,65 @@ type DigestMethod interface {
 	Hash() hash.Hash
 }
 
+// The registries are written by RegisterDecrypter, UnregisterDecrypter and
+// RegisterDigestMethod, which an application may call after init, while
+// Decrypt reads them, possibly from other goroutines.
 var (
+	registryMu    sync.RWMutex
 	decrypters    = map[string]Decrypter{}
 	digestMethods = map[string]DigestMethod{}
 )
 
-// RegisterDecrypter registers the specified decrypter to that it can be
-// used with Decrypt().
+// RegisterDecrypter registers the specified decrypter so that it can be
+// used with Decrypt(), replacing any decrypter registered for the same
+// algorithm. It is safe to call concurrently with Decrypt.
 func RegisterDecrypter(d Decrypter) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
 	decrypters[d.Algorithm()] = d
 }
 
-// RegisterDigestMethod registers the specified digest method to that it can be
-// used with Decrypt().
+// UnregisterDecrypter removes the decrypter registered for algorithm, an
+// EncryptionMethod URI, so that Decrypt returns ErrAlgorithmNotImplemented
+// for documents that name it. It does nothing if no decrypter is registered
+// for algorithm. It is safe to call concurrently with Decrypt.
+//
+// The algorithm Decrypt uses is the one the document names, so a sender can
+// relabel AES-GCM ciphertext as AES-CBC of the same key size and have it
+// decrypted in CBC mode, which has no integrity check. An application whose
+// senders all use AES-GCM can refuse CBC altogether:
+//
+//	xmlenc.UnregisterDecrypter(xmlenc.AES128CBC.Algorithm())
+//	xmlenc.UnregisterDecrypter(xmlenc.AES192CBC.Algorithm())
+//	xmlenc.UnregisterDecrypter(xmlenc.AES256CBC.Algorithm())
+func UnregisterDecrypter(algorithm string) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	delete(decrypters, algorithm)
+}
+
+// RegisterDigestMethod registers the specified digest method so that it can
+// be used with Decrypt(). It is safe to call concurrently with Decrypt.
 func RegisterDigestMethod(dm DigestMethod) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
 	digestMethods[dm.Algorithm()] = dm
+}
+
+// lookupDecrypter returns the decrypter registered for algorithm.
+func lookupDecrypter(algorithm string) (Decrypter, bool) {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	d, ok := decrypters[algorithm]
+	return d, ok
+}
+
+// lookupDigestMethod returns the digest method registered for algorithm.
+func lookupDigestMethod(algorithm string) (DigestMethod, bool) {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	dm, ok := digestMethods[algorithm]
+	return dm, ok
 }
 
 // BlockCipher implements a cipher with a fixed size key like AES or 3DES.
