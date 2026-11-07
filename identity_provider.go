@@ -301,13 +301,11 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 		Now:         TimeNow(),
 	}
 
-	session := idp.SessionProvider.GetSession(w, r, req)
-	if session == nil {
-		// If GetSession returns nil, it must have written an HTTP response, per the interface
-		// (this is probably because it drew a login form or something)
-		return
-	}
-
+	// Resolve the service provider and its ACS endpoint before asking the
+	// SessionProvider for a session, as ServeSSO does via Validate. Otherwise
+	// a request for an unknown service provider would prompt the user to log
+	// in before failing, and the SessionProvider would see a request without
+	// ServiceProviderMetadata.
 	var err error
 	req.ServiceProviderMetadata, err = idp.ServiceProviderProvider.GetServiceProvider(r, serviceProviderID)
 	if err == os.ErrNotExist {
@@ -344,6 +342,13 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 	if req.ACSEndpoint == nil {
 		idp.Logger.Printf("saml metadata does not contain an Assertion Customer Service url")
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	session := idp.SessionProvider.GetSession(w, r, req)
+	if session == nil {
+		// If GetSession returns nil, it must have written an HTTP response, per the interface
+		// (this is probably because it drew a login form or something)
 		return
 	}
 
