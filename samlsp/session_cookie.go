@@ -120,7 +120,7 @@ func (c CookieSessionProvider) CreateSession(w http.ResponseWriter, r *http.Requ
 		Value:    value,
 		MaxAge:   int(maxAge.Seconds()),
 		HttpOnly: c.HTTPOnly,
-		Secure:   c.Secure || r.URL.Scheme == "https",
+		Secure:   c.Secure || r.TLS != nil,
 		SameSite: c.SameSite,
 		Path:     path,
 	})
@@ -163,7 +163,7 @@ func (c CookieSessionProvider) expiredCookie(r *http.Request, domain, path strin
 		Value:    "",
 		Expires:  time.Unix(1, 0), // past time as close to epoch as possible, but not zero time.Time{}
 		HttpOnly: c.HTTPOnly,
-		Secure:   c.Secure || r.URL.Scheme == "https",
+		Secure:   c.Secure || r.TLS != nil,
 		SameSite: c.SameSite,
 		Path:     path,
 	}
