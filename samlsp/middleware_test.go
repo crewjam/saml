@@ -415,9 +415,11 @@ func TestMiddlewareCanParseResponse(t *testing.T) {
 
 	assert.Check(t, is.Equal("/frob", resp.Header().Get("Location")))
 	assert.Check(t, is.DeepEqual([]string{
-		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6=; Path=/saml2/acs; Domain=15661444.ngrok.io; Expires=Thu, 01 Jan 1970 00:00:01 GMT",
+		"saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6=; Path=/saml2/acs; Expires=Thu, 01 Jan 1970 00:00:01 GMT",
+		// the domain-scoped session cookie set by earlier versions is expired
+		"ttt=; Path=/; Domain=15661444.ngrok.io; Expires=Thu, 01 Jan 1970 00:00:01 GMT; HttpOnly; Secure",
 		"ttt=" + test.expectedSessionCookie + "; " +
-			"Path=/; Domain=15661444.ngrok.io; Max-Age=7200; HttpOnly; Secure",
+			"Path=/; Max-Age=7200; HttpOnly; Secure",
 	},
 		resp.Header()["Set-Cookie"]))
 }
@@ -435,14 +437,17 @@ func TestMiddlewareDefaultCookieDomainIPv4(t *testing.T) {
 	resp := httptest.NewRecorder()
 	assert.Check(t, sp.CreateSession(resp, req, &saml.Assertion{}))
 
-	assert.Check(t,
-		strings.Contains(resp.Header().Get("Set-Cookie"), "Domain=127.0.0.1;"),
-		"Cookie domain must not contain a port or the cookie cannot be set properly: %v", resp.Header().Get("Set-Cookie"))
+	cookies := resp.Result().Cookies()
+	assert.Assert(t, is.Len(cookies, 2))
+	// the legacy cookie domain must not contain a port or it cannot be expired
+	assert.Check(t, is.Equal("127.0.0.1", cookies[0].Domain))
+	assert.Check(t, is.Equal("", cookies[0].Value))
+	// the session cookie is host-only
+	assert.Check(t, is.Equal("", cookies[1].Domain))
+	assert.Check(t, cookies[1].Value != "")
 }
 
 func TestMiddlewareDefaultCookieDomainIPv6(t *testing.T) {
-	t.Skip("fails") // TODO(ross): fix this test
-
 	test := NewMiddlewareTest(t)
 
 	sp := DefaultSessionProvider(Options{
@@ -454,9 +459,12 @@ func TestMiddlewareDefaultCookieDomainIPv6(t *testing.T) {
 	resp := httptest.NewRecorder()
 	assert.Check(t, sp.CreateSession(resp, req, &saml.Assertion{}))
 
+	// net/http never accepted an IPv6 address as a cookie domain, so there is
+	// no legacy cookie to expire and the session cookie is host-only.
+	assert.Check(t, is.Len(resp.Header()["Set-Cookie"], 1))
 	assert.Check(t,
-		strings.Contains(resp.Header().Get("Set-Cookie"), "Domain=::1;"),
-		"Cookie domain must not contain a port or the cookie cannot be set properly: %v", resp.Header().Get("Set-Cookie"))
+		!strings.Contains(resp.Header().Get("Set-Cookie"), "Domain="),
+		"Cookie must be host-only: %v", resp.Header().Get("Set-Cookie"))
 }
 
 func TestMiddlewareRejectsInvalidRelayState(t *testing.T) {

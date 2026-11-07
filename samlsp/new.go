@@ -7,9 +7,11 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
 	dsig "github.com/russellhaering/goxmldsig"
@@ -37,6 +39,16 @@ type Options struct {
 	CookieName            string
 	RelayStateFunc        func(w http.ResponseWriter, r *http.Request) string
 	LogoutBindings        []string
+
+	// CookieDomain, if set, is the Domain attribute of the session cookie,
+	// which makes the browser also send the cookie to subdomains of that
+	// domain. If empty, the session cookie is a host-only cookie, sent only to
+	// the host of URL.
+	//
+	// Earlier versions always scoped the session cookie to the host of URL.
+	// To keep sharing the session with subdomains, set CookieDomain to that
+	// host (or to a parent domain).
+	CookieDomain string
 
 	// EncryptionKey and EncryptionCertificate, if set, are used to decrypt
 	// encrypted assertions and are advertised in the metadata for encryption,
@@ -99,14 +111,31 @@ func DefaultSessionProvider(opts Options) CookieSessionProvider {
 		cookieName = defaultSessionCookieName
 	}
 	return CookieSessionProvider{
-		Name:     cookieName,
-		Domain:   opts.URL.Host,
-		MaxAge:   defaultSessionMaxAge,
-		HTTPOnly: true,
-		Secure:   opts.URL.Scheme == "https",
-		SameSite: opts.CookieSameSite,
-		Codec:    DefaultSessionCodec(opts),
+		Name:         cookieName,
+		Domain:       opts.CookieDomain,
+		MaxAge:       defaultSessionMaxAge,
+		HTTPOnly:     true,
+		Secure:       opts.URL.Scheme == "https",
+		SameSite:     opts.CookieSameSite,
+		Codec:        DefaultSessionCodec(opts),
+		legacyDomain: legacySessionCookieDomain(opts),
 	}
+}
+
+// legacySessionCookieDomain returns the Domain attribute that earlier versions
+// of DefaultSessionProvider used for the session cookie (the host of
+// opts.URL), or "" if that cookie cannot differ from the one set now.
+func legacySessionCookieDomain(opts Options) string {
+	host := opts.URL.Hostname()
+	if host == "" || strings.EqualFold(host, opts.CookieDomain) {
+		return ""
+	}
+	// net/http drops an IPv6 address from the Domain attribute, so earlier
+	// versions set a host-only cookie in that case.
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		return ""
+	}
+	return host
 }
 
 // DefaultTrackedRequestCodec returns a new TrackedRequestCodec for the provided
