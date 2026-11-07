@@ -233,9 +233,21 @@ func (as Attributes) lookup(name, format string) (Attribute, bool) {
 		for i, v := range a.Values {
 			out.Values = append(out.Values, v)
 			out.Types = append(out.Types, typeAt(a, i))
+			out.XML = append(out.XML, xmlAt(a, i))
 		}
 	}
+	out.XML = nilIfEmpty(out.XML)
 	return out, found && len(out.Values) > 0
+}
+
+// nilIfEmpty returns nil if every element of s is "", and s otherwise.
+func nilIfEmpty(s []string) []string {
+	for _, v := range s {
+		if v != "" {
+			return s
+		}
+	}
+	return nil
 }
 
 // typeAt returns the declared type of the i-th value of a, or "".
@@ -246,10 +258,19 @@ func typeAt(a Attribute, i int) string {
 	return ""
 }
 
+// xmlAt returns the element content of the i-th value of a, or "".
+func xmlAt(a Attribute, i int) string {
+	if i < len(a.XML) {
+		return a.XML[i]
+	}
+	return ""
+}
+
 // one returns a with only its i-th value.
 func (a Attribute) one(i int) Attribute {
 	a.Values = []string{a.Values[i]}
 	a.Types = []string{typeAt(a, i)}
+	a.XML = nilIfEmpty([]string{xmlAt(a, i)})
 	return a
 }
 

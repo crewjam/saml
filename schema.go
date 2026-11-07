@@ -153,8 +153,8 @@ type LogoutRequest struct {
 	// Reason, if set, says why the principal is being logged out, as a
 	// URI: LogoutReasonUser or LogoutReasonAdmin, or one agreed between
 	// the parties (saml-core §3.7.1, §3.7.3).
-	Reason string `xml:",attr,omitempty"`
-	Signature    *etree.Element
+	Reason    string `xml:",attr,omitempty"`
+	Signature *etree.Element
 
 	// EncryptedID is the saml:EncryptedID element that identifies the
 	// principal instead of NameID (saml-core-2.0-os §2.2.4 and §3.7.1), or
@@ -1905,6 +1905,15 @@ type AttributeValue struct {
 
 	Value  string  `xml:",chardata"`
 	NameID *NameID `xml:"urn:oasis:names:tc:SAML:2.0:assertion NameID"`
+
+	// XML holds the element content of a value of a complex type, such as
+	// an attribute whose values are XML structures (saml-core §2.7.3.1.1):
+	// its child elements, other than a NameID, as self-contained XML that
+	// declares the namespaces it uses. Value then holds only the text
+	// directly inside the AttributeValue. XML is empty for a value of a
+	// simple type, which is the usual case. When the value is written,
+	// XML is added after any NameID.
+	XML string `xml:"-"`
 }
 
 // X500AttributeNamespace is the namespace of the x500:Encoding XML attribute
@@ -1935,10 +1944,20 @@ func (a *AttributeValue) Element() *etree.Element {
 		el.CreateAttr("xsi:nil", "true")
 		return el
 	}
+	el.SetText(a.Value)
 	if a.NameID != nil {
 		el.AddChild(a.NameID.Element())
 	}
-	el.SetText(a.Value)
+	if a.XML != "" {
+		doc := etree.NewDocument()
+		if err := doc.ReadFromString(a.XML); err == nil {
+			for _, child := range doc.Child {
+				if child, ok := child.(*etree.Element); ok {
+					el.AddChild(child)
+				}
+			}
+		}
+	}
 	return el
 }
 

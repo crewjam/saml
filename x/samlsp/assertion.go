@@ -111,6 +111,8 @@ func convertAttributes(attrs []saml.Attribute) Attributes {
 	for _, attr := range attrs {
 		values := make([]string, 0, len(attr.Values))
 		types := make([]string, 0, len(attr.Values))
+		xmls := make([]string, 0, len(attr.Values))
+		hasXML := false
 		for _, v := range attr.Values {
 			switch {
 			case v.Nil:
@@ -121,6 +123,11 @@ func convertAttributes(attrs []saml.Attribute) Attributes {
 				values = append(values, v.Value)
 			}
 			types = append(types, v.Type)
+			xmls = append(xmls, v.XML)
+			hasXML = hasXML || v.XML != ""
+		}
+		if !hasXML {
+			xmls = nil
 		}
 		out = append(out, Attribute{
 			Name:         attr.Name,
@@ -128,6 +135,7 @@ func convertAttributes(attrs []saml.Attribute) Attributes {
 			NameFormat:   attr.NameFormat,
 			Values:       values,
 			Types:        types,
+			XML:          xmls,
 		})
 	}
 	return out
@@ -157,6 +165,13 @@ type Attribute struct {
 	// when it is not declared, which many IdPs do. DecodeAttributes does
 	// not consult them.
 	Types []string
+
+	// XML holds, index for index with Values, the element content of each
+	// value of a complex type (an XML structure rather than text), as
+	// self-contained XML; it is "" for the usual values of a simple type.
+	// Decode such values with an AttributeUnmarshaler. It is nil if no
+	// value has element content.
+	XML []string
 }
 
 // Attributes are the attributes of an assertion.
