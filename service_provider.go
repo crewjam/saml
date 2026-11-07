@@ -1389,6 +1389,25 @@ func withoutValidityPeriod(certs []*x509.Certificate) []*x509.Certificate {
 
 var errSignatureElementNotPresent = errors.New("signature element not present")
 
+// unboundedParentContext is etreeutils.NSBuildParentContext without the
+// default context's 1000-node traversal budget (GHSA-qhrp-hfff-vphr). That
+// budget is meant for SignedInfo canonicalization. Detaching a whole Response
+// or Assertion counts every node in it, and a legitimate one can hold far more,
+// such as a user's group memberships.
+func unboundedParentContext(el *etree.Element) (etreeutils.NSContext, error) {
+	parent := el.Parent()
+	if parent == nil {
+		return etreeutils.EmptyNSContext, nil
+	}
+
+	ctx, err := unboundedParentContext(parent)
+	if err != nil {
+		return ctx, err
+	}
+
+	return ctx.SubContext(parent)
+}
+
 // validateSignature returns nil iff the Signature embedded in the element is valid
 func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	sigEl, err := findChild(el, "http://www.w3.org/2000/09/xmldsig#", "Signature")
@@ -1454,17 +1473,19 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 		}
 	}
 
-	ctx, err := etreeutils.NSBuildParentContext(el)
+	tag := el.Tag
+	ctx, err := unboundedParentContext(el)
 	if err != nil {
-		return fmt.Errorf("cannot validate signature on %s: %v", el.Tag, err)
+		return fmt.Errorf("cannot validate signature on %s: %v", tag, err)
 	}
 	ctx, err = ctx.SubContext(el)
 	if err != nil {
-		return fmt.Errorf("cannot validate signature on %s: %v", el.Tag, err)
+		return fmt.Errorf("cannot validate signature on %s: %v", tag, err)
 	}
+	// NSDetatch returns a nil element with its error, so the tag is kept above.
 	el, err = etreeutils.NSDetatch(ctx, el)
 	if err != nil {
-		return fmt.Errorf("cannot validate signature on %s: %v", el.Tag, err)
+		return fmt.Errorf("cannot validate signature on %s: %v", tag, err)
 	}
 
 	if sp.SignatureVerifier != nil {
@@ -1472,7 +1493,7 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	}
 
 	if _, err := validationContext.Validate(el); err != nil {
-		return fmt.Errorf("cannot validate signature on %s: %v", el.Tag, err)
+		return fmt.Errorf("cannot validate signature on %s: %v", tag, err)
 	}
 
 	return nil
