@@ -396,6 +396,16 @@ type IdentityProvider struct {
 	// can read the policy from IdpAuthnRequest.Request.
 	//
 	// If false, the NameIDPolicy is ignored, as before.
+	//
+	// Service providers built with this package, including samlsp, ask for
+	// the transient format by default (ServiceProvider.AuthnNameIDFormat
+	// empty). An IdP that issues another format, such as samlidp, which
+	// issues emailAddress NameIDs to users with an email address, refuses
+	// those requests when EnforceNameIDPolicy is set. Such a service
+	// provider should set ServiceProvider.AuthnNameIDFormat to the format
+	// the IdP issues, for example the first NameIDFormat of the IdP
+	// metadata, or to UnspecifiedNameIDFormat to accept whatever the IdP
+	// issues.
 	EnforceNameIDPolicy bool
 
 	// StrictACSBinding makes the IdP match the ProtocolBinding of an
