@@ -158,6 +158,27 @@ func hello(w http.ResponseWriter, r *http.Request) {
 
 Each attribute is stored under its `FriendlyName`, or its `Name` when the IDP sends no `FriendlyName` (for example `urn:oid:0.9.2342.19200300.100.1.3` or `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress`). The IDP decides which attributes it sends and what they are called, so if one you expect is missing, check the IDP's attribute release settings. Listing every attribute as above shows exactly what you received. The `SessionIndex` attribute is added by this package, not sent as an attribute by the IDP.
 
+### Logging out
+
+The middleware serves the SAML Single Logout endpoint, `<root URL>/saml/slo`, alongside the metadata and ACS endpoints. To let users log out, route a path of your application to `HandleStartLogout`:
+
+```golang
+http.Handle("/saml/", samlSP)
+http.HandleFunc("/logout", samlSP.HandleStartLogout)
+```
+
+When a user visits `/logout`:
+
+1. `HandleStartLogout` deletes the session cookie and sends the browser to the IDP's `SingleLogoutService` with a `LogoutRequest` for the session's NameID and `SessionIndex`. It remembers the request's ID in a short-lived `samlslo_` cookie, scoped to the SLO URL, just as login remembers the `AuthnRequest`. It uses the HTTP-Redirect binding if the IDP supports it, and HTTP-POST otherwise. If the IDP has no `SingleLogoutService` in its metadata, only the local session is ended.
+
+1. The IDP ends its own session and sends a `LogoutResponse` back to `/saml/slo`.
+
+1. The middleware validates the response's signature, issuer, destination and status, checks that its `InResponseTo` is the ID of the request it sent from this browser, and redirects the user to `/`. A response the SP did not ask for, or one that is replayed, is rejected.
+
+The middleware also handles IDP initiated logout: when the IDP sends a signed `LogoutRequest` to `/saml/slo`, the middleware deletes the session cookie of that browser and answers the IDP with a `LogoutResponse`.
+
+For single logout to work, the IDP needs to know the SLO URL. It is in the service provider's metadata, or you can enter `<root URL>/saml/slo` in the IDP's settings. Many IDPs require logout requests to be signed; set `Options.SignRequest` to sign them. If you need different behaviour, for example to end server-side sessions, the `ServiceProvider` methods `MakeLogoutRequest`, `RedirectLogoutRequestURL`, `ParseLogoutResponse`, `ValidateLogoutRequest` and `MakeRedirectLogoutResponse` are the building blocks `HandleStartLogout` and `ServeSLO` use.
+
 ## Getting Started as an Identity Provider
 
 Please see `example/idp/` for a substantially complete example of how to use the library and helpers to be an identity provider.
