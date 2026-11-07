@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 
 	"github.com/crewjam/saml"
 )
@@ -198,7 +199,15 @@ func (s *Server) HandlePutService(w http.ResponseWriter, r *http.Request) {
 	service.Metadata = *metadata
 	service.RawMetadata = data
 
-	err = s.Store.Put(fmt.Sprintf("/services/%s", r.PathValue("id")), &service)
+	id := r.PathValue("id")
+	s.servicesMu.Lock()
+	defer s.servicesMu.Unlock()
+
+	// The entity ID the service had before, to unregister it if the new
+	// metadata has a different one.
+	previousEntityID, hadPrevious := s.storedServiceEntityID(id)
+
+	err = s.Store.Put(fmt.Sprintf("/services/%s", id), &service)
 	if err != nil {
 		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -206,33 +215,98 @@ func (s *Server) HandlePutService(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.idpConfigMu.Lock()
-	s.serviceProviders[service.Metadata.EntityID] = &service.Metadata
+	s.setService(id, &service.Metadata)
+	if hadPrevious && previousEntityID != service.Metadata.EntityID {
+		s.refreshServiceProvider(previousEntityID)
+	}
 	s.idpConfigMu.Unlock()
 
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // HandleDeleteService handles the `DELETE /services/:id` request.
+//
+// The service provider stops being accepted, unless another stored service
+// has the same entity ID.
 func (s *Server) HandleDeleteService(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.servicesMu.Lock()
+	defer s.servicesMu.Unlock()
+
 	service := Service{}
-	err := s.Store.Get(fmt.Sprintf("/services/%s", r.PathValue("id")), &service)
+	err := s.Store.Get(fmt.Sprintf("/services/%s", id), &service)
 	if err != nil {
 		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
-	if err := s.Store.Delete(fmt.Sprintf("/services/%s", r.PathValue("id"))); err != nil {
+	if err := s.Store.Delete(fmt.Sprintf("/services/%s", id)); err != nil {
 		s.logger.Printf("ERROR: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
 	s.idpConfigMu.Lock()
-	delete(s.serviceProviders, service.Metadata.EntityID)
+	entityIDs := []string{service.Metadata.EntityID}
+	if registered, ok := s.services[id]; ok && registered.EntityID != service.Metadata.EntityID {
+		entityIDs = append(entityIDs, registered.EntityID)
+	}
+	delete(s.services, id)
+	for _, entityID := range entityIDs {
+		s.refreshServiceProvider(entityID)
+	}
 	s.idpConfigMu.Unlock()
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// storedServiceEntityID returns the entity ID of the service stored as id,
+// if there is one. The caller must hold servicesMu.
+func (s *Server) storedServiceEntityID(id string) (string, bool) {
+	s.idpConfigMu.RLock()
+	registered, ok := s.services[id]
+	s.idpConfigMu.RUnlock()
+	if ok {
+		return registered.EntityID, true
+	}
+	service := Service{}
+	if err := s.Store.Get(fmt.Sprintf("/services/%s", id), &service); err != nil {
+		return "", false
+	}
+	return service.Metadata.EntityID, true
+}
+
+// setService registers metadata as the service stored as id. The caller
+// must hold idpConfigMu for writing.
+func (s *Server) setService(id string, metadata *saml.EntityDescriptor) {
+	if s.services == nil {
+		s.services = map[string]*saml.EntityDescriptor{}
+	}
+	if s.serviceProviders == nil {
+		s.serviceProviders = map[string]*saml.EntityDescriptor{}
+	}
+	s.services[id] = metadata
+	s.serviceProviders[metadata.EntityID] = metadata
+}
+
+// refreshServiceProvider makes serviceProviders accept entityID with the
+// metadata of a stored service that has that entity ID, or stop accepting
+// it if none has. The caller must hold idpConfigMu for writing.
+func (s *Server) refreshServiceProvider(entityID string) {
+	ids := make([]string, 0, len(s.services))
+	for id, metadata := range s.services {
+		if metadata.EntityID == entityID {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		delete(s.serviceProviders, entityID)
+		return
+	}
+	// Pick one deterministically when several services share the entity ID.
+	sort.Strings(ids)
+	s.serviceProviders[entityID] = s.services[ids[0]]
 }
 
 // initializeServices reads all the stored services and initializes the underlying
@@ -249,7 +323,7 @@ func (s *Server) initializeServices() error {
 		}
 
 		s.idpConfigMu.Lock()
-		s.serviceProviders[service.Metadata.EntityID] = &service.Metadata
+		s.setService(serviceName, &service.Metadata)
 		s.idpConfigMu.Unlock()
 	}
 	return nil
