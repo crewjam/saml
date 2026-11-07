@@ -35,7 +35,7 @@ func (s *Server) InvalidateSession(w http.ResponseWriter, r *http.Request, req *
 		err := s.Store.Get(sessionKey(cookie.Value), session)
 		switch {
 		case err == nil && req.MatchesSession(session):
-			if err := s.Store.Delete(sessionKey(cookie.Value)); err != nil {
+			if err := s.deleteSession(cookie.Value); err != nil {
 				return err
 			}
 			expireSessionCookie(w, r)
@@ -81,7 +81,7 @@ func (s *Server) deleteSessionsMatching(req *saml.IdpLogoutRequest) error {
 		if !req.MatchesSession(session) {
 			continue
 		}
-		if err := s.Store.Delete(sessionKey(id)); err != nil {
+		if err := s.deleteSession(id); err != nil {
 			return err
 		}
 	}
