@@ -48,6 +48,12 @@ type Middleware struct {
 	RequestTracker   RequestTracker
 	Session          SessionProvider
 	AssertionHandler AssertionHandler
+
+	// ScriptNonce, if set, is called when the middleware serves the
+	// auto-submitting HTML form of the HTTP-POST binding. A non-empty result
+	// is set as the nonce attribute of the form's <script> element, for
+	// applications whose own Content-Security-Policy allows scripts by nonce.
+	ScriptNonce func(r *http.Request) string
 }
 
 // ServeHTTP implements http.Handler and serves the SAML-specific HTTP endpoints
@@ -200,7 +206,11 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 		w.Header().Add("Content-type", "text/html")
 		var buf bytes.Buffer
 		buf.WriteString(`<!DOCTYPE html><html><body>`)
-		buf.Write(authReq.Post(relayState))
+		var nonce string
+		if m.ScriptNonce != nil {
+			nonce = m.ScriptNonce(r)
+		}
+		buf.Write(authReq.PostWithNonce(relayState, nonce))
 		buf.WriteString(`</body></html>`)
 		if _, err := w.Write(buf.Bytes()); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
