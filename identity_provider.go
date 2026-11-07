@@ -229,6 +229,15 @@ type IdentityProvider struct {
 	// []string{HTTPRedirectBinding, HTTPPostBinding} when LogoutURL is served
 	// by ServeSLO.
 	LogoutBindings []string
+
+	// ReplayCache, if set, records the ID of each LogoutRequest that
+	// IdpLogoutRequest.Validate (and so ServeSLO) accepts, and refuses a
+	// LogoutRequest whose ID it has already recorded, so that a captured
+	// request cannot be replayed while it is still current. IDs are recorded
+	// under the key "LogoutRequest:" followed by the ID, until the last
+	// moment the request would be accepted. If nil, LogoutRequests are not
+	// checked for replay.
+	ReplayCache AssertionReplayCache
 }
 
 // Metadata returns the metadata structure for this identity provider.

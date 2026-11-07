@@ -270,6 +270,13 @@ type ServiceProvider struct {
 	// has already recorded. Without it, a captured assertion is accepted
 	// again until it expires, and an IdP-initiated one has no request ID to
 	// tie it to a single use. If nil, assertions are not checked for replay.
+	//
+	// It also records the ID of each LogoutRequest that ValidateLogoutRequest
+	// (and the other LogoutRequest validation methods) accept, and refuses a
+	// LogoutRequest whose ID it has already recorded. These IDs are recorded
+	// under the key "LogoutRequest:" followed by the ID, so they cannot
+	// collide with assertion IDs, which are recorded as is and, being
+	// xs:ID values, contain no colon.
 	ReplayCache AssertionReplayCache
 }
 
@@ -277,6 +284,10 @@ type ServiceProvider struct {
 // is accepted only once. Implementations must be safe for concurrent use, and
 // should be shared by every server that accepts assertions for the same
 // service provider.
+//
+// ServiceProvider.ReplayCache and IdentityProvider.ReplayCache also record
+// the IDs of accepted LogoutRequests in it, under keys prefixed with
+// "LogoutRequest:".
 type AssertionReplayCache interface {
 	// Consume atomically records assertionID as used until expiresAt, the
 	// last moment the ServiceProvider would accept the assertion; after
@@ -1625,6 +1636,38 @@ func (sp *ServiceProvider) consumeAssertion(assertion *Assertion) error {
 	return nil
 }
 
+// logoutRequestReplayKeyPrefix is prepended to the ID of a LogoutRequest to
+// form the key it is recorded under in an AssertionReplayCache. It keeps
+// LogoutRequest IDs apart from assertion IDs, which are recorded as is and,
+// being xs:ID values, cannot contain a colon.
+const logoutRequestReplayKeyPrefix = "LogoutRequest:"
+
+// logoutRequestAcceptableUntil returns the last moment a LogoutRequest is
+// accepted: IssueInstant plus MaxIssueDelay or, if it is earlier, the
+// NotOnOrAfter time allowing for clock skew.
+func logoutRequestAcceptableUntil(req *LogoutRequest) time.Time {
+	deadline := req.IssueInstant.Add(MaxIssueDelay)
+	if req.NotOnOrAfter != nil {
+		deadline = earliest(deadline, skewedDeadline(*req.NotOnOrAfter))
+	}
+	return deadline
+}
+
+// consumeLogoutRequest records the ID of req in cache, if cache is not nil,
+// refusing req if it was recorded before. req must already be validated.
+func consumeLogoutRequest(cache AssertionReplayCache, req *LogoutRequest) error {
+	if cache == nil {
+		return nil
+	}
+	if req.ID == "" {
+		return classify(errors.New("logout request has no ID to check for replay"), ErrMissingElement)
+	}
+	if err := cache.Consume(logoutRequestReplayKeyPrefix+req.ID, logoutRequestAcceptableUntil(req)); err != nil {
+		return fmt.Errorf("logout request %q: %w", req.ID, err)
+	}
+	return nil
+}
+
 // bearerSubjectConfirmationMethod is the SubjectConfirmation Method of the
 // SAML web browser SSO profile.
 const bearerSubjectConfirmationMethod = "urn:oasis:names:tc:SAML:2.0:cm:bearer" //nolint:gosec // not a credential
@@ -2439,6 +2482,9 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 // HTTP-POST-SimpleSign message and must have a valid SimpleSign signature
 // (an enveloped XML signature it also carries must be valid too).
 //
+// If ReplayCache is set, the request's ID is recorded in it once the request
+// is otherwise valid, and a request whose ID is already recorded is refused.
+//
 // The caller should end the session identified by the returned request's
 // NameID (and SessionIndex, if present) and then answer the IDP, for example
 // with MakeRedirectLogoutResponse(req.ID, relayState).
@@ -2535,6 +2581,10 @@ func (sp *ServiceProvider) unmarshalAndValidateLogoutRequest(root *etree.Element
 		return nil, retErr
 	}
 	if err := sp.validateLogoutRequest(&req); err != nil {
+		retErr.PrivateErr = err
+		return nil, retErr
+	}
+	if err := consumeLogoutRequest(sp.ReplayCache, &req); err != nil {
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
