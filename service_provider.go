@@ -1106,13 +1106,16 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 	var responseHasSignature bool
 	if signatureRequirement == signatureRequired {
 		responseSignatureErr = sp.validateSignature(responseEl)
-		if responseSignatureErr != errSignatureElementNotPresent {
+		switch responseSignatureErr {
+		case nil:
 			responseHasSignature = true
+		case errSignatureElementNotPresent:
+			// the Response is not signed, so each Assertion must be (checked below)
+		default:
+			// A Signature is present but invalid: reject the Response before
+			// looking at any of its other contents.
+			return nil, responseSignatureErr
 		}
-
-		// Note: we're deferring taking action on the signature validation until after we've
-		// processed the request attributes, because certain test cases seem to require this mis-feature.
-		// TODO(ross): adjust the test cases so that we can abort here if the Response signature is invalid.
 	}
 
 	// validate request attributes
@@ -1147,17 +1150,9 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 		}
 	}
 
-	if signatureRequirement == signatureRequired {
-		switch responseSignatureErr {
-		case nil:
-			// since the request has a signature, none of the Assertions need one
-			signatureRequirement = signatureNotRequired
-		case errSignatureElementNotPresent:
-			// the request has no signature, so assertions must be signed
-			signatureRequirement = signatureRequired // nop
-		default:
-			return nil, responseSignatureErr
-		}
+	if responseHasSignature {
+		// since the Response has a valid signature, none of the Assertions need one
+		signatureRequirement = signatureNotRequired
 	}
 
 	var errs []error
