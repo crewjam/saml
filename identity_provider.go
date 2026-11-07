@@ -325,6 +325,19 @@ type IdentityProvider struct {
 	// is then logged out through the browser if it can be. Set it only for
 	// tests and development setups.
 	AllowInsecureSOAPEndpoints bool
+
+	// ReportPartialLogoutWithoutTracker, if true, makes ServeSLO answer a
+	// LogoutRequest with the second-level status StatusPartialLogout under
+	// StatusSuccess when the SessionProvider does not implement
+	// SessionParticipantTracker. The IdP then cannot know which other
+	// service providers the session was used for, nor contact them, and
+	// saml-core-2.0-os §3.7.3.2 requires a session authority that cannot
+	// contact all the session participants to say so with PartialLogout. If
+	// false, such a logout is answered with a plain StatusSuccess, as
+	// before. It has no effect when the SessionProvider tracks session
+	// participants: the second-level status then reports whether they were
+	// all logged out.
+	ReportPartialLogoutWithoutTracker bool
 }
 
 // Metadata returns the metadata structure for this identity provider.

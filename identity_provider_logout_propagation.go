@@ -126,6 +126,18 @@ func (idp *IdentityProvider) sessionParticipants(r *http.Request, match func(*Se
 	return participants, true, nil
 }
 
+// participantsUnknown reports whether a logout cannot reach every other
+// session participant because they are not known, given what
+// sessionParticipants returned: the tracker failed to list them, or there
+// is no tracker and ReportPartialLogoutWithoutTracker is set. The logout is
+// then answered with StatusPartialLogout (saml-core-2.0-os §3.7.3.2).
+func (idp *IdentityProvider) participantsUnknown(tracked bool, err error) bool {
+	if tracked {
+		return err != nil
+	}
+	return idp.ReportPartialLogoutWithoutTracker
+}
+
 // StartLogout starts IdP-initiated single logout (saml-profiles-2.0-os
 // §4.4.3.3) of session. Each service provider the session was used for
 // (see SessionParticipantTracker) is sent a signed LogoutRequest, one at a

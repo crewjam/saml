@@ -264,6 +264,8 @@ When a service provider sends a `LogoutRequest`, `ServeSLO`:
 
 If the `SessionProvider` also implements `SessionParticipantTracker`, which records the service providers each session logged in to, `ServeSLO` sends a `LogoutRequest` to each of the session's other service providers before it answers, and `IdentityProvider.StartLogout` starts IdP-initiated logout of a session. Set `EncryptLogoutNameID` to send those requests an `EncryptedID` instead of a NameID, encrypted to each service provider's encryption certificate. A service provider whose metadata publishes none gets the NameID in the clear.
 
+Without a `SessionParticipantTracker`, the IdP cannot contact the session's other service providers, yet answers a plain `Success`. SAML Core (§3.7.3.2) requires it to add the second-level status `PartialLogout` then; set `ReportPartialLogoutWithoutTracker` to do so. It is off by default, as a service provider might handle a second-level status poorly.
+
 ## Support
 
 The SAML standard is huge and complex with many dark corners and strange, unused features. This package implements the most commonly used subset of these features required to provide a single sign on experience. The package supports at least the subset of SAML known as [interoperable SAML](https://kantarainitiative.github.io/SAMLprofiles/saml2int.html).
