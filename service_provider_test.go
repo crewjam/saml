@@ -2221,7 +2221,7 @@ func TestSPValidateRequestIDWithAllowIDPInitiated(t *testing.T) {
 
 func TestSPValidateAuthnContextClassRef(t *testing.T) {
 	const (
-		password    = "urn:oasis:names:tc:SAML:2.0:ac:classes:Password"
+		password    = "urn:oasis:names:tc:SAML:2.0:ac:classes:Password" //nolint:gosec // an AuthnContextClassRef URI, not a credential
 		x509        = "urn:oasis:names:tc:SAML:2.0:ac:classes:X509"
 		unspecified = "urn:oasis:names:tc:SAML:2.0:ac:classes:unspecified"
 	)
