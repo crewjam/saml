@@ -63,6 +63,9 @@ type SessionProvider interface {
 	//
 	// If (and only if) the request is not associated with a session then GetSession
 	// must complete the HTTP request and return nil.
+	// To answer the request with a SAML error Response instead, for example
+	// an IsPassive request when it would have to prompt the user, it can
+	// call IdentityProvider.SendErrorResponse and return nil.
 	GetSession(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session
 }
 
@@ -98,9 +101,10 @@ type AssertionMaker interface {
 type ResponseWriter interface {
 	// WriteResponse writes the HTTP response carrying the SAML response for
 	// req. req.ResponseEl is nil until req.MakeResponse (or req.PostBinding,
-	// which calls it) has been called. If it returns an error, the caller
-	// logs it and replies with an HTTP 500 error, so an implementation
-	// should return errors before it starts writing to w.
+	// which calls it) has been called. For an error Response it has been
+	// set by req.MakeErrorResponse, and req.Assertion is nil. If it returns
+	// an error, the caller logs it and replies with an HTTP 500 error, so an
+	// implementation should return errors before it starts writing to w.
 	WriteResponse(w http.ResponseWriter, req *IdpAuthnRequest) error
 }
 
@@ -325,6 +329,22 @@ type IdentityProvider struct {
 	// is then logged out through the browser if it can be. Set it only for
 	// tests and development setups.
 	AllowInsecureSOAPEndpoints bool
+
+	// SendErrorResponses makes ServeSSO answer an AuthnRequest that is
+	// expired (ErrExpired) or not SAML 2.0 with a SAML error <Response> sent
+	// to the service provider's assertion consumer service, as saml-core
+	// §3.4.1.4 and saml-bindings §3.4.6 and §3.5.6 ask, instead of an HTTP
+	// 400 error. The Response is only sent when the request otherwise
+	// identifies a known service provider and an assertion consumer service
+	// in its metadata, so it never goes to a location the request alone
+	// names; other invalid requests still get HTTP 400. An expired request
+	// gets a Requester status, a request with another version a
+	// VersionMismatch status (saml-core §4.1.3.2).
+	//
+	// Whether or not it is set, an AssertionMaker that returns a
+	// *StatusError gets an error Response, in ServeSSO and
+	// ServeIDPInitiated.
+	SendErrorResponses bool
 }
 
 // Metadata returns the metadata structure for this identity provider.
@@ -537,10 +557,13 @@ func (idp *IdentityProvider) onError(w http.ResponseWriter, r *http.Request, sta
 // endpoint.
 //
 // If the SAML request is invalid or cannot be verified a simple StatusBadRequest
-// response is sent.
+// response is sent, unless SendErrorResponses is set and the request can be
+// answered with a SAML error Response (see SendErrorResponses).
 //
-// If the assertion cannot be created or returned, a StatusInternalServerError
-// response is sent.
+// If the AssertionMaker returns a *StatusError, a SAML Response with that
+// status and no assertion is sent to the assertion consumer service instead
+// (see SendErrorResponse). If the assertion cannot otherwise be created or
+// returned, a StatusInternalServerError response is sent.
 //
 // Set OnError to handle these failures differently.
 func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
@@ -551,6 +574,12 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := req.Validate(); err != nil {
+		if idp.SendErrorResponses {
+			if statusErr := req.validationStatusError(err); statusErr != nil {
+				idp.sendStatusError(w, r, req, statusErr)
+				return
+			}
+		}
 		idp.onError(w, r, http.StatusBadRequest, fmt.Errorf("failed to validate request: %w", err))
 		return
 	}
@@ -568,6 +597,11 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 		assertionMaker = DefaultAssertionMaker{}
 	}
 	if err := assertionMaker.MakeAssertion(req, session); err != nil {
+		var statusErr *StatusError
+		if errors.As(err, &statusErr) {
+			idp.sendStatusError(w, r, req, statusErr)
+			return
+		}
 		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to make assertion: %w", err))
 		return
 	}
@@ -588,7 +622,9 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 // It responds with StatusNotFound if the service provider is unknown, and
 // with StatusInternalServerError if the service provider cannot be looked up
 // or has no usable assertion consumer service, or the assertion cannot be
-// created or returned. Set OnError to handle these failures differently, or
+// created or returned. If the AssertionMaker returns a *StatusError, an
+// unsolicited SAML Response with that status and no assertion is sent to the
+// assertion consumer service instead. Set OnError to handle these failures differently, or
 // build a handler from NewIdpInitiatedRequest.
 func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Request, serviceProviderID string, relayState string) {
 	req, err := idp.NewIdpInitiatedRequest(r, serviceProviderID, relayState)
@@ -616,6 +652,11 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 		assertionMaker = DefaultAssertionMaker{}
 	}
 	if err := assertionMaker.MakeAssertion(req, session); err != nil {
+		var statusErr *StatusError
+		if errors.As(err, &statusErr) {
+			idp.sendStatusError(w, r, req, statusErr)
+			return
+		}
 		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to make assertion: %w", err))
 		return
 	}
@@ -818,7 +859,7 @@ func (req *IdpAuthnRequest) Validate() error {
 			req.Request.IssueInstant.Add(MaxIssueDelay)), ErrExpired)
 	}
 	if req.Request.Version != "2.0" {
-		return classify(fmt.Errorf("expected SAML request version 2.0 got %v", req.Request.Version), ErrUnsupported)
+		return classify(fmt.Errorf("expected SAML request version 2.0 got %v", req.Request.Version), ErrUnsupported, errVersionMismatch)
 	}
 	// The Response answers the request by its ID (saml-core §3.2.1: ID is
 	// required, and InResponseTo must match it). Without one the Response
@@ -827,6 +868,15 @@ func (req *IdpAuthnRequest) Validate() error {
 		return classify(errors.New("authn request is missing an ID"), ErrMissingElement)
 	}
 
+	return req.resolveServiceProvider()
+}
+
+// resolveServiceProvider is the part of Validate that looks up the service
+// provider that issued the request, checks its HTTP-POST-SimpleSign
+// signature if there is one, and selects the assertion consumer service the
+// Response goes to. It sets ServiceProviderMetadata, SPSSODescriptor and
+// ACSEndpoint.
+func (req *IdpAuthnRequest) resolveServiceProvider() error {
 	// find the service provider
 	if req.Request.Issuer == nil {
 		return classify(fmt.Errorf("authn request is missing an issuer"), ErrMissingElement)
