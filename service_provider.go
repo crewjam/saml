@@ -1016,7 +1016,7 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	response, err := httpClient.Do(req)
+	response, err := httpClient.Do(req) //nolint:gosec // G704: the URL is the IdP's ArtifactResolutionService from its metadata, not from the request
 	if err != nil {
 		retErr.PrivateErr = classify(fmt.Errorf("cannot resolve artifact: %w", err), ErrArtifactResolution)
 		return nil, retErr
