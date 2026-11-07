@@ -6,10 +6,12 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"flag"
 	"math/big"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -48,6 +50,7 @@ func main() {
 	logr := logger.DefaultLogger
 	baseURLstr := flag.String("idp", "http://localhost:8080", "The URL to the IDP")
 	listenAddr := flag.String("listen", ":8080", "The address to listen on")
+	certOut := flag.String("cert-out", "idp-cert.pem", "Where to write the certificate the IDP signs its metadata with")
 	flag.Parse()
 
 	baseURL, err := url.Parse(*baseURLstr)
@@ -69,6 +72,14 @@ func main() {
 	})
 	if err != nil {
 		logr.Fatalf("%s", err)
+	}
+
+	// Sign the metadata, and publish the certificate that signs it for
+	// service providers to pin (see example/service.go).
+	idpServer.IDP.SignMetadata = true
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+	if err := os.WriteFile(*certOut, certPEM, 0o600); err != nil {
+		logr.Fatalf("cannot write certificate: %v", err)
 	}
 
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("hunter2"), bcrypt.DefaultCost)

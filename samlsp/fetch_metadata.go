@@ -3,6 +3,7 @@ package samlsp
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -23,10 +24,15 @@ import (
 // an <EntitiesDescriptor>, and sometimes the top level element is an
 // <EntityDescriptor>.
 //
-// For an <EntitiesDescriptor> aggregate, it returns the first entity, in
-// document order, that has an IDPSSODescriptor. Nested <EntitiesDescriptor>
-// elements are searched too. Use ParseMetadataByEntityID to pick a specific
-// IDP out of an aggregate.
+// An <EntitiesDescriptor> must hold exactly one entity with an
+// IDPSSODescriptor (nested <EntitiesDescriptor> elements included), which
+// is returned: ParseMetadata cannot tell which of several IDPs the caller
+// means to trust. Use ParseMetadataByEntityID to pick one out of an
+// aggregate.
+//
+// ParseMetadata does not check a signature on the metadata, so the
+// metadata must come from a source the caller trusts. See
+// ParseSignedMetadata.
 func ParseMetadata(data []byte) (*saml.EntityDescriptor, error) {
 	entity := &saml.EntityDescriptor{}
 
@@ -45,6 +51,9 @@ func ParseMetadata(data []byte) (*saml.EntityDescriptor, error) {
 			return nil, err
 		}
 
+		if n := countIDPEntities(entities); n > 1 {
+			return nil, fmt.Errorf("metadata holds %d entities with an IDPSSODescriptor; use ParseMetadataByEntityID to choose one", n)
+		}
 		entity, err := firstIDPEntity(data)
 		if err != nil {
 			return nil, err
@@ -98,6 +107,45 @@ func ParseMetadataByEntityID(data []byte, entityID string) (*saml.EntityDescript
 		}
 	}
 	return nil, fmt.Errorf("no entity found with entityID %q", entityID)
+}
+
+// countIDPEntities returns the number of entities with an IDPSSODescriptor
+// in entities and in any EntitiesDescriptor nested in it.
+func countIDPEntities(entities *saml.EntitiesDescriptor) int {
+	n := 0
+	for _, e := range entities.EntityDescriptors {
+		if len(e.IDPSSODescriptors) > 0 {
+			n++
+		}
+	}
+	for i := range entities.EntitiesDescriptors {
+		n += countIDPEntities(&entities.EntitiesDescriptors[i])
+	}
+	return n
+}
+
+// ParseSignedMetadata is ParseMetadata for metadata whose root element must
+// carry a valid enveloped XML signature made with one of certs, the IDP's
+// (or its federation's) metadata signing certificates, obtained from a
+// source the caller trusts. Only the content the signature covers is
+// parsed. See saml.VerifyMetadataSignature.
+func ParseSignedMetadata(data []byte, certs []*x509.Certificate) (*saml.EntityDescriptor, error) {
+	signed, err := saml.VerifyMetadataSignature(data, certs)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMetadata(signed)
+}
+
+// ParseSignedMetadataByEntityID is ParseMetadataByEntityID for metadata
+// whose root element must carry a valid enveloped XML signature made with
+// one of certs. See ParseSignedMetadata.
+func ParseSignedMetadataByEntityID(data []byte, entityID string, certs []*x509.Certificate) (*saml.EntityDescriptor, error) {
+	signed, err := saml.VerifyMetadataSignature(data, certs)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMetadataByEntityID(signed, entityID)
 }
 
 // metadataRootElement returns the name of the root element of data.
@@ -181,6 +229,11 @@ func firstIDPEntity(data []byte) (*saml.EntityDescriptor, error) {
 }
 
 // FetchMetadata returns metadata from an IDP metadata URL.
+//
+// The metadata names the certificates the service provider trusts to sign
+// assertions, so whoever controls the response controls who can log in. It
+// is not authenticated beyond what httpClient does: use an https URL, and
+// prefer FetchSignedMetadata, or metadata kept with the application.
 func FetchMetadata(ctx context.Context, httpClient *http.Client, metadataURL url.URL) (*saml.EntityDescriptor, error) {
 	data, err := fetchMetadataBytes(ctx, httpClient, metadataURL)
 	if err != nil {
@@ -198,6 +251,27 @@ func FetchMetadataByEntityID(ctx context.Context, httpClient *http.Client, metad
 		return nil, err
 	}
 	return ParseMetadataByEntityID(data, entityID)
+}
+
+// FetchSignedMetadata fetches metadata from metadataURL and parses it with
+// ParseSignedMetadata: its root element must carry a valid signature made
+// with one of certs.
+func FetchSignedMetadata(ctx context.Context, httpClient *http.Client, metadataURL url.URL, certs []*x509.Certificate) (*saml.EntityDescriptor, error) {
+	data, err := fetchMetadataBytes(ctx, httpClient, metadataURL)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSignedMetadata(data, certs)
+}
+
+// FetchSignedMetadataByEntityID fetches metadata from metadataURL and parses
+// it with ParseSignedMetadataByEntityID.
+func FetchSignedMetadataByEntityID(ctx context.Context, httpClient *http.Client, metadataURL url.URL, entityID string, certs []*x509.Certificate) (*saml.EntityDescriptor, error) {
+	data, err := fetchMetadataBytes(ctx, httpClient, metadataURL)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSignedMetadataByEntityID(data, entityID, certs)
 }
 
 // MaxMetadataSize is the size in bytes of the largest metadata document that
