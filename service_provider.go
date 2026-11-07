@@ -3307,7 +3307,10 @@ func (sp *ServiceProvider) ParseLogoutResponse(req *http.Request, possibleReques
 			return resp, nil
 		}
 	}
-	return nil, classify(fmt.Errorf("`InResponseTo` does not match any of the possible request IDs (expected %v)", possibleRequestIDs), ErrRequestIDMismatch)
+	return nil, &InvalidResponseError{
+		Now:        sp.now(),
+		PrivateErr: classify(fmt.Errorf("`InResponseTo` does not match any of the possible request IDs (expected %v)", possibleRequestIDs), ErrRequestIDMismatch),
+	}
 }
 
 func (sp *ServiceProvider) parseLogoutResponseRequest(req *http.Request) (*LogoutResponse, error) {
@@ -3317,7 +3320,10 @@ func (sp *ServiceProvider) parseLogoutResponseRequest(req *http.Request) (*Logou
 
 	err := req.ParseForm()
 	if err != nil {
-		return nil, classify(fmt.Errorf("unable to parse form: %w", err), ErrMalformedMessage)
+		return nil, &InvalidResponseError{
+			Now:        sp.now(),
+			PrivateErr: classify(fmt.Errorf("unable to parse form: %w", err), ErrMalformedMessage),
+		}
 	}
 
 	if isSimpleSignRequest(req) {
@@ -3349,7 +3355,8 @@ func (sp *ServiceProvider) parseLogoutResponseSimpleSign(req *http.Request) (*Lo
 		return nil, retErr
 	}
 	if err := sp.validateLogoutResponse(&resp); err != nil {
-		return nil, err
+		retErr.PrivateErr = err
+		return nil, retErr
 	}
 	return &resp, nil
 }
@@ -3377,9 +3384,9 @@ func (sp *ServiceProvider) parseLogoutResponseForm(postFormData string) (*Logout
 	}
 	retErr.Response = string(rawResponseBuf)
 
-	// TODO(ross): add test case for this (SLO does not have tests right now)
 	if err := xmlroundtrip.Validate(rawResponseBuf); err != nil {
-		return nil, classify(fmt.Errorf("response contains invalid XML: %w", err), ErrMalformedMessage)
+		retErr.PrivateErr = classify(fmt.Errorf("response contains invalid XML: %w", err), ErrMalformedMessage)
+		return nil, retErr
 	}
 
 	doc := etree.NewDocument()
@@ -3404,7 +3411,8 @@ func (sp *ServiceProvider) parseLogoutResponseForm(postFormData string) (*Logout
 		return nil, retErr
 	}
 	if err := sp.validateLogoutResponse(&resp); err != nil {
-		return nil, err
+		retErr.PrivateErr = err
+		return nil, retErr
 	}
 	return &resp, nil
 }
@@ -3449,7 +3457,8 @@ func (sp *ServiceProvider) validateLogoutResponseRedirectQuery(rawQuery string) 
 		return nil, retErr
 	}
 	if err := sp.validateLogoutResponse(&resp); err != nil {
-		return nil, err
+		retErr.PrivateErr = err
+		return nil, retErr
 	}
 	return &resp, nil
 }
@@ -3506,7 +3515,10 @@ func (sp *ServiceProvider) ValidateLogoutRequest(req *http.Request) (*LogoutRequ
 	}
 
 	if err := req.ParseForm(); err != nil {
-		return nil, classify(fmt.Errorf("unable to parse form: %w", err), ErrMalformedMessage)
+		return nil, &InvalidResponseError{
+			Now:        sp.now(),
+			PrivateErr: classify(fmt.Errorf("unable to parse form: %w", err), ErrMalformedMessage),
+		}
 	}
 
 	if isSimpleSignRequest(req) {
@@ -3550,7 +3562,8 @@ func (sp *ServiceProvider) ValidateLogoutRequestForm(postFormData string) (*Logo
 	retErr.Response = string(rawRequestBuf)
 
 	if err := xmlroundtrip.Validate(rawRequestBuf); err != nil {
-		return nil, classify(fmt.Errorf("request contains invalid XML: %w", err), ErrMalformedMessage)
+		retErr.PrivateErr = classify(fmt.Errorf("request contains invalid XML: %w", err), ErrMalformedMessage)
+		return nil, retErr
 	}
 
 	doc := etree.NewDocument()
