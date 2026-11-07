@@ -354,7 +354,7 @@ func (req *IdpLogoutRequest) writeRedirectLogoutResponse(w http.ResponseWriter, 
 	if err != nil {
 		return err
 	}
-	http.Redirect(w, req.HTTPRequest, u.String(), http.StatusFound)
+	http.Redirect(w, req.HTTPRequest, u.String(), http.StatusFound) //nolint:gosec // the destination is the SingleLogoutService location from the SP metadata (http/https only); the request only contributes the query-escaped RelayState
 	return nil
 }
 
