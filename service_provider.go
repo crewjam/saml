@@ -1464,8 +1464,8 @@ func (sp *ServiceProvider) parseArtifactResponse(artifactResponseEl *etree.Eleme
 			retErr.PrivateErr = classify(fmt.Errorf("`InResponseTo` does not match the artifact request ID (expected %s)", artifactRequestID), ErrRequestIDMismatch)
 			return nil, retErr
 		}
-		if artifactResponse.IssueInstant.Add(MaxIssueDelay).Before(now) {
-			retErr.PrivateErr = classify(fmt.Errorf("response IssueInstant expired at %s", artifactResponse.IssueInstant.Add(MaxIssueDelay)), ErrExpired)
+		if err := checkIssueInstant("response IssueInstant", artifactResponse.IssueInstant, now); err != nil {
+			retErr.PrivateErr = err
 			return nil, retErr
 		}
 		if artifactResponse.Issuer != nil && artifactResponse.Issuer.Value != sp.IDPMetadata.EntityID {
@@ -1685,8 +1685,8 @@ func (sp *ServiceProvider) parseReceivedResponse(responseEl, receivedEl *etree.E
 			return nil, err
 		}
 
-		if response.IssueInstant.Add(MaxIssueDelay).Before(now) {
-			return nil, classify(fmt.Errorf("response IssueInstant expired at %s", response.IssueInstant.Add(MaxIssueDelay)), ErrExpired)
+		if err := checkIssueInstant("response IssueInstant", response.IssueInstant, now); err != nil {
+			return nil, err
 		}
 		if response.Issuer != nil && response.Issuer.Value != sp.IDPMetadata.EntityID {
 			return nil, classify(fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
@@ -2115,6 +2115,9 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if issueDeadline(assertion).Before(now) {
 		return classify(fmt.Errorf("expired on %s", issueDeadline(assertion)), ErrExpired)
 	}
+	if assertion.IssueInstant.Add(-MaxClockSkew).After(now) {
+		return classify(fmt.Errorf("assertion IssueInstant %s is in the future", assertion.IssueInstant), ErrNotYetValid)
+	}
 	if assertion.Issuer.Value != sp.IDPMetadata.EntityID {
 		return classify(fmt.Errorf("issuer is not %q", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
 	}
@@ -2254,7 +2257,29 @@ func (sp *ServiceProvider) validateAssertionInResponseTo(inResponseTo string, po
 // issueDeadline is the last moment validateAssertion accepts assertion by its
 // IssueInstant.
 func issueDeadline(assertion *Assertion) time.Time {
-	return assertion.IssueInstant.Add(MaxIssueDelay)
+	return issueInstantDeadline(assertion.IssueInstant)
+}
+
+// issueInstantDeadline is the last moment a message issued at issueInstant
+// is accepted: MaxIssueDelay later. MaxIssueDelay already allows for some
+// clock drift.
+func issueInstantDeadline(issueInstant time.Time) time.Time {
+	return issueInstant.Add(MaxIssueDelay)
+}
+
+// checkIssueInstant refuses a message whose IssueInstant is more than
+// MaxIssueDelay in the past, or more than MaxClockSkew in
+// the future. A message dated in the future would otherwise stay acceptable
+// by its IssueInstant for as long as the issuer liked. what names the
+// message in the error.
+func checkIssueInstant(what string, issueInstant, now time.Time) error {
+	if deadline := issueInstantDeadline(issueInstant); deadline.Before(now) {
+		return classify(fmt.Errorf("%s expired at %s", what, deadline), ErrExpired)
+	}
+	if issueInstant.Add(-MaxClockSkew).After(now) {
+		return classify(fmt.Errorf("%s %s is in the future", what, issueInstant), ErrNotYetValid)
+	}
+	return nil
 }
 
 // skewedDeadline is a NotOnOrAfter time moved later by the allowed clock
@@ -2333,7 +2358,7 @@ const logoutRequestReplayKeyPrefix = "LogoutRequest:"
 // is refused: IssueInstant plus MaxIssueDelay or, if it is earlier, the
 // NotOnOrAfter time allowing for clock skew.
 func logoutRequestAcceptableUntil(req *LogoutRequest) time.Time {
-	deadline := req.IssueInstant.Add(MaxIssueDelay)
+	deadline := issueInstantDeadline(req.IssueInstant)
 	if req.NotOnOrAfter != nil {
 		deadline = earliest(deadline, skewedDeadline(*req.NotOnOrAfter))
 	}
@@ -3411,8 +3436,8 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 	}
 
 	now := sp.now()
-	if resp.IssueInstant.Add(MaxIssueDelay).Before(now) {
-		return classify(fmt.Errorf("issueInstant expired at %s", resp.IssueInstant.Add(MaxIssueDelay)), ErrExpired)
+	if err := checkIssueInstant("issueInstant", resp.IssueInstant, now); err != nil {
+		return err
 	}
 	if resp.Issuer == nil || resp.Issuer.Value != sp.IDPMetadata.EntityID {
 		return classify(fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
@@ -3571,11 +3596,8 @@ func (sp *ServiceProvider) validateLogoutRequest(req *LogoutRequest) error {
 // Destination.
 func (sp *ServiceProvider) validateLogoutRequestFields(req *LogoutRequest) error {
 	now := sp.now()
-	if req.IssueInstant.Add(MaxIssueDelay).Before(now) {
-		return classify(fmt.Errorf("issueInstant expired at %s", req.IssueInstant.Add(MaxIssueDelay)), ErrExpired)
-	}
-	if req.IssueInstant.Add(-MaxClockSkew).After(now) {
-		return classify(fmt.Errorf("issueInstant %s is in the future", req.IssueInstant), ErrNotYetValid)
+	if err := checkIssueInstant("issueInstant", req.IssueInstant, now); err != nil {
+		return err
 	}
 	if req.NotOnOrAfter != nil && !now.Before(req.NotOnOrAfter.Add(MaxClockSkew)) {
 		return classify(fmt.Errorf("request expired at %s", req.NotOnOrAfter), ErrExpired)

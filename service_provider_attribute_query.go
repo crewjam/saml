@@ -380,8 +380,8 @@ func (sp *ServiceProvider) validateAttributeQueryResponse(response *Response, qu
 	if response.InResponseTo != query.ID {
 		return fmt.Errorf("`InResponseTo` %q does not match the attribute query ID %q", response.InResponseTo, query.ID)
 	}
-	if response.IssueInstant.Add(MaxIssueDelay).Before(now) {
-		return fmt.Errorf("response IssueInstant expired at %s", response.IssueInstant.Add(MaxIssueDelay))
+	if err := checkIssueInstant("response IssueInstant", response.IssueInstant, now); err != nil {
+		return err
 	}
 	if response.Issuer == nil {
 		if signed {
@@ -508,7 +508,10 @@ func (sp *ServiceProvider) validateAttributeQueryAssertion(assertion *Assertion,
 		return err
 	}
 	if issueDeadline(assertion).Before(now) {
-		return fmt.Errorf("expired on %s", issueDeadline(assertion))
+		return classify(fmt.Errorf("expired on %s", issueDeadline(assertion)), ErrExpired)
+	}
+	if assertion.IssueInstant.Add(-MaxClockSkew).After(now) {
+		return classify(fmt.Errorf("assertion IssueInstant %s is in the future", assertion.IssueInstant), ErrNotYetValid)
 	}
 	if assertion.Issuer.Value != sp.IDPMetadata.EntityID {
 		return fmt.Errorf("issuer is not %q", sp.IDPMetadata.EntityID)
