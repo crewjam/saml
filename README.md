@@ -11,7 +11,7 @@ SAML is a standard for identity federation, i.e. either allowing a third party t
 
 In SAML parlance an **Identity Provider** (IDP) is a service that knows how to authenticate users. A **Service Provider** (SP) is a service that delegates authentication to an IDP. If you are building a service where users log in with someone else's credentials, then you are a **Service Provider**. This package supports implementing both service providers and identity providers.
 
-The core package contains the implementation of SAML. The package samlsp provides helper middleware suitable for use in Service Provider applications. The package samlidp provides a rudimentary IDP service that is useful for testing or as a starting point for other integrations.
+The core package contains the implementation of SAML. The package samlsp provides helper middleware suitable for use in Service Provider applications. The experimental package x/samlsp provides a smaller, protocol-only service provider API that leaves sessions to the application (see [below](#a-protocol-only-service-provider-xsamlsp)). The package samlidp provides a rudimentary IDP service that is useful for testing or as a starting point for other integrations.
 
 ## Getting Started as a Service Provider
 
@@ -236,6 +236,36 @@ Leave out the attributes to ask for everything the IDP releases to you. The quer
 Messages on the SOAP back channel (attribute queries, artifact resolution and SOAP single logout, at both the service provider and the IDP) are sent only to `https` endpoints: an `http` endpoint in the peer's metadata is refused with an error matching `saml.ErrInsecureSOAPEndpoint` (the IDP instead treats it as missing and logs the participant out through the browser if it can). Set `AllowInsecureSOAPEndpoints` on the `ServiceProvider` or `IdentityProvider` to allow plain `http`, for tests and development only.
 
 With the `samlsp` middleware, `samlSP.QueryAttributes(r, attributes...)` queries the attributes of the user of the request's session. The default session records the NameID of the login, with its Format and qualifiers, for this purpose; a session issued by an earlier version does not, and the user must log in again (`QueryAttributes` then returns an error matching `samlsp.ErrSessionNameIDUnknown`).
+
+## A protocol-only service provider: x/samlsp
+
+The experimental package `github.com/crewjam/saml/x/samlsp` is a thin layer over `saml.ServiceProvider` shaped after `golang.org/x/oauth2` and `go-oidc`. It deals with the SAML protocol only: it builds requests, verifies responses, handles single logout and serves the SP metadata, and leaves sessions, cookies and the storage of pending requests to the application. Its API may change.
+
+```golang
+config, err := samlsp.New(
+	samlsp.RemoteMetadata("https://idp.example.com/metadata"),
+	"https://sp.example.com/saml/metadata", // the entity ID; the ACS is at .../saml/acs
+	samlsp.WithKey(key, cert),
+)
+
+http.HandleFunc("/saml/metadata", config.ServeMetadata)
+
+http.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+	relayState := rand.Text()
+	req, err := config.AuthnRequest(r.Context(), relayState)
+	// ... handle err; remember req.ID under relayState, e.g. in a signed cookie
+	req.Write(w)
+})
+
+http.HandleFunc("/saml/acs", func(w http.ResponseWriter, r *http.Request) {
+	requestID := ... // the ID remembered under r.FormValue("RelayState")
+	assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(requestID))
+	// ... handle err; start the application's session from assertion.NameID
+	// and assertion.Attributes (see Attributes.Decode)
+})
+```
+
+It turns on every check that the core package leaves off only for compatibility, and refuses replayed assertions by default. It also covers back-channel (SOAP) logout, attribute queries, MDQ metadata, requested attributes in the SP metadata, and decoding attributes into typed struct fields. See the [package documentation](https://pkg.go.dev/github.com/crewjam/saml/x/samlsp) and its examples.
 
 ## Getting Started as an Identity Provider
 
