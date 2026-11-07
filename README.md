@@ -48,19 +48,23 @@ samltest.dev gives each app its own IDP, so first create an app with at least on
       -H "Content-Type: application/json" \
       -d '{"users":[{"email":"john@example.com","firstName":"John","lastName":"Doe"}]}'
 
-The response contains the app's ID (for example `app_01kg2nmcmp9gey67b0kxpqm643`). The IDP metadata URL for the app is `https://www.samltest.dev/apps/<APP_ID>/metadata`.
+The response contains the app's ID (for example `app_01kg2nmcmp9gey67b0kxpqm643`). The IDP metadata URL for the app is `https://www.samltest.dev/apps/<APP_ID>/metadata`. Download it once and keep it with the service:
+
+    curl -o idp-metadata.xml https://www.samltest.dev/apps/<APP_ID>/metadata
+
+The IDP metadata names the certificates the service provider trusts to sign assertions, so whoever controls it controls who can log in. Loading it from a file you checked, rather than fetching it at every start, pins the IDP. See [Trusting the IDP's metadata](#trusting-the-idps-metadata) for the alternatives.
 
 ```golang
 package main
 
 import (
-	"context"
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 
 	"github.com/crewjam/saml/samlsp"
 )
@@ -79,12 +83,11 @@ func main() {
 		panic(err) // TODO handle error
 	}
 
-	idpMetadataURL, err := url.Parse("https://www.samltest.dev/apps/<APP_ID>/metadata")
+	idpMetadataXML, err := os.ReadFile("idp-metadata.xml")
 	if err != nil {
 		panic(err) // TODO handle error
 	}
-	idpMetadata, err := samlsp.FetchMetadata(context.Background(), http.DefaultClient,
-		*idpMetadataURL)
+	idpMetadata, err := samlsp.ParseMetadata(idpMetadataXML)
 	if err != nil {
 		panic(err) // TODO handle error
 	}
@@ -178,6 +181,25 @@ When a user visits `/logout`:
 The middleware also handles IDP initiated logout: when the IDP sends a signed `LogoutRequest` to `/saml/slo`, the middleware deletes the session cookie of that browser and answers the IDP with a `LogoutResponse`.
 
 For single logout to work, the IDP needs to know the SLO URL. It is in the service provider's metadata, or you can enter `<root URL>/saml/slo` in the IDP's settings. Many IDPs require logout requests to be signed; set `Options.SignRequest` to sign them. If you need different behaviour, for example to end server-side sessions, the `ServiceProvider` methods `MakeLogoutRequest`, `RedirectLogoutRequestURL`, `ParseLogoutResponse`, `ValidateLogoutRequest` and `MakeRedirectLogoutResponse` are the building blocks `HandleStartLogout` and `ServeSLO` use.
+
+### Trusting the IDP's metadata
+
+The service provider trusts whatever signing certificates the IDP metadata names, so get the metadata from a source you trust:
+
+- **A file kept with the service**, as above, checked when you download it and updated when the IDP rotates its keys.
+
+- **Signed metadata.** If the IDP (or its federation) signs its metadata, fetch it and check the signature against the metadata signing certificate, obtained out of band:
+
+  ```golang
+  idpMetadata, err := samlsp.FetchSignedMetadata(context.Background(), http.DefaultClient,
+  	*idpMetadataURL, []*x509.Certificate{idpMetadataSigningCert})
+  ```
+
+  Only what the signature covers is parsed. An IDP served by this package signs its metadata when `IdentityProvider.SignMetadata` is set.
+
+- **An `https` URL you trust**, with `samlsp.FetchMetadata`. The metadata is then only as trustworthy as that server and its TLS certificate, and a plain `http` URL can be changed by anyone on the network path.
+
+Federation metadata (an `<EntitiesDescriptor>` such as eduGAIN or InCommon publishes) holds many IDPs. `ParseMetadata` and `FetchMetadata` refuse metadata with more than one; use `ParseMetadataByEntityID`, `FetchMetadataByEntityID` or their `Signed` variants to choose the IDP by its entity ID.
 
 ### Querying attributes from the IDP
 

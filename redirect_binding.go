@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	xrv "github.com/mattermost/xml-roundtrip-validator"
+	"github.com/crewjam/saml/internal/xmlroundtrip"
 
 	"github.com/beevik/etree"
 	dsig "github.com/russellhaering/goxmldsig"
@@ -168,6 +168,9 @@ func (sp *ServiceProvider) redirectBindingCerts() ([]*x509.Certificate, error) {
 // verifyRedirectBindingSignature checks the query string signature of an
 // HTTP-Redirect binding message against the IDP's signing certificates.
 func (sp *ServiceProvider) verifyRedirectBindingSignature(m *redirectBindingMessage) error {
+	if err := checkSigAlgNotSHA1(sp.RejectSHA1Signatures, m.SigAlg); err != nil {
+		return err
+	}
 	return checkRedirectBindingSignature(m, sp.redirectBindingCerts, sp.dsigClock().Now(), sp.IgnoreCertificateExpiry)
 }
 
@@ -270,7 +273,7 @@ func (sp *ServiceProvider) readRedirectBindingMessage(rawQuery, messageParam str
 		return nil, retErr
 	}
 
-	if err := xrv.Validate(bytes.NewReader(inflated)); err != nil {
+	if err := xmlroundtrip.Validate(inflated); err != nil {
 		return nil, err
 	}
 

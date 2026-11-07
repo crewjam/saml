@@ -136,12 +136,12 @@ func TestCovStripPadding(t *testing.T) {
 		want []byte
 		err  string
 	}{
-		{buf: nil, err: "buffer is too short for padding"},
-		{buf: []byte{}, err: "buffer is too short for padding"},
+		{buf: nil, err: "xmlenc: decryption failed"},
+		{buf: []byte{}, err: "xmlenc: decryption failed"},
 		{buf: []byte{1}, want: []byte{}},
-		{buf: []byte{2}, err: "buffer is too short for padding"},
-		{buf: []byte{'a', 0}, err: "padding must be at least one byte"},
-		{buf: append(make([]byte, 31), 17), err: "buffer is too short for padding"},
+		{buf: []byte{2}, err: "xmlenc: decryption failed"},
+		{buf: []byte{'a', 0}, err: "xmlenc: decryption failed"},
+		{buf: append(make([]byte, 31), 17), err: "xmlenc: decryption failed"},
 		{buf: append(make([]byte, 15), 16), want: []byte{}},
 		{buf: []byte{'a', 'b', 'c', 2}, want: []byte{'a', 'b'}},
 	}

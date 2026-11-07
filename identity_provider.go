@@ -20,8 +20,9 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
-	xrv "github.com/mattermost/xml-roundtrip-validator"
 	dsig "github.com/russellhaering/goxmldsig"
+
+	"github.com/crewjam/saml/internal/xmlroundtrip"
 
 	"github.com/crewjam/saml/internal/signerutil"
 	"github.com/crewjam/saml/logger"
@@ -221,6 +222,17 @@ type IdentityProvider struct {
 	// carries an enveloped XML signature made with the IdP's key. See
 	// SignedMetadata.
 	SignMetadata bool
+
+	// RejectSHA1Signatures, if true, refuses messages from service
+	// providers that are signed with a SHA-1 based algorithm: an XML
+	// signature whose SignatureMethod or any DigestMethod is SHA-1 based
+	// (rsa-sha1, ecdsa-sha1, dsa-sha1, hmac-sha1 or sha1), and an
+	// HTTP-Redirect or HTTP-POST-SimpleSign signature whose SigAlg is. It
+	// applies to the signatures the IdP verifies: those of LogoutRequests
+	// (ServeSLO) and of AuthnRequests sent with the HTTP-POST-SimpleSign
+	// binding. The error matches ErrUnsupported. If false, SHA-1 is
+	// accepted.
+	RejectSHA1Signatures bool
 
 	// LogoutBindings are the bindings advertised in the IdP metadata for the
 	// SingleLogoutService at LogoutURL. When empty, only HTTP-Redirect is
@@ -657,11 +669,11 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 // the service provider's metadata (its validity period is not checked), and
 // a Destination equal to SSOURL; it is rejected otherwise.
 func (req *IdpAuthnRequest) Validate() error {
-	if err := xrv.Validate(bytes.NewReader(req.RequestBuffer)); err != nil {
+	if err := xmlroundtrip.Validate(req.RequestBuffer); err != nil {
 		return classify(err, ErrMalformedMessage)
 	}
 
-	if err := xml.Unmarshal(req.RequestBuffer, &req.Request); err != nil { //nolint:gosec // parsing the untrusted request is the point; it was validated by xrv above
+	if err := xml.Unmarshal(req.RequestBuffer, &req.Request); err != nil { //nolint:gosec // parsing the untrusted request is the point; it was checked by xmlroundtrip.Validate above
 		return classify(err, ErrMalformedMessage)
 	}
 

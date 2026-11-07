@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -13,9 +12,10 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
-	xrv "github.com/mattermost/xml-roundtrip-validator"
 	dsig "github.com/russellhaering/goxmldsig"
 	"github.com/russellhaering/goxmldsig/etreeutils"
+
+	"github.com/crewjam/saml/internal/xmlroundtrip"
 )
 
 // SessionInvalidator is an optional interface that a SessionProvider may
@@ -164,7 +164,7 @@ func (req *IdpLogoutRequest) Validate() error {
 // parseRequest parses RequestBuffer into Request and returns the root
 // element of the request.
 func (req *IdpLogoutRequest) parseRequest() (*etree.Element, error) {
-	if err := xrv.Validate(bytes.NewReader(req.RequestBuffer)); err != nil {
+	if err := xmlroundtrip.Validate(req.RequestBuffer); err != nil {
 		return nil, fmt.Errorf("logout request contains invalid XML: %w", err)
 	}
 	doc := etree.NewDocument()
@@ -176,8 +176,11 @@ func (req *IdpLogoutRequest) parseRequest() (*etree.Element, error) {
 		return nil, errors.New("cannot parse logout request: no root element")
 	}
 	// LogoutRequest binds its element names to their namespaces, so this
-	// fails unless the root is a samlp:LogoutRequest.
-	if err := xml.Unmarshal(req.RequestBuffer, &req.Request); err != nil { //nolint:gosec // parsing the untrusted request is the point; it was validated by xrv above
+	// fails unless the root is a samlp:LogoutRequest. unmarshalElement
+	// reads attribute fields only from unqualified attributes, so a
+	// namespace declaration that the signature does not cover cannot
+	// replace one.
+	if err := unmarshalElement(root, &req.Request); err != nil {
 		return nil, fmt.Errorf("cannot parse logout request: %w", err)
 	}
 	return root, nil
@@ -194,9 +197,15 @@ func (req *IdpLogoutRequest) verifySignature(root *etree.Element) error {
 	}
 
 	if req.redirectMessage != nil && req.redirectMessage.SignedContent != nil {
+		if err := checkSigAlgNotSHA1(req.IDP.RejectSHA1Signatures, req.redirectMessage.SigAlg); err != nil {
+			return err
+		}
 		return checkRedirectBindingSignature(req.redirectMessage, func() ([]*x509.Certificate, error) {
 			return certs, nil
 		}, req.Now, true)
+	}
+	if err := checkEnvelopedSignatureNotSHA1(req.IDP.RejectSHA1Signatures, root); err != nil {
+		return err
 	}
 	return verifyEnvelopedSignature(root, certs, Clock)
 }
@@ -473,12 +482,20 @@ func (idp *IdentityProvider) ServeSLO(w http.ResponseWriter, r *http.Request) {
 // must be a direct child of el and reference it, against certs. The
 // certificates' validity periods are ignored. clock may be nil.
 func verifyEnvelopedSignature(el *etree.Element, certs []*x509.Certificate, clock *dsig.Clock) error {
+	_, err := verifiedEnvelopedElement(el, certs, clock)
+	return err
+}
+
+// verifiedEnvelopedElement is verifyEnvelopedSignature, returning what the
+// signature covers: el without its Signature, parsed from the canonical
+// bytes that were digested.
+func verifiedEnvelopedElement(el *etree.Element, certs []*x509.Certificate, clock *dsig.Clock) (*etree.Element, error) {
 	sigEl, err := findChild(el, "http://www.w3.org/2000/09/xmldsig#", "Signature")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if sigEl == nil {
-		return errSignatureElementNotPresent
+		return nil, errSignatureElementNotPresent
 	}
 
 	certs = withoutValidityPeriod(certs)
@@ -492,23 +509,22 @@ func verifyEnvelopedSignature(el *etree.Element, certs []*x509.Certificate, cloc
 
 	ctx, err := unboundedParentContext(el)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	ctx, err = ctx.SubContext(el)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	el, err = etreeutils.NSDetatch(ctx, el)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// See ServiceProvider.validateSignature: without a certificate in
 	// KeyInfo, dsig can only pick the certificate itself if it trusts
 	// exactly one.
 	if noCertInKeyInfo && len(certs) > 1 {
-		return validateWithEachCert(validationContext, certs, el)
+		return validatedWithEachCert(validationContext, certs, el)
 	}
-	_, err = validationContext.Validate(el)
-	return err
+	return validationContext.Validate(el)
 }

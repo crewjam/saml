@@ -1322,7 +1322,7 @@ func TestIDPRejectDecompressionBomb(t *testing.T) {
 		"SAMLRequest": {encoded},
 	}.Encode(), nil)
 	_, err = NewIdpAuthnRequest(&test.IDP, r)
-	assert.Error(t, err, "cannot decompress request: flate: uncompress limit exceeded (10485760 bytes)")
+	assert.Error(t, err, "cannot decompress request: flate: uncompress limit exceeded (1048576 bytes)")
 }
 
 func TestIDPHTTPCanHandleSSORequest(t *testing.T) {

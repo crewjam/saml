@@ -26,9 +26,10 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
-	xrv "github.com/mattermost/xml-roundtrip-validator"
 	dsig "github.com/russellhaering/goxmldsig"
 	"github.com/russellhaering/goxmldsig/etreeutils"
+
+	"github.com/crewjam/saml/internal/xmlroundtrip"
 
 	"github.com/crewjam/saml/internal/signerutil"
 	"github.com/crewjam/saml/logger"
@@ -149,6 +150,14 @@ type ServiceProvider struct {
 	// AuthnNameIDFormat is the format used in the NameIDPolicy for
 	// authentication requests
 	AuthnNameIDFormat NameIDFormat
+
+	// SendUnspecifiedNameIDFormat, when true and AuthnNameIDFormat is
+	// UnspecifiedNameIDFormat, sends the full unspecified URI as the Format
+	// of the AuthnRequest NameIDPolicy and the LogoutRequest NameID. By
+	// default the Format is left off, which the spec reads as unspecified
+	// (SAML Core §2.2.2, §3.4.1.1), but some IdPs (e.g. Keycloak) reject a
+	// request without it.
+	SendUnspecifiedNameIDFormat bool
 
 	// Scoping, when set, is sent in authentication requests. Proxying identity
 	// providers (gateways) use its IDPList to choose which identity provider to
@@ -287,6 +296,16 @@ type ServiceProvider struct {
 	// them.
 	IgnoreCertificateExpiry bool
 
+	// RejectSHA1Signatures, if true, refuses messages from the IDP that are
+	// signed with a SHA-1 based algorithm: an XML signature whose
+	// SignatureMethod or any DigestMethod is SHA-1 based (rsa-sha1,
+	// ecdsa-sha1, dsa-sha1, hmac-sha1 or sha1), and an HTTP-Redirect or
+	// HTTP-POST-SimpleSign signature whose SigAlg is. The check applies to
+	// every signature the ServiceProvider verifies, including those checked
+	// by SignatureVerifier, and the error matches ErrUnsupported (and, for
+	// XML signatures, ErrInvalidSignature). If false, SHA-1 is accepted.
+	RejectSHA1Signatures bool
+
 	// ReplayCache, if set, records the ID of the assertion each accepted
 	// response is accepted for, and refuses a response whose assertion it
 	// has already recorded. Without it, a captured assertion is accepted
@@ -402,7 +421,14 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 					},
 				},
 			},
+			// In order of preference. AES-GCM comes first: CBC has no
+			// integrity check, so a sender of modified ciphertexts can learn
+			// about the plaintext from whether it decrypts to valid XML. CBC
+			// stays listed for IdPs that cannot use GCM.
 			EncryptionMethods: []EncryptionMethod{
+				{Algorithm: xmlenc.AES256GCM.Algorithm()},
+				{Algorithm: xmlenc.AES128GCM.Algorithm()},
+				{Algorithm: xmlenc.AES192GCM.Algorithm()},
 				{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
 				{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
 				{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
@@ -1016,7 +1042,7 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	response, err := httpClient.Do(req)
+	response, err := httpClient.Do(req) //nolint:gosec // G704: the URL is the IdP's ArtifactResolutionService from its metadata, not from the request
 	if err != nil {
 		retErr.PrivateErr = classify(fmt.Errorf("cannot resolve artifact: %w", err), ErrArtifactResolution)
 		return nil, retErr
@@ -1092,7 +1118,7 @@ func (sp *ServiceProvider) ParseXMLArtifactResponse(soapResponseXML []byte, poss
 	}
 
 	// ensure that the response XML is well-formed before we parse it
-	if err := xrv.Validate(bytes.NewReader(soapResponseXML)); err != nil {
+	if err := xmlroundtrip.Validate(soapResponseXML); err != nil {
 		retErr.PrivateErr = classify(fmt.Errorf("invalid xml: %w", err), ErrMalformedMessage)
 		return nil, retErr
 	}
@@ -1226,7 +1252,7 @@ func (sp *ServiceProvider) parseXMLResponse(decodedResponseXML []byte, possibleR
 	}
 
 	// ensure that the response XML is well-formed before we parse it
-	if err := xrv.Validate(bytes.NewReader(decodedResponseXML)); err != nil {
+	if err := xmlroundtrip.Validate(decodedResponseXML); err != nil {
 		retErr.PrivateErr = classify(fmt.Errorf("invalid xml: %w", err), ErrMalformedMessage)
 		return nil, retErr
 	}
@@ -1331,15 +1357,32 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 		signatureRequirement = signatureNotRequired
 	}
 
+	encryptedAssertionEls, err := findChildren(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "EncryptedAssertion")
+	if err != nil {
+		return nil, err
+	}
+	assertionEls, err := findChildren(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "Assertion")
+	if err != nil {
+		return nil, err
+	}
+
+	// Nothing has authenticated an unsigned Response, so each of its
+	// assertions must be decrypted and its signature checked, which costs
+	// more for each one and more again for each namespace declaration in
+	// scope. A Response carries one assertion in practice (and only the
+	// first is returned), and other SAML libraries refuse an unsigned
+	// Response with more than one, so refuse it before doing any of that.
+	if signatureRequirement == signatureRequired {
+		if n := len(encryptedAssertionEls) + len(assertionEls); n > 1 {
+			return nil, classify(fmt.Errorf("an unsigned Response must contain exactly one Assertion or EncryptedAssertion, not %d", n), ErrMalformedMessage)
+		}
+	}
+
 	var errs []error
 	var assertions []Assertion
 
 	// look for encrypted assertions
 	{
-		encryptedAssertionEls, err := findChildren(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "EncryptedAssertion")
-		if err != nil {
-			return nil, err
-		}
 		for _, encryptedAssertionEl := range encryptedAssertionEls {
 			assertion, err := sp.parseEncryptedAssertion(encryptedAssertionEl, possibleRequestIDs, now, signatureRequirement)
 			if err != nil {
@@ -1352,10 +1395,6 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 
 	// look for plaintext assertions
 	{
-		assertionEls, err := findChildren(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "Assertion")
-		if err != nil {
-			return nil, err
-		}
 		for _, assertionEl := range assertionEls {
 			assertion, err := sp.parseAssertion(assertionEl, possibleRequestIDs, now, signatureRequirement)
 			if err != nil {
@@ -1453,16 +1492,20 @@ func (sp *ServiceProvider) decryptElement(encryptedEl *etree.Element) (*etree.El
 		return nil, err
 	}
 
-	if err := xrv.Validate(bytes.NewReader(plaintextEl)); err != nil {
-		return nil, classify(fmt.Errorf("plaintext response contains invalid XML: %w", err), ErrMalformedMessage)
+	// Whether a modified ciphertext decrypts to well-formed XML is what the
+	// attacks on XML Encryption in CBC mode (Jager and Somorovsky, 2011)
+	// learn from, so plaintext that is not a well-formed element gets the
+	// same error as a ciphertext with bad padding, without detail.
+	if err := xmlroundtrip.Validate(plaintextEl); err != nil {
+		return nil, xmlenc.ErrDecryptionFailed
 	}
 
 	doc := etree.NewDocument()
 	if err := doc.ReadFromBytes(plaintextEl); err != nil {
-		return nil, classify(fmt.Errorf("cannot parse plaintext response %w", err), ErrMalformedMessage)
+		return nil, xmlenc.ErrDecryptionFailed
 	}
 	if doc.Root() == nil {
-		return nil, classify(errors.New("plaintext response contains no root element"), ErrMalformedMessage)
+		return nil, xmlenc.ErrDecryptionFailed
 	}
 	return doc.Root(), nil
 }
@@ -1789,6 +1832,13 @@ func stripKeyInfoWithoutCertificate(el *etree.Element) bool {
 // returns nil as soon as one of them verifies it. Otherwise it returns the
 // error from the last certificate tried.
 func validateWithEachCert(base *dsig.ValidationContext, certs []*x509.Certificate, el *etree.Element) error {
+	_, err := validatedWithEachCert(base, certs, el)
+	return err
+}
+
+// validatedWithEachCert is validateWithEachCert, returning the signed
+// element as dsig's Validate does.
+func validatedWithEachCert(base *dsig.ValidationContext, certs []*x509.Certificate, el *etree.Element) (*etree.Element, error) {
 	var err error
 	for _, cert := range certs {
 		ctx := dsig.NewDefaultValidationContext(&dsig.MemoryX509CertificateStore{
@@ -1796,11 +1846,12 @@ func validateWithEachCert(base *dsig.ValidationContext, certs []*x509.Certificat
 		})
 		ctx.IdAttribute = base.IdAttribute
 		ctx.Clock = base.Clock
-		if _, err = ctx.Validate(el); err == nil {
-			return nil
+		var signed *etree.Element
+		if signed, err = ctx.Validate(el); err == nil {
+			return signed, nil
 		}
 	}
-	return err
+	return nil, err
 }
 
 // validateSignature returns nil iff the Signature embedded in the element is valid
@@ -1832,29 +1883,13 @@ func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element, meta
 	if sigEl == nil {
 		return errSignatureElementNotPresent
 	}
+	if err := checkXMLSignatureNotSHA1(sp.RejectSHA1Signatures, sigEl); err != nil {
+		return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
+	}
 
-	var certs []*x509.Certificate
-	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate == nil {
-		certs, err = metadataCerts()
-		if err != nil {
-			return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
-		}
-	}
-	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint != nil && sp.IDPCertificateFingerprintAlgorithm != nil && sp.IDPCertificate == nil {
-		certs, err = sp.getCertBasedOnFingerprint(el)
-		if err != nil {
-			return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
-		}
-	}
-	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate != nil {
-		cert, err := parseCert(*sp.IDPCertificate)
-		if err != nil {
-			return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
-		}
-		certs = append(certs, cert)
-	}
-	if len(certs) == 0 {
-		return fmt.Errorf("cannot validate signature on %s: saml config not set up properly, specify either idp metadata url, fingerprints or actual certificate", el.Tag)
+	certs, err := sp.signatureVerificationCerts(el, metadataCerts)
+	if err != nil {
+		return err
 	}
 
 	if sp.IgnoreCertificateExpiry {
@@ -1926,6 +1961,37 @@ func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element, meta
 	}
 
 	return nil
+}
+
+// signatureVerificationCerts returns the IdP certificates that a signature on
+// el may be made with: from the IdP metadata, the configured fingerprint or
+// the configured certificate.
+func (sp *ServiceProvider) signatureVerificationCerts(el *etree.Element, metadataCerts func() ([]*x509.Certificate, error)) ([]*x509.Certificate, error) {
+	var certs []*x509.Certificate
+	var err error
+	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate == nil {
+		certs, err = metadataCerts()
+		if err != nil {
+			return nil, fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
+		}
+	}
+	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint != nil && sp.IDPCertificateFingerprintAlgorithm != nil && sp.IDPCertificate == nil {
+		certs, err = sp.getCertBasedOnFingerprint(el)
+		if err != nil {
+			return nil, fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
+		}
+	}
+	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate != nil {
+		cert, err := parseCert(*sp.IDPCertificate)
+		if err != nil {
+			return nil, fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
+		}
+		certs = append(certs, cert)
+	}
+	if len(certs) == 0 {
+		return nil, fmt.Errorf("cannot validate signature on %s: saml config not set up properly, specify either idp metadata url, fingerprints or actual certificate", el.Tag)
+	}
+	return certs, nil
 }
 
 // SignLogoutRequest adds the `Signature` element to the `LogoutRequest`.
@@ -2284,7 +2350,11 @@ func (sp *ServiceProvider) nameIDFormat() string {
 		// To maintain library back-compat, use "transient" if unset.
 		nameIDFormat = string(TransientNameIDFormat)
 	case UnspecifiedNameIDFormat:
-		// Spec defines an empty value as "unspecified" so don't set one.
+		// Spec defines an empty value as "unspecified" so don't set one,
+		// unless the IdP needs it spelled out.
+		if sp.SendUnspecifiedNameIDFormat {
+			nameIDFormat = string(UnspecifiedNameIDFormat)
+		}
 	default:
 		nameIDFormat = string(sp.AuthnNameIDFormat)
 	}
@@ -2315,6 +2385,10 @@ func (sp *ServiceProvider) metadataNameIDFormat() NameIDFormat {
 //
 // It does not check the response's InResponseTo against the LogoutRequest
 // this service provider sent; use ParseLogoutResponse for that.
+//
+// Deprecated: use ParseLogoutResponse, which also checks that the response
+// answers a LogoutRequest this service provider sent, so that a
+// LogoutResponse cannot be replayed or delivered unsolicited.
 func (sp *ServiceProvider) ValidateLogoutResponseRequest(req *http.Request) error {
 	_, err := sp.parseLogoutResponseRequest(req)
 	return err
@@ -2386,6 +2460,9 @@ func (sp *ServiceProvider) parseLogoutResponseSimpleSign(req *http.Request) (*Lo
 // ValidateLogoutResponseForm returns a nil error if the logout response is valid.
 //
 // It does not check the response's InResponseTo; see ParseLogoutResponse.
+//
+// Deprecated: use ParseLogoutResponse, which reads the form from the request
+// and also checks the response's InResponseTo.
 func (sp *ServiceProvider) ValidateLogoutResponseForm(postFormData string) error {
 	_, err := sp.parseLogoutResponseForm(postFormData)
 	return err
@@ -2404,7 +2481,7 @@ func (sp *ServiceProvider) parseLogoutResponseForm(postFormData string) (*Logout
 	retErr.Response = string(rawResponseBuf)
 
 	// TODO(ross): add test case for this (SLO does not have tests right now)
-	if err := xrv.Validate(bytes.NewReader(rawResponseBuf)); err != nil {
+	if err := xmlroundtrip.Validate(rawResponseBuf); err != nil {
 		return nil, classify(fmt.Errorf("response contains invalid XML: %w", err), ErrMalformedMessage)
 	}
 
@@ -2445,6 +2522,9 @@ func (sp *ServiceProvider) parseLogoutResponseForm(postFormData string) (*Logout
 // requires); use ValidateLogoutResponseRequest to accept those.
 //
 // It does not check the response's InResponseTo; see ParseLogoutResponse.
+//
+// Deprecated: use ParseLogoutResponse, which also accepts query string
+// signatures and checks the response's InResponseTo.
 //
 // URL Binding appears to be gzip / flate encoded
 // See https://www.oasis-open.org/committees/download.php/20645/sstc-saml-tech-overview-2%200-draft-10.pdf  6.6
@@ -2559,7 +2639,7 @@ func (sp *ServiceProvider) ValidateLogoutRequestForm(postFormData string) (*Logo
 	}
 	retErr.Response = string(rawRequestBuf)
 
-	if err := xrv.Validate(bytes.NewReader(rawRequestBuf)); err != nil {
+	if err := xmlroundtrip.Validate(rawRequestBuf); err != nil {
 		return nil, classify(fmt.Errorf("request contains invalid XML: %w", err), ErrMalformedMessage)
 	}
 
@@ -2643,24 +2723,33 @@ func firstSet(a, b string) string {
 }
 
 // findChildren returns all the elements matching childNS/childTag that are direct children of parentEl.
+//
+// The namespace context of parentEl is built once. Building it for every
+// child (NSBuildParentContext and SubContext both copy every declaration in
+// scope) made the cost the number of children times the number of
+// declarations, so a small unsigned message with many declarations and many
+// matching children took seconds and gigabytes to read.
 func findChildren(parentEl *etree.Element, childNS string, childTag string) ([]*etree.Element, error) {
 	//nolint:prealloc // We don't know how many child elements we'll actually put into this array.
 	var rv []*etree.Element
+	var parentCtx *etreeutils.NSContext
 	for _, childEl := range parentEl.ChildElements() {
 		if childEl.Tag != childTag {
 			continue
 		}
 
-		ctx, err := etreeutils.NSBuildParentContext(childEl)
-		if err != nil {
-			return nil, err
-		}
-		ctx, err = ctx.SubContext(childEl)
-		if err != nil {
-			return nil, err
+		if parentCtx == nil {
+			ctx, err := etreeutils.NSBuildParentContext(childEl)
+			if err != nil {
+				return nil, err
+			}
+			parentCtx = &ctx
 		}
 
-		ns, err := ctx.LookupPrefix(childEl.Space)
+		if err := checkNamespaceDeclarations(childEl); err != nil {
+			return nil, err
+		}
+		ns, err := lookupElementNamespace(*parentCtx, childEl)
 		if err != nil {
 			return nil, classify(fmt.Errorf("[%s]:%s cannot find prefix %s: %w", childNS, childTag, childEl.Space, err), ErrMalformedMessage)
 		}
@@ -2672,6 +2761,43 @@ func findChildren(parentEl *etree.Element, childNS string, childTag string) ([]*
 	}
 
 	return rv, nil
+}
+
+// checkNamespaceDeclarations makes the checks NSContext.SubContext makes of
+// el's namespace declarations.
+func checkNamespaceDeclarations(el *etree.Element) error {
+	for _, attr := range el.Attr {
+		switch {
+		case attr.Space == "xmlns" && attr.Key == "xml" && attr.Value != etreeutils.XMLNamespace:
+			return etreeutils.ErrReservedNamespace
+		case attr.Space == "xmlns" && attr.Key == "xmlns":
+			return etreeutils.ErrReservedNamespace
+		case attr.Space == "" && attr.Key == "xmlns" && attr.Value == etreeutils.XMLNSNamespace:
+			return etreeutils.ErrInvalidDefaultNamespace
+		}
+	}
+	return nil
+}
+
+// lookupElementNamespace returns the namespace of el's prefix, given
+// parentCtx, the namespace context of el's parent: what
+// parentCtx.SubContext(el) followed by LookupPrefix(el.Space) returns,
+// without copying parentCtx. Check el's declarations with
+// checkNamespaceDeclarations first.
+func lookupElementNamespace(parentCtx etreeutils.NSContext, el *etree.Element) (string, error) {
+	ns, declared := "", false
+	for _, attr := range el.Attr {
+		switch {
+		case attr.Space == "xmlns" && attr.Key == el.Space:
+			ns, declared = attr.Value, true
+		case attr.Space == "" && attr.Key == "xmlns" && el.Space == "":
+			ns, declared = attr.Value, true
+		}
+	}
+	if declared {
+		return ns, nil
+	}
+	return parentCtx.LookupPrefix(el.Space)
 }
 
 // findOneChild finds the specified child element. Returns an error if the element doesn't exist.
@@ -2711,6 +2837,12 @@ func findChild(parentEl *etree.Element, childNS string, childTag string) (*etree
 // serialized root, so prefixes (and the default namespace) used anywhere in
 // el resolve to the same URIs they had in the original document.
 func elementToBytes(el *etree.Element) ([]byte, error) {
+	return elementCopyToBytes(elementWithNamespaces(el))
+}
+
+// elementWithNamespaces returns a copy of el that declares every namespace
+// prefix it inherits from its ancestors.
+func elementWithNamespaces(el *etree.Element) *etree.Element {
 	root := el.Copy()
 
 	declared := map[string]bool{}
@@ -2731,7 +2863,10 @@ func elementToBytes(el *etree.Element) ([]byte, error) {
 			root.CreateAttr(attr.FullKey(), attr.Value)
 		}
 	}
+	return root
+}
 
+func elementCopyToBytes(root *etree.Element) ([]byte, error) {
 	doc := etree.NewDocument()
 	doc.SetRoot(root)
 	return doc.WriteToBytes()
@@ -2751,8 +2886,14 @@ func namespaceDeclPrefix(attr etree.Attr) (string, bool) {
 }
 
 // unmarshalElement serializes el into v by serializing el and then parsing it with xml.Unmarshal.
+//
+// el is untrusted: attribute fields are read only from unqualified
+// attributes, never from namespace declarations or attributes in another
+// namespace (see sanitizeAttributesForUnmarshal).
 func unmarshalElement(el *etree.Element, v interface{}) error {
-	buf, err := elementToBytes(el)
+	root := elementWithNamespaces(el)
+	sanitizeAttributesForUnmarshal(root)
+	buf, err := elementCopyToBytes(root)
 	if err != nil {
 		return classify(err, ErrMalformedMessage)
 	}
