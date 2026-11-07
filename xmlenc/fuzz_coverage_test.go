@@ -118,14 +118,20 @@ func TestCovFuzzSeedsDoNotPanic(t *testing.T) {
 	}
 }
 
-func FuzzCovDecrypt(f *testing.F) {
+// FuzzDecrypt fuzzes Decrypt with hostile documents, seeded with the corpus
+// and past crashers of the retired go-fuzz harness. Run it with
+//
+//	go test -fuzz=FuzzDecrypt ./xmlenc
+func FuzzDecrypt(f *testing.F) {
 	for _, seed := range covSeeds(f) {
 		f.Add(seed)
 	}
-	e := OAEP()
-	e.BlockCipher = AES128CBC
-	f.Add(covTestKeyDocument(f, e))
+	for _, bc := range []BlockCipher{AES128CBC, AES256GCM} {
+		e := OAEP()
+		e.BlockCipher = bc
+		f.Add(covTestKeyDocument(f, e))
+	}
 	f.Fuzz(func(_ *testing.T, data []byte) {
-		Fuzz(covFuzzKey(), data)
+		_ = decryptForFuzzing(covFuzzKey(), data)
 	})
 }
