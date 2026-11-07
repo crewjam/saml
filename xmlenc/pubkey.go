@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/beevik/etree"
@@ -49,7 +50,7 @@ func (e RSA) Encrypt(certificate interface{}, plaintext []byte, nonce []byte) (*
 
 	// generate a key
 	key := make([]byte, e.BlockCipher.KeySize())
-	if _, err := RandReader.Read(key); err != nil {
+	if _, err := io.ReadFull(RandReader, key); err != nil {
 		return nil, err
 	}
 
@@ -59,7 +60,7 @@ func (e RSA) Encrypt(certificate interface{}, plaintext []byte, nonce []byte) (*
 	encryptedKey := keyInfoEl.CreateElement("xenc:EncryptedKey")
 	{
 		randBuf := make([]byte, 16)
-		if _, err := RandReader.Read(randBuf); err != nil {
+		if _, err := io.ReadFull(RandReader, randBuf); err != nil {
 			return nil, err
 		}
 		encryptedKey.CreateAttr("Id", fmt.Sprintf("_%x", randBuf))

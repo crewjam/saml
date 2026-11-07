@@ -48,7 +48,7 @@ func (e GCM) Encrypt(key interface{}, plaintext []byte, nonce []byte) (*etree.El
 	encryptedDataEl.CreateAttr("xmlns:xenc", "http://www.w3.org/2001/04/xmlenc#")
 	{
 		randBuf := make([]byte, 16)
-		if _, err := RandReader.Read(randBuf); err != nil {
+		if _, err := io.ReadFull(RandReader, randBuf); err != nil {
 			return nil, err
 		}
 		encryptedDataEl.CreateAttr("Id", fmt.Sprintf("_%x", randBuf))

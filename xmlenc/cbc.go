@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/beevik/etree"
 )
@@ -49,7 +50,7 @@ func (e CBC) Encrypt(key interface{}, plaintext []byte, _ []byte) (*etree.Elemen
 	encryptedDataEl.CreateAttr("xmlns:xenc", "http://www.w3.org/2001/04/xmlenc#")
 	{
 		randBuf := make([]byte, 16)
-		if _, err := RandReader.Read(randBuf); err != nil {
+		if _, err := io.ReadFull(RandReader, randBuf); err != nil {
 			return nil, err
 		}
 		encryptedDataEl.CreateAttr("Id", fmt.Sprintf("_%x", randBuf))
@@ -62,7 +63,7 @@ func (e CBC) Encrypt(key interface{}, plaintext []byte, _ []byte) (*etree.Elemen
 	plaintext = appendPadding(plaintext, block.BlockSize())
 
 	iv := make([]byte, block.BlockSize(), block.BlockSize()+len(plaintext))
-	if _, err := RandReader.Read(iv); err != nil {
+	if _, err := io.ReadFull(RandReader, iv); err != nil {
 		return nil, err
 	}
 
