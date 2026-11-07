@@ -876,34 +876,36 @@ func TestJWTSessionCodec_UnsupportedAlgorithmReturnsError(t *testing.T) {
 }
 
 func TestIsLocalRedirect(t *testing.T) {
-	for uri, want := range map[string]bool{
-		"/":                     true,
-		"/foo":                  true,
-		"/foo/bar":              true,
-		"/foo?bar=baz":          true,
-		"/foo#fragment":         true,
-		"/foo?next=//elsewhere": true,
-
-		"":                        false,
-		"foo":                     false,
-		" /foo":                   false,
-		"//evil.example":          false,
-		"//evil.example/path":     false,
-		"https://evil.example":    false,
-		"http://evil.example":     false,
-		"javascript:alert(1)":     false,
-		"data:text/html,<script>": false,
-		"mailto:a@evil.example":   false,
-		"/\\evil.example":         false,
-		"/foo\\bar":               false,
-		"/\t/evil.example":        false,
-		"/\n/evil.example":        false,
-		"/\r/evil.example":        false,
-		"/\x00/evil.example":      false,
-		"/\x7f/evil.example":      false,
-		"/%zz":                    false,
+	for _, tc := range []struct {
+		uri  string
+		want bool
+	}{
+		{"/", true},
+		{"/foo", true},
+		{"/foo/bar", true},
+		{"/foo?bar=baz", true},
+		{"/foo#fragment", true},
+		{"/foo?next=//elsewhere", true},
+		{"", false},
+		{"foo", false},
+		{" /foo", false},
+		{"//evil.example", false},
+		{"//evil.example/path", false},
+		{"https://evil.example", false},
+		{"http://evil.example", false},
+		{"javascript:alert(1)", false},
+		{"data:text/html,<script>", false},
+		{"mailto:a@evil.example", false},
+		{"/\\evil.example", false},
+		{"/foo\\bar", false},
+		{"/\t/evil.example", false},
+		{"/\n/evil.example", false},
+		{"/\r/evil.example", false},
+		{"/\x00/evil.example", false},
+		{"/\x7f/evil.example", false},
+		{"/%zz", false},
 	} {
-		assert.Check(t, is.Equal(want, isLocalRedirect(uri)), "isLocalRedirect(%q)", uri)
+		assert.Check(t, is.Equal(tc.want, isLocalRedirect(tc.uri)), "isLocalRedirect(%q)", tc.uri)
 	}
 }
 
