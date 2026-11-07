@@ -66,7 +66,7 @@ func assertChildOrder(t *testing.T, buf []byte, tags ...string) {
 	t.Helper()
 	doc := etree.NewDocument()
 	assert.NilError(t, doc.ReadFromBytes(buf))
-	var got []string
+	got := make([]string, 0, len(doc.Root().ChildElements()))
 	for _, el := range doc.Root().ChildElements() {
 		got = append(got, el.Tag)
 	}
@@ -110,7 +110,7 @@ func TestIDPServeSLOSeveralSessionIndexes(t *testing.T) {
 			test.sessions.invalidated = nil
 			w := test.serve(r)
 			assert.Check(t, w.Code == http.StatusFound || w.Code == http.StatusOK, w.Body.String())
-			ids := []string{}
+			ids := make([]string, 0, len(test.sessions.invalidated))
 			for _, s := range test.sessions.invalidated {
 				ids = append(ids, s.ID)
 			}
