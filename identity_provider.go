@@ -221,6 +221,14 @@ type IdentityProvider struct {
 	// carries an enveloped XML signature made with the IdP's key. See
 	// SignedMetadata.
 	SignMetadata bool
+
+	// LogoutBindings are the bindings advertised in the IdP metadata for the
+	// SingleLogoutService at LogoutURL. When empty, only HTTP-Redirect is
+	// advertised, as before. ServeSLO accepts LogoutRequests with both the
+	// HTTP-Redirect and the HTTP-POST binding, so set it to
+	// []string{HTTPRedirectBinding, HTTPPostBinding} when LogoutURL is served
+	// by ServeSLO.
+	LogoutBindings []string
 }
 
 // Metadata returns the metadata structure for this identity provider.
@@ -323,11 +331,15 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 	}
 
 	if idp.LogoutURL.String() != "" {
-		ed.IDPSSODescriptors[0].SingleLogoutServices = []Endpoint{
-			{
-				Binding:  HTTPRedirectBinding,
+		logoutBindings := idp.LogoutBindings
+		if len(logoutBindings) == 0 {
+			logoutBindings = []string{HTTPRedirectBinding}
+		}
+		for _, binding := range logoutBindings {
+			ed.IDPSSODescriptors[0].SingleLogoutServices = append(ed.IDPSSODescriptors[0].SingleLogoutServices, Endpoint{
+				Binding:  binding,
 				Location: idp.LogoutURL.String(),
-			},
+			})
 		}
 	}
 
@@ -335,11 +347,15 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 }
 
 // Handler returns an http.Handler that serves the metadata and SSO
-// URLs
+// URLs, and the single logout URL (see ServeSLO) if LogoutURL is set and its
+// path differs from the others.
 func (idp *IdentityProvider) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc(idp.MetadataURL.Path, idp.ServeMetadata)
 	mux.HandleFunc(idp.SSOURL.Path, idp.ServeSSO)
+	if p := idp.LogoutURL.Path; p != "" && p != idp.MetadataURL.Path && p != idp.SSOURL.Path {
+		mux.HandleFunc(p, idp.ServeSLO)
+	}
 	return mux
 }
 

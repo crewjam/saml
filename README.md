@@ -183,11 +183,37 @@ For single logout to work, the IDP needs to know the SLO URL. It is in the servi
 
 Please see `example/idp/` for a substantially complete example of how to use the library and helpers to be an identity provider.
 
+### Single logout
+
+`IdentityProvider.ServeSLO` handles SP initiated single logout: serve it at `LogoutURL`, and set `LogoutBindings` to `[]string{saml.HTTPRedirectBinding, saml.HTTPPostBinding}` so that the metadata advertises both bindings it accepts. (`IdentityProvider.Handler` serves it at `LogoutURL` for you; `samlidp` serves it at `/slo`.)
+
+When a service provider sends a `LogoutRequest`, `ServeSLO`:
+
+1. checks that it is well formed, comes from a service provider known to the `ServiceProviderProvider`, is addressed to `LogoutURL`, and is still current, and **verifies its signature** against the signing certificates in the service provider's metadata. With HTTP-Redirect that is a query string signature (`SigAlg` and `Signature`); with HTTP-POST an enveloped XML signature. Unsigned or invalid requests are rejected with HTTP 400 and no `LogoutResponse`, as the SLO profile requires requests to be authenticated.
+
+1. ends the IdP session, if the `SessionProvider` also implements the optional `SessionInvalidator` interface. `IdpLogoutRequest.MatchesSession` tells whether a `Session` is one the request names, by its NameID and, if present, `SessionIndex` (the `Session.Index` given to the service provider at login):
+
+   ```golang
+   func (p *MySessionProvider) InvalidateSession(w http.ResponseWriter, r *http.Request, req *saml.IdpLogoutRequest) error {
+   	session := p.lookupSession(r)
+   	if req.MatchesSession(session) {
+   		return p.deleteSession(w, session) // may set headers, e.g. to expire a cookie
+   	}
+   	return nil
+   }
+   ```
+
+1. sends a `LogoutResponse`, signed with the IdP's key (SHA-256 unless `SignatureMethod` says otherwise), to the service provider's `SingleLogoutService`, preferring the binding the request came with, and passes back the `RelayState`. Its status is `Success`, or `Responder` if the session could not be ended or the `SessionProvider` is not a `SessionInvalidator`.
+
+`ServeSLO` does not yet propagate the logout to the other service providers the user is logged in to.
+
 ## Support
 
 The SAML standard is huge and complex with many dark corners and strange, unused features. This package implements the most commonly used subset of these features required to provide a single sign on experience. The package supports at least the subset of SAML known as [interoperable SAML](https://kantarainitiative.github.io/SAMLprofiles/saml2int.html).
 
 This package supports the **Web SSO** profile. Message flows from the service provider to the IDP are supported using the **HTTP Redirect** binding and the **HTTP POST** binding. Message flows from the IDP to the service provider are supported via the **HTTP POST** binding.
+
+The **Single Logout** profile is supported with the HTTP Redirect and HTTP POST bindings: SP initiated and IDP initiated logout on the service provider side (see [Logging out](#logging-out)), and SP initiated logout on the identity provider side (see [Single logout](#single-logout)).
 
 Both directions also support the **HTTP POST SimpleSign** binding ([sstc-saml-binding-simplesign-cs-01](https://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-binding-simplesign-cs-01.pdf)), which posts the message like HTTP POST but signs it with a detached signature over the message XML, the RelayState and the signature algorithm, carried in the `SigAlg` and `Signature` form fields. The service provider accepts it at the ACS and for logout, and can send authentication requests and logout messages with it (`MakeSimpleSignAuthenticationRequest`, or `samlsp.Options.Binding`; `samlsp.Options.UseSimpleSignResponse` asks for SimpleSign responses). The identity provider accepts SimpleSign authentication requests and answers with SimpleSign when the service provider's ACS endpoint uses that binding.
 
