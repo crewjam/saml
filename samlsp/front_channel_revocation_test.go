@@ -181,8 +181,9 @@ func TestServeSLOFrontChannelProviderCannotTerminate(t *testing.T) {
 		provider.Revocations = store
 		app.lt.m.Session = provider
 
-		// The failure is reported, and the IdP still told Success: the
-		// session it sent has ended.
+		// The failure is reported, and the IdP still told Success, since
+		// the session it sent has ended, with the second-level status
+		// PartialLogout (see TestServeSLOFrontChannelPartialLogout).
 		checkLogoutSuccess(t, app.lt, app.frontChannelLogout(t, saml.HTTPPostBinding, alice, "index-1"))
 		assert.Assert(t, is.Len(app.errors, 1))
 		assert.Check(t, is.ErrorIs(app.errors[0], errFrontChannelLogoutNotTerminated))

@@ -3007,10 +3007,22 @@ func (r *LogoutRequest) PostWithNonce(relayState, nonce string) []byte {
 }
 
 // MakeLogoutResponse produces a new LogoutResponse object for idpURL and
-// logoutRequestID. If sp.SignatureMethod is set, the response carries an
-// enveloped XML signature, which is what the HTTP-POST binding uses.
+// logoutRequestID, with the status Success. If sp.SignatureMethod is set,
+// the response carries an enveloped XML signature, which is what the
+// HTTP-POST binding uses.
 func (sp *ServiceProvider) MakeLogoutResponse(idpURL, logoutRequestID string) (*LogoutResponse, error) {
+	return sp.MakeLogoutResponseWithStatus(idpURL, logoutRequestID, successStatus())
+}
+
+// MakeLogoutResponseWithStatus is like MakeLogoutResponse, but the response
+// carries status instead of Success. For example, a service provider that
+// ended the session the LogoutRequest came with but not every session it
+// names answers with StatusSuccess and the second-level status
+// StatusPartialLogout (saml-core-2.0-os §3.7.3.2). The signature, if any,
+// covers the status.
+func (sp *ServiceProvider) MakeLogoutResponseWithStatus(idpURL, logoutRequestID string, status Status) (*LogoutResponse, error) {
 	response := sp.makeUnsignedLogoutResponse(idpURL, logoutRequestID)
+	response.Status = status
 	if sp.logoutSignatureMethod() != "" {
 		if err := sp.SignLogoutResponse(response); err != nil {
 			return nil, err
@@ -3030,12 +3042,13 @@ func (sp *ServiceProvider) makeUnsignedLogoutResponse(idpURL, logoutRequestID st
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
 			Value:  firstSet(sp.EntityID, sp.MetadataURL.String()),
 		},
-		Status: Status{
-			StatusCode: StatusCode{
-				Value: StatusSuccess,
-			},
-		},
+		Status: successStatus(),
 	}
+}
+
+// successStatus returns the Status of a request that succeeded.
+func successStatus() Status {
+	return Status{StatusCode: StatusCode{Value: StatusSuccess}}
 }
 
 // MakeRedirectLogoutResponse creates a SAML LogoutResponse using
@@ -3047,7 +3060,16 @@ func (sp *ServiceProvider) makeUnsignedLogoutResponse(idpURL, logoutRequestID st
 // (saml-bindings-2.0-os section 3.4.4.1), rather than with an enveloped XML
 // signature.
 func (sp *ServiceProvider) MakeRedirectLogoutResponse(logoutRequestID, relayState string) (*url.URL, error) {
+	return sp.MakeRedirectLogoutResponseWithStatus(logoutRequestID, relayState, successStatus())
+}
+
+// MakeRedirectLogoutResponseWithStatus is like MakeRedirectLogoutResponse,
+// but the response carries status instead of Success (see
+// MakeLogoutResponseWithStatus). The query string signature, if any, covers
+// the status.
+func (sp *ServiceProvider) MakeRedirectLogoutResponseWithStatus(logoutRequestID, relayState string, status Status) (*url.URL, error) {
 	resp := sp.makeUnsignedLogoutResponse(sp.GetSLOBindingLocation(HTTPRedirectBinding), logoutRequestID)
+	resp.Status = status
 	encoded, err := deflateAndEncode(resp.Element())
 	if err != nil {
 		return nil, err
@@ -3093,7 +3115,14 @@ func (r *LogoutResponse) Redirect(relayState string) *url.URL {
 // the HTTP-POST binding. It returns HTML text representing an HTML form that
 // can be sent presented to a browser for LogoutResponse.
 func (sp *ServiceProvider) MakePostLogoutResponse(logoutRequestID, relayState string) ([]byte, error) {
-	resp, err := sp.MakeLogoutResponse(sp.GetSLOBindingLocation(HTTPPostBinding), logoutRequestID)
+	return sp.MakePostLogoutResponseWithStatus(logoutRequestID, relayState, successStatus())
+}
+
+// MakePostLogoutResponseWithStatus is like MakePostLogoutResponse, but the
+// response carries status instead of Success (see
+// MakeLogoutResponseWithStatus).
+func (sp *ServiceProvider) MakePostLogoutResponseWithStatus(logoutRequestID, relayState string, status Status) ([]byte, error) {
+	resp, err := sp.MakeLogoutResponseWithStatus(sp.GetSLOBindingLocation(HTTPPostBinding), logoutRequestID, status)
 	if err != nil {
 		return nil, err
 	}

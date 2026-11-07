@@ -447,7 +447,16 @@ func (r *LogoutRequest) SimpleSignWithNonce(relayState, nonce string, sp *Servic
 // a SimpleSign signature made with Key and SignatureMethod, which must be
 // set. The response carries no XML signature.
 func (sp *ServiceProvider) MakeSimpleSignLogoutResponse(logoutRequestID, relayState string) ([]byte, error) {
+	return sp.MakeSimpleSignLogoutResponseWithStatus(logoutRequestID, relayState, successStatus())
+}
+
+// MakeSimpleSignLogoutResponseWithStatus is like
+// MakeSimpleSignLogoutResponse, but the response carries status instead of
+// Success (see MakeLogoutResponseWithStatus). The SimpleSign signature
+// covers the status.
+func (sp *ServiceProvider) MakeSimpleSignLogoutResponseWithStatus(logoutRequestID, relayState string, status Status) ([]byte, error) {
 	resp := sp.makeUnsignedLogoutResponse(sp.GetSLOBindingLocation(HTTPPostSimpleSignBinding), logoutRequestID)
+	resp.Status = status
 	return resp.SimpleSign(relayState, sp)
 }
 

@@ -73,20 +73,27 @@ func (d *discardResponseWriter) WriteHeader(int)             {}
 // terminateFrontChannelSessions ends the sessions that logoutRequest, a
 // LogoutRequest the IDP sent through the browser, names with Session, if it
 // implements SessionTerminator, so that copies of them held elsewhere are
-// refused as after a back-channel LogoutRequest. The browser's own session
-// has already been deleted, so failure does not change the answer to the
-// IDP: it is passed to OnError, whose response is discarded, unless the
-// provider cannot end sessions on the server at all.
-func (m *Middleware) terminateFrontChannelSessions(r *http.Request, logoutRequest *saml.LogoutRequest) {
+// refused as after a back-channel LogoutRequest, and returns the status to
+// answer the IDP with. The browser's own session has already been deleted,
+// so the top-level status is always Success. If the provider cannot end
+// sessions on the server at all, nothing more was promised and that is all.
+// Any other failure is passed to OnError, whose response is discarded, and
+// the status carries the second-level status PartialLogout
+// (saml-core-2.0-os §3.7.3.2), as other copies of the sessions may still be
+// accepted.
+func (m *Middleware) terminateFrontChannelSessions(r *http.Request, logoutRequest *saml.LogoutRequest) saml.Status {
+	status := saml.Status{StatusCode: saml.StatusCode{Value: saml.StatusSuccess}}
 	terminator, ok := m.Session.(SessionTerminator)
 	if !ok {
-		return
+		return status
 	}
 	err := terminator.TerminateSessions(r.Context(), logoutRequest)
 	if err == nil || errors.Is(err, ErrSessionTerminationUnsupported) {
-		return
+		return status
 	}
 	m.reportBackChannelError(r, fmt.Errorf("%w: %w", errFrontChannelLogoutNotTerminated, err))
+	status.StatusCode.StatusCode = &saml.StatusCode{Value: saml.StatusPartialLogout}
+	return status
 }
 
 // errFrontChannelLogoutNotTerminated wraps the reason ServeSLO could not
