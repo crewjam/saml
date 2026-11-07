@@ -10,8 +10,9 @@ import (
 	"net/http"
 
 	"github.com/beevik/etree"
-	xrv "github.com/mattermost/xml-roundtrip-validator"
 	dsig "github.com/russellhaering/goxmldsig"
+
+	"github.com/crewjam/saml/internal/xmlroundtrip"
 )
 
 // The HTTP-POST-SimpleSign binding (sstc-saml-binding-simplesign-cs-01)
@@ -206,7 +207,7 @@ func (sp *ServiceProvider) simpleSignCertByFingerprint(m *simpleSignMessage) ([]
 	if err != nil {
 		return nil, fmt.Errorf("cannot decode KeyInfo: %w", err)
 	}
-	if err := xrv.Validate(bytes.NewReader(keyInfoXML)); err != nil {
+	if err := xmlroundtrip.Validate(keyInfoXML); err != nil {
 		return nil, fmt.Errorf("KeyInfo contains invalid XML: %w", err)
 	}
 	doc := etree.NewDocument()
@@ -238,7 +239,7 @@ func (sp *ServiceProvider) readSimpleSignMessage(m *simpleSignMessage, retErr *I
 		return nil, retErr
 	}
 
-	if err := xrv.Validate(bytes.NewReader(m.XML)); err != nil {
+	if err := xmlroundtrip.Validate(m.XML); err != nil {
 		retErr.PrivateErr = fmt.Errorf("invalid xml: %w", err)
 		return nil, retErr
 	}
