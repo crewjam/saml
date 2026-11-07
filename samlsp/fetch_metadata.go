@@ -255,6 +255,9 @@ func (v metadataValidity) applyTo(entity *saml.EntityDescriptor) {
 
 // FetchMetadata returns metadata from an IDP metadata URL.
 //
+// If httpClient is nil, a client with a two-minute timeout is used. Only a
+// 2xx response is accepted.
+//
 // The metadata names the certificates the service provider trusts to sign
 // assertions, so whoever controls the response controls who can log in. It
 // is not authenticated beyond what httpClient does: use an https URL, and
@@ -306,7 +309,15 @@ func FetchSignedMetadataByEntityID(ctx context.Context, httpClient *http.Client,
 // fetching a single IDP's metadata.
 var MaxMetadataSize int64 = 256 << 20
 
+// defaultMetadataHTTPClient fetches metadata when the caller passes no
+// client. Unlike http.DefaultClient it gives up on a server that stops
+// responding.
+var defaultMetadataHTTPClient = &http.Client{Timeout: 2 * time.Minute}
+
 func fetchMetadataBytes(ctx context.Context, httpClient *http.Client, metadataURL url.URL) ([]byte, error) {
+	if httpClient == nil {
+		httpClient = defaultMetadataHTTPClient
+	}
 	req, err := http.NewRequest("GET", metadataURL.String(), nil)
 	if err != nil {
 		return nil, err
@@ -322,7 +333,9 @@ func fetchMetadataBytes(ctx context.Context, httpClient *http.Client, metadataUR
 			logger.DefaultLogger.Printf("Error while closing response body during fetch metadata: %v", err)
 		}
 	}()
-	if resp.StatusCode >= 400 {
+	// Only a successful response holds the metadata: the body of a redirect
+	// the client did not follow (or of any other status) is not it.
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, fmt.Errorf("failed to fetch metadata: unexpected status code %d", resp.StatusCode)
 	}
 
