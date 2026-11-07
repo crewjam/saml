@@ -130,7 +130,9 @@ func (s *Server) GetSession(w http.ResponseWriter, r *http.Request, req *saml.Id
 }
 
 var defaultLoginFormTemplate = template.Must(template.New("saml-post-form").Parse(`` +
-	`<html>` +
+	`<html xmlns="http://www.w3.org/1999/xhtml">` +
+	`<head><title>Log in</title></head>` +
+	`<body>` +
 	`<p>{{.Toast}}</p>` +
 	`<form method="post" action="{{.URL}}">` +
 	`<input type="text" name="user" placeholder="user" value="" />` +
@@ -139,6 +141,7 @@ var defaultLoginFormTemplate = template.Must(template.New("saml-post-form").Pars
 	`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
 	`<input type="submit" value="Log In" />` +
 	`</form>` +
+	`</body>` +
 	`</html>`))
 
 // sendLoginForm produces a form which requests a username and password. If the form is

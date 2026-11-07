@@ -331,7 +331,10 @@ func (m *Middleware) writePostForm(w http.ResponseWriter, scriptHash string, for
 	w.Header().Add("Content-type", "text/html")
 	setNoCacheHeaders(w.Header())
 	var buf bytes.Buffer
-	buf.WriteString(`<!DOCTYPE html><html><body>`)
+	buf.WriteString(`<!DOCTYPE html>` +
+		`<html xmlns="http://www.w3.org/1999/xhtml">` +
+		`<head><title>Continue</title></head>` +
+		`<body>`)
 	buf.Write(form)
 	buf.WriteString(`</body></html>`)
 	if _, err := w.Write(buf.Bytes()); err != nil {
