@@ -25,8 +25,8 @@ import (
 //
 // InvalidateSession must terminate the IdP session (or sessions) that req
 // refers to. Use req.MatchesSession to decide whether a Session is one of
-// them: its NameID must be the request's NameID and, if the request carries a
-// SessionIndex, its Index must be that SessionIndex. Ending no session, for
+// them: its NameID must be the request's NameID and, if the request carries
+// SessionIndexes, its Index must be one of them. Ending no session, for
 // example because the user is already logged out, is not an error.
 //
 // InvalidateSession may set headers on w, for example to expire a session
@@ -116,6 +116,11 @@ func NewIdpLogoutRequest(idp *IdentityProvider, r *http.Request) (*IdpLogoutRequ
 // addressed to this IdP and still current. It assigns Request,
 // ServiceProviderMetadata and SLOEndpoint. It returns a non-nil error if the
 // request is not valid.
+//
+// The principal is identified by a NameID or an EncryptedID. An EncryptedID
+// is decrypted with the IdP's Key, the private key of the certificate the IdP
+// metadata publishes for encryption, which must be an *rsa.PrivateKey;
+// Request.NameID is then set to the NameID it holds.
 //
 // The request must be signed: with the HTTP-Redirect binding, with a query
 // string signature (SigAlg and Signature) or an enveloped XML signature;
@@ -227,8 +232,8 @@ func (req *IdpLogoutRequest) validateFields() error {
 	if r.NotOnOrAfter != nil && !req.Now.Before(r.NotOnOrAfter.Add(MaxClockSkew)) {
 		return fmt.Errorf("logout request expired at %s", r.NotOnOrAfter)
 	}
-	if r.NameID == nil || r.NameID.Value == "" {
-		return errors.New("logout request does not contain a NameID")
+	if err := resolveLogoutRequestNameID(r, req.IDP.decryptElement); err != nil {
+		return fmt.Errorf("logout request: %w", err)
 	}
 	return nil
 }
@@ -273,8 +278,8 @@ func logoutResponseLocation(endpoint Endpoint) string {
 
 // MatchesSession reports whether session is one that the logout request asks
 // to terminate: its NameID must be the request's NameID and, if the request
-// carries a SessionIndex, its Index must be equal to it. Call it only after
-// Validate has succeeded.
+// carries any SessionIndex, its Index must be equal to one of them
+// (saml-core-2.0-os §3.7.1). Call it only after Validate has succeeded.
 func (req *IdpLogoutRequest) MatchesSession(session *Session) bool {
 	if session == nil || req.Request.NameID == nil || req.Request.NameID.Value == "" {
 		return false
@@ -282,10 +287,16 @@ func (req *IdpLogoutRequest) MatchesSession(session *Session) bool {
 	if session.NameID != req.Request.NameID.Value {
 		return false
 	}
-	if req.Request.SessionIndex != nil && req.Request.SessionIndex.Value != session.Index {
-		return false
+	sessionIndexes := req.Request.AllSessionIndexes()
+	if len(sessionIndexes) == 0 {
+		return true
 	}
-	return true
+	for _, sessionIndex := range sessionIndexes {
+		if sessionIndex.Value == session.Index {
+			return true
+		}
+	}
+	return false
 }
 
 // MakeLogoutResponse returns an unsigned LogoutResponse to the request with

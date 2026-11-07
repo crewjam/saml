@@ -1409,7 +1409,12 @@ func (sp *ServiceProvider) decryptElement(encryptedEl *etree.Element) (*etree.El
 	if err != nil {
 		return nil, err
 	}
+	return parsePlaintext(plaintextEl)
+}
 
+// parsePlaintext parses the plaintext of a decrypted element and returns its
+// root element.
+func parsePlaintext(plaintextEl []byte) (*etree.Element, error) {
 	if err := xrv.Validate(bytes.NewReader(plaintextEl)); err != nil {
 		return nil, classify(fmt.Errorf("plaintext response contains invalid XML: %w", err), ErrMalformedMessage)
 	}
@@ -1891,10 +1896,27 @@ type LogoutRequestOption func(*LogoutRequest)
 func WithSessionIndex(sessionIndex string) LogoutRequestOption {
 	return func(req *LogoutRequest) {
 		if sessionIndex == "" {
-			req.SessionIndex = nil
+			req.setSessionIndexes(nil)
 			return
 		}
-		req.SessionIndex = &SessionIndex{Value: sessionIndex}
+		req.setSessionIndexes([]SessionIndex{{Value: sessionIndex}})
+	}
+}
+
+// WithSessionIndexes sets the SessionIndex elements of a LogoutRequest, one
+// for each non-empty value, in order (saml-core-2.0-os section 3.7.1). Use it
+// instead of WithSessionIndex to end several sessions of the principal at the
+// IDP with one request. Without any non-empty value, the request carries no
+// SessionIndex.
+func WithSessionIndexes(sessionIndexes ...string) LogoutRequestOption {
+	return func(req *LogoutRequest) {
+		indexes := make([]SessionIndex, 0, len(sessionIndexes))
+		for _, sessionIndex := range sessionIndexes {
+			if sessionIndex != "" {
+				indexes = append(indexes, SessionIndex{Value: sessionIndex})
+			}
+		}
+		req.setSessionIndexes(indexes)
 	}
 }
 
@@ -2431,6 +2453,10 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 // ValidateLogoutRequest validates a LogoutRequest sent by the IDP (IDP
 // initiated single logout), using the HTTP-Redirect, HTTP-POST or
 // HTTP-POST-SimpleSign binding. It returns the request only if it is valid.
+// If the request identifies the principal with an EncryptedID rather than a
+// NameID, it is decrypted with the service provider's decryption keys (as
+// for encrypted assertions) and NameID is set to the result. All the
+// request's SessionIndexes are returned by its AllSessionIndexes method.
 //
 // The request must be signed by the IDP. With the HTTP-Redirect binding that
 // is either a query string signature (SigAlg and Signature parameters) or an
@@ -2560,11 +2586,7 @@ func (sp *ServiceProvider) validateLogoutRequest(req *LogoutRequest) error {
 	if req.Issuer == nil || req.Issuer.Value != sp.IDPMetadata.EntityID {
 		return classify(fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
 	}
-	if req.NameID == nil || req.NameID.Value == "" {
-		return classify(errors.New("request does not contain a NameID"), ErrMissingElement)
-	}
-
-	return nil
+	return resolveLogoutRequestNameID(req, sp.decryptElement)
 }
 
 func firstSet(a, b string) string {
