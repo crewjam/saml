@@ -47,7 +47,7 @@ func assertXHTMLDocument(t *testing.T, page []byte) {
 			}
 			assert.Check(t, is.Equal(xhtmlNamespace, tok.Name.Space), "element %q is not in the XHTML namespace", tok.Name.Local)
 			path = append(path, tok.Name)
-			var names []string
+			names := make([]string, 0, len(path))
 			for _, n := range path {
 				names = append(names, n.Local)
 			}
