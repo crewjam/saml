@@ -724,6 +724,14 @@ func (sp *ServiceProvider) MakePostAuthenticationRequest(relayState string) ([]b
 
 // Post returns an HTML form suitable for using the HTTP-POST binding with the request
 func (r *AuthnRequest) Post(relayState string) []byte {
+	return r.PostWithNonce(relayState, "")
+}
+
+// PostWithNonce is like Post, but if nonce is not empty it is set as the
+// nonce attribute of the form's auto-submit <script> element, so that the
+// form can be served under a Content-Security-Policy that allows scripts by
+// nonce.
+func (r *AuthnRequest) PostWithNonce(relayState, nonce string) []byte {
 	doc := etree.NewDocument()
 	doc.SetRoot(r.Element())
 	reqBuf, err := doc.WriteToBytes()
@@ -738,16 +746,18 @@ func (r *AuthnRequest) Post(relayState string) []byte {
 		`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
 		`<input id="SAMLSubmitButton" type="submit" value="Submit" />` +
 		`</form>` +
-		`<script>document.getElementById('SAMLSubmitButton').style.visibility="hidden";` +
+		`<script{{with .Nonce}} nonce="{{.}}"{{end}}>document.getElementById('SAMLSubmitButton').style.visibility="hidden";` +
 		`document.getElementById('SAMLRequestForm').submit();</script>`))
 	data := struct {
 		URL         string
 		SAMLRequest string
 		RelayState  string
+		Nonce       string
 	}{
 		URL:         r.Destination,
 		SAMLRequest: encodedReqBuf,
 		RelayState:  relayState,
+		Nonce:       nonce,
 	}
 
 	rv := bytes.Buffer{}
@@ -1634,6 +1644,14 @@ func (sp *ServiceProvider) MakePostLogoutRequest(nameID, relayState string, opts
 
 // Post returns an HTML form suitable for using the HTTP-POST binding with the request
 func (r *LogoutRequest) Post(relayState string) []byte {
+	return r.PostWithNonce(relayState, "")
+}
+
+// PostWithNonce is like Post, but if nonce is not empty it is set as the
+// nonce attribute of the form's auto-submit <script> element, so that the
+// form can be served under a Content-Security-Policy that allows scripts by
+// nonce.
+func (r *LogoutRequest) PostWithNonce(relayState, nonce string) []byte {
 	doc := etree.NewDocument()
 	doc.SetRoot(r.Element())
 	reqBuf, err := doc.WriteToBytes()
@@ -1648,16 +1666,18 @@ func (r *LogoutRequest) Post(relayState string) []byte {
 		`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
 		`<input id="SAMLSubmitButton" type="submit" value="Submit" />` +
 		`</form>` +
-		`<script>document.getElementById('SAMLSubmitButton').style.visibility="hidden";` +
+		`<script{{with .Nonce}} nonce="{{.}}"{{end}}>document.getElementById('SAMLSubmitButton').style.visibility="hidden";` +
 		`document.getElementById('SAMLRequestForm').submit();</script>`))
 	data := struct {
 		URL         string
 		SAMLRequest string
 		RelayState  string
+		Nonce       string
 	}{
 		URL:         r.Destination,
 		SAMLRequest: encodedReqBuf,
 		RelayState:  relayState,
+		Nonce:       nonce,
 	}
 
 	rv := bytes.Buffer{}
@@ -1761,6 +1781,14 @@ func (sp *ServiceProvider) MakePostLogoutResponse(logoutRequestID, relayState st
 
 // Post returns an HTML form suitable for using the HTTP-POST binding with the LogoutResponse.
 func (r *LogoutResponse) Post(relayState string) []byte {
+	return r.PostWithNonce(relayState, "")
+}
+
+// PostWithNonce is like Post, but if nonce is not empty it is set as the
+// nonce attribute of the form's auto-submit <script> element, so that the
+// form can be served under a Content-Security-Policy that allows scripts by
+// nonce.
+func (r *LogoutResponse) PostWithNonce(relayState, nonce string) []byte {
 	doc := etree.NewDocument()
 	doc.SetRoot(r.Element())
 	reqBuf, err := doc.WriteToBytes()
@@ -1775,16 +1803,18 @@ func (r *LogoutResponse) Post(relayState string) []byte {
 		`<input type="hidden" name="RelayState" value="{{.RelayState}}" />` +
 		`<input id="SAMLSubmitButton" type="submit" value="Submit" />` +
 		`</form>` +
-		`<script>document.getElementById('SAMLSubmitButton').style.visibility="hidden";` +
+		`<script{{with .Nonce}} nonce="{{.}}"{{end}}>document.getElementById('SAMLSubmitButton').style.visibility="hidden";` +
 		`document.getElementById('SAMLResponseForm').submit();</script>`))
 	data := struct {
 		URL          string
 		SAMLResponse string
 		RelayState   string
+		Nonce        string
 	}{
 		URL:          r.Destination,
 		SAMLResponse: encodedReqBuf,
 		RelayState:   relayState,
+		Nonce:        nonce,
 	}
 
 	rv := bytes.Buffer{}
