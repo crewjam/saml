@@ -49,3 +49,25 @@ func TestHandleStartLogoutRevokesSession(t *testing.T) {
 	_, err := lt.m.Session.GetSession(r)
 	assert.Check(t, err)
 }
+
+// With RequirePOSTToStartLogout, a GET (such as a cross-site link or image)
+// does not log the user out; a POST does.
+func TestHandleStartLogoutRequirePOST(t *testing.T) {
+	lt := newLogoutTest(t, saml.HTTPRedirectBinding)
+	lt.m.RequirePOSTToStartLogout = true
+	cookie := lt.sessionCookie(t, "idx-1")
+
+	req := httptest.NewRequest(http.MethodGet, "https://sp.example.com/logout", nil)
+	req.AddCookie(cookie)
+	resp := httptest.NewRecorder()
+	lt.m.HandleStartLogout(resp, req)
+	assert.Check(t, is.Equal(http.StatusMethodNotAllowed, resp.Code))
+	assert.Check(t, is.Equal(http.MethodPost, resp.Header().Get("Allow")))
+	assert.Check(t, is.Len(resp.Result().Cookies(), 0))
+
+	req = httptest.NewRequest(http.MethodPost, "https://sp.example.com/logout", nil)
+	req.AddCookie(cookie)
+	resp = httptest.NewRecorder()
+	lt.m.HandleStartLogout(resp, req)
+	assert.Check(t, is.Equal(http.StatusFound, resp.Code))
+}

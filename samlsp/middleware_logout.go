@@ -62,10 +62,18 @@ var errSLOUnexpectedMessage = errors.New("saml: single logout endpoint received 
 // SingleLogoutService, only the local session is ended and the browser is
 // redirected to "/".
 //
+// If RequirePOSTToStartLogout is set, any method but POST is refused with
+// 405 Method Not Allowed.
+//
 // To use it, route a path of your application to it, for example:
 //
 //	http.HandleFunc("/logout", samlMiddleware.HandleStartLogout)
 func (m *Middleware) HandleStartLogout(w http.ResponseWriter, r *http.Request) {
+	if m.RequirePOSTToStartLogout && r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
 	session, err := m.Session.GetSession(r)
 	if errors.Is(err, ErrNoSession) {
 		http.Redirect(w, r, "/", http.StatusFound)
