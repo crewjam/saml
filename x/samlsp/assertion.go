@@ -12,7 +12,7 @@ import (
 // about who the user is.
 type Assertion struct {
 	// ID is the assertion's ID. It is unique, so it can serve as a replay
-	// cache key (see WithReplayCache).
+	// cache key (see WithReplayState).
 	ID string
 
 	// Issuer is the entityID of the identity provider.
