@@ -703,12 +703,7 @@ func (r *AttributeQuery) Element() *etree.Element {
 // SoapRequest returns a SOAP 1.1 Envelope containing the AttributeQuery, as
 // the SAML SOAP binding sends it (saml-bindings §3.2).
 func (r *AttributeQuery) SoapRequest() *etree.Element {
-	envelope := etree.NewElement("soapenv:Envelope")
-	envelope.CreateAttr("xmlns:soapenv", soapEnvelopeNamespace)
-	body := etree.NewElement("soapenv:Body")
-	envelope.AddChild(body)
-	body.AddChild(r.Element())
-	return envelope
+	return soapEnvelope(r.Element())
 }
 
 // MarshalXML implements xml.Marshaler

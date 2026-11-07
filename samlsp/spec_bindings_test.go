@@ -143,3 +143,47 @@ func TestOptionsLimitRelayStateLength(t *testing.T) {
 	opts.LimitRelayStateLength = true
 	assert.Check(t, DefaultServiceProvider(opts).LimitRelayStateLength)
 }
+
+// saml-bindings-2.0-os §3.4.5.1 and §3.5.5.1: an HTTP response carrying a
+// SAML message SHOULD "Include a Cache-Control header field set to
+// "no-cache, no-store"" and "a Pragma header field set to "no-cache"". The
+// middleware sets both when it sends an AuthnRequest, a LogoutRequest or a
+// LogoutResponse, with the HTTP-Redirect or the HTTP-POST binding.
+func TestSpecBinding_3_4_5_1_SAMLMessagesAreNotCached(t *testing.T) {
+	checkNoCache := func(t *testing.T, resp *httptest.ResponseRecorder) {
+		t.Helper()
+		assert.Check(t, is.Equal("no-cache, no-store", resp.Header().Get("Cache-Control")))
+		assert.Check(t, is.Equal("no-cache", resp.Header().Get("Pragma")))
+	}
+
+	for _, binding := range []string{saml.HTTPRedirectBinding, saml.HTTPPostBinding} {
+		t.Run("AuthnRequest "+binding, func(t *testing.T) {
+			test := specMiddlewareTest(t)
+			test.Middleware.Binding = binding
+			w := httptest.NewRecorder()
+			test.Middleware.HandleStartAuthFlow(w, httptest.NewRequest(http.MethodGet, "/frob", nil))
+			assert.Check(t, w.Code == http.StatusOK || w.Code == http.StatusFound, "status %d", w.Code)
+			checkNoCache(t, w)
+		})
+
+		t.Run("LogoutRequest "+binding, func(t *testing.T) {
+			lt := newLogoutTest(t, binding)
+			req := httptest.NewRequest(http.MethodGet, "https://sp.example.com/logout", nil)
+			req.AddCookie(lt.sessionCookie(t, "session-index-1"))
+			resp := httptest.NewRecorder()
+			lt.m.HandleStartLogout(resp, req)
+			assert.Check(t, resp.Code == http.StatusOK || resp.Code == http.StatusFound, "status %d", resp.Code)
+			checkNoCache(t, resp)
+		})
+
+		t.Run("LogoutResponse "+binding, func(t *testing.T) {
+			lt := newLogoutTest(t, binding)
+			resp := lt.postToSLO(url.Values{
+				"SAMLRequest": {lt.signedIDPMessage(t, lt.logoutRequest().Element())},
+				"RelayState":  {"rs"},
+			}, lt.sessionCookie(t, "x"))
+			assert.Check(t, resp.Code == http.StatusOK || resp.Code == http.StatusFound, "status %d", resp.Code)
+			checkNoCache(t, resp)
+		})
+	}
+}

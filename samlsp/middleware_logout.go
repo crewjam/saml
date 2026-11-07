@@ -121,6 +121,7 @@ func (m *Middleware) sendLogoutRequest(w http.ResponseWriter, r *http.Request, b
 			m.OnError(w, r, err)
 			return
 		}
+		setNoCacheHeaders(w.Header())
 		http.Redirect(w, r, redirectURL.String(), http.StatusFound)
 	case saml.HTTPPostSimpleSignBinding:
 		// The SimpleSign signature replaces the enveloped XML signature, as
@@ -171,8 +172,24 @@ func (m *Middleware) sloBinding() string {
 // request's NameID; such applications can handle SloURL themselves with
 // ServiceProvider.ValidateLogoutRequest.
 //
+// A POST with Content-Type text/xml is a LogoutRequest sent with the SOAP
+// binding (back-channel single logout, saml-profiles §4.4): the IDP sends it
+// itself, without the browser. It must be signed by the IDP (see
+// saml.ServiceProvider.ValidateSOAPLogoutRequest). Once it is validated, the
+// sessions it names are ended with the session provider's
+// TerminateSessions (see SessionTerminator), and the IDP is answered with a
+// signed LogoutResponse with the status Success, or Responder if Session
+// does not implement SessionTerminator or could not end them. An invalid
+// SOAP request is passed to OnError, whose response is discarded, and
+// answered with a SOAP Fault. To have the IDP use it, advertise the SOAP
+// binding in the SP metadata (see Options.LogoutBindings).
+//
 // Invalid messages are passed to OnError.
 func (m *Middleware) ServeSLO(w http.ResponseWriter, r *http.Request) {
+	if saml.IsSOAPRequest(r) {
+		m.serveSOAPLogoutRequest(w, r)
+		return
+	}
 	if err := r.ParseForm(); err != nil {
 		m.OnError(w, r, err)
 		return
@@ -246,6 +263,7 @@ func (m *Middleware) serveSLORequest(w http.ResponseWriter, r *http.Request) {
 			m.OnError(w, r, err)
 			return
 		}
+		setNoCacheHeaders(w.Header())
 		http.Redirect(w, r, redirectURL.String(), http.StatusFound) //nolint:gosec // the target is the IDP's SLO location from its metadata; the RelayState is only a query parameter
 	case saml.HTTPPostBinding, saml.HTTPPostSimpleSignBinding:
 		m.postLogoutResponse(w, r, binding, logoutRequest.ID, relayState)

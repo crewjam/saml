@@ -179,7 +179,7 @@ func (sp *ServiceProvider) QueryAttributes(ctx context.Context, nameID NameID, a
 	if err != nil {
 		return nil, err
 	}
-	responseBody, err := sp.postSOAP(ctx, query.Destination, query.SoapRequest())
+	responseBody, err := sp.postSOAP(ctx, query.Destination, query.SoapRequest(), MaxAttributeQueryResponseSize)
 	if err != nil {
 		return nil, fmt.Errorf("attribute query to %s: %w", query.Destination, err)
 	}
@@ -188,13 +188,13 @@ func (sp *ServiceProvider) QueryAttributes(ctx context.Context, nameID NameID, a
 
 // postSOAP sends envelope to location with the SAML SOAP binding, using
 // HTTPClient (or http.DefaultClient), and returns the body of the response,
-// which may be at most MaxAttributeQueryResponseSize bytes.
-func (sp *ServiceProvider) postSOAP(ctx context.Context, location string, envelope *etree.Element) ([]byte, error) {
+// which may be at most limit bytes.
+func (sp *ServiceProvider) postSOAP(ctx context.Context, location string, envelope *etree.Element, limit int64) ([]byte, error) {
 	httpClient := sp.HTTPClient
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	return postSOAPMessage(ctx, httpClient, location, envelope, MaxAttributeQueryResponseSize)
+	return postSOAPMessage(ctx, httpClient, location, envelope, limit)
 }
 
 // ParseXMLAttributeQueryResponse validates soapResponseXML, the SOAP

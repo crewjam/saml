@@ -44,6 +44,16 @@ type CookieSessionProvider struct {
 	Path   string
 	Codec  SessionCodec
 
+	// Revocations, if set, records sessions ended by back-channel single
+	// logout (see TerminateSessions), and GetSession refuses those sessions
+	// as if there were none. The sessions must implement RevocableSession,
+	// as those of JWTSessionCodec do; the signature of the session token
+	// keeps a client from changing what identifies its session. If nil,
+	// sessions cannot be ended without the browser, and TerminateSessions
+	// returns ErrSessionTerminationUnsupported. DefaultSessionProvider sets
+	// it.
+	Revocations SessionRevocationStore
+
 	// legacyDomain, if set, is the Domain of a session cookie set by an
 	// earlier version of DefaultSessionProvider. CreateSession and
 	// DeleteSession expire that cookie too, so that a browser does not keep
@@ -151,7 +161,10 @@ func (c CookieSessionProvider) expireLegacyCookie(w http.ResponseWriter, r *http
 // error matching ErrNoSession (as determined by errors.Is) if there is no valid
 // session. When the cookie is present but cannot be decoded, the returned error
 // also wraps the error from Codec.Decode, so callers can see why the session
-// was rejected.
+// was rejected. A session revoked in Revocations is refused with an error
+// matching both ErrNoSession and ErrSessionRevoked; if Revocations cannot be
+// read, the error does not match ErrNoSession, so the request fails rather
+// than start a new login.
 func (c CookieSessionProvider) GetSession(r *http.Request) (Session, error) {
 	cookie, err := r.Cookie(c.Name)
 	if err == http.ErrNoCookie {
@@ -163,6 +176,9 @@ func (c CookieSessionProvider) GetSession(r *http.Request) (Session, error) {
 	session, err := c.Codec.Decode(cookie.Value)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrNoSession, err)
+	}
+	if err := c.checkRevoked(r.Context(), session); err != nil {
+		return nil, err
 	}
 	return session, nil
 }

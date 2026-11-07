@@ -229,7 +229,7 @@ func TestFormReplayAfterLogin(t *testing.T) {
 	assert.Check(t, is.Equal("default-src; script-src '"+replayScriptHash+"'; reflected-xss block; referrer no-referrer;",
 		resp.Header().Get("Content-Security-Policy")))
 	assert.Check(t, is.Equal("text/html", resp.Header().Get("Content-Type")))
-	assert.Check(t, is.Equal("no-store", resp.Header().Get("Cache-Control")))
+	assert.Check(t, is.Equal("no-cache, no-store", resp.Header().Get("Cache-Control")))
 
 	// the session is created as usual
 	assert.Check(t, is.Contains(strings.Join(resp.Header()["Set-Cookie"], "\n"), "ttt="+test.expectedSessionCookie))
