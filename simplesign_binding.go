@@ -326,12 +326,13 @@ func signSimpleSign(signingContext *dsig.SigningContext, messageParam string, me
 }
 
 // simpleSignSigningContext returns the signing context the service provider
-// uses for the HTTP-POST-SimpleSign binding, which requires signing.
-func (sp *ServiceProvider) simpleSignSigningContext() (*dsig.SigningContext, error) {
-	if sp.SignatureMethod == "" {
+// uses for the HTTP-POST-SimpleSign binding, which requires signing, with
+// signatureMethod.
+func (sp *ServiceProvider) simpleSignSigningContext(signatureMethod string) (*dsig.SigningContext, error) {
+	if signatureMethod == "" {
 		return nil, errors.New("the HTTP-POST-SimpleSign binding requires ServiceProvider.SignatureMethod to be set")
 	}
-	return GetSigningContext(sp)
+	return sp.signingContext(signatureMethod)
 }
 
 // simpleSignForm returns an auto-submitting HTML form that sends el to
@@ -339,8 +340,8 @@ func (sp *ServiceProvider) simpleSignSigningContext() (*dsig.SigningContext, err
 // (SAMLRequest or SAMLResponse) control, signed with the SP's key and
 // SignatureMethod. el is sent as is: an XML signature it carries is kept,
 // but none is added.
-func (sp *ServiceProvider) simpleSignForm(destination, messageParam string, el *etree.Element, relayState, nonce string) ([]byte, error) {
-	signingContext, err := sp.simpleSignSigningContext()
+func (sp *ServiceProvider) simpleSignForm(destination, messageParam string, el *etree.Element, relayState, nonce, signatureMethod string) ([]byte, error) {
+	signingContext, err := sp.simpleSignSigningContext(signatureMethod)
 	if err != nil {
 		return nil, err
 	}
@@ -407,7 +408,7 @@ func (r *AuthnRequest) SimpleSignWithNonce(relayState, nonce string, sp *Service
 	if err := checkRelayState(sp.LimitRelayStateLength, relayState); err != nil {
 		return nil, err
 	}
-	return sp.simpleSignForm(r.Destination, redirectParamSAMLRequest, r.Element(), relayState, nonce)
+	return sp.simpleSignForm(r.Destination, redirectParamSAMLRequest, r.Element(), relayState, nonce, sp.SignatureMethod)
 }
 
 // MakeSimpleSignLogoutRequest creates a SAML LogoutRequest for the IDP's
@@ -437,7 +438,7 @@ func (r *LogoutRequest) SimpleSignWithNonce(relayState, nonce string, sp *Servic
 	if err := checkRelayState(sp.LimitRelayStateLength, relayState); err != nil {
 		return nil, err
 	}
-	return sp.simpleSignForm(r.Destination, redirectParamSAMLRequest, r.Element(), relayState, nonce)
+	return sp.simpleSignForm(r.Destination, redirectParamSAMLRequest, r.Element(), relayState, nonce, sp.logoutSignatureMethod())
 }
 
 // MakeSimpleSignLogoutResponse creates a SAML LogoutResponse for the IDP's
@@ -461,5 +462,5 @@ func (r *LogoutResponse) SimpleSign(relayState string, sp *ServiceProvider) ([]b
 // SimpleSignWithNonce is like SimpleSign, but if nonce is not empty it is
 // set as the nonce attribute of the form's auto-submit <script> element.
 func (r *LogoutResponse) SimpleSignWithNonce(relayState, nonce string, sp *ServiceProvider) ([]byte, error) {
-	return sp.simpleSignForm(r.Destination, redirectParamSAMLResponse, r.Element(), relayState, nonce)
+	return sp.simpleSignForm(r.Destination, redirectParamSAMLResponse, r.Element(), relayState, nonce, sp.logoutSignatureMethod())
 }

@@ -121,6 +121,14 @@ type Options struct {
 	// It is off by default.
 	KeyAttributesByName bool
 
+	// SignLogout signs the LogoutRequests and LogoutResponses the
+	// middleware sends with Key, even if SignRequest is not set
+	// (saml.ServiceProvider.LogoutSignatureMethod). The single logout
+	// profile requires them to be signed with the HTTP-Redirect and HTTP-POST
+	// bindings (saml-profiles §4.4.3.1 and §4.4.3.4). With SignRequest they
+	// are signed anyway. It is off by default.
+	SignLogout bool
+
 	// AcsIndex, if set, makes authentication requests name the
 	// AssertionConsumerService endpoint by its index in the SP metadata
 	// instead of by URL and binding. See saml.ServiceProvider.AcsIndex.
@@ -321,6 +329,10 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 	if !opts.SignRequest {
 		signatureMethod = ""
 	}
+	var logoutSignatureMethod string
+	if opts.SignLogout {
+		logoutSignatureMethod = defaultSigningMethodForKey(opts.Key)
+	}
 
 	if opts.DefaultRedirectURI == "" {
 		opts.DefaultRedirectURI = "/"
@@ -351,6 +363,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		ForceAuthn:            forceAuthn,
 		RequestedAuthnContext: opts.RequestedAuthnContext,
 		SignatureMethod:       signatureMethod,
+		LogoutSignatureMethod: logoutSignatureMethod,
 		AllowIDPInitiated:     opts.AllowIDPInitiated,
 		LimitRelayStateLength: opts.LimitRelayStateLength,
 		DefaultRedirectURI:    opts.DefaultRedirectURI,
@@ -410,8 +423,8 @@ func applyBindingOptions(m *Middleware, opts Options) error {
 	switch opts.LogoutBinding {
 	case "", saml.HTTPRedirectBinding, saml.HTTPPostBinding:
 	case saml.HTTPPostSimpleSignBinding:
-		if !opts.SignRequest {
-			return errors.New("samlsp: the HTTP-POST-SimpleSign logout binding requires SignRequest")
+		if !opts.SignRequest && !opts.SignLogout {
+			return errors.New("samlsp: the HTTP-POST-SimpleSign logout binding requires SignRequest or SignLogout")
 		}
 	default:
 		return fmt.Errorf("samlsp: unsupported LogoutBinding %q", opts.LogoutBinding)
