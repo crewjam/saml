@@ -257,8 +257,12 @@ type IdentityProvider struct {
 	// supports are usually listed in its metadata.
 	//
 	// When nil, assertions are encrypted with RSA-OAEP-MGF1P using a SHA-1
-	// digest and AES-128-CBC, for compatibility with existing service
-	// providers.
+	// digest and the strongest block cipher that the service provider's
+	// metadata lists in the EncryptionMethods of its encryption key: AES-GCM
+	// (256, 128 then 192 bit keys) before AES-CBC. If it lists none of
+	// them, AES-128-CBC is used, for compatibility with existing service
+	// providers. CBC has no integrity protection; set AssertionEncrypter to
+	// use AES-GCM with service providers that support it but do not say so.
 	AssertionEncrypter xmlenc.Encrypter
 
 	// SignMetadata, if true, causes ServeMetadata to publish metadata that
@@ -1579,7 +1583,7 @@ func (req *IdpAuthnRequest) MakeAssertionEl() error {
 	req.Assertion.Signature = sigEl.(*etree.Element)
 	signedAssertionEl = req.Assertion.Element()
 
-	certBuf, err := req.getSPEncryptionCert()
+	certBuf, methods, err := encryptionKey(req.SPSSODescriptor.KeyDescriptors)
 	if errors.Is(err, os.ErrNotExist) {
 		req.AssertionEl = signedAssertionEl
 		return nil
@@ -1597,15 +1601,11 @@ func (req *IdpAuthnRequest) MakeAssertionEl() error {
 		}
 	}
 
-	var encryptor xmlenc.Encrypter
-	if req.IDP != nil && req.IDP.AssertionEncrypter != nil {
-		encryptor = req.IDP.AssertionEncrypter
-	} else {
-		rsaEncryptor := xmlenc.OAEP()
-		rsaEncryptor.BlockCipher = xmlenc.AES128CBC
-		rsaEncryptor.DigestMethod = &xmlenc.SHA1
-		encryptor = rsaEncryptor
+	var configured xmlenc.Encrypter
+	if req.IDP != nil {
+		configured = req.IDP.AssertionEncrypter
 	}
+	encryptor := assertionEncrypter(configured, methods)
 	encryptedDataEl, err := encryptor.Encrypt(certBuf, signedAssertionBuf, nil)
 	if err != nil {
 		return err
@@ -1617,6 +1617,35 @@ func (req *IdpAuthnRequest) MakeAssertionEl() error {
 	req.AssertionEl = encryptedAssertionEl
 
 	return nil
+}
+
+// assertionEncrypter returns the Encrypter for an assertion: configured, if
+// it is set, and otherwise RSA-OAEP-MGF1P with a SHA-1 digest, which all
+// implementations support, and a block cipher chosen from methods, the
+// EncryptionMethods the service provider's metadata lists for its
+// encryption key: the first of AES-256-GCM, AES-128-GCM, AES-192-GCM,
+// AES-256-CBC, AES-128-CBC and AES-192-CBC that it lists. A service
+// provider that lists none of them gets AES-128-CBC, as before, since
+// many service providers that do not list their algorithms cannot decrypt
+// AES-GCM.
+func assertionEncrypter(configured xmlenc.Encrypter, methods []EncryptionMethod) xmlenc.Encrypter {
+	if configured != nil {
+		return configured
+	}
+	encrypter := xmlenc.OAEP()
+	encrypter.DigestMethod = &xmlenc.SHA1
+	encrypter.BlockCipher = xmlenc.AES128CBC
+	listed := make(map[string]bool, len(methods))
+	for _, method := range methods {
+		listed[method.Algorithm] = true
+	}
+	for _, blockCipher := range identifierBlockCiphers {
+		if listed[blockCipher.Algorithm()] {
+			encrypter.BlockCipher = blockCipher
+			break
+		}
+	}
+	return encrypter
 }
 
 // errNoACSEndpoint is returned when a response is to be made for an
