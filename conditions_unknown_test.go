@@ -80,7 +80,14 @@ func TestParseXMLResponseUnknownConditions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			e := spcovSetup(t)
 			buf := specCoreSignedResponse(t, e, e.assertion(), conditionsUnknownMutate(t, tc.mutate))
+
+			// By default unknown conditions are ignored.
 			assertion, err := e.sp.ParseXMLResponse(buf, []string{spcovRequestID}, e.sp.AcsURL)
+			assert.NilError(t, err, "accepted by default")
+			assert.Check(t, assertion != nil)
+
+			e.sp.RejectUnknownConditions = true
+			assertion, err = e.sp.ParseXMLResponse(buf, []string{spcovRequestID}, e.sp.AcsURL)
 			if tc.unknown == (xml.Name{}) {
 				assert.NilError(t, err)
 				return
@@ -99,6 +106,8 @@ func TestParseXMLResponseValidateUnknownConditions(t *testing.T) {
 	e := spcovSetup(t)
 	buf := specCoreSignedResponse(t, e, e.assertion(), conditionsUnknownMutate(t, conditionsUnknownMutations[0].mutate))
 
+	// The hook decides even when RejectUnknownConditions is set.
+	e.sp.RejectUnknownConditions = true
 	var seen []xml.Name
 	e.sp.ValidateUnknownConditions = func(a *Assertion) error {
 		seen = a.Conditions.UnknownConditions
@@ -142,6 +151,11 @@ func TestParseXMLAttributeQueryResponseUnknownConditions(t *testing.T) {
 			query := e.aqQuery(t)
 			buf := conditionsUnknownAttributeQueryResponse(t, e, query, tc.mutate)
 			result, err := e.sp.ParseXMLAttributeQueryResponse(buf, query)
+			assert.NilError(t, err, "accepted by default")
+			assert.Check(t, is.Len(result.Assertions, 1))
+
+			e.sp.RejectUnknownConditions = true
+			result, err = e.sp.ParseXMLAttributeQueryResponse(buf, query)
 			if tc.unknown == (xml.Name{}) {
 				assert.NilError(t, err)
 				assert.Check(t, is.Len(result.Assertions, 1))
@@ -160,6 +174,7 @@ func TestParseXMLAttributeQueryResponseValidateUnknownConditions(t *testing.T) {
 	e := aqSetup(t)
 	query := e.aqQuery(t)
 	buf := conditionsUnknownAttributeQueryResponse(t, e, query, conditionsUnknownMutations[1].mutate)
+	e.sp.RejectUnknownConditions = true
 	e.sp.ValidateUnknownConditions = func(*Assertion) error { return nil }
 	result, err := e.sp.ParseXMLAttributeQueryResponse(buf, query)
 	assert.NilError(t, err)

@@ -132,8 +132,8 @@ var (
 	// LogoutResponse whose Version is not 2.0, a RequestedAuthnContext
 	// Comparison other than "exact" when
 	// ValidateAuthnContextClassRef is set and AuthnContextClassRefComparator
-	// is not, or an assertion whose Conditions has a condition this package
-	// does not understand when ValidateUnknownConditions is not set.
+	// is not, or, with RejectUnknownConditions, an assertion whose Conditions
+	// has a condition this package does not understand.
 	ErrUnsupported = errors.New("saml: not supported")
 
 	// ErrRelayStateTooLong is returned, when ServiceProvider or

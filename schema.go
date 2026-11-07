@@ -1483,8 +1483,9 @@ type Conditions struct {
 	// understand: anything but AudienceRestriction, OneTimeUse and
 	// ProxyRestriction, including a saml:Condition extended with xsi:type.
 	// saml-core §2.5.1.1 makes such an assertion Indeterminate, so the
-	// ServiceProvider rejects it unless ValidateUnknownConditions accepts
-	// it. Element and MarshalXML do not reproduce these elements.
+	// ServiceProvider rejects it if RejectUnknownConditions is set (or
+	// ValidateUnknownConditions refuses it); otherwise they are ignored.
+	// Element and MarshalXML do not reproduce these elements.
 	UnknownConditions []xml.Name `xml:"-"`
 }
 

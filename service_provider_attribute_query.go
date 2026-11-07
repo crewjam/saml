@@ -240,8 +240,8 @@ func (sp *ServiceProvider) postSOAP(ctx context.Context, location string, envelo
 //     provider;
 //   - it has Conditions that are currently valid and an AudienceRestriction
 //     naming this service provider (or passes ValidateAudienceRestriction),
-//     and no condition this package does not understand (or passes
-//     ValidateUnknownConditions);
+//     and, with RejectUnknownConditions, no condition this package does not
+//     understand (or passes ValidateUnknownConditions);
 //   - any SubjectConfirmationData is currently valid, and, if it has an
 //     InResponseTo, is InResponseTo query.ID.
 //
