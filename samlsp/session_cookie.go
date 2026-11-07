@@ -127,12 +127,9 @@ func (c CookieSessionProvider) DeleteSession(w http.ResponseWriter, r *http.Requ
 		c.Domain = domain
 	}
 
-	cookie, err := r.Cookie(c.Name)
-
-	if err == http.ErrNoCookie {
+	if _, err := r.Cookie(c.Name); err == http.ErrNoCookie {
 		return nil
-	}
-	if err != nil {
+	} else if err != nil {
 		return err
 	}
 
@@ -143,13 +140,25 @@ func (c CookieSessionProvider) DeleteSession(w http.ResponseWriter, r *http.Requ
 		path = "/"
 	}
 
-	cookie.Value = ""
-	cookie.Expires = time.Unix(1, 0) // past time as close to epoch as possible, but not zero time.Time{}
-	cookie.Path = path
-	cookie.Domain = c.Domain
-	http.SetCookie(w, cookie)
+	http.SetCookie(w, c.expiredCookie(r, c.Domain, path))
 	c.expireLegacyCookie(w, r, path)
 	return nil
+}
+
+// expiredCookie returns a cookie that expires the session cookie scoped to
+// domain and path. It has the same attributes as the cookie CreateSession
+// sets: a cookie read from the request carries none, so it cannot be reused.
+func (c CookieSessionProvider) expiredCookie(r *http.Request, domain, path string) *http.Cookie {
+	return &http.Cookie{ //nolint:gosec // Secure is set when served over https
+		Name:     c.Name,
+		Domain:   domain,
+		Value:    "",
+		Expires:  time.Unix(1, 0), // past time as close to epoch as possible, but not zero time.Time{}
+		HttpOnly: c.HTTPOnly,
+		Secure:   c.Secure || r.URL.Scheme == "https",
+		SameSite: c.SameSite,
+		Path:     path,
+	}
 }
 
 // expireLegacyCookie expires the session cookie scoped to c.legacyDomain, if
@@ -158,16 +167,7 @@ func (c CookieSessionProvider) expireLegacyCookie(w http.ResponseWriter, r *http
 	if c.legacyDomain == "" || c.legacyDomain == c.Domain {
 		return
 	}
-	http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure is set when served over https
-		Name:     c.Name,
-		Domain:   c.legacyDomain,
-		Value:    "",
-		Expires:  time.Unix(1, 0), // past time as close to epoch as possible, but not zero time.Time{}
-		HttpOnly: c.HTTPOnly,
-		Secure:   c.Secure || r.URL.Scheme == "https",
-		SameSite: c.SameSite,
-		Path:     path,
-	})
+	http.SetCookie(w, c.expiredCookie(r, c.legacyDomain, path))
 }
 
 // GetSession returns the current Session associated with the request, or an
