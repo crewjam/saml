@@ -759,6 +759,12 @@ func (req *IdpAuthnRequest) Validate() error {
 	if req.Request.Version != "2.0" {
 		return classify(fmt.Errorf("expected SAML request version 2.0 got %v", req.Request.Version), ErrUnsupported)
 	}
+	// The Response answers the request by its ID (saml-core §3.2.1: ID is
+	// required, and InResponseTo must match it). Without one the Response
+	// would carry no InResponseTo and look unsolicited.
+	if req.Request.ID == "" {
+		return classify(errors.New("authn request is missing an ID"), ErrMissingElement)
+	}
 
 	// find the service provider
 	if req.Request.Issuer == nil {
