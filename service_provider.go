@@ -403,7 +403,14 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 					},
 				},
 			},
+			// In order of preference. AES-GCM comes first: CBC has no
+			// integrity check, so a sender of modified ciphertexts can learn
+			// about the plaintext from whether it decrypts to valid XML. CBC
+			// stays listed for IdPs that cannot use GCM.
 			EncryptionMethods: []EncryptionMethod{
+				{Algorithm: xmlenc.AES256GCM.Algorithm()},
+				{Algorithm: xmlenc.AES128GCM.Algorithm()},
+				{Algorithm: xmlenc.AES192GCM.Algorithm()},
 				{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"},
 				{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes192-cbc"},
 				{Algorithm: "http://www.w3.org/2001/04/xmlenc#aes256-cbc"},
