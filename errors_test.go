@@ -3,7 +3,12 @@ package saml
 import (
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/xml"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,6 +85,7 @@ var allErrorKinds = []error{
 	ErrMalformedMessage, ErrMissingElement, ErrExpired, ErrNotYetValid,
 	ErrIssuerMismatch, ErrDestinationMismatch, ErrRequestIDMismatch,
 	ErrAudienceMismatch, ErrDecryptionFailed, ErrArtifactResolution,
+	ErrUnknownServiceProvider, ErrUnknownAssertionConsumerService, ErrUnsupported,
 }
 
 func checkOnlyKind(t *testing.T, err error, want error) {
@@ -232,5 +238,105 @@ func TestLogoutErrorKinds(t *testing.T) {
 				checkOnlyKind(t, e.sp.validateLogoutRequest(r), tc.want)
 			})
 		}
+	})
+}
+
+func TestIdpAuthnRequestErrorKinds(t *testing.T) {
+	test := idpcovNewTest(t)
+
+	validate := func(t *testing.T, mutate func(r *AuthnRequest)) error {
+		t.Helper()
+		authnRequest, err := test.SP.MakeAuthenticationRequest(test.SP.GetSSOBindingLocation(HTTPRedirectBinding), HTTPRedirectBinding, HTTPPostBinding)
+		assert.NilError(t, err)
+		mutate(authnRequest)
+		buf, err := xml.Marshal(authnRequest)
+		assert.NilError(t, err)
+		req := IdpAuthnRequest{IDP: &test.IDP, Now: TimeNow(), RequestBuffer: buf,
+			HTTPRequest: httptest.NewRequest("POST", "https://idp.example.com/saml/sso", nil)}
+		return req.Validate()
+	}
+	assert.NilError(t, validate(t, func(*AuthnRequest) {}))
+
+	tests := []struct {
+		name   string
+		mutate func(r *AuthnRequest)
+		want   error
+	}{
+		{"Destination", func(r *AuthnRequest) { r.Destination = "https://elsewhere.example.com/sso" }, ErrDestinationMismatch},
+		{"IssueInstant", func(r *AuthnRequest) { r.IssueInstant = TimeNow().Add(-time.Hour) }, ErrExpired},
+		{"Version", func(r *AuthnRequest) { r.Version = "1.1" }, ErrUnsupported},
+		{"no Issuer", func(r *AuthnRequest) { r.Issuer = nil }, ErrMissingElement},
+		{"unknown Issuer", func(r *AuthnRequest) { r.Issuer.Value = "https://other-sp.example.com/metadata" }, ErrUnknownServiceProvider},
+		{"unknown AssertionConsumerServiceURL", func(r *AuthnRequest) {
+			r.AssertionConsumerServiceURL = "https://sp.example.com/elsewhere"
+		}, ErrUnknownAssertionConsumerService},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			checkOnlyKind(t, validate(t, tc.mutate), tc.want)
+		})
+	}
+
+	t.Run("unknown Issuer matches os.ErrNotExist", func(t *testing.T) {
+		err := validate(t, func(r *AuthnRequest) { r.Issuer.Value = "https://other-sp.example.com/metadata" })
+		assert.Check(t, errors.Is(err, os.ErrNotExist))
+	})
+
+	t.Run("invalid XML", func(t *testing.T) {
+		req := IdpAuthnRequest{IDP: &test.IDP, Now: TimeNow(), RequestBuffer: []byte("<a>")}
+		checkOnlyKind(t, req.Validate(), ErrMalformedMessage)
+	})
+
+	t.Run("wrong root element", func(t *testing.T) {
+		req := IdpAuthnRequest{IDP: &test.IDP, Now: TimeNow(), RequestBuffer: []byte("<NotAnAuthnRequest/>")}
+		checkOnlyKind(t, req.Validate(), ErrMalformedMessage)
+	})
+
+	t.Run("service provider lookup error is wrapped", func(t *testing.T) {
+		lookupErr := errors.New("database on fire")
+		old := test.IDP.ServiceProviderProvider
+		t.Cleanup(func() { test.IDP.ServiceProviderProvider = old })
+		test.IDP.ServiceProviderProvider = &mockServiceProviderProvider{
+			GetServiceProviderFunc: func(*http.Request, string) (*EntityDescriptor, error) { return nil, lookupErr },
+		}
+		err := validate(t, func(*AuthnRequest) {})
+		checkOnlyKind(t, err, nil)
+		assert.Check(t, errors.Is(err, lookupErr))
+	})
+
+	t.Run("NewIdpAuthnRequest", func(t *testing.T) {
+		tests := []struct {
+			name string
+			r    *http.Request
+			want error
+		}{
+			{"GET bad base64", httptest.NewRequest("GET", "https://idp.example.com/saml/sso?SAMLRequest=%21%21", nil), ErrMalformedMessage},
+			{"GET bad deflate", httptest.NewRequest("GET", "https://idp.example.com/saml/sso?SAMLRequest=AAAA", nil), ErrMalformedMessage},
+			{"POST bad base64", func() *http.Request {
+				r := httptest.NewRequest("POST", "https://idp.example.com/saml/sso", strings.NewReader("SAMLRequest=%21%21"))
+				r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				return r
+			}(), ErrMalformedMessage},
+			{"POST bad form", func() *http.Request {
+				r := httptest.NewRequest("POST", "https://idp.example.com/saml/sso", strings.NewReader("SAMLRequest=%zz"))
+				r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				return r
+			}(), ErrMalformedMessage},
+			{"PUT", httptest.NewRequest("PUT", "https://idp.example.com/saml/sso", nil), ErrUnsupported},
+		}
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				_, err := NewIdpAuthnRequest(&test.IDP, tc.r)
+				checkOnlyKind(t, err, tc.want)
+			})
+		}
+	})
+
+	t.Run("PostBinding unsupported binding", func(t *testing.T) {
+		req := idpcovRequest(t, test)
+		req.ResponseEl = etree.NewElement("Response")
+		req.ACSEndpoint.Binding = HTTPRedirectBinding
+		_, err := req.PostBinding()
+		checkOnlyKind(t, err, ErrUnsupported)
 	})
 }

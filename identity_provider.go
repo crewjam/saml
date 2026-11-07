@@ -462,25 +462,25 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 	case "GET":
 		compressedRequest, err := base64.StdEncoding.DecodeString(r.URL.Query().Get("SAMLRequest"))
 		if err != nil {
-			return nil, fmt.Errorf("cannot decode request: %s", err)
+			return nil, classify(fmt.Errorf("cannot decode request: %w", err), ErrMalformedMessage)
 		}
 		req.RequestBuffer, err = io.ReadAll(newSaferFlateReader(bytes.NewReader(compressedRequest)))
 		if err != nil {
-			return nil, fmt.Errorf("cannot decompress request: %s", err)
+			return nil, classify(fmt.Errorf("cannot decompress request: %w", err), ErrMalformedMessage)
 		}
 		req.RelayState = r.URL.Query().Get("RelayState")
 	case "POST":
 		if err := r.ParseForm(); err != nil {
-			return nil, err
+			return nil, classify(err, ErrMalformedMessage)
 		}
 		var err error
 		req.RequestBuffer, err = base64.StdEncoding.DecodeString(r.PostForm.Get("SAMLRequest"))
 		if err != nil {
-			return nil, err
+			return nil, classify(err, ErrMalformedMessage)
 		}
 		req.RelayState = r.PostForm.Get("RelayState")
 	default:
-		return nil, fmt.Errorf("method not allowed")
+		return nil, classify(fmt.Errorf("method not allowed"), ErrUnsupported)
 	}
 
 	return req, nil
@@ -491,11 +491,11 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 // request is not valid.
 func (req *IdpAuthnRequest) Validate() error {
 	if err := xrv.Validate(bytes.NewReader(req.RequestBuffer)); err != nil {
-		return err
+		return classify(err, ErrMalformedMessage)
 	}
 
 	if err := xml.Unmarshal(req.RequestBuffer, &req.Request); err != nil { //nolint:gosec // parsing the untrusted request is the point; it was validated by xrv above
-		return err
+		return classify(err, ErrMalformedMessage)
 	}
 
 	// We always have exactly one IDP SSO descriptor
@@ -508,7 +508,7 @@ func (req *IdpAuthnRequest) Validate() error {
 	// For now we do the safe thing and fail in the case where we think
 	// requests might be signed.
 	if idpSsoDescriptor.WantAuthnRequestsSigned != nil && *idpSsoDescriptor.WantAuthnRequestsSigned {
-		return fmt.Errorf("authn request signature checking is not currently supported")
+		return classify(fmt.Errorf("authn request signature checking is not currently supported"), ErrUnsupported)
 	}
 
 	// In http://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf §3.4.5.2
@@ -526,34 +526,34 @@ func (req *IdpAuthnRequest) Validate() error {
 	mustHaveDestination = mustHaveDestination || req.Request.Destination != ""
 	if mustHaveDestination {
 		if req.Request.Destination != req.IDP.SSOURL.String() {
-			return fmt.Errorf("expected destination to be %q, not %q", req.IDP.SSOURL.String(), req.Request.Destination)
+			return classify(fmt.Errorf("expected destination to be %q, not %q", req.IDP.SSOURL.String(), req.Request.Destination), ErrDestinationMismatch)
 		}
 	}
 
 	if req.Request.IssueInstant.Add(MaxIssueDelay).Before(req.Now) {
-		return fmt.Errorf("request expired at %s",
-			req.Request.IssueInstant.Add(MaxIssueDelay))
+		return classify(fmt.Errorf("request expired at %s",
+			req.Request.IssueInstant.Add(MaxIssueDelay)), ErrExpired)
 	}
 	if req.Request.Version != "2.0" {
-		return fmt.Errorf("expected SAML request version 2.0 got %v", req.Request.Version)
+		return classify(fmt.Errorf("expected SAML request version 2.0 got %v", req.Request.Version), ErrUnsupported)
 	}
 
 	// find the service provider
 	if req.Request.Issuer == nil {
-		return fmt.Errorf("authn request is missing an issuer")
+		return classify(fmt.Errorf("authn request is missing an issuer"), ErrMissingElement)
 	}
 	serviceProviderID := req.Request.Issuer.Value
 	serviceProvider, err := req.IDP.ServiceProviderProvider.GetServiceProvider(req.HTTPRequest, serviceProviderID)
 	if err == os.ErrNotExist {
-		return fmt.Errorf("cannot handle request from unknown service provider %s", serviceProviderID)
+		return classify(fmt.Errorf("cannot handle request from unknown service provider %s", serviceProviderID), ErrUnknownServiceProvider, os.ErrNotExist)
 	} else if err != nil {
-		return fmt.Errorf("cannot find service provider %s: %v", serviceProviderID, err)
+		return fmt.Errorf("cannot find service provider %s: %w", serviceProviderID, err)
 	}
 	req.ServiceProviderMetadata = serviceProvider
 
 	// Check that the ACS URL matches an ACS endpoint in the SP metadata.
 	if err := req.getACSEndpoint(); err != nil {
-		return fmt.Errorf("cannot find assertion consumer service: %v", err)
+		return classify(fmt.Errorf("cannot find assertion consumer service: %w", err), ErrUnknownAssertionConsumerService)
 	}
 
 	return nil
@@ -1053,9 +1053,9 @@ func (req *IdpAuthnRequest) PostBinding() (IdpAuthnRequestForm, error) {
 	}
 
 	if req.ACSEndpoint.Binding != HTTPPostBinding {
-		return form, fmt.Errorf("%s: unsupported binding %s",
+		return form, classify(fmt.Errorf("%s: unsupported binding %s",
 			req.ServiceProviderMetadata.EntityID,
-			req.ACSEndpoint.Binding)
+			req.ACSEndpoint.Binding), ErrUnsupported)
 	}
 
 	form.URL = req.ACSEndpoint.Location

@@ -39,17 +39,18 @@ var (
 	ErrCertificateNotValidNow = errors.New("saml: signing certificate is expired or not yet valid")
 )
 
-// Errors that the ServiceProvider attaches to the other reasons it rejects a
-// Response, Assertion, ArtifactResponse, LogoutResponse or LogoutRequest.
-// Like the signature errors above, they are matched with errors.Is, through
-// *InvalidResponseError where one is returned, and leave the message of the
-// error unchanged.
+// Errors attached to the other reasons a message is rejected: by the
+// ServiceProvider for a Response, Assertion, ArtifactResponse, LogoutResponse
+// or LogoutRequest, and by the IdentityProvider for an AuthnRequest (from
+// NewIdpAuthnRequest and IdpAuthnRequest.Validate). Like the signature errors
+// above, they are matched with errors.Is, through *InvalidResponseError where
+// one is returned, and leave the message of the error unchanged.
 //
 // A rejected logout response whose status is not success also matches
 // ErrBadStatus with errors.As, as a rejected Response already does.
 var (
 	// ErrMalformedMessage is attached when a message cannot be decoded or
-	// parsed: bad base64 or form encoding, invalid XML, a missing root
+	// parsed: bad base64, deflate or form encoding, invalid XML, a missing root
 	// element, an element that cannot be unmarshalled, or more instances of
 	// an element than allowed.
 	ErrMalformedMessage = errors.New("saml: malformed message")
@@ -57,7 +58,8 @@ var (
 	// ErrMissingElement is attached when a required element or value is
 	// absent: no Assertion, an Assertion with no Subject, Conditions, ID,
 	// SubjectConfirmationData or bearer SubjectConfirmation, a LogoutRequest
-	// with no NameID, or another required child element.
+	// with no NameID, an AuthnRequest with no Issuer, or another required
+	// child element.
 	ErrMissingElement = errors.New("saml: required element is missing")
 
 	// ErrExpired is attached when a message or assertion is no longer valid:
@@ -77,10 +79,11 @@ var (
 	ErrIssuerMismatch = errors.New("saml: issuer does not match the IdP metadata")
 
 	// ErrDestinationMismatch is attached when a message was not addressed to
-	// this SP: a Destination that is neither the requested URL nor AcsURL
-	// (or SloURL, for logout messages), or a SubjectConfirmationData
-	// Recipient that is not AcsURL.
-	ErrDestinationMismatch = errors.New("saml: destination does not match this service provider")
+	// its recipient. At the SP: a Destination that is neither the requested
+	// URL nor AcsURL (or SloURL, for logout messages), or a
+	// SubjectConfirmationData Recipient that is not AcsURL. At the IdP: an
+	// AuthnRequest Destination that is not IdentityProvider.SSOURL.
+	ErrDestinationMismatch = errors.New("saml: destination does not match the recipient")
 
 	// ErrRequestIDMismatch is attached when an InResponseTo does not name
 	// one of the requests this SP made (possibleRequestIDs), or the artifact
@@ -100,6 +103,25 @@ var (
 	// IdP fails: building the request, the HTTP exchange, or a non-200
 	// status.
 	ErrArtifactResolution = errors.New("saml: artifact resolution failed")
+
+	// ErrUnknownServiceProvider is attached when an AuthnRequest's Issuer is
+	// not a service provider the IdP knows: its ServiceProviderProvider
+	// returned os.ErrNotExist, which the error also matches.
+	ErrUnknownServiceProvider = errors.New("saml: unknown service provider")
+
+	// ErrUnknownAssertionConsumerService is attached when the
+	// AssertionConsumerServiceURL or AssertionConsumerServiceIndex of an
+	// AuthnRequest is not in the service provider's metadata, or the
+	// metadata has no usable assertion consumer service. The SP metadata the
+	// IdP holds may be out of date.
+	ErrUnknownAssertionConsumerService = errors.New("saml: unknown assertion consumer service")
+
+	// ErrUnsupported is attached when a request uses something the
+	// IdentityProvider does not implement: an HTTP method other than GET or
+	// POST, a SAML version other than 2.0, signed AuthnRequests
+	// (WantAuthnRequestsSigned), or an assertion consumer service binding
+	// other than HTTP-POST.
+	ErrUnsupported = errors.New("saml: not supported")
 )
 
 // Unwrap returns PrivateErr, so that errors.Is and errors.As can inspect the
