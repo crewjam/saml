@@ -1617,6 +1617,9 @@ const canonicalizerPrefixList = ""
 
 // MakeAssertionEl sets `AssertionEl` to a signed, possibly encrypted, version of `Assertion`.
 func (req *IdpAuthnRequest) MakeAssertionEl() error {
+	if req.Assertion == nil {
+		return errors.New("the request has no assertion: call MakeAssertion first")
+	}
 	signingContext, err := req.signingContext()
 	if err != nil {
 		return err
@@ -1673,6 +1676,11 @@ func (req *IdpAuthnRequest) MakeAssertionEl() error {
 	return nil
 }
 
+// errNoACSEndpoint is returned when a response is to be made for an
+// IdpAuthnRequest whose ACSEndpoint is not set, typically because Validate
+// was not called or failed.
+var errNoACSEndpoint = errors.New("the request has no assertion consumer service endpoint: call Validate first")
+
 // IdpAuthnRequestForm contans HTML form information to be submitted to the
 // SAML HTTP POST binding ACS.
 type IdpAuthnRequestForm struct {
@@ -1687,6 +1695,20 @@ type IdpAuthnRequestForm struct {
 func (req *IdpAuthnRequest) PostBinding() (IdpAuthnRequestForm, error) {
 	var form IdpAuthnRequestForm
 
+	// Check the endpoint before the response is signed (and perhaps
+	// encrypted) for nothing.
+	if req.ACSEndpoint == nil {
+		return form, errNoACSEndpoint
+	}
+	if req.ACSEndpoint.Binding != HTTPPostBinding {
+		entityID := ""
+		if req.ServiceProviderMetadata != nil {
+			entityID = req.ServiceProviderMetadata.EntityID
+		}
+		return form, classify(fmt.Errorf("%s: unsupported binding %s",
+			entityID, req.ACSEndpoint.Binding), ErrUnsupported)
+	}
+
 	if req.ResponseEl == nil {
 		if err := req.MakeResponse(); err != nil {
 			return form, err
@@ -1698,12 +1720,6 @@ func (req *IdpAuthnRequest) PostBinding() (IdpAuthnRequestForm, error) {
 	responseBuf, err := doc.WriteToBytes()
 	if err != nil {
 		return form, err
-	}
-
-	if req.ACSEndpoint.Binding != HTTPPostBinding {
-		return form, classify(fmt.Errorf("%s: unsupported binding %s",
-			req.ServiceProviderMetadata.EntityID,
-			req.ACSEndpoint.Binding), ErrUnsupported)
 	}
 
 	form.URL = req.ACSEndpoint.Location
@@ -1784,6 +1800,9 @@ func unmarshalEtreeHack(el *etree.Element, v interface{}) error {
 // be non-nil. If MakeAssertionEl() has not been called, this function calls it for
 // you.
 func (req *IdpAuthnRequest) MakeResponse() error {
+	if req.ACSEndpoint == nil {
+		return errNoACSEndpoint
+	}
 	if req.AssertionEl == nil {
 		if err := req.MakeAssertionEl(); err != nil {
 			return err
