@@ -274,7 +274,7 @@ func TestMiddlewareRequireAccountCreds(t *testing.T) {
 			assert.Check(t, is.Equal("555-5555", jwtSession.Attributes.Get("telephoneNumber")))
 			assert.Check(t, is.Equal("And I", jwtSession.Attributes.Get("sn")))
 			assert.Check(t, is.Equal("urn:mace:dir:entitlement:common-lib-terms", jwtSession.Attributes.Get("eduPersonEntitlement")))
-			assert.Check(t, is.Equal("", jwtSession.Attributes.Get("eduPersonTargetedID")))
+			assert.Check(t, is.Equal("8F+M9ovyaYNwCId0pVkVsnZYRDo=", jwtSession.Attributes.Get("eduPersonTargetedID")))
 			assert.Check(t, is.Equal("Me Myself", jwtSession.Attributes.Get("givenName")))
 			assert.Check(t, is.Equal("Me Myself And I", jwtSession.Attributes.Get("cn")))
 			assert.Check(t, is.Equal("myself", jwtSession.Attributes.Get("uid")))
