@@ -49,14 +49,31 @@ type Options struct {
 	// shibmd:Scope extension elements. See
 	// saml.IdentityProvider.MetadataScopes.
 	MetadataScopes []saml.ShibbolethScope
+
+	// SOAPLogout, if true, has /slo also accept LogoutRequests that service
+	// providers send server to server with the SOAP binding, and advertises
+	// a SOAP SingleLogoutService for it in the metadata (see
+	// saml.IdentityProvider.LogoutBindings). The sessions are then ended by
+	// NameID and SessionIndex, without the browser (see
+	// Server.InvalidateSession), and the logout is propagated only to the
+	// service providers that also offer a SOAP SingleLogoutService.
+	//
+	// It is off by default: a service provider that finds a SOAP endpoint in
+	// the metadata may start using it instead of the browser, and a logout
+	// that starts without a browser cannot reach the service providers that
+	// only offer front-channel logout, which a browser-based logout reaches.
+	// It also needs /slo to be reachable from the service providers'
+	// servers.
+	SOAPLogout bool
 }
 
 // Server represents an IDP server. The server provides the following URLs:
 //
 //	/metadata     - the SAML metadata
 //	/sso          - the SAML endpoint to initiate an authentication flow
-//	/slo          - the SAML single logout endpoint (SP-initiated logout, and
-//	                the service providers' answers to IdP-initiated logout)
+//	/slo          - the SAML single logout endpoint (SP-initiated logout,
+//	                also over SOAP if Options.SOAPLogout is set, and the
+//	                service providers' answers to IdP-initiated logout)
 //	/logout       - log the browser's session out of the IdP and of every
 //	                service provider it was used for (IdP-initiated logout)
 //	/login        - prompt for a username and password if no session established
@@ -123,6 +140,9 @@ func New(opts Options) (*Server, error) {
 		AdminMiddleware:   opts.AdminMiddleware,
 	}
 
+	if opts.SOAPLogout {
+		s.IDP.LogoutBindings = append(s.IDP.LogoutBindings, saml.SOAPBinding)
+	}
 	s.IDP.SessionProvider = s
 	s.IDP.ServiceProviderProvider = s
 
