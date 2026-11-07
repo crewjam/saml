@@ -119,29 +119,38 @@ func newAssertion(a *saml.Assertion) *Assertion {
 
 // Attribute is a SAML attribute, with its values as strings.
 type Attribute struct {
-	Name         string
+	// Name identifies the attribute, as NameFormat says how to read it:
+	// for example "urn:oid:0.9.2342.19200300.100.1.3" (mail) with the URI
+	// name format.
+	Name       string
+	NameFormat string
+
+	// FriendlyName is an optional, human-readable form of Name, such as
+	// "mail". It is for display only: it does not identify the attribute
+	// (saml-core §2.7.3.1), so nothing in this package looks attributes up
+	// by it.
 	FriendlyName string
-	NameFormat   string
-	Values       []string
+
+	Values []string
 }
 
 // Attributes are the attributes of an assertion.
 type Attributes []Attribute
 
-// Values returns the values of every attribute whose Name or FriendlyName
-// is name, in the order they appear.
+// Values returns the values of every attribute whose Name is name, in the
+// order they appear. FriendlyName is not matched.
 func (as Attributes) Values(name string) []string {
 	var values []string
 	for _, a := range as {
-		if a.Name == name || (a.FriendlyName != "" && a.FriendlyName == name) {
+		if a.Name == name {
 			values = append(values, a.Values...)
 		}
 	}
 	return values
 }
 
-// Get returns the first value of the attribute named name (by Name or
-// FriendlyName), or "" if there is none.
+// Get returns the first value of the attribute whose Name is name, or "" if
+// there is none. FriendlyName is not matched.
 func (as Attributes) Get(name string) string {
 	if v := as.Values(name); len(v) > 0 {
 		return v[0]
@@ -150,13 +159,13 @@ func (as Attributes) Get(name string) string {
 }
 
 // DecodeAttributes stores the assertion's attributes in the struct that v
-// points to. Each field to
-// set has a tag naming the attribute by Name or FriendlyName:
+// points to. Each field to set has a tag with the Name of its attribute
+// (not its FriendlyName, which does not identify it):
 //
 //	var user struct {
 //		Email  string   `saml:"urn:oid:0.9.2342.19200300.100.1.3"`
-//		Name   string   `saml:"displayName"`
-//		Groups []string `saml:"memberOf"`
+//		Name   string   `saml:"urn:oid:2.16.840.1.113730.3.1.241"`
+//		Groups []string `saml:"http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"`
 //	}
 //	err := assertion.DecodeAttributes(&user)
 //

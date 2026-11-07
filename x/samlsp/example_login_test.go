@@ -235,8 +235,8 @@ func Example_passiveLogin() {
 	})
 }
 
-// DecodeAttributes copies attributes into a struct, by Name or
-// FriendlyName.
+// DecodeAttributes copies attributes into a struct, by their Name. The
+// FriendlyName does not identify an attribute, so it is not used.
 func ExampleAssertion_DecodeAttributes() {
 	assertion := &samlsp.Assertion{ // as returned by ParseResponse
 		Attributes: samlsp.Attributes{
@@ -247,10 +247,10 @@ func ExampleAssertion_DecodeAttributes() {
 	}
 
 	var user struct {
-		Email  string   `saml:"mail"`
+		Email  string   `saml:"urn:oid:0.9.2342.19200300.100.1.3"`
 		Name   string   `saml:"urn:oid:2.16.840.1.113730.3.1.241"`
 		Groups []string `saml:"memberOf"`
-		Phone  string   `saml:"telephoneNumber"` // absent: left as is
+		Phone  string   `saml:"urn:oid:2.5.4.20"` // absent: left as is
 	}
 	if err := assertion.DecodeAttributes(&user); err != nil {
 		log.Fatal(err)
@@ -260,18 +260,17 @@ func ExampleAssertion_DecodeAttributes() {
 	// {Email:alice@example.com Name:Alice Groups:[admins users] Phone:}
 }
 
-// Get and Values look attributes up by Name or FriendlyName.
+// Get and Values look attributes up by Name. The FriendlyName is only a
+// label: looking an attribute up by it finds nothing.
 func ExampleAttributes_Get() {
 	attrs := samlsp.Attributes{
 		{Name: "urn:oid:0.9.2342.19200300.100.1.3", FriendlyName: "mail", Values: []string{"alice@example.com"}},
 		{Name: "memberOf", Values: []string{"admins", "users"}},
 	}
-	fmt.Println(attrs.Get("mail"))
 	fmt.Println(attrs.Get("urn:oid:0.9.2342.19200300.100.1.3"))
 	fmt.Println(attrs.Values("memberOf"))
-	fmt.Printf("%q\n", attrs.Get("missing"))
+	fmt.Printf("%q\n", attrs.Get("mail"))
 	// Output:
-	// alice@example.com
 	// alice@example.com
 	// [admins users]
 	// ""
