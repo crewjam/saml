@@ -112,6 +112,15 @@ type IdentityProvider struct {
 	ValidDuration           *time.Duration
 	ResponseFormTemplate    *template.Template
 
+	// ExtraCertificates are additional certificates published in the IdP
+	// metadata as signing keys, after Certificate. They are never used to
+	// sign anything. Use them to announce a new signing certificate before
+	// switching Certificate (and Key or Signer) to it, so that service
+	// providers that refresh their copy of the metadata already trust the
+	// new key when the rollover happens, or to keep publishing the old
+	// certificate for a while afterwards.
+	ExtraCertificates []*x509.Certificate
+
 	// NameIDFormats are the NameID formats advertised in the IdP metadata.
 	// When empty it defaults to the transient format for backwards compatibility.
 	NameIDFormats []NameIDFormat
@@ -202,6 +211,22 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 				},
 			},
 		},
+	}
+
+	for _, cert := range idp.ExtraCertificates {
+		if cert == nil {
+			continue
+		}
+		ed.IDPSSODescriptors[0].KeyDescriptors = append(ed.IDPSSODescriptors[0].KeyDescriptors, KeyDescriptor{
+			Use: "signing",
+			KeyInfo: KeyInfo{
+				X509Data: X509Data{
+					X509Certificates: []X509Certificate{
+						{Data: base64.StdEncoding.EncodeToString(cert.Raw)},
+					},
+				},
+			},
+		})
 	}
 
 	if idp.LogoutURL.String() != "" {

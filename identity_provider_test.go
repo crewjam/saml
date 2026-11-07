@@ -225,6 +225,49 @@ func TestIDPCanProduceMetadata(t *testing.T) {
 	assert.Check(t, is.DeepEqual(expected, test.IDP.Metadata()))
 }
 
+func TestIDPMetadataPublishesExtraCertificates(t *testing.T) {
+	test := NewIdentityProviderTest(t, applyKey)
+	// Any certificate other than the IdP's own will do as the "next" key.
+	nextCert := test.SPCertificate
+	test.IDP.ExtraCertificates = []*x509.Certificate{nil, nextCert}
+
+	metadata := test.IDP.Metadata()
+	assert.Assert(t, is.Len(metadata.IDPSSODescriptors, 1))
+	keyDescriptors := metadata.IDPSSODescriptors[0].KeyDescriptors
+	assert.Assert(t, is.Len(keyDescriptors, 3))
+
+	certStr := base64.StdEncoding.EncodeToString(test.Certificate.Raw)
+	nextCertStr := base64.StdEncoding.EncodeToString(nextCert.Raw)
+
+	// The primary certificate is still published first, for signing and
+	// encryption, exactly as before.
+	assert.Check(t, is.Equal(keyDescriptors[0].Use, "signing"))
+	assert.Check(t, is.DeepEqual(keyDescriptors[0].KeyInfo.X509Data.X509Certificates, []X509Certificate{{Data: certStr}}))
+	assert.Check(t, is.Equal(keyDescriptors[1].Use, "encryption"))
+	assert.Check(t, is.DeepEqual(keyDescriptors[1].KeyInfo.X509Data.X509Certificates, []X509Certificate{{Data: certStr}}))
+
+	// The extra certificate is published as a signing key only; the nil
+	// entry is skipped.
+	assert.Check(t, is.Equal(keyDescriptors[2].Use, "signing"))
+	assert.Check(t, is.DeepEqual(keyDescriptors[2].KeyInfo.X509Data.X509Certificates, []X509Certificate{{Data: nextCertStr}}))
+	assert.Check(t, is.Len(keyDescriptors[2].EncryptionMethods, 0))
+
+	buf, err := xml.Marshal(metadata)
+	assert.NilError(t, err)
+	assert.Check(t, is.Contains(string(buf), nextCertStr))
+
+	// A service provider using this metadata trusts both certificates, so
+	// it keeps working when the IdP switches to the new key.
+	var parsed EntityDescriptor
+	assert.NilError(t, xml.Unmarshal(buf, &parsed))
+	sp := ServiceProvider{IDPMetadata: &parsed}
+	certs, err := sp.getIDPSigningCerts()
+	assert.NilError(t, err)
+	assert.Assert(t, is.Len(certs, 2))
+	assert.Check(t, certs[0].Equal(test.Certificate))
+	assert.Check(t, certs[1].Equal(nextCert))
+}
+
 func TestIDPCanAdvertiseCustomNameIDFormats(t *testing.T) {
 	test := NewIdentityProviderTest(t, applyKey)
 	test.IDP.NameIDFormats = []NameIDFormat{
