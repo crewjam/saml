@@ -1,14 +1,14 @@
 package saml
 
 import (
-	"bytes"
 	"crypto/x509"
 	"errors"
 	"fmt"
 
 	"github.com/beevik/etree"
-	xrv "github.com/mattermost/xml-roundtrip-validator"
 	"github.com/russellhaering/goxmldsig/etreeutils"
+
+	"github.com/crewjam/saml/internal/xmlroundtrip"
 )
 
 // metadataNamespace is the namespace of SAML metadata elements.
@@ -33,7 +33,7 @@ func VerifyMetadataSignature(data []byte, certs []*x509.Certificate) ([]byte, er
 		return nil, errors.New("cannot verify metadata signature: no certificate to verify it with")
 	}
 
-	if err := xrv.Validate(bytes.NewReader(data)); err != nil {
+	if err := xmlroundtrip.Validate(data); err != nil {
 		return nil, classify(fmt.Errorf("invalid xml: %w", err), ErrMalformedMessage)
 	}
 	doc := etree.NewDocument()
