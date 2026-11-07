@@ -63,6 +63,13 @@ type Options struct {
 	// refused, as saml-core §2.5.1.1 requires. It is off by default.
 	RejectUnknownConditions bool
 
+	// RequireSignedResponseForCBC sets
+	// saml.ServiceProvider.RequireSignedResponseForCBC: if true, an
+	// EncryptedAssertion encrypted with a CBC block cipher is decrypted
+	// only if the Response carrying it is signed, as the saml-core errata
+	// (E93) recommend. It is off by default.
+	RequireSignedResponseForCBC bool
+
 	// LimitRelayStateLength sets saml.ServiceProvider.LimitRelayStateLength:
 	// if true, a RelayStateFunc result or other RelayState the middleware
 	// would send that is longer than saml.MaxRelayStateLength (80 bytes) is
@@ -384,6 +391,7 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		LogoutBindings:          opts.LogoutBindings,
 
 		AssertionConsumerServiceBindings: opts.AssertionConsumerServiceBindings,
+		RequireSignedResponseForCBC:      opts.RequireSignedResponseForCBC,
 		IgnoreCertificateExpiry:          opts.IgnoreCertificateExpiry,
 		RejectExpiredIDPMetadata:         opts.RejectExpiredIDPMetadata,
 		SignMetadata:                     opts.SignMetadata,

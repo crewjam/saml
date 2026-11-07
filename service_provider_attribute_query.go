@@ -230,7 +230,8 @@ func (sp *ServiceProvider) postSOAP(ctx context.Context, location string, envelo
 // IDPSSODescriptor (or IDPCertificate or IDPCertificateFingerprint, if set).
 //
 // EncryptedAssertions, and EncryptedIDs in place of a Subject NameID, are
-// decrypted as for login. Every assertion must be
+// decrypted as for login (and, with RequireSignedResponseForCBC, one
+// encrypted in CBC mode only in a signed Response). Every assertion must be
 // valid, or the response is rejected:
 //
 //   - its Issuer is the IdP entity ID, and it was recently issued;
@@ -435,6 +436,9 @@ func (sp *ServiceProvider) attributeQueryAssertions(responseEl *etree.Element, q
 	}
 
 	for _, encryptedAssertionEl := range encryptedAssertionEls {
+		if err := sp.checkCBCIntegrity(encryptedAssertionEl, !signatureRequired); err != nil {
+			return nil, err
+		}
 		assertionEl, err := sp.decryptElement(encryptedAssertionEl)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decrypt EncryptedAssertion: %v", err)

@@ -286,6 +286,8 @@ Some protections the SAML profiles call for are opt-in, because turning them on 
 
 - **Unknown conditions.** An assertion whose `<Conditions>` holds a condition this package does not understand (an extension `saml:Condition`, for example) is Indeterminate, and SAML Core says it MUST be rejected. Such conditions are ignored by default, since some IDPs send extension conditions. Set `Options.RejectUnknownConditions` (`ServiceProvider.RejectUnknownConditions`) to refuse them, or `ServiceProvider.ValidateUnknownConditions` to evaluate them yourself.
 
+- **Integrity protection for CBC encryption.** An unsigned Response can carry an `EncryptedAssertion` whose signature is inside the encryption, so the service provider decrypts it before anything has authenticated it. With AES-CBC that is what padding and format oracle attacks on XML Encryption need, and the SAML Core errata (E93) say relying parties SHOULD require integrity protection before processing CBC-encrypted assertions. The SP metadata advertises AES-GCM first, but an IDP may still choose CBC. Set `Options.RequireSignedResponseForCBC` (`ServiceProvider.RequireSignedResponseForCBC`) to refuse, before decrypting, a CBC-encrypted assertion in a Response (or ArtifactResponse) that is not signed; the error matches `ErrInvalidSignature`. AES-GCM assertions are unaffected. Many IDPs sign only the assertion, so check that yours signs the Response, or encrypts with AES-GCM, before turning it on.
+
 - **RelayState length.** The bindings limit RelayState to 80 bytes. Set `Options.LimitRelayStateLength` (`ServiceProvider.LimitRelayStateLength`, `IdentityProvider.LimitRelayStateLength`) to refuse to send a longer one. See [RelayState](#relaystate).
 
 ## Customizing the session lifetime

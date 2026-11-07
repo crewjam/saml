@@ -308,6 +308,29 @@ type ServiceProvider struct {
 	// set, decides instead.
 	RejectUnknownConditions bool
 
+	// RequireSignedResponseForCBC, if true, refuses to decrypt an
+	// EncryptedAssertion whose EncryptedData uses a CBC block cipher
+	// (aes128-cbc, aes192-cbc, aes256-cbc or tripledes-cbc) unless the
+	// message that carries it was authenticated before decryption: a
+	// Response (or, for the HTTP-Artifact binding, an ArtifactResponse)
+	// with a valid signature by the IdP, or a Response whose
+	// HTTP-POST-SimpleSign signature is valid. The saml-core errata (E93,
+	// §6.2) say that "when CBC-mode algorithms are used for data
+	// encryption, relying parties SHOULD require the presence of integrity
+	// protection before processing encrypted SAML assertions", since
+	// decrypting unauthenticated CBC ciphertext is what padding and format
+	// oracle attacks on XML Encryption need. A signature on the assertion
+	// inside the encryption does not count, because it can only be checked
+	// after decrypting. The refusal matches ErrInvalidSignature, and
+	// happens before any decryption. AES-GCM is authenticated encryption,
+	// so it is not affected. ParseXMLAttributeQueryResponse applies it to
+	// the Response the attribute authority sends.
+	//
+	// It is off by default, because many IdPs sign only the assertion and
+	// encrypt it with AES-CBC; with it on, configure the IdP to sign the
+	// Response or to encrypt with AES-GCM.
+	RequireSignedResponseForCBC bool
+
 	// ValidateUnknownConditions, if set, decides an assertion whose
 	// Conditions has child elements this package does not understand (see
 	// RejectUnknownConditions), whatever RejectUnknownConditions says:
@@ -1627,6 +1650,10 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 	// look for encrypted assertions
 	{
 		for _, encryptedAssertionEl := range encryptedAssertionEls {
+			if err := sp.checkCBCIntegrity(encryptedAssertionEl, signatureRequirement != signatureRequired); err != nil {
+				errs = append(errs, err)
+				continue
+			}
 			assertion, err := sp.parseEncryptedAssertion(encryptedAssertionEl, possibleRequestIDs, now, signatureRequirement)
 			if err != nil {
 				errs = append(errs, err)
@@ -1689,6 +1716,40 @@ func (sp *ServiceProvider) validateRequestID(response Response, possibleRequestI
 	}
 	if !requestIDvalid {
 		return classify(fmt.Errorf("`InResponseTo` does not match any of the possible request IDs (expected %v)", possibleRequestIDs), ErrRequestIDMismatch)
+	}
+	return nil
+}
+
+// cbcAlgorithms are the XML Encryption block ciphers in CBC mode, which do
+// not authenticate the ciphertext.
+var cbcAlgorithms = map[string]bool{
+	xmlenc.AES128CBC.Algorithm(): true,
+	xmlenc.AES192CBC.Algorithm(): true,
+	xmlenc.AES256CBC.Algorithm(): true,
+	xmlenc.TripleDES.Algorithm(): true,
+}
+
+// checkCBCIntegrity implements RequireSignedResponseForCBC: it refuses
+// encryptedEl, an EncryptedAssertion, if one of its EncryptedData children
+// is encrypted with a CBC block cipher and responseAuthenticated is false,
+// that is, nothing authenticated the message carrying it before decryption.
+// It only reads the EncryptionMethod, so nothing is decrypted.
+func (sp *ServiceProvider) checkCBCIntegrity(encryptedEl *etree.Element, responseAuthenticated bool) error {
+	if !sp.RequireSignedResponseForCBC || responseAuthenticated {
+		return nil
+	}
+	for _, encryptedDataEl := range encryptedEl.ChildElements() {
+		if encryptedDataEl.Tag != "EncryptedData" {
+			continue
+		}
+		for _, methodEl := range encryptedDataEl.ChildElements() {
+			if methodEl.Tag != "EncryptionMethod" {
+				continue
+			}
+			if algorithm := methodEl.SelectAttrValue("Algorithm", ""); cbcAlgorithms[algorithm] {
+				return classify(fmt.Errorf("the Response is not signed, and RequireSignedResponseForCBC refuses to decrypt an EncryptedAssertion encrypted with %s", algorithm), ErrInvalidSignature)
+			}
+		}
 	}
 	return nil
 }
