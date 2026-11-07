@@ -25,6 +25,7 @@ var mgfHashes = map[string]crypto.Hash{
 var cryptoHashes = map[string]crypto.Hash{
 	SHA1.Algorithm():            crypto.SHA1,
 	SHA256.Algorithm():          crypto.SHA256,
+	SHA384.Algorithm():          crypto.SHA384,
 	SHA512.Algorithm():          crypto.SHA512,
 	RIPEMD160.Algorithm():       crypto.RIPEMD160,
 	legacySHA256.Algorithm():    crypto.SHA256,
