@@ -419,13 +419,17 @@ func logoutRequestEndpoint(metadata *EntityDescriptor) (*Endpoint, error) {
 	return nil, errors.New("the service provider metadata has no HTTP-Redirect or HTTP-POST SingleLogoutService endpoint")
 }
 
-var defaultLogoutRequestFormTemplate = template.Must(template.New("saml-logout-request-form").Parse(`<html>` +
+var defaultLogoutRequestFormTemplate = template.Must(template.New("saml-logout-request-form").Parse(`` +
+	`<html xmlns="http://www.w3.org/1999/xhtml">` +
+	`<head><title>Continue</title></head>` +
+	`<body>` +
 	`<form method="post" action="{{.URL}}" id="SAMLRequestForm">` +
 	`<input type="hidden" name="SAMLRequest" value="{{.SAMLRequest}}" />` +
 	`<input id="SAMLSubmitButton" type="submit" value="Continue" />` +
 	`</form>` +
 	`<script>document.getElementById('SAMLSubmitButton').style.visibility='hidden';</script>` +
 	`<script>document.getElementById('SAMLRequestForm').submit();</script>` +
+	`</body>` +
 	`</html>`))
 
 // logoutRequestWriter signs logoutRequest for binding and returns a function
@@ -475,9 +479,13 @@ func (idp *IdentityProvider) logoutRequestWriter(logoutRequest *LogoutRequest, b
 	}
 }
 
-var defaultLogoutCompleteTemplate = template.Must(template.New("saml-logout-complete").Parse(`<html>` +
+var defaultLogoutCompleteTemplate = template.Must(template.New("saml-logout-complete").Parse(`` +
+	`<html xmlns="http://www.w3.org/1999/xhtml">` +
+	`<head><title>Logged out</title></head>` +
+	`<body>` +
 	`<p>You have been logged out.</p>` +
 	`{{if .}}<p>The logout could not be confirmed by:</p><ul>{{range .}}<li>{{.}}</li>{{end}}</ul>{{end}}` +
+	`</body>` +
 	`</html>`))
 
 // finishLogout ends a single logout once every participant has been

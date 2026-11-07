@@ -31,7 +31,7 @@ const testValidityAggregate = `<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAM
 
 // testValidityOuterOnly has an IDP whose own policy is stricter than its
 // parent's, after a closed aggregate whose stricter policy must not apply.
-const testValidityOuterOnly = `<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" validUntil="2030-01-01T00:00:00Z" cacheDuration="PT24H">
+const testValidityOuterOnly = `<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" ID="id-outer-only" validUntil="2030-01-01T00:00:00Z" cacheDuration="PT24H">
   <EntitiesDescriptor validUntil="2001-01-01T00:00:00Z" cacheDuration="PT1M">
     <EntityDescriptor entityID="https://sp.example.org/shibboleth">
       <SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
@@ -46,7 +46,7 @@ const testValidityOuterOnly = `<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAM
   </EntityDescriptor>
 </EntitiesDescriptor>`
 
-const testValidityNone = `<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata">
+const testValidityNone = `<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" ID="id-none">
   <EntitiesDescriptor>
     <EntityDescriptor entityID="https://idp.example.org/idp">
       <IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
