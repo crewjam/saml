@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/beevik/etree"
@@ -37,6 +38,7 @@ type EntitiesDescriptor struct {
 	CacheDuration       *time.Duration `xml:"cacheDuration,attr,omitempty"`
 	Name                *string        `xml:",attr,omitempty"`
 	Signature           *etree.Element
+	Extensions          *Extensions          `xml:"urn:oasis:names:tc:SAML:2.0:metadata Extensions,omitempty"`
 	EntitiesDescriptors []EntitiesDescriptor `xml:"urn:oasis:names:tc:SAML:2.0:metadata EntitiesDescriptor"`
 	EntityDescriptors   []EntityDescriptor   `xml:"urn:oasis:names:tc:SAML:2.0:metadata EntityDescriptor"`
 }
@@ -113,6 +115,7 @@ type EntityDescriptor struct {
 	ValidUntil                    time.Time     `xml:"validUntil,attr,omitempty"`
 	CacheDuration                 time.Duration `xml:"cacheDuration,attr,omitempty"`
 	Signature                     *etree.Element
+	Extensions                    *Extensions                    `xml:"urn:oasis:names:tc:SAML:2.0:metadata Extensions,omitempty"`
 	RoleDescriptors               []RoleDescriptor               `xml:"RoleDescriptor"`
 	IDPSSODescriptors             []IDPSSODescriptor             `xml:"IDPSSODescriptor"`
 	SPSSODescriptors              []SPSSODescriptor              `xml:"SPSSODescriptor"`
@@ -273,6 +276,7 @@ type RoleDescriptor struct {
 	ProtocolSupportEnumeration string        `xml:"protocolSupportEnumeration,attr"`
 	ErrorURL                   string        `xml:"errorURL,attr,omitempty"`
 	Signature                  *etree.Element
+	Extensions                 *Extensions     `xml:"urn:oasis:names:tc:SAML:2.0:metadata Extensions,omitempty"`
 	KeyDescriptors             []KeyDescriptor `xml:"KeyDescriptor,omitempty"`
 	Organization               *Organization   `xml:"Organization,omitempty"`
 	ContactPeople              []ContactPerson `xml:"ContactPerson,omitempty"`
@@ -318,6 +322,96 @@ type KeyDescriptor struct {
 // EncryptionMethod represents the XMLSEC object of the same name
 type EncryptionMethod struct {
 	Algorithm string `xml:"Algorithm,attr"`
+	// KeySize is the optional xenc:KeySize child, which states the key size
+	// in bits for algorithms that allow more than one.
+	KeySize *int `xml:"http://www.w3.org/2001/04/xmlenc# KeySize,omitempty"`
+}
+
+// AlgSupportNamespace is the namespace of the SAML V2.0 Metadata Profile for
+// Algorithm Support.
+//
+// See https://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-metadata-algsupport-v1.0-cs01.html
+const AlgSupportNamespace = "urn:oasis:names:tc:SAML:metadata:algsupport"
+
+// Extensions represents the SAML metadata element md:Extensions, which holds
+// extension elements from namespaces other than the SAML metadata namespace.
+//
+// Elements this package knows are decoded into their own fields. Any other
+// element is kept in Other, so that it is not lost when metadata is parsed and
+// then written out again. Elements are written in field order, so the order
+// of elements in Other relative to the known elements is not preserved.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-metadata-2.0-os.pdf §2.3.1
+type Extensions struct {
+	XMLName xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:metadata Extensions"`
+
+	// SigningMethods and DigestMethods are the alg:SigningMethod and
+	// alg:DigestMethod elements of the Metadata Profile for Algorithm Support.
+	SigningMethods []SigningMethod `xml:"urn:oasis:names:tc:SAML:metadata:algsupport SigningMethod"`
+	DigestMethods  []DigestMethod  `xml:"urn:oasis:names:tc:SAML:metadata:algsupport DigestMethod"`
+
+	// Other holds the extension elements that have no field of their own.
+	Other []ExtensionElement `xml:",any"`
+}
+
+// SigningMethod represents the alg:SigningMethod element: an XML Signature
+// algorithm the entity supports, with optional bounds on the key size, in
+// bits, it supports for that algorithm.
+//
+// See https://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-metadata-algsupport-v1.0-cs01.html §2.4
+type SigningMethod struct {
+	XMLName    xml.Name `xml:"urn:oasis:names:tc:SAML:metadata:algsupport SigningMethod"`
+	Algorithm  string   `xml:"Algorithm,attr"`
+	MinKeySize int      `xml:"MinKeySize,attr,omitempty"`
+	MaxKeySize int      `xml:"MaxKeySize,attr,omitempty"`
+}
+
+// DigestMethod represents the alg:DigestMethod element: an XML Signature
+// digest algorithm the entity supports.
+//
+// See https://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-metadata-algsupport-v1.0-cs01.html §2.3
+type DigestMethod struct {
+	XMLName   xml.Name `xml:"urn:oasis:names:tc:SAML:metadata:algsupport DigestMethod"`
+	Algorithm string   `xml:"Algorithm,attr"`
+}
+
+// ExtensionElement is a generic XML element, used for extension elements
+// that this package does not model. Names are kept with their namespace URIs
+// rather than their prefixes, so the element can be written out again with
+// its namespaces intact. Character data is kept, but its position relative to
+// child elements (mixed content) is not.
+type ExtensionElement struct {
+	XMLName  xml.Name
+	Attrs    []xml.Attr         `xml:",any,attr"`
+	CharData string             `xml:",chardata"`
+	Children []ExtensionElement `xml:",any"`
+}
+
+// UnmarshalXML implements xml.Unmarshaler
+func (m *ExtensionElement) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	type Alias ExtensionElement
+	if err := d.DecodeElement((*Alias)(m), &start); err != nil {
+		return err
+	}
+	// Drop namespace declarations. The decoder has already resolved names
+	// to namespace URIs, and the encoder declares the namespaces it needs;
+	// re-encoding the declarations as attributes would produce bogus ones.
+	attrs := m.Attrs[:0]
+	for _, attr := range m.Attrs {
+		if attr.Name.Space == "xmlns" || (attr.Name.Space == "" && attr.Name.Local == "xmlns") {
+			continue
+		}
+		attrs = append(attrs, attr)
+	}
+	m.Attrs = attrs
+	if len(m.Attrs) == 0 {
+		m.Attrs = nil
+	}
+	// Whitespace between child elements is indentation, not content.
+	if len(m.Children) > 0 && strings.TrimSpace(m.CharData) == "" {
+		m.CharData = ""
+	}
+	return nil
 }
 
 // KeyInfo represents the XMLSEC object of the same name
@@ -754,6 +848,7 @@ type AffiliationDescriptor struct {
 	ValidUntil         time.Time     `xml:"validUntil,attr,omitempty"`
 	CacheDuration      time.Duration `xml:"cacheDuration,attr"`
 	Signature          *etree.Element
+	Extensions         *Extensions     `xml:"urn:oasis:names:tc:SAML:2.0:metadata Extensions,omitempty"`
 	AffiliateMembers   []string        `xml:"AffiliateMember"`
 	KeyDescriptors     []KeyDescriptor `xml:"KeyDescriptor"`
 }
