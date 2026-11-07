@@ -1245,7 +1245,15 @@ type Subject struct {
 	XMLName xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:assertion Subject"`
 	// BaseID               *BaseID  ... TODO
 	NameID *NameID `xml:"urn:oasis:names:tc:SAML:2.0:assertion NameID"`
-	// EncryptedID          *EncryptedID  ... TODO
+
+	// EncryptedID is the saml:EncryptedID element (saml-core §2.2.4) that
+	// identifies the subject in place of NameID, as received.
+	//
+	// When the service provider accepts an assertion whose Subject has an
+	// EncryptedID, it decrypts it with its decryption keys and sets NameID
+	// to the NameID it holds, then clears EncryptedID.
+	EncryptedID *etree.Element `xml:"urn:oasis:names:tc:SAML:2.0:assertion EncryptedID"`
+
 	SubjectConfirmations []SubjectConfirmation `xml:"urn:oasis:names:tc:SAML:2.0:assertion SubjectConfirmation"`
 }
 
@@ -1255,10 +1263,43 @@ func (a *Subject) Element() *etree.Element {
 	if a.NameID != nil {
 		el.AddChild(a.NameID.Element())
 	}
+	if a.EncryptedID != nil {
+		el.AddChild(a.EncryptedID.Copy())
+	}
 	for _, v := range a.SubjectConfirmations {
 		el.AddChild(v.Element())
 	}
 	return el
+}
+
+// MarshalXML implements xml.Marshaler
+func (a *Subject) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
+	type Alias Subject
+	aux := &struct {
+		EncryptedID *etreeElementXML `xml:"urn:oasis:names:tc:SAML:2.0:assertion EncryptedID"`
+		*Alias
+	}{
+		EncryptedID: (*etreeElementXML)(a.EncryptedID),
+		Alias:       (*Alias)(a),
+	}
+	return e.Encode(aux)
+}
+
+// UnmarshalXML implements xml.Unmarshaler
+func (a *Subject) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	type Alias Subject
+	aux := &struct {
+		EncryptedID *etreeElementXML `xml:"urn:oasis:names:tc:SAML:2.0:assertion EncryptedID"`
+		*Alias
+	}{
+		Alias: (*Alias)(a),
+	}
+	if err := d.DecodeElement(&aux, &start); err != nil {
+		return err
+	}
+	a.XMLName = start.Name
+	a.EncryptedID = (*etree.Element)(aux.EncryptedID)
+	return nil
 }
 
 // NameID represents the SAML element NameID.
@@ -1317,7 +1358,12 @@ type SubjectConfirmation struct {
 	Method string `xml:",attr"`
 	// BaseID               *BaseID  ... TODO
 	NameID *NameID `xml:"urn:oasis:names:tc:SAML:2.0:assertion NameID"`
-	// EncryptedID          *EncryptedID  ... TODO
+
+	// EncryptedID is the saml:EncryptedID element (saml-core §2.2.4) that
+	// identifies the confirming entity in place of NameID, as received. The
+	// service provider decrypts it into NameID, as for Subject.EncryptedID.
+	EncryptedID *etree.Element `xml:"urn:oasis:names:tc:SAML:2.0:assertion EncryptedID"`
+
 	SubjectConfirmationData *SubjectConfirmationData `xml:"urn:oasis:names:tc:SAML:2.0:assertion SubjectConfirmationData"`
 }
 
@@ -1328,10 +1374,42 @@ func (a *SubjectConfirmation) Element() *etree.Element {
 	if a.NameID != nil {
 		el.AddChild(a.NameID.Element())
 	}
+	if a.EncryptedID != nil {
+		el.AddChild(a.EncryptedID.Copy())
+	}
 	if a.SubjectConfirmationData != nil {
 		el.AddChild(a.SubjectConfirmationData.Element())
 	}
 	return el
+}
+
+// MarshalXML implements xml.Marshaler
+func (a *SubjectConfirmation) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	type Alias SubjectConfirmation
+	aux := &struct {
+		EncryptedID *etreeElementXML `xml:"urn:oasis:names:tc:SAML:2.0:assertion EncryptedID"`
+		*Alias
+	}{
+		EncryptedID: (*etreeElementXML)(a.EncryptedID),
+		Alias:       (*Alias)(a),
+	}
+	return e.EncodeElement(aux, start)
+}
+
+// UnmarshalXML implements xml.Unmarshaler
+func (a *SubjectConfirmation) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	type Alias SubjectConfirmation
+	aux := &struct {
+		EncryptedID *etreeElementXML `xml:"urn:oasis:names:tc:SAML:2.0:assertion EncryptedID"`
+		*Alias
+	}{
+		Alias: (*Alias)(a),
+	}
+	if err := d.DecodeElement(&aux, &start); err != nil {
+		return err
+	}
+	a.EncryptedID = (*etree.Element)(aux.EncryptedID)
+	return nil
 }
 
 // SubjectConfirmationData represents the SAML element SubjectConfirmationData.

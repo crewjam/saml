@@ -13,28 +13,43 @@ import (
 
 const samlAssertionNamespace = "urn:oasis:names:tc:SAML:2.0:assertion"
 
+// decryptNameID decrypts encryptedID, a saml:EncryptedID element, with
+// decrypt, which returns the root element of the plaintext, and returns the
+// saml:NameID it holds. Other identifiers (BaseID, or an EncryptedID that
+// does not hold a NameID) are rejected.
+func decryptNameID(encryptedID *etree.Element, decrypt func(*etree.Element) (*etree.Element, error)) (*NameID, error) {
+	nameID, _, err := decryptIdentifier(encryptedID, decrypt, false)
+	return nameID, err
+}
+
 // decryptIdentifier decrypts encryptedID, a saml:EncryptedID element, with
 // decrypt, which returns the root element of the plaintext. It returns the
-// saml:NameID it holds, or else the saml:BaseID it holds. Anything else is
-// rejected.
-func decryptIdentifier(encryptedID *etree.Element, decrypt func(*etree.Element) (*etree.Element, error)) (*NameID, *etree.Element, error) {
+// saml:NameID it holds or, if allowBaseID is true, the saml:BaseID it holds.
+// Anything else is rejected.
+func decryptIdentifier(encryptedID *etree.Element, decrypt func(*etree.Element) (*etree.Element, error), allowBaseID bool) (*NameID, *etree.Element, error) {
 	plaintext, err := decrypt(encryptedID)
 	if err != nil {
 		return nil, nil, classify(fmt.Errorf("cannot decrypt EncryptedID: %w", err), ErrDecryptionFailed)
 	}
 	if plaintext.NamespaceURI() == samlAssertionNamespace {
-		switch plaintext.Tag {
-		case "NameID":
+		switch {
+		case plaintext.Tag == "NameID":
 			var nameID NameID
 			if err := unmarshalElement(plaintext, &nameID); err != nil {
 				return nil, nil, err
 			}
 			return &nameID, nil, nil
-		case "BaseID":
+		case plaintext.Tag == "BaseID" && allowBaseID:
 			return nil, plaintext, nil
 		}
 	}
-	return nil, nil, classify(fmt.Errorf("EncryptedID holds a %s element, only saml:NameID and saml:BaseID are supported", plaintext.FullTag()), ErrUnsupported)
+	supported := "saml:NameID"
+	if allowBaseID {
+		supported = "saml:NameID and saml:BaseID are"
+	} else {
+		supported += " is"
+	}
+	return nil, nil, classify(fmt.Errorf("EncryptedID holds a %s element, only %s supported", plaintext.FullTag(), supported), ErrUnsupported)
 }
 
 // resolveLogoutRequestNameID makes sure req identifies the principal with
@@ -54,7 +69,7 @@ func resolveLogoutRequestNameID(req *LogoutRequest, decrypt func(*etree.Element)
 		return classify(errors.New("request contains more than one of BaseID, NameID and EncryptedID"), ErrMalformedMessage)
 	}
 	if req.EncryptedID != nil {
-		nameID, baseID, err := decryptIdentifier(req.EncryptedID, decrypt)
+		nameID, baseID, err := decryptIdentifier(req.EncryptedID, decrypt, true)
 		if err != nil {
 			return err
 		}

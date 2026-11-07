@@ -48,6 +48,7 @@ func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
 	if sub := assertion.Subject; sub != nil {
 		if nameID := sub.NameID; nameID != nil {
 			claims.Subject = nameID.Value
+			setNameIDClaims(&claims, nameID)
 		}
 	}
 
@@ -72,6 +73,22 @@ func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
 	}
 
 	return claims, nil
+}
+
+// setNameIDClaims records the Format, NameQualifier and SPNameQualifier of
+// nameID in claims, so that GetSAMLNameID can rebuild it. An omitted Format
+// is recorded as the unspecified format, which it means (saml-core §8.3.1),
+// so that a recorded Format marks a session made with these claims.
+func setNameIDClaims(claims *JWTSessionClaims, nameID *saml.NameID) {
+	if nameID.Value == "" {
+		return
+	}
+	claims.NameIDFormat = nameID.Format
+	if claims.NameIDFormat == "" {
+		claims.NameIDFormat = string(saml.UnspecifiedNameIDFormat)
+	}
+	claims.NameIDNameQualifier = nameID.NameQualifier
+	claims.NameIDSPNameQualifier = nameID.SPNameQualifier
 }
 
 // attributeValueString returns the string form of a SAML AttributeValue.
@@ -129,9 +146,39 @@ type JWTSessionClaims struct {
 	jwt.RegisteredClaims
 	Attributes  Attributes `json:"attr"`
 	SAMLSession bool       `json:"saml-session"`
+
+	// NameIDFormat, NameIDNameQualifier and NameIDSPNameQualifier are the
+	// Format, NameQualifier and SPNameQualifier of the NameID of the
+	// assertion the session was made from; its value is the JWT subject.
+	// Together they let GetSAMLNameID rebuild that NameID, for example to
+	// query the IdP's attribute authority (see Middleware.QueryAttributes).
+	// Empty ones are omitted from the JWT. Sessions issued before these
+	// claims existed have none of them.
+	NameIDFormat          string `json:"saml-nameid-format,omitempty"`
+	NameIDNameQualifier   string `json:"saml-nameid-nq,omitempty"`
+	NameIDSPNameQualifier string `json:"saml-nameid-spnq,omitempty"`
 }
 
 var _ Session = JWTSessionClaims{}
+
+// GetSAMLNameID implements SessionWithSAMLNameID. It returns the NameID of
+// the assertion the session was made from, with its Format and qualifiers.
+// It returns false if the session does not record the NameID's Format,
+// because it was issued before JWTSessionCodec recorded it, or has no
+// subject.
+func (c JWTSessionClaims) GetSAMLNameID() (saml.NameID, bool) {
+	if c.Subject == "" || c.NameIDFormat == "" {
+		return saml.NameID{}, false
+	}
+	return saml.NameID{
+		Format:          c.NameIDFormat,
+		NameQualifier:   c.NameIDNameQualifier,
+		SPNameQualifier: c.NameIDSPNameQualifier,
+		Value:           c.Subject,
+	}, true
+}
+
+var _ SessionWithSAMLNameID = JWTSessionClaims{}
 
 // GetAttributes implements SessionWithAttributes. It returns the SAMl attributes.
 func (c JWTSessionClaims) GetAttributes() Attributes {

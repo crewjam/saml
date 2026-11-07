@@ -53,8 +53,34 @@ var errOverflow = errors.New("roundtrip error: unexpected input after token")
 // token ends with a '>' after which the decoder reads nothing more.
 var sentinel = []byte("<_/>")
 
+// MaxDepth is the deepest nesting of elements Validate accepts. SAML
+// messages and metadata nest a dozen or so levels.
+const MaxDepth = 64
+
+// MaxNamespacesInScope is the largest number of namespace declarations
+// Validate accepts in scope at any element. SAML messages and metadata have
+// about ten.
+//
+// What a document costs to canonicalize and namespace-resolve grows with the
+// number of elements times the declarations in scope at each, and that work
+// happens before the digest of a signed element is checked: with a validly
+// signed element replayed over a body of thousands of declarations and
+// elements, a few tens of kilobytes cost seconds and gigabytes. Declarations
+// repeated on sibling elements (xmlns:xs on every AttributeValue, say) do
+// not add up, so the limit is on those in scope, not on the total.
+const MaxNamespacesInScope = 64
+
+// ErrTooDeep and ErrTooManyNamespaces report a document over MaxDepth or
+// MaxNamespacesInScope.
+var (
+	ErrTooDeep           = fmt.Errorf("xml: elements nested more than %d deep", MaxDepth)
+	ErrTooManyNamespaces = fmt.Errorf("xml: more than %d namespace declarations in scope", MaxNamespacesInScope)
+)
+
 // Validate returns an error if any token of data does not survive a round
-// trip through encoding/xml unchanged. It does not check that data is
+// trip through encoding/xml unchanged, or if data nests elements more than
+// MaxDepth deep or has more than MaxNamespacesInScope namespace
+// declarations in scope at an element. It does not check that data is
 // well-formed beyond what encoding/xml's tokenizer requires.
 func Validate(data []byte) error {
 	decoder := xml.NewDecoder(bytes.NewReader(data))
@@ -63,6 +89,10 @@ func Validate(data []byte) error {
 
 	c := newChecker()
 	offset := int64(0)
+	// declared holds, for each open element, the number of namespaces it
+	// declares; inScope is their sum.
+	var declared []int
+	inScope := 0
 	for {
 		token, err := decoder.RawToken()
 		if err == io.EOF {
@@ -71,7 +101,32 @@ func Validate(data []byte) error {
 		if err != nil {
 			return err
 		}
-		if err := c.check(token); err != nil {
+		switch t := token.(type) {
+		case xml.StartElement:
+			n := 0
+			for _, attr := range t.Attr {
+				if attr.Name.Space == "xmlns" || (attr.Name.Space == "" && attr.Name.Local == "xmlns") {
+					n++
+				}
+			}
+			declared = append(declared, n)
+			inScope += n
+			if len(declared) > MaxDepth {
+				err = ErrTooDeep
+			} else if inScope > MaxNamespacesInScope {
+				err = ErrTooManyNamespaces
+			}
+		case xml.EndElement:
+			// The decoder is not strict, so an end tag may close nothing.
+			if len(declared) > 0 {
+				inScope -= declared[len(declared)-1]
+				declared = declared[:len(declared)-1]
+			}
+		}
+		if err == nil {
+			err = c.check(token)
+		}
+		if err != nil {
 			line := int64(bytes.Count(data[:offset], []byte{'\n'})) + 1
 			column := offset - int64(bytes.LastIndexByte(data[:offset], '\n'))
 			return &Error{Line: line, Column: column, Err: err}

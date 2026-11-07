@@ -23,16 +23,21 @@ func namespaceDeclarations(n int) string {
 }
 
 // parseCost parses buf as a response, which must fail, and returns the
-// bytes allocated per byte of input and the private error.
+// bytes allocated per byte of input and the error. It skips the checks
+// ParseXMLResponse makes before parsing (xmlroundtrip.Validate refuses this
+// many namespace declarations), so that these tests show what
+// parseResponse itself costs.
 func parseCost(t *testing.T, e *spcovEnv, buf []byte) (float64, error) {
 	t.Helper()
 	var before, after runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
-	_, err := e.sp.ParseXMLResponse(buf, []string{spcovRequestID}, e.sp.AcsURL)
+	doc := etree.NewDocument()
+	assert.NilError(t, doc.ReadFromBytes(buf))
+	_, err := e.sp.parseResponse(doc.Root(), []string{spcovRequestID}, spcovNow, signatureRequired, e.sp.AcsURL)
 	runtime.ReadMemStats(&after)
 	assert.Assert(t, err != nil)
-	return float64(after.TotalAlloc-before.TotalAlloc) / float64(len(buf)), spcovPrivateErr(t, err)
+	return float64(after.TotalAlloc-before.TotalAlloc) / float64(len(buf)), err
 }
 
 // Before the fixes for findChildren and for unsigned responses with several

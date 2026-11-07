@@ -34,7 +34,7 @@ type Options struct {
 	// AdminMiddleware, if set, wraps the handlers of the administrative
 	// endpoints (/services, /users, /sessions and /shortcuts), for example to
 	// require authentication. It is not applied to /metadata, /sso and
-	// /login and /slo, which must stay reachable by browsers and service
+	// /login, /slo and /logout, which must stay reachable by browsers and service
 	// providers.
 	// If nil, the administrative endpoints are unauthenticated.
 	AdminMiddleware func(http.Handler) http.Handler
@@ -55,7 +55,10 @@ type Options struct {
 //
 //	/metadata     - the SAML metadata
 //	/sso          - the SAML endpoint to initiate an authentication flow
-//	/slo          - the SAML single logout endpoint (SP-initiated logout)
+//	/slo          - the SAML single logout endpoint (SP-initiated logout, and
+//	                the service providers' answers to IdP-initiated logout)
+//	/logout       - log the browser's session out of the IdP and of every
+//	                service provider it was used for (IdP-initiated logout)
 //	/login        - prompt for a username and password if no session established
 //	/login/:shortcut - kick off an IDP-initiated authentication flow
 //	/services     - RESTful interface to Service objects
@@ -148,6 +151,8 @@ func (s *Server) InitializeHTTP() {
 	mux.HandleFunc("/slo", func(w http.ResponseWriter, r *http.Request) {
 		s.IDP.ServeSLO(w, r)
 	})
+	mux.HandleFunc("GET /logout", s.HandleLogout)
+	mux.HandleFunc("POST /logout", s.HandleLogout)
 
 	mux.HandleFunc("/login", s.HandleLogin)
 	mux.HandleFunc("/login/{shortcut}", s.HandleIDPInitiated)

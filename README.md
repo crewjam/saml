@@ -226,6 +226,8 @@ for _, attribute := range result.Attributes {
 
 Leave out the attributes to ask for everything the IDP releases to you. The query is signed with the service provider's key, and the response is accepted only if it answers this query, is signed by the IDP (the `Response`, or every `Assertion`), and every assertion is about the queried NameID, addressed to this service provider and currently valid. The result describes the user but does not authenticate them: never start a session from it. `QueryAttributes` sends the query with `ServiceProvider.HTTPClient`; to use your own transport, build the query with `MakeAttributeQuery`, send `query.SoapRequest()`, and validate the reply with `ParseXMLAttributeQueryResponse`.
 
+With the `samlsp` middleware, `samlSP.QueryAttributes(r, attributes...)` queries the attributes of the user of the request's session. The default session records the NameID of the login, with its Format and qualifiers, for this purpose; a session issued by an earlier version does not, and the user must log in again (`QueryAttributes` then returns an error matching `samlsp.ErrSessionNameIDUnknown`).
+
 ## Getting Started as an Identity Provider
 
 Please see `example/idp/` for a substantially complete example of how to use the library and helpers to be an identity provider.
