@@ -1598,7 +1598,8 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	//
 	// The best course of action is to just remove the KeyInfo so that dsig falls back to
 	// verifying against the public key provided in the metadata.
-	if el.FindElement("./Signature/KeyInfo/X509Data/X509Certificate") == nil {
+	noCertInKeyInfo := el.FindElement("./Signature/KeyInfo/X509Data/X509Certificate") == nil
+	if noCertInKeyInfo {
 		if sigEl := el.FindElement("./Signature"); sigEl != nil {
 			if keyInfo := sigEl.FindElement("KeyInfo"); keyInfo != nil {
 				sigEl.RemoveChild(keyInfo)
@@ -1623,6 +1624,29 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 
 	if sp.SignatureVerifier != nil {
 		return sp.SignatureVerifier.VerifySignature(validationContext, el)
+	}
+
+	// Without a certificate in KeyInfo, dsig can only pick the signing
+	// certificate itself when it trusts exactly one ("Missing x509 Element"
+	// otherwise), so an IdP that lists several signing certificates in its
+	// metadata, for example during key rollover, and signs without
+	// X509Certificate would always be rejected. In that case validate
+	// against each trusted certificate on its own. Each attempt is a full
+	// dsig validation of the same element that trusts only that
+	// certificate, so this accepts exactly what one of them would accept
+	// had the IdP named it in KeyInfo.
+	if noCertInKeyInfo && len(certs) > 1 {
+		for _, cert := range certs {
+			certValidationContext := dsig.NewDefaultValidationContext(&dsig.MemoryX509CertificateStore{
+				Roots: []*x509.Certificate{cert},
+			})
+			certValidationContext.IdAttribute = validationContext.IdAttribute
+			certValidationContext.Clock = validationContext.Clock
+			if _, err = certValidationContext.Validate(el); err == nil {
+				return nil
+			}
+		}
+		return fmt.Errorf("cannot validate signature on %s: %v", tag, err)
 	}
 
 	if _, err := validationContext.Validate(el); err != nil {
