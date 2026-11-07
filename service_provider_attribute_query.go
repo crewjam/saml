@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
@@ -183,7 +182,7 @@ func (sp *ServiceProvider) QueryAttributes(ctx context.Context, nameID NameID, a
 	if err != nil {
 		return nil, err
 	}
-	responseBody, err := sp.postSOAP(ctx, query.Destination, query.SoapRequest())
+	responseBody, err := sp.postSOAP(ctx, query.Destination, query.SoapRequest(), MaxAttributeQueryResponseSize)
 	if err != nil {
 		return nil, fmt.Errorf("attribute query to %s: %w", query.Destination, err)
 	}
@@ -191,8 +190,8 @@ func (sp *ServiceProvider) QueryAttributes(ctx context.Context, nameID NameID, a
 }
 
 // postSOAP sends envelope to location with the SAML SOAP binding and returns
-// the body of the response.
-func (sp *ServiceProvider) postSOAP(ctx context.Context, location string, envelope *etree.Element) ([]byte, error) {
+// the body of the response, which must be at most limit bytes.
+func (sp *ServiceProvider) postSOAP(ctx context.Context, location string, envelope *etree.Element, limit int64) ([]byte, error) {
 	requestBody, err := elementToBytes(envelope)
 	if err != nil {
 		return nil, err
@@ -222,13 +221,9 @@ func (sp *ServiceProvider) postSOAP(ctx context.Context, location string, envelo
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP status %d (%s)", resp.StatusCode, resp.Status)
 	}
-	limit := MaxAttributeQueryResponseSize
-	buf, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	buf, err := readLimited(resp.Body, limit)
 	if err != nil {
-		return nil, err
-	}
-	if int64(len(buf)) > limit {
-		return nil, fmt.Errorf("response body is larger than %d bytes", limit)
+		return nil, fmt.Errorf("response %w", err)
 	}
 	return buf, nil
 }
@@ -352,12 +347,20 @@ func (sp *ServiceProvider) parseAttributeQueryResponse(soapResponseXML []byte, q
 // returns the samlp:Response that must be the only element of its Body. Each
 // element is matched by its namespace, not just its local name.
 func soapResponseElement(soapResponseXML []byte) (*etree.Element, error) {
-	if err := xmlroundtrip.Validate(soapResponseXML); err != nil {
+	return soapBodyElement(soapResponseXML, "Response")
+}
+
+// soapBodyElement parses soapXML as a SOAP 1.1 envelope and returns the
+// SAML protocol element samlpTag that must be the only element of its Body.
+// Each element is matched by its namespace, not just its local name. A Body
+// that holds a SOAP Fault is an error.
+func soapBodyElement(soapXML []byte, samlpTag string) (*etree.Element, error) {
+	if err := xmlroundtrip.Validate(soapXML); err != nil {
 		return nil, fmt.Errorf("invalid xml: %s", err)
 	}
 	doc := etree.NewDocument()
-	if err := doc.ReadFromBytes(soapResponseXML); err != nil {
-		return nil, fmt.Errorf("cannot parse response: %s", err)
+	if err := doc.ReadFromBytes(soapXML); err != nil {
+		return nil, fmt.Errorf("cannot parse SOAP message: %s", err)
 	}
 	root := doc.Root()
 	if root == nil {
@@ -376,7 +379,7 @@ func soapResponseElement(soapResponseXML []byte) (*etree.Element, error) {
 	if n := len(bodyEl.ChildElements()); n != 1 {
 		return nil, fmt.Errorf("expected exactly one element in the SOAP Body, found %d", n)
 	}
-	return findOneChild(bodyEl, "urn:oasis:names:tc:SAML:2.0:protocol", "Response")
+	return findOneChild(bodyEl, "urn:oasis:names:tc:SAML:2.0:protocol", samlpTag)
 }
 
 // attributeAuthoritySigningCerts returns the IdP certificates that may sign

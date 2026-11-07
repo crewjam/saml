@@ -512,6 +512,12 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 			Location:         sp.SloURL.String(),
 			ResponseLocation: sp.SloURL.String(),
 		}
+		if binding == SOAPBinding {
+			// The SOAP binding is synchronous: the response goes back
+			// over the requester's own connection, so a separate
+			// ResponseLocation means nothing for it.
+			sloEndpoints[i].ResponseLocation = ""
+		}
 	}
 
 	acsBindings := sp.AssertionConsumerServiceBindings
@@ -2973,7 +2979,12 @@ func (sp *ServiceProvider) validateLogoutRequest(req *LogoutRequest) error {
 	if req.Destination != sp.SloURL.String() {
 		return classify(fmt.Errorf("`Destination` does not match SloURL (expected %q)", sp.SloURL.String()), ErrDestinationMismatch)
 	}
+	return sp.validateLogoutRequestFields(req)
+}
 
+// validateLogoutRequestFields validates the LogoutRequest fields other than
+// Destination.
+func (sp *ServiceProvider) validateLogoutRequestFields(req *LogoutRequest) error {
 	now := sp.now()
 	if req.IssueInstant.Add(MaxIssueDelay).Before(now) {
 		return classify(fmt.Errorf("issueInstant expired at %s", req.IssueInstant.Add(MaxIssueDelay)), ErrExpired)

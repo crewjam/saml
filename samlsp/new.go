@@ -45,6 +45,16 @@ type Options struct {
 	CookieSameSite http.SameSite
 	CookieName     string
 	RelayStateFunc func(w http.ResponseWriter, r *http.Request) string
+
+	// LogoutBindings are the bindings the SP metadata advertises for its
+	// SingleLogoutService, SloURL. If empty, HTTP-POST is advertised.
+	//
+	// Add saml.SOAPBinding to let the IdP end sessions with back-channel
+	// LogoutRequests (see Middleware.ServeSLO). It is not advertised by
+	// default: an IdP that sees it may prefer it to the browser bindings,
+	// and it ends sessions only if the session provider can end them on the
+	// server, which the default one does with a store in memory that a
+	// single process sees (see SessionRevocations).
 	LogoutBindings []string
 
 	// CookieDomain, if set, is the Domain attribute of the session cookie,
@@ -144,6 +154,14 @@ type Options struct {
 	// saml.ServiceProvider.ReplayCache. NewMemoryReplayCache returns one for
 	// a single process. If nil, assertions are not checked for replay.
 	ReplayCache saml.AssertionReplayCache
+
+	// SessionRevocations, if set, is where the default session provider
+	// records the sessions ended by back-channel single logout, and checks
+	// each session it reads. If nil, DefaultSessionProvider uses a
+	// MemorySessionRevocationStore of DefaultMaxSessionRevocations records,
+	// which serves a single process only. Applications served by several
+	// processes must set a store they share; see SessionRevocationStore.
+	SessionRevocations SessionRevocationStore
 }
 
 // sessionKey returns the key that signs session and tracked-request JWTs.
@@ -191,11 +209,17 @@ func DefaultSessionCodec(opts Options) JWTSessionCodec {
 }
 
 // DefaultSessionProvider returns the default SessionProvider for the provided options,
-// a CookieSessionProvider configured to store sessions in a cookie.
+// a CookieSessionProvider configured to store sessions in a cookie. Its
+// Revocations store is opts.SessionRevocations or, if that is nil, a new
+// MemorySessionRevocationStore.
 func DefaultSessionProvider(opts Options) CookieSessionProvider {
 	cookieName := opts.CookieName
 	if cookieName == "" {
 		cookieName = defaultSessionCookieName
+	}
+	revocations := opts.SessionRevocations
+	if revocations == nil {
+		revocations = NewMemorySessionRevocationStore(DefaultMaxSessionRevocations)
 	}
 	return CookieSessionProvider{
 		Name:         cookieName,
@@ -205,6 +229,7 @@ func DefaultSessionProvider(opts Options) CookieSessionProvider {
 		Secure:       opts.URL.Scheme == "https",
 		SameSite:     opts.CookieSameSite,
 		Codec:        DefaultSessionCodec(opts),
+		Revocations:  revocations,
 		legacyDomain: legacySessionCookieDomain(opts),
 	}
 }
