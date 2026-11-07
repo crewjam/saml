@@ -222,7 +222,7 @@ func (m *Middleware) serveSLORequest(w http.ResponseWriter, r *http.Request) {
 			m.OnError(w, r, err)
 			return
 		}
-		http.Redirect(w, r, redirectURL.String(), http.StatusFound)
+		http.Redirect(w, r, redirectURL.String(), http.StatusFound) //nolint:gosec // the target is the IDP's SLO location from its metadata; the RelayState is only a query parameter
 	case saml.HTTPPostBinding:
 		resp, err := m.ServiceProvider.MakeLogoutResponse(
 			m.ServiceProvider.GetSLOBindingLocation(saml.HTTPPostBinding), logoutRequest.ID)

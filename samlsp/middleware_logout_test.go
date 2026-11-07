@@ -58,7 +58,7 @@ func newLogoutTest(t *testing.T, sloBindings ...string) *logoutTest {
 	idpKey := mustParsePrivateKey(idpKeyPEM).(*rsa.PrivateKey)
 	idpCert := mustParseCertificate(idpCertPEM)
 
-	var sloEndpoints []saml.Endpoint
+	sloEndpoints := make([]saml.Endpoint, 0, len(sloBindings))
 	for _, binding := range sloBindings {
 		location := logoutTestIDPPost
 		if binding == saml.HTTPRedirectBinding {
@@ -115,7 +115,7 @@ func (lt *logoutTest) sessionCookie(t *testing.T, sessionIndex string) *http.Coo
 	}
 	value, err := codec.Encode(claims)
 	assert.NilError(t, err)
-	return &http.Cookie{Name: provider.Name, Value: value}
+	return &http.Cookie{Name: provider.Name, Value: value, Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode}
 }
 
 // signedIDPMessage returns the base64 encoding of el, signed by the IDP.
