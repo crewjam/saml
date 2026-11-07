@@ -216,7 +216,8 @@ type ServiceProvider struct {
 	SignMetadata bool
 
 	// LogoutBindings specify the bindings available for SLO endpoint. If empty,
-	// HTTP-POST binding is used.
+	// HTTP-POST binding is used. HTTPPostSimpleSignBinding may be listed: the
+	// logout validation functions accept HTTP-POST-SimpleSign messages.
 	LogoutBindings []string
 
 	// AssertionConsumerServiceBindings specify the bindings advertised for the
@@ -224,7 +225,9 @@ type ServiceProvider struct {
 	// preference. If empty, both HTTP-POST and HTTP-Artifact bindings are
 	// advertised. Set this to []string{HTTPPostBinding} to stop advertising
 	// the HTTP-Artifact binding, for example when the IDP does not publish an
-	// ArtifactResolutionService or the SP cannot reach it.
+	// ArtifactResolutionService or the SP cannot reach it. Include
+	// HTTPPostSimpleSignBinding to advertise that the ACS accepts
+	// HTTP-POST-SimpleSign responses (ParseResponse always accepts them).
 	AssertionConsumerServiceBindings []string
 
 	// ValidateAudienceRestriction allows you to override the default audience validation
@@ -466,7 +469,8 @@ func (r *AuthnRequest) Redirect(relayState string, sp *ServiceProvider) (*url.UR
 }
 
 // GetSSOBindingLocation returns URL for the IDP's Single Sign On Service binding
-// of the specified type (HTTPRedirectBinding or HTTPPostBinding)
+// of the specified type (HTTPRedirectBinding, HTTPPostBinding or
+// HTTPPostSimpleSignBinding)
 func (sp *ServiceProvider) GetSSOBindingLocation(binding string) string {
 	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
 		for _, singleSignOnService := range idpSSODescriptor.SingleSignOnServices {
@@ -928,6 +932,18 @@ func (e ErrBadStatus) Error() string {
 
 // ParseResponse extracts the SAML IDP response received in req, resolves
 // artifacts when necessary, validates it, and returns the verified assertion.
+// req.ParseForm must have been called.
+//
+// A posted form that carries a SigAlg or Signature field is an
+// HTTP-POST-SimpleSign message (sstc-saml-binding-simplesign-cs-01 section
+// 2.10). Its SimpleSign signature must then be valid, or the response is
+// rejected; it is never accepted on the strength of XML signatures alone. A
+// valid SimpleSign signature authenticates the whole Response, so the
+// assertions need not be signed, and the Response must carry a Destination.
+// An enveloped XML signature on the Response is still checked when present.
+// Every other check (Destination, InResponseTo, Issuer, Status, assertion
+// conditions, decryption, ReplayCache) applies as for HTTP-POST. A form
+// without SigAlg and Signature is handled as HTTP-POST, as before.
 func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs []string) (*Assertion, error) {
 	if artifactID := req.Form.Get("SAMLart"); artifactID != "" {
 		return sp.handleArtifactRequest(req.Context(), artifactID, possibleRequestIDs)
@@ -991,6 +1007,15 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 func (sp *ServiceProvider) parseResponseHTTP(req *http.Request, possibleRequestIDs []string) (*Assertion, error) {
 	retErr := &InvalidResponseError{
 		Now: sp.now(),
+	}
+
+	simpleSign, err := parseSimpleSignRequest(req, redirectParamSAMLResponse)
+	if err != nil {
+		retErr.PrivateErr = err
+		return nil, retErr
+	}
+	if simpleSign != nil {
+		return sp.parseSimpleSignResponse(simpleSign, possibleRequestIDs, *req.URL)
 	}
 
 	rawResponseBuf, err := base64.StdEncoding.DecodeString(req.PostForm.Get("SAMLResponse"))
@@ -1128,6 +1153,28 @@ func (sp *ServiceProvider) parseArtifactResponse(artifactResponseEl *etree.Eleme
 // failed. However, to discourage inadvertent disclosure the diagnostic
 // information, the Error() method returns a static string.
 func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleRequestIDs []string, currentURL url.URL) (*Assertion, error) {
+	return sp.parseXMLResponse(decodedResponseXML, possibleRequestIDs, currentURL, signatureRequired)
+}
+
+// parseSimpleSignResponse validates a Response received at the ACS with the
+// HTTP-POST-SimpleSign binding. The SimpleSign signature is checked before
+// anything else. A valid one authenticates the whole Response, as a valid
+// XML signature on the Response element does, so the assertions need no
+// signature of their own; everything else is validated as for HTTP-POST.
+func (sp *ServiceProvider) parseSimpleSignResponse(m *simpleSignMessage, possibleRequestIDs []string, currentURL url.URL) (*Assertion, error) {
+	if err := sp.verifySimpleSignSignature(m); err != nil {
+		return nil, &InvalidResponseError{
+			Now:        sp.now(),
+			Response:   string(m.XML),
+			PrivateErr: err,
+		}
+	}
+	return sp.parseXMLResponse(m.XML, possibleRequestIDs, currentURL, signatureVerifiedByBinding)
+}
+
+// parseXMLResponse is ParseXMLResponse with the signature requirement for
+// the Response element given by signatureRequirement.
+func (sp *ServiceProvider) parseXMLResponse(decodedResponseXML []byte, possibleRequestIDs []string, currentURL url.URL, signatureRequirement signatureRequirement) (*Assertion, error) {
 	now := sp.now()
 	var err error
 	retErr := &InvalidResponseError{
@@ -1151,7 +1198,7 @@ func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleR
 		return nil, retErr
 	}
 
-	assertion, err := sp.parseResponse(doc.Root(), possibleRequestIDs, now, signatureRequired, currentURL)
+	assertion, err := sp.parseResponse(doc.Root(), possibleRequestIDs, now, signatureRequirement, currentURL)
 	if err != nil {
 		retErr.PrivateErr = err
 		return nil, retErr
@@ -1165,6 +1212,13 @@ type signatureRequirement int
 const (
 	signatureRequired signatureRequirement = iota
 	signatureNotRequired
+
+	// signatureVerifiedByBinding means the binding (HTTP-POST-SimpleSign)
+	// has already authenticated the whole Response with a detached
+	// signature. The Response then counts as signed: its Destination is
+	// required, an enveloped XML signature it carries must still be valid,
+	// and the assertions need no signature of their own.
+	signatureVerifiedByBinding
 )
 
 // validateXMLResponse validates the SAML IDP response and returns
@@ -1176,7 +1230,8 @@ const (
 func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequestIDs []string, now time.Time, signatureRequirement signatureRequirement, currentURL url.URL) (*Assertion, error) {
 	var responseSignatureErr error
 	var responseHasSignature bool
-	if signatureRequirement == signatureRequired {
+	switch signatureRequirement {
+	case signatureRequired:
 		responseSignatureErr = sp.validateSignature(responseEl)
 		switch responseSignatureErr {
 		case nil:
@@ -1188,6 +1243,12 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 			// looking at any of its other contents.
 			return nil, responseSignatureErr
 		}
+	case signatureVerifiedByBinding:
+		responseHasSignature = true
+		if err := sp.validateSignature(responseEl); err != nil && err != errSignatureElementNotPresent {
+			return nil, err
+		}
+		signatureRequirement = signatureNotRequired
 	}
 
 	// validate request attributes
@@ -2175,11 +2236,14 @@ func (sp *ServiceProvider) metadataNameIDFormat() NameIDFormat {
 }
 
 // ValidateLogoutResponseRequest validates the LogoutResponse content from the
-// request, which may use either the HTTP-Redirect or the HTTP-POST binding.
+// request, which may use the HTTP-Redirect, HTTP-POST or HTTP-POST-SimpleSign
+// binding.
 //
 // With the HTTP-Redirect binding the response must be signed, either with a
 // query string signature (SigAlg and Signature parameters) or with an
-// enveloped XML signature.
+// enveloped XML signature. A posted form that carries a SigAlg or Signature
+// field is an HTTP-POST-SimpleSign message and must have a valid SimpleSign
+// signature; an enveloped XML signature it also carries must be valid too.
 //
 // It does not check the response's InResponseTo against the LogoutRequest
 // this service provider sent; use ParseLogoutResponse for that.
@@ -2189,7 +2253,7 @@ func (sp *ServiceProvider) ValidateLogoutResponseRequest(req *http.Request) erro
 }
 
 // ParseLogoutResponse validates the LogoutResponse content from the request,
-// which may use either the HTTP-Redirect or the HTTP-POST binding, as
+// which may use the HTTP-Redirect, HTTP-POST or HTTP-POST-SimpleSign binding, as
 // ValidateLogoutResponseRequest does, and returns it. In addition, the
 // response's InResponseTo must be one of possibleRequestIDs, the IDs of the
 // LogoutRequests this service provider sent and still expects an answer to,
@@ -2217,7 +2281,38 @@ func (sp *ServiceProvider) parseLogoutResponseRequest(req *http.Request) (*Logou
 		return nil, classify(fmt.Errorf("unable to parse form: %w", err), ErrMalformedMessage)
 	}
 
+	if isSimpleSignRequest(req) {
+		return sp.parseLogoutResponseSimpleSign(req)
+	}
 	return sp.parseLogoutResponseForm(req.PostForm.Get("SAMLResponse"))
+}
+
+// parseLogoutResponseSimpleSign validates a LogoutResponse received via
+// the HTTP-POST-SimpleSign binding. Its SimpleSign signature must be valid.
+func (sp *ServiceProvider) parseLogoutResponseSimpleSign(req *http.Request) (*LogoutResponse, error) {
+	retErr := &InvalidResponseError{
+		Now: sp.now(),
+	}
+
+	m, err := parseSimpleSignRequest(req, redirectParamSAMLResponse)
+	if err != nil {
+		retErr.PrivateErr = err
+		return nil, retErr
+	}
+	root, err := sp.readSimpleSignMessage(m, retErr)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp LogoutResponse
+	if err := unmarshalElement(root, &resp); err != nil {
+		retErr.PrivateErr = err
+		return nil, retErr
+	}
+	if err := sp.validateLogoutResponse(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // ValidateLogoutResponseForm returns a nil error if the logout response is valid.
@@ -2334,13 +2429,15 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 }
 
 // ValidateLogoutRequest validates a LogoutRequest sent by the IDP (IDP
-// initiated single logout), using either the HTTP-Redirect or the HTTP-POST
-// binding. It returns the request only if it is valid.
+// initiated single logout), using the HTTP-Redirect, HTTP-POST or
+// HTTP-POST-SimpleSign binding. It returns the request only if it is valid.
 //
 // The request must be signed by the IDP. With the HTTP-Redirect binding that
 // is either a query string signature (SigAlg and Signature parameters) or an
 // enveloped XML signature; with the HTTP-POST binding it is an enveloped XML
-// signature.
+// signature. A posted form that carries a SigAlg or Signature field is an
+// HTTP-POST-SimpleSign message and must have a valid SimpleSign signature
+// (an enveloped XML signature it also carries must be valid too).
 //
 // The caller should end the session identified by the returned request's
 // NameID (and SessionIndex, if present) and then answer the IDP, for example
@@ -2354,7 +2451,29 @@ func (sp *ServiceProvider) ValidateLogoutRequest(req *http.Request) (*LogoutRequ
 		return nil, classify(fmt.Errorf("unable to parse form: %w", err), ErrMalformedMessage)
 	}
 
+	if isSimpleSignRequest(req) {
+		return sp.validateLogoutRequestSimpleSign(req)
+	}
 	return sp.ValidateLogoutRequestForm(req.PostForm.Get(redirectParamSAMLRequest))
+}
+
+// validateLogoutRequestSimpleSign validates a LogoutRequest received via the
+// HTTP-POST-SimpleSign binding. Its SimpleSign signature must be valid.
+func (sp *ServiceProvider) validateLogoutRequestSimpleSign(req *http.Request) (*LogoutRequest, error) {
+	retErr := &InvalidResponseError{
+		Now: sp.now(),
+	}
+
+	m, err := parseSimpleSignRequest(req, redirectParamSAMLRequest)
+	if err != nil {
+		retErr.PrivateErr = err
+		return nil, retErr
+	}
+	root, err := sp.readSimpleSignMessage(m, retErr)
+	if err != nil {
+		return nil, err
+	}
+	return sp.unmarshalAndValidateLogoutRequest(root, retErr)
 }
 
 // ValidateLogoutRequestForm validates a LogoutRequest received via the

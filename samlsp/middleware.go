@@ -48,8 +48,8 @@ import (
 type Middleware struct {
 	ServiceProvider  saml.ServiceProvider
 	OnError          func(w http.ResponseWriter, r *http.Request, err error)
-	Binding          string // either saml.HTTPPostBinding or saml.HTTPRedirectBinding
-	ResponseBinding  string // either saml.HTTPPostBinding or saml.HTTPArtifactBinding
+	Binding          string // saml.HTTPRedirectBinding, saml.HTTPPostBinding or saml.HTTPPostSimpleSignBinding
+	ResponseBinding  string // saml.HTTPPostBinding, saml.HTTPArtifactBinding or saml.HTTPPostSimpleSignBinding
 	RequestTracker   RequestTracker
 	Session          SessionProvider
 	AssertionHandler AssertionHandler
@@ -236,17 +236,31 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 		m.writePostForm(w, postRequestScriptHash, authReq.PostWithNonce(relayState, m.scriptNonce(r)))
 		return
 	}
+	if binding == saml.HTTPPostSimpleSignBinding {
+		form, err := authReq.SimpleSignWithNonce(relayState, m.scriptNonce(r), &m.ServiceProvider)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// The SimpleSign form uses the same auto-submit script as the
+		// HTTP-POST AuthnRequest form, so the same hash allows it.
+		m.writePostForm(w, postRequestScriptHash, form)
+		return
+	}
 	panic("not reached")
 }
 
 // The SHA-256 hashes of the auto-submit scripts of the HTTP-POST binding
 // forms, for the Content-Security-Policy of the pages that carry them. The
-// form of an AuthnRequest and of a LogoutRequest share the same script.
+// form of an AuthnRequest and of a LogoutRequest share the same script, as
+// does the HTTP-POST-SimpleSign AuthnRequest form.
 const (
 	postRequestScriptHash  = "sha256-AjPdJSbZmeWHnEc5ykvJFay8FTWeTeRbs9dutfZ0HqE="
 	postResponseScriptHash = "sha256-ae3F9sw3MnGNUqmT+7gdyojm/I6ukOUOr9mHRkJJvCU="
 )
 
+// scriptNonce returns the nonce for the auto-submit script of a form, or ""
+// if ScriptNonce is not set.
 func (m *Middleware) scriptNonce(r *http.Request) string {
 	if m.ScriptNonce == nil {
 		return ""

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/url"
 	"strings"
+	"time"
 
 	xrv "github.com/mattermost/xml-roundtrip-validator"
 
@@ -167,14 +168,9 @@ func (sp *ServiceProvider) redirectBindingCerts() ([]*x509.Certificate, error) {
 // verifyRedirectBindingSignature checks the query string signature of an
 // HTTP-Redirect binding message against the IDP's signing certificates.
 func (sp *ServiceProvider) verifyRedirectBindingSignature(m *redirectBindingMessage) error {
-	algorithm, ok := redirectSignatureAlgorithms[m.SigAlg]
-	if !ok {
-		return fmt.Errorf("unsupported signature algorithm %q", m.SigAlg)
-	}
-
-	signature, err := base64.StdEncoding.DecodeString(m.Signature)
+	algorithm, signature, err := decodeDetachedSignature(m.SigAlg, m.Signature, base64.StdEncoding)
 	if err != nil {
-		return fmt.Errorf("cannot decode signature: %w", err)
+		return err
 	}
 
 	certs, err := sp.redirectBindingCerts()
@@ -182,16 +178,39 @@ func (sp *ServiceProvider) verifyRedirectBindingSignature(m *redirectBindingMess
 		return fmt.Errorf("cannot validate signature: %w", err)
 	}
 
-	now := sp.dsigClock().Now()
+	return checkDetachedSignature(algorithm, m.SignedContent, signature, certs, sp.dsigClock().Now(), sp.IgnoreCertificateExpiry)
+}
+
+// decodeDetachedSignature maps the SigAlg value of a binding that carries a
+// detached signature (HTTP-Redirect or HTTP-POST-SimpleSign) to an x509
+// signature algorithm, and decodes the base64 Signature value with enc.
+func decodeDetachedSignature(sigAlg, signature string, enc *base64.Encoding) (x509.SignatureAlgorithm, []byte, error) {
+	algorithm, ok := redirectSignatureAlgorithms[sigAlg]
+	if !ok {
+		return x509.UnknownSignatureAlgorithm, nil, fmt.Errorf("unsupported signature algorithm %q", sigAlg)
+	}
+
+	sig, err := enc.DecodeString(signature)
+	if err != nil {
+		return x509.UnknownSignatureAlgorithm, nil, fmt.Errorf("cannot decode signature: %w", err)
+	}
+	return algorithm, sig, nil
+}
+
+// checkDetachedSignature returns nil if signature is a valid signature over
+// signedContent, made with algorithm by the key of one of certs. Unless
+// ignoreExpiry is set, a certificate is only accepted at a time (now) within
+// its validity period.
+func checkDetachedSignature(algorithm x509.SignatureAlgorithm, signedContent, signature []byte, certs []*x509.Certificate, now time.Time, ignoreExpiry bool) error {
 	var lastErr error
 	for _, cert := range certs {
-		if !sp.IgnoreCertificateExpiry && (now.Before(cert.NotBefore) || now.After(cert.NotAfter)) {
+		if !ignoreExpiry && (now.Before(cert.NotBefore) || now.After(cert.NotAfter)) {
 			lastErr = errors.New("certificate is not valid at this time")
 			continue
 		}
 		// CheckSignature also rejects a SigAlg whose key type does not match
 		// the certificate's key (e.g. ecdsa-sha256 with an RSA certificate).
-		if err := cert.CheckSignature(algorithm, m.SignedContent, signature); err != nil {
+		if err := cert.CheckSignature(algorithm, signedContent, signature); err != nil {
 			lastErr = err
 			continue
 		}
@@ -201,6 +220,17 @@ func (sp *ServiceProvider) verifyRedirectBindingSignature(m *redirectBindingMess
 		lastErr = errors.New("no certificates")
 	}
 	return fmt.Errorf("cannot validate signature: %w", lastErr)
+}
+
+// signDetached signs content with signingContext and returns the base64
+// encoded signature, the value of the Signature parameter of the
+// HTTP-Redirect and HTTP-POST-SimpleSign bindings.
+func signDetached(signingContext *dsig.SigningContext, content string) (string, error) {
+	sig, err := signingContext.SignString(content)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(sig), nil
 }
 
 // readRedirectBindingMessage decodes the HTTP-Redirect binding message carried
@@ -305,11 +335,11 @@ func (sp *ServiceProvider) redirectBindingURL(destination, messageParam, encoded
 		if err != nil {
 			return nil, err
 		}
-		sig, err := signingContext.SignString(query)
+		sig, err := signDetached(signingContext, query)
 		if err != nil {
 			return nil, err
 		}
-		query += "&" + redirectParamSignature + "=" + url.QueryEscape(base64.StdEncoding.EncodeToString(sig))
+		query += "&" + redirectParamSignature + "=" + url.QueryEscape(sig)
 	}
 
 	if rv.RawQuery != "" {
