@@ -184,7 +184,7 @@ func TestCovSessionWithECDSAKeys(t *testing.T) {
 }
 
 func TestCovDefaultSigningMethodForKey(t *testing.T) {
-	assert.Check(t, is.Equal(dsig.RSASHA1SignatureMethod, defaultSigningMethodForKey(covRSAKey(t))))
+	assert.Check(t, is.Equal(dsig.RSASHA256SignatureMethod, defaultSigningMethodForKey(covRSAKey(t))))
 	assert.Check(t, is.Equal(dsig.ECDSASHA256SignatureMethod, defaultSigningMethodForKey(covECDSAKey(t, elliptic.P256()))))
 	assert.Check(t, is.Equal("", defaultSigningMethodForKey(nil)))
 	_, edKey, err := ed25519.GenerateKey(rand.Reader)
@@ -203,7 +203,7 @@ func TestCovDefaultServiceProvider(t *testing.T) {
 	})
 	assert.Assert(t, sp.ForceAuthn != nil)
 	assert.Check(t, *sp.ForceAuthn)
-	assert.Check(t, is.Equal(dsig.RSASHA1SignatureMethod, sp.SignatureMethod))
+	assert.Check(t, is.Equal(dsig.RSASHA256SignatureMethod, sp.SignatureMethod))
 	assert.Check(t, is.DeepEqual([]string{saml.HTTPRedirectBinding}, sp.LogoutBindings))
 	assert.Check(t, is.Equal("https://sp.example.com/app/saml/acs", sp.AcsURL.String()))
 	assert.Check(t, is.Equal("/", sp.DefaultRedirectURI))

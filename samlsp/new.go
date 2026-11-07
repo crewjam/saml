@@ -183,6 +183,11 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 	}
 }
 
+// defaultSigningMethodForKey returns the signature method used for signed
+// requests when Options.SignRequest is set. SHA-1 based methods are deprecated
+// for XML signatures, so SHA-256 is used for both RSA and ECDSA keys. Callers
+// that need a different method can set ServiceProvider.SignatureMethod on the
+// returned Middleware.
 func defaultSigningMethodForKey(key crypto.Signer) string {
 	if signerutil.IsNil(key) {
 		return ""
@@ -191,7 +196,7 @@ func defaultSigningMethodForKey(key crypto.Signer) string {
 	// that aren't concrete *rsa.PrivateKey or *ecdsa.PrivateKey types
 	switch key.Public().(type) {
 	case *rsa.PublicKey:
-		return dsig.RSASHA1SignatureMethod
+		return dsig.RSASHA256SignatureMethod
 	case *ecdsa.PublicKey:
 		return dsig.ECDSASHA256SignatureMethod
 	default:

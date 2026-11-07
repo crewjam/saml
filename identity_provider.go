@@ -3,6 +3,7 @@ package saml
 import (
 	"bytes"
 	"crypto"
+	"crypto/ecdsa"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -1141,10 +1142,18 @@ func (req *IdpAuthnRequest) signingContext() (*dsig.SigningContext, error) {
 		signingContext = dsig.NewDefaultSigningContext(keyStore)
 	}
 
-	// Default to using SHA1 if the signature method isn't set.
+	// Default to SHA-256 if the signature method isn't set. SHA-1 based
+	// methods are deprecated for XML signatures.
 	signatureMethod := req.IDP.SignatureMethod
 	if signatureMethod == "" {
-		signatureMethod = dsig.RSASHA1SignatureMethod
+		publicKey := req.IDP.Certificate.PublicKey
+		if req.IDP.Signer != nil {
+			publicKey = req.IDP.Signer.Public()
+		}
+		signatureMethod = dsig.RSASHA256SignatureMethod
+		if _, ok := publicKey.(*ecdsa.PublicKey); ok {
+			signatureMethod = dsig.ECDSASHA256SignatureMethod
+		}
 	}
 
 	signingContext.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(canonicalizerPrefixList)
