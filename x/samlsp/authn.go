@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
+	"strconv"
 
 	"github.com/crewjam/saml"
 )
@@ -31,6 +33,8 @@ type authnOptions struct {
 	forceAuthn      bool
 	isPassive       bool
 	authnContext    *saml.RequestedAuthnContext
+	acsIndex        *int
+	modify          []func(*saml.AuthnRequest) error
 }
 
 type authnOptionFunc func(*authnOptions)
@@ -77,6 +81,106 @@ type AuthnContextOption struct {
 
 func (a AuthnContextOption) applyAuthn(o *authnOptions)       { o.authnContext = a.rac }
 func (a AuthnContextOption) applyResponse(o *responseOptions) { o.authnContext = a.rac }
+
+// WithAuthnRequest calls modify with the AuthnRequest before it is signed
+// and sent, to set fields that have no option of their own. Options run in
+// the order given, after the other options have shaped the request. An
+// error from modify is returned by AuthnRequest.
+func WithAuthnRequest(modify func(req *saml.AuthnRequest) error) AuthnOption {
+	return authnOptionFunc(func(o *authnOptions) { o.modify = append(o.modify, modify) })
+}
+
+func modifyRequest(f func(req *saml.AuthnRequest)) AuthnOption {
+	return WithAuthnRequest(func(req *saml.AuthnRequest) error { f(req); return nil })
+}
+
+// WithSubject names the user the IdP should authenticate, as a hint (for
+// example, a login_hint from a "sign in as" form): the AuthnRequest
+// carries it as its Subject (saml-core §3.4.1). The IdP must then
+// authenticate that user or fail.
+func WithSubject(nameID saml.NameID) AuthnOption {
+	return modifyRequest(func(req *saml.AuthnRequest) {
+		id := nameID
+		req.Subject = &saml.Subject{NameID: &id}
+	})
+}
+
+// WithScoping sets the Scoping of the AuthnRequest (saml-core §3.4.1.2),
+// which a proxying IdP uses: the IdPs the SP trusts to authenticate the
+// user (IDPList), how many times the request may be proxied (ProxyCount),
+// and on whose behalf it is made (RequesterIDs).
+func WithScoping(scoping saml.Scoping) AuthnOption {
+	return modifyRequest(func(req *saml.AuthnRequest) {
+		s := scoping
+		req.Scoping = &s
+	})
+}
+
+// WithIDPList asks a proxying IdP to authenticate the user with one of the
+// IdPs whose entity IDs are given. It sets the IDPList of the Scoping.
+func WithIDPList(entityIDs ...string) AuthnOption {
+	return modifyRequest(func(req *saml.AuthnRequest) {
+		if req.Scoping == nil {
+			req.Scoping = &saml.Scoping{}
+		}
+		list := &saml.IDPList{}
+		for _, id := range entityIDs {
+			list.IDPEntries = append(list.IDPEntries, saml.IDPEntry{ProviderID: id})
+		}
+		req.Scoping.IDPList = list
+	})
+}
+
+// WithProviderName sets the ProviderName of the AuthnRequest: a
+// human-readable name of the SP, which some IdPs show the user.
+func WithProviderName(name string) AuthnOption {
+	return modifyRequest(func(req *saml.AuthnRequest) { req.ProviderName = name })
+}
+
+// WithAttributeConsumingServiceIndex asks the IdP to send the attributes
+// that the SP metadata lists in the AttributeConsumingService with this
+// index (see WithRequestedAttributes).
+func WithAttributeConsumingServiceIndex(index int) AuthnOption {
+	return WithAuthnRequest(func(req *saml.AuthnRequest) error {
+		if index < 0 || index > math.MaxUint16 {
+			return fmt.Errorf("samlsp: AttributeConsumingServiceIndex %d is not between 0 and %d", index, math.MaxUint16)
+		}
+		req.AttributeConsumingServiceIndex = strconv.Itoa(index)
+		return nil
+	})
+}
+
+// WithAllowCreate sets the AllowCreate of the NameIDPolicy, which is true
+// by default: whether the IdP may create a new identifier for the user
+// for this SP (saml-core §3.4.1.1).
+func WithAllowCreate(allow bool) AuthnOption {
+	return modifyRequest(func(req *saml.AuthnRequest) {
+		if req.NameIDPolicy == nil {
+			req.NameIDPolicy = &saml.NameIDPolicy{}
+		}
+		req.NameIDPolicy.AllowCreate = &allow
+	})
+}
+
+// WithSPNameQualifier asks the IdP to return a NameID in the namespace of
+// qualifier rather than of this SP, as when several SPs share one
+// affiliation (saml-core §3.4.1.1).
+func WithSPNameQualifier(qualifier string) AuthnOption {
+	return modifyRequest(func(req *saml.AuthnRequest) {
+		if req.NameIDPolicy == nil {
+			req.NameIDPolicy = &saml.NameIDPolicy{}
+		}
+		req.NameIDPolicy.SPNameQualifier = &qualifier
+	})
+}
+
+// WithACSIndex names the assertion consumer service by its index in the
+// SP metadata instead of by URL and binding, as some IdPs require. The
+// index chooses the response binding, so WithResponseBinding is ignored.
+// AuthnRequest returns an error if the SP metadata has no such index.
+func WithACSIndex(index int) AuthnOption {
+	return authnOptionFunc(func(o *authnOptions) { o.acsIndex = &index })
+}
 
 // WithResponseBinding asks the IdP to send its response with binding:
 // saml.HTTPPostBinding (the default), saml.HTTPArtifactBinding or
@@ -175,6 +279,12 @@ func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...Au
 	if o.authnContext != nil {
 		sp.RequestedAuthnContext = o.authnContext
 	}
+	if o.acsIndex != nil {
+		if !hasACSIndex(sp.Metadata(), *o.acsIndex) {
+			return nil, fmt.Errorf("samlsp: the SP metadata has no AssertionConsumerService with index %d", *o.acsIndex)
+		}
+		sp.AcsIndex = o.acsIndex
+	}
 
 	// Build the request unsigned (the binding argument "" makes no
 	// signature), so that IsPassive can be set before signing.
@@ -185,6 +295,11 @@ func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...Au
 	if o.isPassive {
 		t := true
 		req.IsPassive = &t
+	}
+	for _, modify := range o.modify {
+		if err := modify(req); err != nil {
+			return nil, err
+		}
 	}
 
 	m := &Message{ID: req.ID, Binding: binding, Destination: location, RelayState: relayState, scriptHash: requestScriptHash}
@@ -284,4 +399,16 @@ func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...Res
 		return nil, err
 	}
 	return newAssertion(a), nil
+}
+
+// hasACSIndex reports whether md has an AssertionConsumerService with index.
+func hasACSIndex(md *saml.EntityDescriptor, index int) bool {
+	for _, d := range md.SPSSODescriptors {
+		for _, acs := range d.AssertionConsumerServices {
+			if acs.Index == index {
+				return true
+			}
+		}
+	}
+	return false
 }
