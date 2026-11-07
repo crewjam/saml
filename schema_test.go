@@ -349,17 +349,17 @@ func TestAuthnContextUnmarshalAuthenticatingAuthority(t *testing.T) {
 
 func TestRequestedAuthnContextMultipleClassRefs(t *testing.T) {
 	const (
-		password = "urn:oasis:names:tc:SAML:2.0:ac:classes:Password"
-		ppt      = "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport"
+		classA = "urn:oasis:names:tc:SAML:2.0:ac:classes:Password"
+		classB = "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport"
 	)
 	expectedXML := `<samlp:RequestedAuthnContext Comparison="minimum">` +
-		`<saml:AuthnContextClassRef>` + password + `</saml:AuthnContextClassRef>` +
-		`<saml:AuthnContextClassRef>` + ppt + `</saml:AuthnContextClassRef>` +
+		`<saml:AuthnContextClassRef>` + classA + `</saml:AuthnContextClassRef>` +
+		`<saml:AuthnContextClassRef>` + classB + `</saml:AuthnContextClassRef>` +
 		`</samlp:RequestedAuthnContext>`
 
 	r := RequestedAuthnContext{
 		Comparison:            "minimum",
-		AuthnContextClassRefs: []string{password, ppt},
+		AuthnContextClassRefs: []string{classA, classB},
 		AuthnContextClassRef:  "ignored when AuthnContextClassRefs is set",
 	}
 	doc := etree.NewDocument()
@@ -371,15 +371,15 @@ func TestRequestedAuthnContextMultipleClassRefs(t *testing.T) {
 	// Parsing keeps every value and sets the deprecated field to the first.
 	in := `<samlp:RequestedAuthnContext xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ` +
 		`xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" Comparison="minimum">` +
-		`<saml:AuthnContextClassRef>` + password + `</saml:AuthnContextClassRef>` +
-		`<saml:AuthnContextClassRef>` + ppt + `</saml:AuthnContextClassRef>` +
+		`<saml:AuthnContextClassRef>` + classA + `</saml:AuthnContextClassRef>` +
+		`<saml:AuthnContextClassRef>` + classB + `</saml:AuthnContextClassRef>` +
 		`</samlp:RequestedAuthnContext>`
 	var got RequestedAuthnContext
 	assert.Check(t, xml.Unmarshal([]byte(in), &got))
 	assert.Check(t, is.Equal("minimum", got.Comparison))
-	assert.Check(t, is.DeepEqual([]string{password, ppt}, got.AuthnContextClassRefs))
-	assert.Check(t, is.Equal(password, got.AuthnContextClassRef))
-	assert.Check(t, is.DeepEqual([]string{password, ppt}, got.ClassRefs()))
+	assert.Check(t, is.DeepEqual([]string{classA, classB}, got.AuthnContextClassRefs))
+	assert.Check(t, is.Equal(classA, got.AuthnContextClassRef))
+	assert.Check(t, is.DeepEqual([]string{classA, classB}, got.ClassRefs()))
 
 	// encoding/xml marshaling round-trips too.
 	out, err := xml.Marshal(got)
