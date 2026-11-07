@@ -58,8 +58,6 @@ linters:
         linters:
           - staticcheck
         text: "SA1019: (github\\.com/crewjam/)?saml\\.(TimeNow|Clock) is deprecated"
-    paths:
-      - example/.*\.go$
 formatters:
   enable:
     - gofmt
@@ -73,4 +71,3 @@ formatters:
     paths:
       - third_party$
       - builtin$
-      - examples$

@@ -114,7 +114,7 @@ func CreateLink(w http.ResponseWriter, r *http.Request) {
 	links.links[l.ShortLink] = l
 	links.mu.Unlock()
 
-	fmt.Fprintf(w, "%s\n", l.ShortLink)
+	writeText(w, "%s\n", l.ShortLink)
 }
 
 // ServeLink handles requests to redirect to a link
@@ -149,7 +149,7 @@ func ListLinks(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(mine)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	for _, shortLink := range mine {
-		fmt.Fprintf(w, "%s\n", shortLink)
+		writeText(w, "%s\n", shortLink)
 	}
 }
 
@@ -159,24 +159,30 @@ func ServeWhoami(w http.ResponseWriter, r *http.Request) {
 
 	session := samlsp.SessionFromContext(r.Context())
 	if session == nil {
-		fmt.Fprintln(w, "not signed in")
+		writeText(w, "not signed in\n")
 		return
 	}
-	fmt.Fprintln(w, "signed in")
+	writeText(w, "signed in\n")
 	sessionWithAttrs, ok := session.(samlsp.SessionWithAttributes)
 	if ok {
-		fmt.Fprintln(w, "attributes:")
+		writeText(w, "attributes:\n")
 		for name, values := range sessionWithAttrs.GetAttributes() {
 			for _, value := range values {
-				fmt.Fprintf(w, "%s: %v\n", name, value)
+				writeText(w, "%s: %v\n", name, value)
 			}
 		}
 	}
 }
 
+// writeText writes a formatted line of the response. An error writing to the
+// client cannot be reported back to it, so it is deliberately ignored.
+func writeText(w io.Writer, format string, args ...any) {
+	_, _ = fmt.Fprintf(w, format, args...)
+}
+
 // readCertificate reads a PEM encoded certificate from path.
 func readCertificate(path string) (*x509.Certificate, error) {
-	buf, err := os.ReadFile(path)
+	buf, err := os.ReadFile(path) //nolint:gosec // G304: the path is a command-line flag chosen by the operator
 	if err != nil {
 		return nil, err
 	}

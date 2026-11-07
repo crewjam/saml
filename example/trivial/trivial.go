@@ -29,7 +29,8 @@ import (
 var samlMiddleware *samlsp.Middleware
 
 func hello(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hello, %s!", samlsp.AttributeFromContext(r.Context(), "displayName"))
+	// An error writing to the client cannot be reported back to it.
+	_, _ = fmt.Fprintf(w, "Hello, %s!", samlsp.AttributeFromContext(r.Context(), "displayName"))
 }
 
 func main() {

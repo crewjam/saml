@@ -13,8 +13,8 @@ import (
 	"github.com/crewjam/saml/samlsp"
 )
 
-func requestAs(method, target, body, account string) *http.Request {
-	r := httptest.NewRequest(method, target, strings.NewReader(body))
+func requestAs(method, body, account string) *http.Request {
+	r := httptest.NewRequest(method, "/", strings.NewReader(body))
 	if body != "" {
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
@@ -36,7 +36,7 @@ func resetLinks(t *testing.T) {
 func createLink(t *testing.T, target, account string) string {
 	t.Helper()
 	w := httptest.NewRecorder()
-	CreateLink(w, requestAs(http.MethodPost, "/", url.Values{"t": {target}}.Encode(), account))
+	CreateLink(w, requestAs(http.MethodPost, url.Values{"t": {target}}.Encode(), account))
 	if w.Code != http.StatusOK {
 		t.Fatalf("CreateLink(%q) = %d %q", target, w.Code, w.Body.String())
 	}
@@ -68,7 +68,7 @@ func TestListLinksUsesSessionNotHeader(t *testing.T) {
 	short := createLink(t, "https://example.com/", "alice@example.com")
 
 	w := httptest.NewRecorder()
-	r := requestAs(http.MethodGet, "/", "", "bob@example.com")
+	r := requestAs(http.MethodGet, "", "bob@example.com")
 	r.Header.Set("X-Remote-User", "alice@example.com")
 	ListLinks(w, r)
 	if strings.Contains(w.Body.String(), short) {
@@ -76,7 +76,7 @@ func TestListLinksUsesSessionNotHeader(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	ListLinks(w, requestAs(http.MethodGet, "/", "", "alice@example.com"))
+	ListLinks(w, requestAs(http.MethodGet, "", "alice@example.com"))
 	if strings.TrimSpace(w.Body.String()) != short {
 		t.Errorf("alice's links = %q, want %q", w.Body.String(), short)
 	}
@@ -95,7 +95,7 @@ func TestCreateLinkRejectsBadRequests(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			CreateLink(w, requestAs(http.MethodPost, "/", url.Values{"t": {tc.target}}.Encode(), tc.account))
+			CreateLink(w, requestAs(http.MethodPost, url.Values{"t": {tc.target}}.Encode(), tc.account))
 			if w.Code != tc.want {
 				t.Errorf("got %d, want %d", w.Code, tc.want)
 			}
@@ -114,7 +114,7 @@ func TestLinksConcurrentAccess(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			ListLinks(httptest.NewRecorder(), requestAs(http.MethodGet, "/", "", "alice"))
+			ListLinks(httptest.NewRecorder(), requestAs(http.MethodGet, "", "alice"))
 		}()
 	}
 	wg.Wait()
