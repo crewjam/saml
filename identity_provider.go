@@ -470,6 +470,9 @@ func (req *IdpAuthnRequest) Validate() error {
 	}
 
 	// find the service provider
+	if req.Request.Issuer == nil {
+		return fmt.Errorf("authn request is missing an issuer")
+	}
 	serviceProviderID := req.Request.Issuer.Value
 	serviceProvider, err := req.IDP.ServiceProviderProvider.GetServiceProvider(req.HTTPRequest, serviceProviderID)
 	if err == os.ErrNotExist {
