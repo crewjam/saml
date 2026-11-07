@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -22,6 +23,7 @@ import (
 	xrv "github.com/mattermost/xml-roundtrip-validator"
 	dsig "github.com/russellhaering/goxmldsig"
 
+	"github.com/crewjam/saml/internal/signerutil"
 	"github.com/crewjam/saml/logger"
 	"github.com/crewjam/saml/xmlenc"
 )
@@ -1116,6 +1118,19 @@ func (req *IdpAuthnRequest) MakeResponse() error {
 
 // signingContext will create a signing context for the request.
 func (req *IdpAuthnRequest) signingContext() (*dsig.SigningContext, error) {
+	// A typed-nil key (for example the *rsa.PrivateKey returned by a failed
+	// x509.ParsePKCS1PrivateKey call) is not == nil but panics when used to
+	// sign, so check for that explicitly and return an error instead.
+	useSigner := !signerutil.IsNil(req.IDP.Signer)
+	if !useSigner {
+		if key, _ := req.IDP.Key.(crypto.Signer); signerutil.IsNil(key) {
+			return nil, errors.New("cannot sign: IdentityProvider.Key and IdentityProvider.Signer are both nil or invalid")
+		}
+	}
+	if req.IDP.Certificate == nil {
+		return nil, errors.New("cannot sign: IdentityProvider.Certificate is nil")
+	}
+
 	// Create a cert chain based off of the IDP cert and its intermediates.
 	certificates := make([][]byte, 0, 1+len(req.IDP.Intermediates))
 	certificates = append(certificates, req.IDP.Certificate.Raw)
@@ -1126,7 +1141,7 @@ func (req *IdpAuthnRequest) signingContext() (*dsig.SigningContext, error) {
 	var signingContext *dsig.SigningContext
 	var err error
 	// If signer is set, use it instead of the private key.
-	if req.IDP.Signer != nil {
+	if useSigner {
 		signingContext, err = dsig.NewSigningContext(req.IDP.Signer, certificates)
 		if err != nil {
 			return nil, err
@@ -1147,7 +1162,7 @@ func (req *IdpAuthnRequest) signingContext() (*dsig.SigningContext, error) {
 	signatureMethod := req.IDP.SignatureMethod
 	if signatureMethod == "" {
 		publicKey := req.IDP.Certificate.PublicKey
-		if req.IDP.Signer != nil {
+		if useSigner {
 			publicKey = req.IDP.Signer.Public()
 		}
 		signatureMethod = dsig.RSASHA256SignatureMethod
