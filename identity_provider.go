@@ -18,6 +18,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/beevik/etree"
@@ -1258,6 +1259,10 @@ func hostFromRemoteAddr(remoteAddr string) string {
 	return host
 }
 
+// nonAlphanumeric matches what DefaultAssertionMaker ignores when it
+// matches the name of a requested attribute.
+var nonAlphanumeric = regexp.MustCompile("[^A-Za-z0-9]+")
+
 // DefaultAssertionMaker produces a SAML assertion for the
 // given request and assigns it to req.Assertion.
 type DefaultAssertionMaker struct {
@@ -1276,9 +1281,12 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 	attributeConsumingService := defaultAttributeConsumingService(req.SPSSODescriptor)
 
 	for _, requestedAttribute := range attributeConsumingService.RequestedAttributes {
-		if requestedAttribute.NameFormat == "urn:oasis:names:tc:SAML:2.0:attrname-format:basic" || requestedAttribute.NameFormat == "urn:oasis:names:tc:SAML:2.0:attrname-format:unspecified" {
-			attrName := requestedAttribute.Name
-			attrName = regexp.MustCompile("[^A-Za-z0-9]+").ReplaceAllString(attrName, "")
+		// An omitted NameFormat means unspecified (saml-core §2.7.3.1).
+		switch requestedAttribute.NameFormat {
+		case "", "urn:oasis:names:tc:SAML:2.0:attrname-format:basic", "urn:oasis:names:tc:SAML:2.0:attrname-format:unspecified":
+			// Match the name without regard to case or punctuation, so
+			// that "Email", "email_address" and "EmailAddress" all match.
+			attrName := strings.ToLower(nonAlphanumeric.ReplaceAllString(requestedAttribute.Name, ""))
 			switch attrName {
 			case "email", "emailaddress":
 				attributes = append(attributes, Attribute{
