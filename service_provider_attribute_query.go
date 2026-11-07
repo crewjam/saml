@@ -68,7 +68,8 @@ func (sp *ServiceProvider) GetAttributeServiceLocation(binding string) string {
 // MakeAttributeQuery returns an AttributeQuery for the attributes of the
 // subject identified by nameID, addressed to the IdP's SOAP AttributeService
 // (see GetAttributeServiceLocation). It returns ErrNoAttributeService if the
-// IdP metadata has none.
+// IdP metadata has none, and an error matching ErrInsecureSOAPEndpoint if
+// its Location is not https and AllowInsecureSOAPEndpoints is not set.
 //
 // nameID is sent as is. Pass the NameID the IdP issued for the subject, for
 // example Assertion.Subject.NameID from the login, so that its Format and
@@ -91,6 +92,9 @@ func (sp *ServiceProvider) MakeAttributeQuery(nameID NameID, attributes ...Attri
 	destination := sp.GetAttributeServiceLocation(SOAPBinding)
 	if destination == "" {
 		return nil, ErrNoAttributeService
+	}
+	if err := checkSOAPEndpoint(destination, sp.AllowInsecureSOAPEndpoints); err != nil {
+		return nil, fmt.Errorf("cannot make an attribute query: %w", err)
 	}
 	if nameID.Value == "" {
 		return nil, errors.New("cannot make an attribute query: the NameID is empty")
@@ -170,7 +174,8 @@ func (sp *ServiceProvider) SignAttributeQuery(req *AttributeQuery) error {
 // The query is made with MakeAttributeQuery and sent with the SAML SOAP
 // binding to the IdP's SOAP AttributeService, using HTTPClient (or
 // http.DefaultClient) and ctx. The response body is limited to
-// MaxAttributeQueryResponseSize bytes.
+// MaxAttributeQueryResponseSize bytes. The AttributeService must be https
+// unless AllowInsecureSOAPEndpoints is set.
 //
 // Errors in making or sending the query are returned as they are; an invalid
 // response is returned as an *InvalidResponseError.
@@ -188,8 +193,12 @@ func (sp *ServiceProvider) QueryAttributes(ctx context.Context, nameID NameID, a
 
 // postSOAP sends envelope to location with the SAML SOAP binding, using
 // HTTPClient (or http.DefaultClient), and returns the body of the response,
-// which may be at most limit bytes.
+// which may be at most limit bytes. location must be https unless
+// AllowInsecureSOAPEndpoints is set.
 func (sp *ServiceProvider) postSOAP(ctx context.Context, location string, envelope *etree.Element, limit int64) ([]byte, error) {
+	if err := checkSOAPEndpoint(location, sp.AllowInsecureSOAPEndpoints); err != nil {
+		return nil, err
+	}
 	httpClient := sp.HTTPClient
 	if httpClient == nil {
 		httpClient = http.DefaultClient

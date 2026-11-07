@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/beevik/etree"
@@ -41,6 +42,34 @@ var defaultSOAPHTTPClient = &http.Client{
 	CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	},
+}
+
+// ErrInsecureSOAPEndpoint is returned when a SAML SOAP message would be sent
+// to an endpoint whose Location is not an https URL. SOAP messages go
+// server to server and carry the user's NameID, attributes or a whole
+// assertion. The SOAP binding itself does nothing against an eavesdropper,
+// or against someone who changes the messages in transit: saml-bindings
+// §3.1.2 leaves confidentiality and integrity to the environment of use,
+// typically TLS in the substrate protocol (and §3.6.5.2 does the same for
+// the artifact resolution exchange). IdentityProvider and ServiceProvider
+// choose TLS by default, and refuse http endpoints for the SOAP binding
+// unless AllowInsecureSOAPEndpoints is set.
+var ErrInsecureSOAPEndpoint = errors.New("the SOAP endpoint is not an https URL")
+
+// checkSOAPEndpoint returns an error matching ErrInsecureSOAPEndpoint unless
+// location is an https URL, or allowInsecure is set and it is an http URL.
+func checkSOAPEndpoint(location string, allowInsecure bool) error {
+	locationURL, err := url.Parse(location)
+	if err != nil {
+		return fmt.Errorf("invalid SOAP endpoint %q: %w", location, err)
+	}
+	switch {
+	case locationURL.Scheme == "https":
+		return nil
+	case locationURL.Scheme == "http" && allowInsecure:
+		return nil
+	}
+	return fmt.Errorf("%w: %q (set AllowInsecureSOAPEndpoints to allow plain http)", ErrInsecureSOAPEndpoint, location)
 }
 
 // soapContentType is the Content-Type of a SOAP 1.1 message (SOAP 1.1 §6.1.1).
