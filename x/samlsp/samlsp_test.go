@@ -279,7 +279,7 @@ func TestAuthnRequestOptions(t *testing.T) {
 	msg, err := cfg.AuthnRequest(t.Context(), "s",
 		samlsp.ForceAuthn,
 		samlsp.IsPassive,
-		samlsp.WithAuthnContext("minimum", "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport"),
+		samlsp.WithAuthnContext(samlsp.ComparisonMinimum, samlsp.AuthnContextPasswordProtectedTransport, samlsp.AuthnContextX509),
 		samlsp.WithResponseBinding(saml.HTTPArtifactBinding),
 	)
 	if err != nil {
@@ -295,7 +295,8 @@ func TestAuthnRequestOptions(t *testing.T) {
 	if req.IsPassive == nil || !*req.IsPassive {
 		t.Error("IsPassive not set")
 	}
-	if req.RequestedAuthnContext == nil || req.RequestedAuthnContext.Comparison != "minimum" {
+	if rac := req.RequestedAuthnContext; rac == nil || rac.Comparison != "minimum" ||
+		len(rac.AuthnContextClassRefs) != 2 || rac.AuthnContextClassRefs[1] != string(samlsp.AuthnContextX509) {
 		t.Errorf("RequestedAuthnContext = %+v", req.RequestedAuthnContext)
 	}
 	if req.ProtocolBinding != saml.HTTPArtifactBinding {
@@ -452,12 +453,15 @@ func TestSPInitiatedLogout(t *testing.T) {
 			} else {
 				back = postForm(cfg.SLOURL, formValues(w.Body.String()))
 			}
-			resp, err := cfg.ParseLogoutResponse(t.Context(), back, logout.ID)
+			resp, err := cfg.ParseLogoutResponse(t.Context(), back, samlsp.WithRequestID(logout.ID))
 			if err != nil {
 				t.Fatalf("ParseLogoutResponse: %v (%v)", err, errors.Unwrap(err))
 			}
 			if resp.InResponseTo != logout.ID {
 				t.Errorf("InResponseTo = %q", resp.InResponseTo)
+			}
+			if _, err := cfg.ParseLogoutResponse(t.Context(), back, samlsp.AllowUnsolicited); err == nil {
+				t.Error("ParseLogoutResponse accepted AllowUnsolicited")
 			}
 			if _, err := cfg.ParseLogoutResponse(t.Context(), back); !errors.Is(err, samlsp.ErrNoRequestID) {
 				t.Errorf("ParseLogoutResponse without IDs = %v", err)
@@ -648,5 +652,71 @@ func TestRemoteMetadataWithConfig(t *testing.T) {
 	}
 	if _, err := cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID(msg.ID)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestServiceProviderOptions(t *testing.T) {
+	ti := newTestIDP(t)
+	cfg := newTestConfig(t, ti)
+
+	var order []string
+	cfg.ServiceProviderOptions = []samlsp.ServiceProviderOption{
+		func(*saml.ServiceProvider) { order = append(order, "config") },
+	}
+	perCall := samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
+		order = append(order, "call")
+		f := true
+		sp.ForceAuthn = &f
+	})
+	msg, err := cfg.AuthnRequest(t.Context(), "s", perCall)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(order, ",") != "config,call" {
+		t.Errorf("options ran in order %v", order)
+	}
+	if req := decodeRedirectRequest(t, msg.RedirectURL()); req.ForceAuthn == nil || !*req.ForceAuthn {
+		t.Error("per-call option was not applied")
+	}
+
+	// Per-call options apply to that call only.
+	order = nil
+	msg, err = cfg.AuthnRequest(t.Context(), "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(order, ",") != "config" {
+		t.Errorf("options ran in order %v", order)
+	}
+	if req := decodeRedirectRequest(t, msg.RedirectURL()); req.ForceAuthn != nil {
+		t.Error("per-call option leaked into the next call")
+	}
+
+	// A ServiceProviderOption is also a ResponseOption and a LogoutOption.
+	called := 0
+	count := samlsp.WithServiceProvider(func(*saml.ServiceProvider) { called++ })
+	msg, err = cfg.AuthnRequest(t.Context(), "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID(msg.ID), count); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cfg.LogoutRequest(t.Context(), saml.NameID{Value: "alice"}, "", count); err != nil {
+		t.Fatal(err)
+	}
+	if called != 2 {
+		t.Errorf("option called %d times, want 2", called)
+	}
+}
+
+func TestSignMetadata(t *testing.T) {
+	ti := newTestIDP(t)
+	cfg := newTestConfig(t, ti)
+	cfg.ServiceProviderOptions = append(cfg.ServiceProviderOptions, samlsp.SignMetadata)
+	w := httptest.NewRecorder()
+	cfg.ServeMetadata(w, httptest.NewRequest(http.MethodGet, cfg.MetadataURL, nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "SignatureValue") {
+		t.Fatalf("metadata is not signed: %d %s", w.Code, w.Body.String())
 	}
 }
