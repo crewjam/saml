@@ -39,8 +39,12 @@ func TestMemoryReplayCacheRefusesReplay(t *testing.T) {
 	assert.Check(t, is.ErrorIs(c.Consume("id-1", now.Add(time.Minute)), saml.ErrAssertionReplayed))
 	assert.Check(t, c.Consume("id-2", now.Add(time.Minute)))
 
-	// Still refused up to the recorded expiry, accepted from then on.
+	// Still refused up to and including the recorded expiry (the last
+	// moment the ServiceProvider would accept the assertion), accepted
+	// after it.
 	now = now.Add(time.Minute - time.Nanosecond)
+	assert.Check(t, is.ErrorIs(c.Consume("id-1", now.Add(time.Minute)), saml.ErrAssertionReplayed))
+	now = now.Add(time.Nanosecond)
 	assert.Check(t, is.ErrorIs(c.Consume("id-1", now.Add(time.Minute)), saml.ErrAssertionReplayed))
 	now = now.Add(time.Nanosecond)
 	assert.Check(t, c.Consume("id-1", now.Add(time.Minute)))
@@ -64,7 +68,7 @@ func TestMemoryReplayCacheFull(t *testing.T) {
 	assert.Check(t, is.ErrorIs(c.Consume("id-2", now.Add(time.Minute)), saml.ErrAssertionReplayed))
 
 	// Once id-1 expires there is room for one more.
-	now = now.Add(time.Minute)
+	now = now.Add(time.Minute + time.Nanosecond)
 	assert.Check(t, c.Consume("id-3", now.Add(time.Minute)))
 	assert.Check(t, is.ErrorIs(c.Consume("id-4", now.Add(time.Minute)), ErrReplayCacheFull))
 	assert.Check(t, is.ErrorIs(c.Consume("id-2", now.Add(time.Minute)), saml.ErrAssertionReplayed))
@@ -83,7 +87,7 @@ func TestMemoryReplayCacheAlreadyExpired(t *testing.T) {
 	setReplayCacheTestNow(t, &now)
 	c := NewMemoryReplayCache(1)
 
-	assert.NilError(t, c.Consume("id-1", now))
+	assert.NilError(t, c.Consume("id-1", now.Add(-time.Nanosecond)))
 	assert.Check(t, c.Consume("id-2", now.Add(time.Minute)))
 	assert.Check(t, is.Len(c.entries, 1))
 }

@@ -60,7 +60,7 @@ func (c *MemoryReplayCache) Consume(assertionID string, expiresAt time.Time) err
 	defer c.mu.Unlock()
 
 	now := saml.TimeNow()
-	if prev, ok := c.entries[assertionID]; ok && now.Before(prev) {
+	if prev, ok := c.entries[assertionID]; ok && !now.After(prev) {
 		return saml.ErrAssertionReplayed
 	}
 	// An expired record for this ID is replaced below; the ServiceProvider
@@ -85,12 +85,12 @@ func (c *MemoryReplayCache) Consume(assertionID string, expiresAt time.Time) err
 // before nextExpiry, so a cache full of unexpired IDs is not scanned on every
 // call.
 func (c *MemoryReplayCache) dropExpired(now time.Time) {
-	if !c.nextExpiry.IsZero() && now.Before(c.nextExpiry) {
+	if !c.nextExpiry.IsZero() && !now.After(c.nextExpiry) {
 		return
 	}
 	c.nextExpiry = time.Time{}
 	for id, expiresAt := range c.entries {
-		if !now.Before(expiresAt) {
+		if now.After(expiresAt) {
 			delete(c.entries, id)
 			continue
 		}
