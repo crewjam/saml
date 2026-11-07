@@ -572,7 +572,20 @@ type Endpoint struct {
 	ResponseLocation string `xml:"ResponseLocation,attr,omitempty"`
 }
 
+// trimXMLWhitespace removes leading and trailing XML whitespace (space, tab,
+// CR and LF) from s. Attributes of type xs:anyURI have whiteSpace="collapse"
+// (XML Schema Part 2 §3.2.17), so " https://sp.example.com/acs " is a valid
+// way of writing "https://sp.example.com/acs".
+func trimXMLWhitespace(s string) string {
+	return strings.Trim(s, " \t\r\n")
+}
+
+// checkEndpointLocation checks that location is a valid location for an
+// endpoint with binding and returns it with surrounding whitespace removed,
+// or "" for a binding whose location syntax is unknown.
 func checkEndpointLocation(binding string, location string) (string, error) {
+	binding = trimXMLWhitespace(binding)
+	location = trimXMLWhitespace(location)
 	// Within the SAML standard, the complex type EndpointType describes a
 	// SAML protocol binding endpoint at which a SAML entity can be sent
 	// protocol messages. In particular, the location of an endpoint type is
@@ -628,6 +641,7 @@ func (m *Endpoint) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 		return err
 	}
 
+	m.Binding = trimXMLWhitespace(m.Binding)
 	var err error
 	m.Location, err = checkEndpointLocation(m.Binding, m.Location)
 	if err != nil {
@@ -666,6 +680,7 @@ func (m *IndexedEndpoint) UnmarshalXML(d *xml.Decoder, start xml.StartElement) e
 		return err
 	}
 
+	m.Binding = trimXMLWhitespace(m.Binding)
 	var err error
 	m.Location, err = checkEndpointLocation(m.Binding, m.Location)
 	if err != nil {
