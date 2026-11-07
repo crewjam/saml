@@ -383,6 +383,21 @@ type IdentityProvider struct {
 	// ServeIDPInitiated.
 	SendErrorResponses bool
 
+	// EnforceNameIDPolicy, if true, makes DefaultAssertionMaker enforce the
+	// NameIDPolicy of the AuthnRequest, as saml-core §3.4.1.1 requires.
+	// A request whose NameIDPolicy Format is neither unspecified nor
+	// encrypted, and is not the format the IdP issues (Session.NameIDFormat,
+	// or transient if that is empty), is answered with an error Response
+	// with the status Requester and InvalidNameIDPolicy, and no assertion.
+	// A NameIDPolicy SPNameQualifier is put in the NameID instead of the
+	// service provider's entity ID (it is left out of an entity format
+	// NameID). Whether the service provider may ask for that qualifier, and
+	// what identifier to give under it, is up to the SessionProvider, which
+	// can read the policy from IdpAuthnRequest.Request.
+	//
+	// If false, the NameIDPolicy is ignored, as before.
+	EnforceNameIDPolicy bool
+
 	// StrictACSBinding makes the IdP match the ProtocolBinding of an
 	// AuthnRequest, as well as its AssertionConsumerServiceURL, against the
 	// service provider's assertion consumer services (saml-core §3.4.1:
@@ -1410,10 +1425,9 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 		confirmationNotOnOrAfter = notOnOrAfterAfter
 	}
 
-	nameIDFormat := "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
-
-	if session.NameIDFormat != "" {
-		nameIDFormat = session.NameIDFormat
+	nameID, err := req.makeAssertionNameID(session)
+	if err != nil {
+		return err
 	}
 
 	remoteAddress := hostFromRemoteAddr(req.HTTPRequest.RemoteAddr)
@@ -1427,12 +1441,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 			Value:  req.IDP.Metadata().EntityID,
 		},
 		Subject: &Subject{
-			NameID: &NameID{
-				Format:          nameIDFormat,
-				NameQualifier:   req.IDP.Metadata().EntityID,
-				SPNameQualifier: req.ServiceProviderMetadata.EntityID,
-				Value:           session.NameID,
-			},
+			NameID: nameID,
 			SubjectConfirmations: []SubjectConfirmation{
 				{
 					Method: bearerSubjectConfirmationMethod,

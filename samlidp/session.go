@@ -104,12 +104,13 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, req *saml.
 	}
 
 	session := &saml.Session{
-		ID:         base64.StdEncoding.EncodeToString(randomBytes(32)),
-		NameID:     user.Email,
-		CreateTime: saml.TimeNow(),
-		ExpireTime: saml.TimeNow().Add(sessionMaxAge),
-		Index:      hex.EncodeToString(randomBytes(32)),
-		UserName:   user.Name,
+		ID:           base64.StdEncoding.EncodeToString(randomBytes(32)),
+		NameID:       user.Email,
+		NameIDFormat: nameIDFormatForEmail(user.Email),
+		CreateTime:   saml.TimeNow(),
+		ExpireTime:   saml.TimeNow().Add(sessionMaxAge),
+		Index:        hex.EncodeToString(randomBytes(32)),
+		UserName:     user.Name,
 		// nolint:gocritic // Groups should be a slice here.
 		Groups:                user.Groups[:],
 		UserEmail:             user.Email,
@@ -295,4 +296,16 @@ func (s *Server) HandleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// nameIDFormatForEmail returns the format of a NameID whose value is the
+// user's email address: emailAddress, rather than the transient format
+// saml.DefaultAssertionMaker assumes when none is given, since an email
+// address is neither random nor short-lived (saml-core §8.3.8). It returns
+// "" for a user with no email address, keeping the transient default.
+func nameIDFormatForEmail(email string) string {
+	if email == "" {
+		return ""
+	}
+	return string(saml.EmailAddressNameIDFormat)
 }
