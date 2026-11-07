@@ -351,4 +351,4 @@ The SAML specification is a collection of PDFs (sadly):
 
 ## Security Issues
 
-Please do not report security issues in the issue tracker. Rather, please contact me directly at ross@kndr.org ([PGP Key `78B6038B3B9DFB88`](https://keybase.io/crewjam)). If your issue is *not* a security issue, please use the issue tracker so other contributors can help.
+Please do not report security issues in the issue tracker. Instead, report them privately through GitHub: on the [Security tab](https://github.com/crewjam/saml/security), choose **Report a vulnerability** (or go straight to [the advisory form](https://github.com/crewjam/saml/security/advisories/new)). See [SECURITY.md](SECURITY.md) for details. If your issue is *not* a security issue, please use the issue tracker so other contributors can help.
