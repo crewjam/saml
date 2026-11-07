@@ -20,3 +20,19 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.15
+  generate:
+    # saml.go is generated from README.md (see saml_gen.go); fail if it
+    # is out of date so the package doc cannot drift from the README.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - run: go generate ./...
+      - name: check generated files are up to date
+        run: |
+          if ! git diff --exit-code; then
+            echo "::error::generated files are out of date: run 'go generate ./...' and commit the result"
+            exit 1
+          fi
