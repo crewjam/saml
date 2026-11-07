@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/url"
 	"strings"
+	"time"
 
 	xrv "github.com/mattermost/xml-roundtrip-validator"
 
@@ -167,6 +168,14 @@ func (sp *ServiceProvider) redirectBindingCerts() ([]*x509.Certificate, error) {
 // verifyRedirectBindingSignature checks the query string signature of an
 // HTTP-Redirect binding message against the IDP's signing certificates.
 func (sp *ServiceProvider) verifyRedirectBindingSignature(m *redirectBindingMessage) error {
+	return checkRedirectBindingSignature(m, sp.redirectBindingCerts, sp.dsigClock().Now(), sp.IgnoreCertificateExpiry)
+}
+
+// checkRedirectBindingSignature checks the query string signature of an
+// HTTP-Redirect binding message against the certificates returned by
+// getCerts. Unless ignoreExpiry is set, a certificate is only used if it is
+// valid at now.
+func checkRedirectBindingSignature(m *redirectBindingMessage, getCerts func() ([]*x509.Certificate, error), now time.Time, ignoreExpiry bool) error {
 	algorithm, ok := redirectSignatureAlgorithms[m.SigAlg]
 	if !ok {
 		return fmt.Errorf("unsupported signature algorithm %q", m.SigAlg)
@@ -177,15 +186,14 @@ func (sp *ServiceProvider) verifyRedirectBindingSignature(m *redirectBindingMess
 		return fmt.Errorf("cannot decode signature: %w", err)
 	}
 
-	certs, err := sp.redirectBindingCerts()
+	certs, err := getCerts()
 	if err != nil {
 		return fmt.Errorf("cannot validate signature: %w", err)
 	}
 
-	now := sp.dsigClock().Now()
 	var lastErr error
 	for _, cert := range certs {
-		if !sp.IgnoreCertificateExpiry && (now.Before(cert.NotBefore) || now.After(cert.NotAfter)) {
+		if !ignoreExpiry && (now.Before(cert.NotBefore) || now.After(cert.NotAfter)) {
 			lastErr = errors.New("certificate is not valid at this time")
 			continue
 		}
@@ -288,6 +296,21 @@ func deflateAndEncode(el *etree.Element) (string, error) {
 // signature covers only the SAML parameters, not any query parameters already
 // present in destination.
 func (sp *ServiceProvider) redirectBindingURL(destination, messageParam, encodedMessage, relayState string) (*url.URL, error) {
+	if sp.SignatureMethod == "" {
+		return signedRedirectBindingURL(destination, messageParam, encodedMessage, relayState, "", nil)
+	}
+	signingContext, err := GetSigningContext(sp)
+	if err != nil {
+		return nil, err
+	}
+	return signedRedirectBindingURL(destination, messageParam, encodedMessage, relayState, sp.SignatureMethod, signingContext)
+}
+
+// signedRedirectBindingURL returns destination with the HTTP-Redirect binding
+// parameters for encodedMessage appended. If signingContext is not nil, the
+// query is signed with it and sigAlg is sent as the SigAlg parameter, as
+// described in saml-bindings-2.0-os section 3.4.4.1.
+func signedRedirectBindingURL(destination, messageParam, encodedMessage, relayState, sigAlg string, signingContext *dsig.SigningContext) (*url.URL, error) {
 	rv, err := url.Parse(destination)
 	if err != nil {
 		return nil, err
@@ -299,12 +322,8 @@ func (sp *ServiceProvider) redirectBindingURL(destination, messageParam, encoded
 	if relayState != "" {
 		query += "&" + redirectParamRelayState + "=" + url.QueryEscape(relayState)
 	}
-	if sp.SignatureMethod != "" {
-		query += "&" + redirectParamSigAlg + "=" + url.QueryEscape(sp.SignatureMethod)
-		signingContext, err := GetSigningContext(sp)
-		if err != nil {
-			return nil, err
-		}
+	if signingContext != nil {
+		query += "&" + redirectParamSigAlg + "=" + url.QueryEscape(sigAlg)
 		sig, err := signingContext.SignString(query)
 		if err != nil {
 			return nil, err
