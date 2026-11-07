@@ -309,3 +309,38 @@ func ExampleAssertion_DecodeAttributes_types() {
 	// true 25 2024-06-01 13:00:00 +0000 UTC 8h0m0s
 	// [192.0.2.10 192.0.2.11] true
 }
+
+// roles is a set of role names, decoded from every value of an attribute.
+type roles map[string]bool
+
+// UnmarshalSAMLAttribute implements samlsp.AttributeUnmarshaler. It is
+// given the whole attribute, so it sees every value at once.
+func (r *roles) UnmarshalSAMLAttribute(attr samlsp.Attribute) error {
+	*r = roles{}
+	for _, v := range attr.Values {
+		for _, name := range strings.Split(v, ",") { // some IdPs join them
+			(*r)[strings.TrimSpace(name)] = true
+		}
+	}
+	return nil
+}
+
+// A type that implements AttributeUnmarshaler decodes itself from the whole
+// attribute, in preference to encoding.TextUnmarshaler.
+func ExampleAttributeUnmarshaler() {
+	assertion := &samlsp.Assertion{ // as returned by ParseResponse
+		Attributes: samlsp.Attributes{
+			{Name: "https://example.com/claims/roles", Values: []string{"admin, billing", "support"}},
+		},
+	}
+
+	var user struct {
+		Roles roles `saml:"https://example.com/claims/roles"`
+	}
+	if err := assertion.DecodeAttributes(&user); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(user.Roles["admin"], user.Roles["billing"], user.Roles["support"], user.Roles["root"])
+	// Output:
+	// true true true false
+}

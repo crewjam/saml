@@ -42,8 +42,11 @@ import (
 //	[]byte                  xs:base64Binary
 //	url.URL, *url.URL       xs:anyURI
 //
-// A field of any other type that implements encoding.TextUnmarshaler,
-// through a pointer, is given the text. The declared type of a value
+// A field whose type implements AttributeUnmarshaler is given the whole
+// attribute instead, which takes precedence over everything else; a field
+// of type Attribute receives the attribute as it is. A field of any other
+// type that implements encoding.TextUnmarshaler, through a pointer, is
+// given the text. The declared type of a value
 // (xsi:type, see Attribute.Types) is not consulted, because many IdPs send
 // every value as an untyped string.
 //
@@ -69,34 +72,96 @@ func (a *Assertion) DecodeAttributes(v any) error {
 		if !ok || name == "" || name == "-" || !f.IsExported() {
 			continue
 		}
-		values := a.Attributes.Values(name)
-		if len(values) == 0 {
+		attr, ok := a.Attributes.lookup(name)
+		if !ok {
 			continue
 		}
-		if err := decodeField(rv.Field(i), values); err != nil {
+		if err := decodeField(rv.Field(i), attr); err != nil {
 			return fmt.Errorf("samlsp: DecodeAttributes: attribute %q into field %s (%s): %w", name, f.Name, f.Type, err)
 		}
 	}
 	return nil
 }
 
+// AttributeUnmarshaler is implemented by types that decode themselves from
+// a SAML attribute. DecodeAttributes prefers it to encoding.TextUnmarshaler
+// and to its own parsing.
+//
+// A field whose type implements it (through a pointer) is given the whole
+// attribute: every value, with its declared type in Types. A field that is
+// a slice of such a type has each element given the attribute with one of
+// its values. It is not called for an attribute that is absent or has only
+// null values.
+type AttributeUnmarshaler interface {
+	UnmarshalSAMLAttribute(attr Attribute) error
+}
+
+// UnmarshalSAMLAttribute implements AttributeUnmarshaler: a field of type
+// Attribute receives the attribute as it is.
+func (a *Attribute) UnmarshalSAMLAttribute(attr Attribute) error {
+	*a = attr
+	return nil
+}
+
+// lookup returns the attribute whose Name is name, with the values of every
+// such attribute in the assertion, or false if there are none.
+func (as Attributes) lookup(name string) (Attribute, bool) {
+	var out Attribute
+	found := false
+	for _, a := range as {
+		if a.Name != name {
+			continue
+		}
+		if !found {
+			out = Attribute{Name: a.Name, NameFormat: a.NameFormat, FriendlyName: a.FriendlyName}
+			found = true
+		}
+		for i, v := range a.Values {
+			out.Values = append(out.Values, v)
+			out.Types = append(out.Types, typeAt(a, i))
+		}
+	}
+	return out, found && len(out.Values) > 0
+}
+
+// typeAt returns the declared type of the i-th value of a, or "".
+func typeAt(a Attribute, i int) string {
+	if i < len(a.Types) {
+		return a.Types[i]
+	}
+	return ""
+}
+
+// one returns a with only its i-th value.
+func (a Attribute) one(i int) Attribute {
+	a.Values = []string{a.Values[i]}
+	a.Types = []string{typeAt(a, i)}
+	return a
+}
+
 var (
-	textUnmarshalerType = reflect.TypeFor[encoding.TextUnmarshaler]()
-	timeType            = reflect.TypeFor[time.Time]()
-	durationType        = reflect.TypeFor[time.Duration]()
-	urlType             = reflect.TypeFor[url.URL]()
-	bytesType           = reflect.TypeFor[[]byte]()
+	attributeUnmarshalerType = reflect.TypeFor[AttributeUnmarshaler]()
+	textUnmarshalerType      = reflect.TypeFor[encoding.TextUnmarshaler]()
+	timeType                 = reflect.TypeFor[time.Time]()
+	durationType             = reflect.TypeFor[time.Duration]()
+	urlType                  = reflect.TypeFor[url.URL]()
+	bytesType                = reflect.TypeFor[[]byte]()
 )
 
-// decodeField sets field from values: all of them for a slice (other than
-// []byte), the first otherwise.
-func decodeField(field reflect.Value, values []string) error {
+// decodeField sets field from attr: the whole attribute for an
+// AttributeUnmarshaler, every value for a slice (other than []byte), and
+// the first value otherwise.
+func decodeField(field reflect.Value, attr Attribute) error {
 	t := field.Type()
-	if t.Kind() == reflect.Slice && t != bytesType && !isScalar(t) {
-		s := reflect.MakeSlice(t, len(values), len(values))
-		for i, value := range values {
-			if err := decodeValue(s.Index(i), value); err != nil {
-				if len(values) > 1 {
+	if unmarshalsAttribute(t) {
+		return decodeValue(field, attr)
+	}
+	if t.Kind() == reflect.Slice && !isScalar(t) {
+		n := len(attr.Values)
+		s := reflect.MakeSlice(t, n, n)
+		for i := range n {
+			if err := decodeValue(s.Index(i), attr.one(i)); err != nil {
+				if n > 1 {
 					return fmt.Errorf("value %d: %w", i+1, err)
 				}
 				return err
@@ -105,7 +170,16 @@ func decodeField(field reflect.Value, values []string) error {
 		field.Set(s)
 		return nil
 	}
-	return decodeValue(field, values[0])
+	return decodeValue(field, attr.one(0))
+}
+
+// unmarshalsAttribute reports whether a value of type t, or what it points
+// to, implements AttributeUnmarshaler.
+func unmarshalsAttribute(t reflect.Type) bool {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return reflect.PointerTo(t).Implements(attributeUnmarshalerType)
 }
 
 // isScalar reports whether a value of type t is decoded from one value as a
@@ -114,17 +188,22 @@ func isScalar(t reflect.Type) bool {
 	return t == bytesType || reflect.PointerTo(t).Implements(textUnmarshalerType)
 }
 
-// decodeValue parses s into v by the type of v.
-func decodeValue(v reflect.Value, s string) error {
+// decodeValue sets v from attr, which has a single value unless v is an
+// AttributeUnmarshaler given the whole attribute.
+func decodeValue(v reflect.Value, attr Attribute) error {
 	t := v.Type()
 	if t.Kind() == reflect.Pointer {
 		p := reflect.New(t.Elem())
-		if err := decodeValue(p.Elem(), s); err != nil {
+		if err := decodeValue(p.Elem(), attr); err != nil {
 			return err
 		}
 		v.Set(p)
 		return nil
 	}
+	if u, ok := v.Addr().Interface().(AttributeUnmarshaler); ok {
+		return u.UnmarshalSAMLAttribute(attr)
+	}
+	s := attr.Values[0]
 
 	// Types with a lexical form of their own, before TextUnmarshaler: the
 	// UnmarshalText of time.Time is RFC 3339, not xs:dateTime.
