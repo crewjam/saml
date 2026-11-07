@@ -284,7 +284,7 @@ func TestRedirectBindingLogoutResponseSignature(t *testing.T) {
 		q := valid
 		q.xml = spcovSerialize(t, lr.Element())
 		err := e.sp.ValidateLogoutResponseRequest(redirectRequest(e.sp, q.build(t)))
-		assert.Error(t, err, "`Destination` does not match SloURL (expected \"https://sp.example.com/saml/slo\")")
+		assert.Error(t, spcovPrivateErr(t, err), "`Destination` does not match SloURL (expected \"https://sp.example.com/saml/slo\")")
 	})
 }
 
@@ -374,7 +374,7 @@ func TestValidateLogoutRequest(t *testing.T) {
 	t.Run("unparsable form", func(t *testing.T) {
 		req, err := e.sp.ValidateLogoutRequest(httptest.NewRequest(http.MethodPost, e.sp.SloURL.String()+"?a=%zz", nil))
 		assert.Check(t, is.Nil(req))
-		assert.Error(t, err, `unable to parse form: invalid URL escape "%zz"`)
+		assert.Error(t, spcovPrivateErr(t, err), `unable to parse form: invalid URL escape "%zz"`)
 	})
 
 	future := spcovNow.Add(time.Hour)
