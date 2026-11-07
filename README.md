@@ -115,7 +115,7 @@ Next we'll have to register our service provider with the identity provider to e
            "spAcsUrl":"http://localhost:8000/saml/acs",
            "spEntityId":"http://localhost:8000/saml/metadata"}'
 
-By default `samlsp` uses `<root URL>/saml/acs` as the ACS URL and `<root URL>/saml/metadata` as the entity ID. You can view the service provider's metadata at `localhost:8000/saml/metadata`.
+By default `samlsp` uses `<root URL>/saml/acs` as the ACS URL and `<root URL>/saml/metadata` as the entity ID (set `Options.AcsPath`, `Options.MetadataPath` and `Options.SloPath` to use different paths). You can view the service provider's metadata at `localhost:8000/saml/metadata`.
 
 Now you should be able to authenticate. The flow should look like this:
 
