@@ -123,6 +123,15 @@ type ServiceProvider struct {
 	// queries (QueryAttributes). If nil, http.DefaultClient is used.
 	HTTPClient *http.Client
 
+	// AllowInsecureSOAPEndpoints lets the service provider send SOAP
+	// messages (ArtifactResolve, AttributeQuery and SOAP LogoutRequest) to
+	// http endpoints of the IdP. By default they are sent only to https
+	// endpoints, and an http one fails with an error matching
+	// ErrInsecureSOAPEndpoint, so that the user's NameID, attributes and
+	// assertions never cross the network in the clear. Set it only for
+	// tests and development setups.
+	AllowInsecureSOAPEndpoints bool
+
 	// MetadataURL is the full URL to the metadata endpoint on this host,
 	// i.e. https://example.com/saml/metadata
 	MetadataURL url.URL
@@ -644,7 +653,20 @@ func (sp *ServiceProvider) GetSSOBindingLocation(binding string) string {
 // specified type
 func (sp *ServiceProvider) GetArtifactBindingLocation(binding string) string {
 	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
+		// The deprecated IDPSSODescriptor.ArtifactResolutionServices is
+		// consulted first, so that a caller that changed it after parsing
+		// the metadata gets what it set. The indexed endpoints are used when
+		// it is empty, as it is when the descriptor was built in code with
+		// only SSODescriptor.ArtifactResolutionServices.
 		for _, artifactResolutionService := range idpSSODescriptor.ArtifactResolutionServices {
+			if artifactResolutionService.Binding == binding {
+				return artifactResolutionService.Location
+			}
+		}
+		if len(idpSSODescriptor.ArtifactResolutionServices) > 0 {
+			continue
+		}
+		for _, artifactResolutionService := range idpSSODescriptor.SSODescriptor.ArtifactResolutionServices {
 			if artifactResolutionService.Binding == binding {
 				return artifactResolutionService.Location
 			}
@@ -1067,12 +1089,30 @@ type AssertionAttributes []AssertionAttribute
 
 // Get returns the assertion attribute whose Name or FriendlyName
 // matches name, or nil if no matching attribute is found.
+//
+// FriendlyName "MUST NOT be used as a basis for formally identifying SAML
+// attributes" (saml-core §2.7.3.1): an attribute's FriendlyName can equal
+// another attribute's Name.
+//
+// Deprecated: Get can return an attribute whose FriendlyName equals the
+// Name asked for, in place of the attribute with that Name. Use GetByName.
 func (aa AssertionAttributes) Get(name string) *AssertionAttribute {
 	for _, attr := range aa {
 		if attr.Name == name {
 			return &attr
 		}
 		if attr.FriendlyName == name {
+			return &attr
+		}
+	}
+	return nil
+}
+
+// GetByName returns the assertion attribute whose Name is name, or nil if
+// there is none. Unlike Get, it never matches a FriendlyName.
+func (aa AssertionAttributes) GetByName(name string) *AssertionAttribute {
+	for _, attr := range aa {
+		if attr.Name == name {
 			return &attr
 		}
 	}
@@ -1147,8 +1187,12 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 		return nil, retErr
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", sp.GetArtifactBindingLocation(SOAPBinding),
-		bytes.NewReader(requestBody))
+	location := sp.GetArtifactBindingLocation(SOAPBinding)
+	if err := checkSOAPEndpoint(location, sp.AllowInsecureSOAPEndpoints); err != nil {
+		retErr.PrivateErr = classify(fmt.Errorf("cannot resolve artifact: %w", err), ErrArtifactResolution)
+		return nil, retErr
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", location, bytes.NewReader(requestBody))
 	if err != nil {
 		retErr.PrivateErr = classify(err, ErrArtifactResolution)
 		return nil, retErr
@@ -1603,7 +1647,7 @@ func (sp *ServiceProvider) decryptElement(encryptedEl *etree.Element) (*etree.El
 	for i, k := range sp.DecryptionKeys {
 		keys = append(keys, namedDecryptionKey{fmt.Sprintf("DecryptionKeys[%d]", i), k})
 	}
-	return decryptWithKeys(encryptedEl, keys)
+	return decryptWithKeys(encryptedEl, keys, sp.entityID())
 }
 
 // parsePlaintext parses the plaintext of a decrypted element and returns its
@@ -1628,16 +1672,26 @@ func parsePlaintext(plaintextEl []byte) (*etree.Element, error) {
 }
 
 // decryptWithKey decrypts encryptedDataEl, the EncryptedData child of
-// encryptedEl, with decryptionKey. The content key is wrapped in an
-// EncryptedKey either beside the EncryptedData or inside its KeyInfo.
-func decryptWithKey(decryptionKey interface{}, encryptedEl, encryptedDataEl *etree.Element) ([]byte, error) {
-	key := decryptionKey
-	keyEl := encryptedEl.FindElement("./EncryptedKey")
-	if keyEl != nil {
-		var err error
-		key, err = xmlenc.Decrypt(decryptionKey, keyEl)
-		if err != nil {
+// encryptedEl, with decryptionKey. If encryptedKeyEl is not nil, it is an
+// EncryptedKey, beside the EncryptedData or inside its KeyInfo, that holds
+// the content key wrapped with decryptionKey.
+func decryptWithKey(decryptionKey interface{}, encryptedEl, encryptedKeyEl, encryptedDataEl *etree.Element) ([]byte, error) {
+	if encryptedKeyEl == nil {
+		return xmlenc.Decrypt(decryptionKey, encryptedDataEl)
+	}
+	key, err := xmlenc.Decrypt(decryptionKey, encryptedKeyEl)
+	if err != nil {
+		if encryptedKeyEl.Parent() == encryptedEl {
 			return nil, classify(fmt.Errorf("failed to decrypt key from response: %w", err), ErrDecryptionFailed)
+		}
+		return nil, err
+	}
+	// The block ciphers unwrap an EncryptedKey in KeyInfo themselves, so
+	// hand them the EncryptedData without one, now that the key is known.
+	if encryptedDataEl.FindElement("./KeyInfo/EncryptedKey") != nil {
+		encryptedDataEl = encryptedDataEl.Copy()
+		for _, el := range encryptedDataEl.FindElements("./KeyInfo/EncryptedKey") {
+			el.Parent().RemoveChild(el)
 		}
 	}
 	return xmlenc.Decrypt(key, encryptedDataEl)

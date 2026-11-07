@@ -24,14 +24,20 @@ func (idp *IdentityProvider) httpClient() *http.Client {
 }
 
 // soapLogoutEndpoint returns the first SingleLogoutService of metadata with
-// the SOAP binding and an http or https Location, or nil.
-func soapLogoutEndpoint(metadata *EntityDescriptor) *Endpoint {
+// the SOAP binding and an https Location (or an http one, if
+// AllowInsecureSOAPEndpoints is set), or nil. An endpoint skipped because it
+// is not https is logged.
+func (idp *IdentityProvider) soapLogoutEndpoint(metadata *EntityDescriptor) *Endpoint {
 	for _, spssoDescriptor := range metadata.SPSSODescriptors {
 		for _, endpoint := range spssoDescriptor.SingleLogoutServices {
 			if endpoint.Binding != SOAPBinding {
 				continue
 			}
 			if location, err := checkEndpointLocation(endpoint.Binding, endpoint.Location); err != nil || location == "" {
+				continue
+			}
+			if err := checkSOAPEndpoint(endpoint.Location, idp.AllowInsecureSOAPEndpoints); err != nil {
+				idp.Logger.Printf("ignoring the SOAP SingleLogoutService of %s: %s", metadata.EntityID, err)
 				continue
 			}
 			return &endpoint
@@ -45,9 +51,10 @@ func soapLogoutEndpoint(metadata *EntityDescriptor) *Endpoint {
 // metadata of the participant's service provider, lists, and checks the
 // LogoutResponse that comes back (see parseSOAPLogoutResponse). It returns
 // nil only if the service provider answered with a Success status. It
-// returns errNoSOAPLogoutEndpoint if metadata lists no SOAP endpoint.
+// returns errNoSOAPLogoutEndpoint if metadata lists no SOAP endpoint, or
+// only ones that are not https (see AllowInsecureSOAPEndpoints).
 func (idp *IdentityProvider) logoutParticipantSOAP(ctx context.Context, metadata *EntityDescriptor, participant SessionParticipant) error {
-	endpoint := soapLogoutEndpoint(metadata)
+	endpoint := idp.soapLogoutEndpoint(metadata)
 	if endpoint == nil {
 		return errNoSOAPLogoutEndpoint
 	}

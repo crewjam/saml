@@ -316,6 +316,15 @@ type IdentityProvider struct {
 	// StartLogout and ServeSLO). If nil, a client that gives up after 10
 	// seconds and does not follow redirects is used.
 	HTTPClient *http.Client
+
+	// AllowInsecureSOAPEndpoints lets the IdP send SOAP messages to http
+	// endpoints. By default a SOAP SingleLogoutService whose Location is not
+	// https is ignored, as if the service provider metadata did not list it
+	// (see ErrInsecureSOAPEndpoint), so that a LogoutRequest carrying the
+	// user's NameID never crosses the network in the clear; the participant
+	// is then logged out through the browser if it can be. Set it only for
+	// tests and development setups.
+	AllowInsecureSOAPEndpoints bool
 }
 
 // Metadata returns the metadata structure for this identity provider.
@@ -1165,7 +1174,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 
 	if session.UserScopedAffiliation != "" {
 		attributes = append(attributes, Attribute{
-			FriendlyName: "scopedAffiliation",
+			FriendlyName: "eduPersonScopedAffiliation",
 			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.9",
 			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
 			Values: []AttributeValue{{

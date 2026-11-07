@@ -47,11 +47,12 @@ type CookieSessionProvider struct {
 	// Revocations, if set, records sessions ended by back-channel single
 	// logout (see TerminateSessions), and GetSession refuses those sessions
 	// as if there were none. The sessions must implement RevocableSession,
-	// as those of JWTSessionCodec do; the signature of the session token
-	// keeps a client from changing what identifies its session. If nil,
-	// sessions cannot be ended without the browser, and TerminateSessions
-	// returns ErrSessionTerminationUnsupported. DefaultSessionProvider sets
-	// it.
+	// and Codec must say so by implementing RevocableSessionCodec, as
+	// JWTSessionCodec does; the signature of the session token keeps a
+	// client from changing what identifies its session. If nil, or if Codec
+	// does not implement RevocableSessionCodec, sessions cannot be ended
+	// without the browser, and TerminateSessions returns
+	// ErrSessionTerminationUnsupported. DefaultSessionProvider sets it.
 	Revocations SessionRevocationStore
 
 	// legacyDomain, if set, is the Domain of a session cookie set by an

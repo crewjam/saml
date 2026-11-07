@@ -69,3 +69,27 @@ type discardResponseWriter struct {
 func (d *discardResponseWriter) Header() http.Header         { return d.header }
 func (d *discardResponseWriter) Write(b []byte) (int, error) { return len(b), nil }
 func (d *discardResponseWriter) WriteHeader(int)             {}
+
+// terminateFrontChannelSessions ends the sessions that logoutRequest, a
+// LogoutRequest the IDP sent through the browser, names with Session, if it
+// implements SessionTerminator, so that copies of them held elsewhere are
+// refused as after a back-channel LogoutRequest. The browser's own session
+// has already been deleted, so failure does not change the answer to the
+// IDP: it is passed to OnError, whose response is discarded, unless the
+// provider cannot end sessions on the server at all.
+func (m *Middleware) terminateFrontChannelSessions(r *http.Request, logoutRequest *saml.LogoutRequest) {
+	terminator, ok := m.Session.(SessionTerminator)
+	if !ok {
+		return
+	}
+	err := terminator.TerminateSessions(r.Context(), logoutRequest)
+	if err == nil || errors.Is(err, ErrSessionTerminationUnsupported) {
+		return
+	}
+	m.reportBackChannelError(r, fmt.Errorf("%w: %w", errFrontChannelLogoutNotTerminated, err))
+}
+
+// errFrontChannelLogoutNotTerminated wraps the reason ServeSLO could not
+// end, beyond the requesting browser's session, the sessions named by a
+// LogoutRequest the IDP sent through the browser; it is passed to OnError.
+var errFrontChannelLogoutNotTerminated = errors.New("saml: cannot end the other sessions named by a front-channel LogoutRequest")

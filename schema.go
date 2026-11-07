@@ -1827,18 +1827,50 @@ func (a *Attribute) Element() *etree.Element {
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf §2.7.3.1.1
 type AttributeValue struct {
-	Type   string  `xml:"http://www.w3.org/2001/XMLSchema-instance type,attr"`
+	Type string `xml:"http://www.w3.org/2001/XMLSchema-instance type,attr"`
+
+	// Nil reports that the value is a SAML "null" value, carried as
+	// xsi:nil="true" (or "1") on an empty element (saml-core §2.7.3.1.1).
+	// It distinguishes a null value from an empty string. When Nil is set,
+	// Element writes xsi:nil="true" and omits Value and NameID.
+	Nil bool `xml:"http://www.w3.org/2001/XMLSchema-instance nil,attr,omitempty"`
+
+	// Encoding is the x500:Encoding XML attribute (namespace X500AttributeNamespace)
+	// that the X.500/LDAP attribute profile requires on each value, with the
+	// value "LDAP" (saml-profiles §8.2.4). It is written only when set.
+	Encoding string `xml:"urn:oasis:names:tc:SAML:2.0:profiles:attribute:X500 Encoding,attr,omitempty"`
+
 	Value  string  `xml:",chardata"`
 	NameID *NameID `xml:"urn:oasis:names:tc:SAML:2.0:assertion NameID"`
 }
+
+// X500AttributeNamespace is the namespace of the x500:Encoding XML attribute
+// defined by the X.500/LDAP attribute profile (saml-profiles §8.2.4).
+const X500AttributeNamespace = "urn:oasis:names:tc:SAML:2.0:profiles:attribute:X500"
+
+// X500EncodingLDAP is the x500:Encoding value the X.500/LDAP attribute
+// profile requires (saml-profiles §8.2.4).
+const X500EncodingLDAP = "LDAP"
 
 // Element returns an etree.Element representing the object in XML form.
 func (a *AttributeValue) Element() *etree.Element {
 	el := etree.NewElement("saml:AttributeValue")
 	el.CreateAttr("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance")
 	el.CreateAttr("xmlns:xs", "http://www.w3.org/2001/XMLSchema")
+	if a.Encoding != "" {
+		el.CreateAttr("xmlns:x500", X500AttributeNamespace)
+	}
 	if a.Type != "" {
 		el.CreateAttr("xsi:type", a.Type)
+	}
+	if a.Encoding != "" {
+		el.CreateAttr("x500:Encoding", a.Encoding)
+	}
+	if a.Nil {
+		// saml-core §2.7.3.1.1: a null value MUST be an empty element
+		// carrying xsi:nil="true" or "1".
+		el.CreateAttr("xsi:nil", "true")
+		return el
 	}
 	if a.NameID != nil {
 		el.AddChild(a.NameID.Element())
