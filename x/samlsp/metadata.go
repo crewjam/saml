@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/crewjam/saml"
-	legacy "github.com/crewjam/saml/samlsp"
+	"github.com/crewjam/saml/internal/idpmetadata"
 )
 
 // MetadataFunc returns the metadata of the identity provider (IdP) that a
@@ -111,29 +111,34 @@ func newMetadataOptions(opts []MetadataOption) metadataOptions {
 }
 
 func parseMetadata(data []byte, o metadataOptions) (*saml.EntityDescriptor, error) {
-	switch {
-	case len(o.certs) > 0 && o.entityID != "":
-		return legacy.ParseSignedMetadataByEntityID(data, o.entityID, o.certs)
-	case len(o.certs) > 0:
-		return legacy.ParseSignedMetadata(data, o.certs)
-	case o.entityID != "":
-		return legacy.ParseMetadataByEntityID(data, o.entityID)
-	default:
-		return legacy.ParseMetadata(data)
+	if len(o.certs) > 0 {
+		signed, err := saml.VerifyMetadataSignature(data, o.certs)
+		if err != nil {
+			return nil, err
+		}
+		data = signed
 	}
+	if o.entityID != "" {
+		return idpmetadata.ParseByEntityID(data, o.entityID)
+	}
+	md, err := idpmetadata.Parse(data)
+	var multiple *idpmetadata.MultipleIDPsError
+	if errors.As(err, &multiple) {
+		return nil, fmt.Errorf("samlsp: %s; use WithIdentityProviderEntityID to choose one", multiple)
+	}
+	return md, err
 }
 
+// maxMetadataSize is the size in bytes of the largest metadata document
+// RemoteMetadata reads. It leaves room for federation aggregates.
+const maxMetadataSize = 256 << 20
+
 func fetchMetadata(ctx context.Context, metadataURL url.URL, o metadataOptions) (*saml.EntityDescriptor, error) {
-	switch {
-	case len(o.certs) > 0 && o.entityID != "":
-		return legacy.FetchSignedMetadataByEntityID(ctx, o.client, metadataURL, o.entityID, o.certs)
-	case len(o.certs) > 0:
-		return legacy.FetchSignedMetadata(ctx, o.client, metadataURL, o.certs)
-	case o.entityID != "":
-		return legacy.FetchMetadataByEntityID(ctx, o.client, metadataURL, o.entityID)
-	default:
-		return legacy.FetchMetadata(ctx, o.client, metadataURL)
+	data, err := idpmetadata.Fetch(ctx, o.client, metadataURL, maxMetadataSize)
+	if err != nil {
+		return nil, err
 	}
+	return parseMetadata(data, o)
 }
 
 // RemoteMetadata returns a MetadataFunc that fetches identity provider
