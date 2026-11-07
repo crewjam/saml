@@ -143,6 +143,26 @@ This package supports the **Web SSO** profile. Message flows from the service pr
 
 The package can produce signed SAML assertions, and can validate both signed and encrypted SAML assertions.
 
+## Customizing the session lifetime
+
+Sessions last one hour by default. This used to be set with `samlsp.Options.CookieMaxAge`, which has been removed. To change it, set the `MaxAge` of both the session cookie and the JWT it holds, then assign the provider to the middleware:
+
+```golang
+sessionMaxAge := 12 * time.Hour
+
+codec := samlsp.DefaultSessionCodec(opts)
+codec.MaxAge = sessionMaxAge
+
+sessionProvider := samlsp.DefaultSessionProvider(opts)
+sessionProvider.MaxAge = sessionMaxAge
+sessionProvider.Codec = codec
+
+samlSP, _ := samlsp.New(opts)
+samlSP.Session = sessionProvider
+```
+
+Setting only the cookie's `MaxAge` is not enough: the browser keeps the cookie, but the token in it is rejected once the JWT expires.
+
 ## RelayState
 
 The _RelayState_ parameter allows you to pass user state information across the authentication flow. The most common use for this is to allow a user to request a deep link into your site, be redirected through the SAML login flow, and upon successful completion, be directed to the originally requested link, rather than the root.
