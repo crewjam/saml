@@ -27,10 +27,27 @@
 // - `Logger` - This was used to emit errors while validating, which is an anti-pattern.
 // - `IDPMetadataURL` - Instead use `FetchMetadata()`
 // - `HTTPClient` - Instead pass httpClient to FetchMetadata
-// - `CookieMaxAge` - Instead assign a custom CookieRequestTracker or CookieSessionProvider
+// - `CookieMaxAge` - Instead set MaxAge on both the CookieSessionProvider and its JWTSessionCodec (see "Customizing the session lifetime" below)
 // - `CookieName` - Instead assign a custom CookieRequestTracker or CookieSessionProvider
 // - `CookieDomain` - Instead assign a custom CookieRequestTracker or CookieSessionProvider
-// - `CookieDomain` - Instead assign a custom CookieRequestTracker or CookieSessionProvider
+//
+// # Customizing the session lifetime
+//
+// Sessions last one hour by default. To change that, set the MaxAge of both the session cookie and the JWT it holds, then assign the provider to the middleware:
+//
+//	sessionMaxAge := 12 * time.Hour
+//
+//	codec := samlsp.DefaultSessionCodec(opts)
+//	codec.MaxAge = sessionMaxAge
+//
+//	sessionProvider := samlsp.DefaultSessionProvider(opts)
+//	sessionProvider.MaxAge = sessionMaxAge
+//	sessionProvider.Codec = codec
+//
+//	middleware, _ := samlsp.New(opts)
+//	middleware.Session = sessionProvider
+//
+// Setting only the cookie's MaxAge is not enough: the browser keeps the cookie, but the token in it is rejected once the JWT expires.
 //
 // # Getting Started as a Service Provider
 //

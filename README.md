@@ -115,7 +115,7 @@ Next we'll have to register our service provider with the identity provider to e
            "spAcsUrl":"http://localhost:8000/saml/acs",
            "spEntityId":"http://localhost:8000/saml/metadata"}'
 
-By default `samlsp` uses `<root URL>/saml/acs` as the ACS URL and `<root URL>/saml/metadata` as the entity ID. You can view the service provider's metadata at `localhost:8000/saml/metadata`.
+By default `samlsp` uses `<root URL>/saml/acs` as the ACS URL and `<root URL>/saml/metadata` as the entity ID (set `Options.AcsPath`, `Options.MetadataPath` and `Options.SloPath` to use different paths). You can view the service provider's metadata at `localhost:8000/saml/metadata`.
 
 Now you should be able to authenticate. The flow should look like this:
 
@@ -142,6 +142,26 @@ The SAML standard is huge and complex with many dark corners and strange, unused
 This package supports the **Web SSO** profile. Message flows from the service provider to the IDP are supported using the **HTTP Redirect** binding and the **HTTP POST** binding. Message flows from the IDP to the service provider are supported via the **HTTP POST** binding.
 
 The package can produce signed SAML assertions, and can validate both signed and encrypted SAML assertions.
+
+## Customizing the session lifetime
+
+Sessions last one hour by default. This used to be set with `samlsp.Options.CookieMaxAge`, which has been removed. To change it, set the `MaxAge` of both the session cookie and the JWT it holds, then assign the provider to the middleware:
+
+```golang
+sessionMaxAge := 12 * time.Hour
+
+codec := samlsp.DefaultSessionCodec(opts)
+codec.MaxAge = sessionMaxAge
+
+sessionProvider := samlsp.DefaultSessionProvider(opts)
+sessionProvider.MaxAge = sessionMaxAge
+sessionProvider.Codec = codec
+
+samlSP, _ := samlsp.New(opts)
+samlSP.Session = sessionProvider
+```
+
+Setting only the cookie's `MaxAge` is not enough: the browser keeps the cookie, but the token in it is rejected once the JWT expires.
 
 ## RelayState
 

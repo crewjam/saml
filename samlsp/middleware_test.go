@@ -2,6 +2,7 @@ package samlsp
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -228,6 +229,40 @@ func TestMiddlewareRequireAccountNoCredsPostBinding(t *testing.T) {
 		resp.Header().Get("Content-Security-Policy")))
 
 	assert.Check(t, is.Equal("text/html", resp.Header().Get("Content-type")))
+}
+
+func TestMiddlewareRequireAccountNoCredsPostBindingScriptNonce(t *testing.T) {
+	test := NewMiddlewareTest(t)
+	test.Middleware.ServiceProvider.IDPMetadata.IDPSSODescriptors[0].SingleSignOnServices = test.Middleware.ServiceProvider.IDPMetadata.IDPSSODescriptors[0].SingleSignOnServices[1:2]
+
+	type nonceKey struct{}
+	test.Middleware.ScriptNonce = func(r *http.Request) string {
+		nonce, _ := r.Context().Value(nonceKey{}).(string)
+		return nonce
+	}
+
+	handler := test.Middleware.RequireAccount(
+		http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+			panic("not reached")
+		}))
+
+	req, _ := http.NewRequest("GET", "/frob", nil)
+	req = req.WithContext(context.WithValue(req.Context(), nonceKey{}, "n0nce"))
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	assert.Check(t, is.Equal(http.StatusOK, resp.Code))
+	// the body is the usual form, with the nonce on its <script> element
+	expected := strings.Replace(string(golden.Get(t, "expected_post_binding_response.html")),
+		"<script>", `<script nonce="n0nce">`, 1)
+	assert.Check(t, is.Equal(expected, resp.Body.String()))
+
+	// the script content, and so the CSP hash, is unchanged
+	scriptContent := "document.getElementById('SAMLSubmitButton').style.visibility=\"hidden\";document.getElementById('SAMLRequestForm').submit();"
+	scriptSum := sha256.Sum256([]byte(scriptContent))
+	scriptHash := base64.StdEncoding.EncodeToString(scriptSum[:])
+	assert.Check(t, is.Equal("default-src; script-src 'sha256-"+scriptHash+"'; reflected-xss block; referrer no-referrer;",
+		resp.Header().Get("Content-Security-Policy")))
 }
 
 func TestMiddlewareRequireAccountCreds(t *testing.T) {

@@ -56,6 +56,17 @@ type Options struct {
 	// signing certificate outside its validity period. See
 	// saml.ServiceProvider.IgnoreCertificateExpiry.
 	IgnoreCertificateExpiry bool
+
+	// MetadataPath, AcsPath and SloPath set the paths of the SAML metadata,
+	// AssertionConsumerService and SingleLogoutService endpoints. Each is
+	// resolved as a URL reference against URL, so a relative path (such as
+	// the defaults "saml/metadata", "saml/acs" and "saml/slo") is appended to
+	// the path of URL, and an absolute path (beginning with "/") replaces it.
+	// Empty values use the defaults. When EntityID is empty the metadata URL is
+	// used as the entity ID, so changing MetadataPath changes it too.
+	MetadataPath string
+	AcsPath      string
+	SloPath      string
 }
 
 func getDefaultSigningMethod(signer crypto.Signer) jwt.SigningMethod {
@@ -137,9 +148,9 @@ func DefaultRequestTracker(opts Options, serviceProvider *saml.ServiceProvider) 
 // DefaultServiceProvider returns the default saml.ServiceProvider for the provided
 // options.
 func DefaultServiceProvider(opts Options) saml.ServiceProvider {
-	metadataURL := opts.URL.ResolveReference(&url.URL{Path: "saml/metadata"})
-	acsURL := opts.URL.ResolveReference(&url.URL{Path: "saml/acs"})
-	sloURL := opts.URL.ResolveReference(&url.URL{Path: "saml/slo"})
+	metadataURL := opts.URL.ResolveReference(&url.URL{Path: pathOrDefault(opts.MetadataPath, "saml/metadata")})
+	acsURL := opts.URL.ResolveReference(&url.URL{Path: pathOrDefault(opts.AcsPath, "saml/acs")})
+	sloURL := opts.URL.ResolveReference(&url.URL{Path: pathOrDefault(opts.SloPath, "saml/slo")})
 
 	var forceAuthn *bool
 	if opts.ForceAuthn {
@@ -181,6 +192,13 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		AssertionConsumerServiceBindings: opts.AssertionConsumerServiceBindings,
 		IgnoreCertificateExpiry:          opts.IgnoreCertificateExpiry,
 	}
+}
+
+func pathOrDefault(path, defaultPath string) string {
+	if path == "" {
+		return defaultPath
+	}
+	return path
 }
 
 // defaultSigningMethodForKey returns the signature method used for signed

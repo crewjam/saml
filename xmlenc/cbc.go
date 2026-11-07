@@ -155,14 +155,15 @@ var (
 		cipher:    aes.NewCipher,
 	}
 
-	// TripleDES implements DES in CBC mode for encryption and decryption. Despite
-	// its name and algorithm URI it takes an 8 byte single DES key, not a 24 byte
-	// 3DES one, so it is not registered as a decrypter: a document naming
-	// tripledes-cbc gets ErrAlgorithmNotImplemented instead of weak decryption.
+	// TripleDES implements 3DES (DES-EDE3) in CBC mode for encryption and
+	// decryption, with a 24 byte key as XML Encryption section 5.2.1 requires.
+	// 3DES is a legacy cipher with a 64-bit block, so it is not registered as a
+	// decrypter: a document naming tripledes-cbc gets ErrAlgorithmNotImplemented
+	// unless the application opts in with RegisterDecrypter(TripleDES).
 	TripleDES BlockCipher = CBC{
-		keySize:   8,
+		keySize:   24,
 		algorithm: "http://www.w3.org/2001/04/xmlenc#tripledes-cbc",
-		cipher:    des.NewCipher,
+		cipher:    des.NewTripleDESCipher,
 	}
 )
 
