@@ -31,13 +31,21 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
+	"sort"
+	"sync"
 	"time"
 
 	"github.com/crewjam/saml/samlsp"
 )
 
-var links = map[string]Link{}
+// linkStore holds the short links. Handlers run concurrently, so every
+// access goes through mu.
+type linkStore struct {
+	mu    sync.Mutex
+	links map[string]Link
+}
+
+var links = &linkStore{links: map[string]Link{}}
 
 // Link represents a short link
 type Link struct {
@@ -46,28 +54,71 @@ type Link struct {
 	Owner     string
 }
 
-// CreateLink handles requests to create links
-func CreateLink(w http.ResponseWriter, r *http.Request) {
-	account := r.Header.Get("X-Remote-User")
+// currentAccount returns the SAML NameID of the signed-in user, which
+// identifies the owner of a link. It is taken from the session samlsp
+// established, never from a request header a client could set itself.
+func currentAccount(r *http.Request) (string, bool) {
+	switch session := samlsp.SessionFromContext(r.Context()).(type) {
+	case samlsp.JWTSessionClaims:
+		// The default session codec stores the NameID value as the subject.
+		return session.Subject, session.Subject != ""
+	case samlsp.SessionWithSAMLNameID:
+		nameID, ok := session.GetSAMLNameID()
+		return nameID.Value, ok && nameID.Value != ""
+	default:
+		return "", false
+	}
+}
 
+// newShortLink returns a random, URL-safe short link name.
+func newShortLink() (string, error) {
 	randomness := make([]byte, 8)
-	if _, err := r.Body.Read(randomness); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if _, err := rand.Read(randomness); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(randomness), nil
+}
+
+// CreateLink handles requests to create links. The target is the form value
+// "t", for example:
+//
+//	curl -d t=https://example.com/ ...
+func CreateLink(w http.ResponseWriter, r *http.Request) {
+	account, ok := currentAccount(r)
+	if !ok {
+		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+		return
+	}
+
+	target, err := url.Parse(r.FormValue("t"))
+	if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" {
+		http.Error(w, "t must be an absolute http or https URL", http.StatusBadRequest)
+		return
+	}
+
+	shortLink, err := newShortLink()
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	l := Link{
-		ShortLink: base64.RawURLEncoding.EncodeToString(randomness),
-		Target:    r.FormValue("t"),
+		ShortLink: shortLink,
+		Target:    target.String(),
 		Owner:     account,
 	}
-	links[l.ShortLink] = l
+
+	links.mu.Lock()
+	links.links[l.ShortLink] = l
+	links.mu.Unlock()
 
 	fmt.Fprintf(w, "%s\n", l.ShortLink)
 }
 
 // ServeLink handles requests to redirect to a link
 func ServeLink(w http.ResponseWriter, r *http.Request) {
-	l, ok := links[strings.TrimPrefix(r.URL.Path, "/")]
+	links.mu.Lock()
+	l, ok := links.links[r.PathValue("link")]
+	links.mu.Unlock()
 	if !ok {
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		return
@@ -77,11 +128,25 @@ func ServeLink(w http.ResponseWriter, r *http.Request) {
 
 // ListLinks returns a list of the current user's links
 func ListLinks(w http.ResponseWriter, r *http.Request) {
-	account := r.Header.Get("X-Remote-User")
-	for _, l := range links {
+	account, ok := currentAccount(r)
+	if !ok {
+		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+		return
+	}
+
+	links.mu.Lock()
+	var mine []string
+	for _, l := range links.links {
 		if l.Owner == account {
-			fmt.Fprintf(w, "%s\n", l.ShortLink)
+			mine = append(mine, l.ShortLink)
 		}
+	}
+	links.mu.Unlock()
+
+	sort.Strings(mine)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	for _, shortLink := range mine {
+		fmt.Fprintf(w, "%s\n", shortLink)
 	}
 }
 
