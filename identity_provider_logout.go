@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"regexp"
 	"time"
 
 	"github.com/beevik/etree"
@@ -187,12 +186,11 @@ func (req *IdpLogoutRequest) parseRequest() (*etree.Element, error) {
 // verifySignature checks the signature of the request against the signing
 // certificates of the service provider that issued it.
 func (req *IdpLogoutRequest) verifySignature(root *etree.Element) error {
+	// spSigningCerts (shared with the HTTP-POST-SimpleSign binding) fails if
+	// the metadata has no signing certificate.
 	certs, err := spSigningCerts(req.ServiceProviderMetadata)
 	if err != nil {
 		return err
-	}
-	if len(certs) == 0 {
-		return errors.New("the service provider metadata has no signing certificate")
 	}
 
 	if req.redirectMessage != nil && req.redirectMessage.SignedContent != nil {
@@ -440,38 +438,6 @@ func (idp *IdentityProvider) ServeSLO(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 }
-
-// spSigningCerts returns the certificates the service provider described by
-// metadata uses to sign messages: those in its SPSSODescriptors' key
-// descriptors whose use is "signing" or unspecified.
-func spSigningCerts(metadata *EntityDescriptor) ([]*x509.Certificate, error) {
-	var certs []*x509.Certificate
-	for _, spssoDescriptor := range metadata.SPSSODescriptors {
-		for _, keyDescriptor := range spssoDescriptor.KeyDescriptors {
-			if keyDescriptor.Use != "" && keyDescriptor.Use != "signing" {
-				continue
-			}
-			for _, x509Cert := range keyDescriptor.KeyInfo.X509Data.X509Certificates {
-				data := whitespaceRegexp.ReplaceAllString(x509Cert.Data, "")
-				if data == "" {
-					continue
-				}
-				der, err := base64.StdEncoding.DecodeString(data)
-				if err != nil {
-					return nil, fmt.Errorf("cannot decode service provider certificate: %w", err)
-				}
-				cert, err := x509.ParseCertificate(der)
-				if err != nil {
-					return nil, fmt.Errorf("cannot parse service provider certificate: %w", err)
-				}
-				certs = append(certs, cert)
-			}
-		}
-	}
-	return certs, nil
-}
-
-var whitespaceRegexp = regexp.MustCompile(`\s+`)
 
 // verifyEnvelopedSignature checks the enveloped XML signature of el, which
 // must be a direct child of el and reference it, against certs. The

@@ -105,7 +105,9 @@ type ResponseWriter interface {
 // DefaultResponseWriter is the default ResponseWriter. It calls
 // req.WriteResponse, which writes an auto-submitting HTML form (see
 // IdentityProvider.ResponseFormTemplate) that posts the response to the
-// service provider using the HTTP-POST binding.
+// service provider using the HTTP-POST binding, or, when the ACS endpoint
+// uses the HTTP-POST-SimpleSign binding, using that binding (see
+// IdentityProvider.SimpleSignResponseFormTemplate).
 type DefaultResponseWriter struct{}
 
 // WriteResponse implements ResponseWriter.
@@ -144,11 +146,39 @@ type IdentityProvider struct {
 	ValidDuration           *time.Duration
 	ResponseFormTemplate    *template.Template
 
+	// SimpleSignResponseFormTemplate, if set, replaces the default
+	// auto-submitting HTML form used to send responses to ACS endpoints with
+	// the HTTP-POST-SimpleSign binding. It is executed with an
+	// IdpAuthnRequestSimpleSignForm and must post its SAMLResponse, SigAlg
+	// and Signature fields, and RelayState when it is not empty (an empty
+	// RelayState field would be included in the signed content).
+	SimpleSignResponseFormTemplate *template.Template
+
+	// AdvertiseSimpleSignSSO, if true, adds an HTTP-POST-SimpleSign
+	// SingleSignOnService endpoint at SSOURL to the metadata. ServeSSO
+	// accepts SimpleSign authentication requests whether or not this is set.
+	AdvertiseSimpleSignSSO bool
+
 	// ResponseWriter, if set, writes the HTTP response carrying the SAML
 	// response in ServeSSO and ServeIDPInitiated. If nil,
 	// DefaultResponseWriter is used, which posts the response with the
 	// HTML form from ResponseFormTemplate.
 	ResponseWriter ResponseWriter
+
+	// OnError, if non-nil, is called when ServeSSO, ServeIDPInitiated or
+	// ServeMetadata cannot complete a request, in place of DefaultOnError,
+	// which logs err to Logger and responds with status. status is the HTTP
+	// status the IdentityProvider would respond with: StatusBadRequest for a
+	// request that cannot be parsed or is invalid, StatusNotFound for an
+	// IdP-initiated request for an unknown service provider, and
+	// StatusInternalServerError otherwise. err can be matched with errors.Is
+	// against the error values of this package, such as
+	// ErrUnknownServiceProvider or ErrInvalidCertificate.
+	//
+	// OnError must write the response. When writing the SAML response or
+	// the metadata failed part way, some of it may already have been
+	// written to w.
+	OnError func(w http.ResponseWriter, r *http.Request, status int, err error)
 
 	// ExtraCertificates are additional certificates published in the IdP
 	// metadata as signing keys, after Certificate. They are never used to
@@ -271,6 +301,13 @@ func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 		},
 	}
 
+	if idp.AdvertiseSimpleSignSSO {
+		ed.IDPSSODescriptors[0].SingleSignOnServices = append(ed.IDPSSODescriptors[0].SingleSignOnServices, Endpoint{
+			Binding:  HTTPPostSimpleSignBinding,
+			Location: idp.SSOURL.String(),
+		})
+	}
+
 	for _, cert := range idp.ExtraCertificates {
 		if cert == nil {
 			continue
@@ -338,20 +375,22 @@ func (idp *IdentityProvider) SignedMetadata() (*etree.Element, error) {
 
 // ServeMetadata is an http.HandlerFunc that serves the IDP metadata. If
 // SignMetadata is set, the metadata is signed.
-func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, _ *http.Request) {
+//
+// If the metadata cannot be signed, serialized or written, a
+// StatusInternalServerError response is sent. Set OnError to handle these
+// failures differently.
+func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, r *http.Request) {
 	var buf []byte
 	if idp.SignMetadata {
 		el, err := idp.SignedMetadata()
 		if err != nil {
-			idp.Logger.Printf("ERROR: failed to sign metadata: %s", err)
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to sign metadata: %w", err))
 			return
 		}
 		doc := etree.NewDocument()
 		doc.SetRoot(el)
 		if buf, err = doc.WriteToBytes(); err != nil {
-			idp.Logger.Printf("ERROR: %s", err)
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to serialize metadata: %w", err))
 			return
 		}
 	} else {
@@ -359,9 +398,24 @@ func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, _ *http.Reques
 	}
 	w.Header().Set("Content-Type", "application/samlmetadata+xml")
 	if _, err := w.Write(buf); err != nil {
-		idp.Logger.Printf("ERROR: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to write metadata: %w", err))
 	}
+}
+
+// DefaultOnError is how ServeSSO, ServeIDPInitiated and ServeMetadata report
+// an error when OnError is nil: it logs err to Logger and responds with
+// status. An OnError can call it for the errors it does not handle itself.
+func (idp *IdentityProvider) DefaultOnError(w http.ResponseWriter, _ *http.Request, status int, err error) {
+	idp.Logger.Printf("%s", err)
+	http.Error(w, http.StatusText(status), status)
+}
+
+func (idp *IdentityProvider) onError(w http.ResponseWriter, r *http.Request, status int, err error) {
+	if idp.OnError != nil {
+		idp.OnError(w, r, status, err)
+		return
+	}
+	idp.DefaultOnError(w, r, status, err)
 }
 
 // ServeSSO handles SAML auth requests.
@@ -381,17 +435,17 @@ func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, _ *http.Reques
 //
 // If the assertion cannot be created or returned, a StatusInternalServerError
 // response is sent.
+//
+// Set OnError to handle these failures differently.
 func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 	req, err := NewIdpAuthnRequest(idp, r)
 	if err != nil {
-		idp.Logger.Printf("failed to parse request: %s", err)
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		idp.onError(w, r, http.StatusBadRequest, fmt.Errorf("failed to parse request: %w", err))
 		return
 	}
 
 	if err := req.Validate(); err != nil {
-		idp.Logger.Printf("failed to validate request: %s", err)
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		idp.onError(w, r, http.StatusBadRequest, fmt.Errorf("failed to validate request: %w", err))
 		return
 	}
 
@@ -408,13 +462,11 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 		assertionMaker = DefaultAssertionMaker{}
 	}
 	if err := assertionMaker.MakeAssertion(req, session); err != nil {
-		idp.Logger.Printf("failed to make assertion: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to make assertion: %w", err))
 		return
 	}
 	if err := idp.responseWriter().WriteResponse(w, req); err != nil {
-		idp.Logger.Printf("failed to write response: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to write response: %w", err))
 		return
 	}
 }
@@ -422,55 +474,20 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 // ServeIDPInitiated handes an IDP-initiated authorization request. Requests of this
 // type require us to know a registered service provider and (optionally) the RelayState
 // that will be passed to the application.
+//
+// It responds with StatusNotFound if the service provider is unknown, and
+// with StatusInternalServerError if the service provider cannot be looked up
+// or has no usable assertion consumer service, or the assertion cannot be
+// created or returned. Set OnError to handle these failures differently, or
+// build a handler from NewIdpInitiatedRequest.
 func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Request, serviceProviderID string, relayState string) {
-	req := &IdpAuthnRequest{
-		IDP:         idp,
-		HTTPRequest: r,
-		RelayState:  relayState,
-		Now:         TimeNow(),
-	}
-
-	// Resolve the service provider and its ACS endpoint before asking the
-	// SessionProvider for a session, as ServeSSO does via Validate. Otherwise
-	// a request for an unknown service provider would prompt the user to log
-	// in before failing, and the SessionProvider would see a request without
-	// ServiceProviderMetadata.
-	var err error
-	req.ServiceProviderMetadata, err = idp.ServiceProviderProvider.GetServiceProvider(r, serviceProviderID)
-	if err == os.ErrNotExist {
-		idp.Logger.Printf("cannot find service provider: %s", serviceProviderID)
-		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
-		return
-	} else if err != nil {
-		idp.Logger.Printf("cannot find service provider %s: %v", serviceProviderID, err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
-
-	// find an ACS endpoint that we can use
-	for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
-		for _, endpoint := range spssoDescriptor.AssertionConsumerServices {
-			if endpoint.Binding == HTTPPostBinding {
-				// explicitly copy loop iterator variables
-				//
-				// c.f. https://github.com/golang/go/wiki/CommonMistakes#using-reference-to-loop-iterator-variable
-				//
-				// (note that I'm pretty sure this isn't strictly necessary because we break out of the loop immediately,
-				// but it certainly doesn't hurt anything and may prevent bugs in the future.)
-				endpoint, spssoDescriptor := endpoint, spssoDescriptor
-
-				req.ACSEndpoint = &endpoint
-				req.SPSSODescriptor = &spssoDescriptor
-				break
-			}
+	req, err := idp.NewIdpInitiatedRequest(r, serviceProviderID, relayState)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, ErrUnknownServiceProvider) {
+			status = http.StatusNotFound
 		}
-		if req.ACSEndpoint != nil {
-			break
-		}
-	}
-	if req.ACSEndpoint == nil {
-		idp.Logger.Printf("saml metadata does not contain an Assertion Customer Service url")
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		idp.onError(w, r, status, err)
 		return
 	}
 
@@ -486,16 +503,58 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 		assertionMaker = DefaultAssertionMaker{}
 	}
 	if err := assertionMaker.MakeAssertion(req, session); err != nil {
-		idp.Logger.Printf("failed to make assertion: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to make assertion: %w", err))
 		return
 	}
 
 	if err := idp.responseWriter().WriteResponse(w, req); err != nil {
-		idp.Logger.Printf("failed to write response: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to write response: %w", err))
 		return
 	}
+}
+
+// NewIdpInitiatedRequest returns the IdpAuthnRequest for an IdP-initiated
+// login to the service provider serviceProviderID, with its metadata and the
+// first HTTP-POST assertion consumer service in it resolved. It is the part
+// of ServeIDPInitiated that runs before the SessionProvider is asked for a
+// session.
+//
+// It returns an error matching ErrUnknownServiceProvider (and os.ErrNotExist)
+// if the ServiceProviderProvider does not know serviceProviderID,
+// ErrUnknownAssertionConsumerService if the service provider has no HTTP-POST
+// assertion consumer service, and otherwise the ServiceProviderProvider's
+// error, wrapped.
+func (idp *IdentityProvider) NewIdpInitiatedRequest(r *http.Request, serviceProviderID string, relayState string) (*IdpAuthnRequest, error) {
+	req := &IdpAuthnRequest{
+		IDP:         idp,
+		HTTPRequest: r,
+		RelayState:  relayState,
+		Now:         TimeNow(),
+	}
+
+	// Resolve the service provider and its ACS endpoint before the
+	// SessionProvider is asked for a session, as ServeSSO does via Validate.
+	// Otherwise a request for an unknown service provider would prompt the
+	// user to log in before failing, and the SessionProvider would see a
+	// request without ServiceProviderMetadata.
+	var err error
+	req.ServiceProviderMetadata, err = idp.ServiceProviderProvider.GetServiceProvider(r, serviceProviderID)
+	if err == os.ErrNotExist {
+		return nil, classify(fmt.Errorf("cannot find service provider: %s", serviceProviderID), ErrUnknownServiceProvider, os.ErrNotExist)
+	} else if err != nil {
+		return nil, fmt.Errorf("cannot find service provider %s: %w", serviceProviderID, err)
+	}
+
+	// find an ACS endpoint that we can use: the first HTTP-POST one, or,
+	// if there is none, the first HTTP-POST-SimpleSign one.
+	if !req.selectACSEndpoint(func(ep *IndexedEndpoint) bool { return ep.Binding == HTTPPostBinding }) {
+		req.selectACSEndpoint(func(ep *IndexedEndpoint) bool { return ep.Binding == HTTPPostSimpleSignBinding })
+	}
+	if req.ACSEndpoint == nil {
+		return nil, classify(errors.New("saml metadata does not contain an Assertion Customer Service url"), ErrUnknownAssertionConsumerService)
+	}
+
+	return req, nil
 }
 
 // responseWriter returns idp.ResponseWriter, or DefaultResponseWriter if it
@@ -521,10 +580,21 @@ type IdpAuthnRequest struct {
 	AssertionEl             *etree.Element
 	ResponseEl              *etree.Element
 	Now                     time.Time
+
+	// simpleSign is the HTTP-POST-SimpleSign message the request arrived
+	// in, or nil if it arrived with another binding. Validate checks its
+	// signature once it knows the service provider.
+	simpleSign *simpleSignMessage
 }
 
 // NewIdpAuthnRequest returns a new IdpAuthnRequest for the given HTTP request to the authorization
 // service.
+//
+// A GET request carries the request with the HTTP-Redirect binding and a
+// POST request with the HTTP-POST binding, or with the HTTP-POST-SimpleSign
+// binding when the form has a SigAlg or Signature field. The SimpleSign form
+// is checked for duplicated or missing fields here; its signature is checked
+// by Validate, once the service provider is known.
 func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnRequest, error) {
 	req := &IdpAuthnRequest{
 		IDP:         idp,
@@ -536,25 +606,34 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 	case "GET":
 		compressedRequest, err := base64.StdEncoding.DecodeString(r.URL.Query().Get("SAMLRequest"))
 		if err != nil {
-			return nil, fmt.Errorf("cannot decode request: %s", err)
+			return nil, classify(fmt.Errorf("cannot decode request: %w", err), ErrMalformedMessage)
 		}
 		req.RequestBuffer, err = io.ReadAll(newSaferFlateReader(bytes.NewReader(compressedRequest)))
 		if err != nil {
-			return nil, fmt.Errorf("cannot decompress request: %s", err)
+			return nil, classify(fmt.Errorf("cannot decompress request: %w", err), ErrMalformedMessage)
 		}
 		req.RelayState = r.URL.Query().Get("RelayState")
 	case "POST":
 		if err := r.ParseForm(); err != nil {
-			return nil, err
+			return nil, classify(err, ErrMalformedMessage)
 		}
-		var err error
-		req.RequestBuffer, err = base64.StdEncoding.DecodeString(r.PostForm.Get("SAMLRequest"))
+		simpleSign, err := parseSimpleSignRequest(r, redirectParamSAMLRequest)
 		if err != nil {
 			return nil, err
 		}
+		if simpleSign != nil {
+			req.simpleSign = simpleSign
+			req.RequestBuffer = simpleSign.XML
+			req.RelayState = simpleSign.RelayState
+			break
+		}
+		req.RequestBuffer, err = base64.StdEncoding.DecodeString(r.PostForm.Get("SAMLRequest"))
+		if err != nil {
+			return nil, classify(err, ErrMalformedMessage)
+		}
 		req.RelayState = r.PostForm.Get("RelayState")
 	default:
-		return nil, fmt.Errorf("method not allowed")
+		return nil, classify(fmt.Errorf("method not allowed"), ErrUnsupported)
 	}
 
 	return req, nil
@@ -563,13 +642,19 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 // Validate checks that the authentication request is valid and assigns
 // the AuthnRequest and Metadata properties. Returns a non-nil error if the
 // request is not valid.
+//
+// Signatures on requests sent with the HTTP-Redirect or HTTP-POST binding
+// are not checked. A request sent with the HTTP-POST-SimpleSign binding must
+// carry a valid SimpleSign signature made with a signing certificate from
+// the service provider's metadata (its validity period is not checked), and
+// a Destination equal to SSOURL; it is rejected otherwise.
 func (req *IdpAuthnRequest) Validate() error {
 	if err := xrv.Validate(bytes.NewReader(req.RequestBuffer)); err != nil {
-		return err
+		return classify(err, ErrMalformedMessage)
 	}
 
 	if err := xml.Unmarshal(req.RequestBuffer, &req.Request); err != nil { //nolint:gosec // parsing the untrusted request is the point; it was validated by xrv above
-		return err
+		return classify(err, ErrMalformedMessage)
 	}
 
 	// We always have exactly one IDP SSO descriptor
@@ -582,7 +667,7 @@ func (req *IdpAuthnRequest) Validate() error {
 	// For now we do the safe thing and fail in the case where we think
 	// requests might be signed.
 	if idpSsoDescriptor.WantAuthnRequestsSigned != nil && *idpSsoDescriptor.WantAuthnRequestsSigned {
-		return fmt.Errorf("authn request signature checking is not currently supported")
+		return classify(fmt.Errorf("authn request signature checking is not currently supported"), ErrUnsupported)
 	}
 
 	// In http://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf §3.4.5.2
@@ -596,81 +681,75 @@ func (req *IdpAuthnRequest) Validate() error {
 	//
 	// We require the destination be correct either (a) if signing is enabled or
 	// (b) if it was provided.
+	//
+	// A request sent with the HTTP-POST-SimpleSign binding is signed, so it
+	// must carry a Destination (sstc-saml-binding-simplesign-cs-01 §2.4).
 	mustHaveDestination := idpSsoDescriptor.WantAuthnRequestsSigned != nil && *idpSsoDescriptor.WantAuthnRequestsSigned
-	mustHaveDestination = mustHaveDestination || req.Request.Destination != ""
+	mustHaveDestination = mustHaveDestination || req.Request.Destination != "" || req.simpleSign != nil
 	if mustHaveDestination {
 		if req.Request.Destination != req.IDP.SSOURL.String() {
-			return fmt.Errorf("expected destination to be %q, not %q", req.IDP.SSOURL.String(), req.Request.Destination)
+			return classify(fmt.Errorf("expected destination to be %q, not %q", req.IDP.SSOURL.String(), req.Request.Destination), ErrDestinationMismatch)
 		}
 	}
 
 	if req.Request.IssueInstant.Add(MaxIssueDelay).Before(req.Now) {
-		return fmt.Errorf("request expired at %s",
-			req.Request.IssueInstant.Add(MaxIssueDelay))
+		return classify(fmt.Errorf("request expired at %s",
+			req.Request.IssueInstant.Add(MaxIssueDelay)), ErrExpired)
 	}
 	if req.Request.Version != "2.0" {
-		return fmt.Errorf("expected SAML request version 2.0 got %v", req.Request.Version)
+		return classify(fmt.Errorf("expected SAML request version 2.0 got %v", req.Request.Version), ErrUnsupported)
 	}
 
 	// find the service provider
 	if req.Request.Issuer == nil {
-		return fmt.Errorf("authn request is missing an issuer")
+		return classify(fmt.Errorf("authn request is missing an issuer"), ErrMissingElement)
 	}
 	serviceProviderID := req.Request.Issuer.Value
 	serviceProvider, err := req.IDP.ServiceProviderProvider.GetServiceProvider(req.HTTPRequest, serviceProviderID)
 	if err == os.ErrNotExist {
-		return fmt.Errorf("cannot handle request from unknown service provider %s", serviceProviderID)
+		return classify(fmt.Errorf("cannot handle request from unknown service provider %s", serviceProviderID), ErrUnknownServiceProvider, os.ErrNotExist)
 	} else if err != nil {
-		return fmt.Errorf("cannot find service provider %s: %v", serviceProviderID, err)
+		return fmt.Errorf("cannot find service provider %s: %w", serviceProviderID, err)
 	}
 	req.ServiceProviderMetadata = serviceProvider
 
+	if req.simpleSign != nil {
+		if err := req.verifySimpleSignSignature(); err != nil {
+			return fmt.Errorf("cannot verify HTTP-POST-SimpleSign signature: %w", err)
+		}
+	}
+
 	// Check that the ACS URL matches an ACS endpoint in the SP metadata.
 	if err := req.getACSEndpoint(); err != nil {
-		return fmt.Errorf("cannot find assertion consumer service: %v", err)
+		return classify(fmt.Errorf("cannot find assertion consumer service: %w", err), ErrUnknownAssertionConsumerService)
 	}
 
 	return nil
 }
 
+// getACSEndpoint finds the AssertionConsumerService endpoint the response is
+// sent to and sets SPSSODescriptor and ACSEndpoint.
+//
+// An endpoint named by AssertionConsumerServiceIndex is used whatever its
+// binding. An endpoint named by AssertionConsumerServiceURL is matched by
+// Location; an HTTP-POST-SimpleSign endpoint there is preferred when
+// ProtocolBinding asks for that binding, and is otherwise only used when no
+// endpoint with another binding has that Location and ProtocolBinding is
+// empty. So a service provider that lists both bindings at one URL keeps
+// getting HTTP-POST unless it asks for SimpleSign. Without either, the
+// default endpoint (HTTP-POST, HTTP-Redirect or HTTP-POST-SimpleSign) is
+// used, then any HTTP-POST or HTTP-Redirect endpoint, then any
+// HTTP-POST-SimpleSign endpoint.
 func (req *IdpAuthnRequest) getACSEndpoint() error {
-	if req.Request.AssertionConsumerServiceIndex != "" {
-		for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
-			for _, spAssertionConsumerService := range spssoDescriptor.AssertionConsumerServices {
-				if strconv.Itoa(spAssertionConsumerService.Index) == req.Request.AssertionConsumerServiceIndex {
-					// explicitly copy loop iterator variables
-					//
-					// c.f. https://github.com/golang/go/wiki/CommonMistakes#using-reference-to-loop-iterator-variable
-					//
-					// (note that I'm pretty sure this isn't strictly necessary because we break out of the loop immediately,
-					// but it certainly doesn't hurt anything and may prevent bugs in the future.)
-					spssoDescriptor, spAssertionConsumerService := spssoDescriptor, spAssertionConsumerService
-
-					req.SPSSODescriptor = &spssoDescriptor
-					req.ACSEndpoint = &spAssertionConsumerService
-					return nil
-				}
-			}
+	if index := req.Request.AssertionConsumerServiceIndex; index != "" {
+		if req.selectACSEndpoint(func(ep *IndexedEndpoint) bool { return strconv.Itoa(ep.Index) == index }) {
+			return nil
 		}
 	}
 
-	if req.Request.AssertionConsumerServiceURL != "" {
-		for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
-			for _, spAssertionConsumerService := range spssoDescriptor.AssertionConsumerServices {
-				if spAssertionConsumerService.Location == req.Request.AssertionConsumerServiceURL {
-					// explicitly copy loop iterator variables
-					//
-					// c.f. https://github.com/golang/go/wiki/CommonMistakes#using-reference-to-loop-iterator-variable
-					//
-					// (note that I'm pretty sure this isn't strictly necessary because we break out of the loop immediately,
-					// but it certainly doesn't hurt anything and may prevent bugs in the future.)
-					spssoDescriptor, spAssertionConsumerService := spssoDescriptor, spAssertionConsumerService
-
-					req.SPSSODescriptor = &spssoDescriptor
-					req.ACSEndpoint = &spAssertionConsumerService
-					return nil
-				}
-			}
+	if acsURL := req.Request.AssertionConsumerServiceURL; acsURL != "" {
+		if req.selectACSEndpointByURL(acsURL) {
+			return nil
 		}
 	}
 
@@ -678,49 +757,62 @@ func (req *IdpAuthnRequest) getACSEndpoint() error {
 	// assertion requests that don't specify an ACS url at all.
 	if req.Request.AssertionConsumerServiceURL == "" && req.Request.AssertionConsumerServiceIndex == "" {
 		// find a default ACS binding in the metadata that we can use
-		for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
-			for _, spAssertionConsumerService := range spssoDescriptor.AssertionConsumerServices {
-				if spAssertionConsumerService.IsDefault != nil && *spAssertionConsumerService.IsDefault {
-					switch spAssertionConsumerService.Binding {
-					case HTTPPostBinding, HTTPRedirectBinding:
-						// explicitly copy loop iterator variables
-						//
-						// c.f. https://github.com/golang/go/wiki/CommonMistakes#using-reference-to-loop-iterator-variable
-						//
-						// (note that I'm pretty sure this isn't strictly necessary because we break out of the loop immediately,
-						// but it certainly doesn't hurt anything and may prevent bugs in the future.)
-						spssoDescriptor, spAssertionConsumerService := spssoDescriptor, spAssertionConsumerService
-
-						req.SPSSODescriptor = &spssoDescriptor
-						req.ACSEndpoint = &spAssertionConsumerService
-						return nil
-					}
-				}
-			}
+		if req.selectACSEndpoint(func(ep *IndexedEndpoint) bool {
+			return ep.IsDefault != nil && *ep.IsDefault && (isPostOrRedirect(ep.Binding) || ep.Binding == HTTPPostSimpleSignBinding)
+		}) {
+			return nil
 		}
 
 		// if we can't find a default, use *any* ACS binding
-		for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
-			for _, spAssertionConsumerService := range spssoDescriptor.AssertionConsumerServices {
-				switch spAssertionConsumerService.Binding {
-				case HTTPPostBinding, HTTPRedirectBinding:
-					// explicitly copy loop iterator variables
-					//
-					// c.f. https://github.com/golang/go/wiki/CommonMistakes#using-reference-to-loop-iterator-variable
-					//
-					// (note that I'm pretty sure this isn't strictly necessary because we break out of the loop immediately,
-					// but it certainly doesn't hurt anything and may prevent bugs in the future.)
-					spssoDescriptor, spAssertionConsumerService := spssoDescriptor, spAssertionConsumerService
-
-					req.SPSSODescriptor = &spssoDescriptor
-					req.ACSEndpoint = &spAssertionConsumerService
-					return nil
-				}
-			}
+		if req.selectACSEndpoint(func(ep *IndexedEndpoint) bool { return isPostOrRedirect(ep.Binding) }) {
+			return nil
+		}
+		if req.selectACSEndpoint(func(ep *IndexedEndpoint) bool { return ep.Binding == HTTPPostSimpleSignBinding }) {
+			return nil
 		}
 	}
 
 	return os.ErrNotExist // no ACS url found or specified
+}
+
+// selectACSEndpointByURL selects the ACS endpoint at acsURL, as described for
+// getACSEndpoint, and reports whether there is one.
+func (req *IdpAuthnRequest) selectACSEndpointByURL(acsURL string) bool {
+	atURL := func(simpleSign bool) func(*IndexedEndpoint) bool {
+		return func(ep *IndexedEndpoint) bool {
+			return ep.Location == acsURL && (ep.Binding == HTTPPostSimpleSignBinding) == simpleSign
+		}
+	}
+	switch req.Request.ProtocolBinding {
+	case HTTPPostSimpleSignBinding:
+		return req.selectACSEndpoint(atURL(true)) || req.selectACSEndpoint(atURL(false))
+	case "":
+		return req.selectACSEndpoint(atURL(false)) || req.selectACSEndpoint(atURL(true))
+	default:
+		return req.selectACSEndpoint(atURL(false))
+	}
+}
+
+// selectACSEndpoint sets SPSSODescriptor and ACSEndpoint to the first
+// AssertionConsumerService endpoint in the service provider metadata for
+// which match returns true, and reports whether there is one.
+func (req *IdpAuthnRequest) selectACSEndpoint(match func(*IndexedEndpoint) bool) bool {
+	for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
+		for _, endpoint := range spssoDescriptor.AssertionConsumerServices {
+			if match(&endpoint) {
+				// Copy, so that the pointers do not alias the metadata.
+				spssoDescriptor, endpoint := spssoDescriptor, endpoint
+				req.SPSSODescriptor = &spssoDescriptor
+				req.ACSEndpoint = &endpoint
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isPostOrRedirect(binding string) bool {
+	return binding == HTTPPostBinding || binding == HTTPRedirectBinding
 }
 
 // hostFromRemoteAddr returns the host part of an http.Request RemoteAddr,
@@ -1127,9 +1219,9 @@ func (req *IdpAuthnRequest) PostBinding() (IdpAuthnRequestForm, error) {
 	}
 
 	if req.ACSEndpoint.Binding != HTTPPostBinding {
-		return form, fmt.Errorf("%s: unsupported binding %s",
+		return form, classify(fmt.Errorf("%s: unsupported binding %s",
 			req.ServiceProviderMetadata.EntityID,
-			req.ACSEndpoint.Binding)
+			req.ACSEndpoint.Binding), ErrUnsupported)
 	}
 
 	form.URL = req.ACSEndpoint.Location
@@ -1151,7 +1243,16 @@ var defaultResponseFormTemplate = template.Must(template.New("saml-post-form").P
 
 // WriteResponse writes the `Response` to the http.ResponseWriter. If
 // `Response` is not already set, it calls MakeResponse to produce it.
+//
+// If the ACS endpoint uses the HTTP-POST-SimpleSign binding, the form is the
+// one SimpleSignBinding describes, rendered with
+// IdentityProvider.SimpleSignResponseFormTemplate. Otherwise it is the
+// HTTP-POST form PostBinding describes, rendered with ResponseFormTemplate.
 func (req *IdpAuthnRequest) WriteResponse(w http.ResponseWriter) error {
+	if req.ACSEndpoint != nil && req.ACSEndpoint.Binding == HTTPPostSimpleSignBinding {
+		return req.writeSimpleSignResponse(w)
+	}
+
 	form, err := req.PostBinding()
 	if err != nil {
 		return err
@@ -1202,11 +1303,11 @@ func (req *IdpAuthnRequest) getSPEncryptionCert() (*x509.Certificate, error) {
 	certStr = regexp.MustCompile(`\s+`).ReplaceAllString(certStr, "")
 	certBytes, err := base64.StdEncoding.DecodeString(certStr)
 	if err != nil {
-		return nil, fmt.Errorf("cannot decode certificate base64: %v", err)
+		return nil, classify(fmt.Errorf("cannot decode certificate base64: %w", err), ErrInvalidCertificate)
 	}
 	cert, err := x509.ParseCertificate(certBytes)
 	if err != nil {
-		return nil, fmt.Errorf("cannot parse certificate: %v", err)
+		return nil, classify(fmt.Errorf("cannot parse certificate: %w", err), ErrInvalidCertificate)
 	}
 	return cert, nil
 }

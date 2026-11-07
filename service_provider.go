@@ -148,6 +148,11 @@ type ServiceProvider struct {
 	// authentication requests
 	AuthnNameIDFormat NameIDFormat
 
+	// Scoping, when set, is sent in authentication requests. Proxying identity
+	// providers (gateways) use its IDPList to choose which identity provider to
+	// delegate authentication to.
+	Scoping *Scoping
+
 	// MetadataValidDuration is a duration used to calculate validUntil
 	// attribute in the metadata endpoint
 	MetadataValidDuration time.Duration
@@ -211,7 +216,8 @@ type ServiceProvider struct {
 	SignMetadata bool
 
 	// LogoutBindings specify the bindings available for SLO endpoint. If empty,
-	// HTTP-POST binding is used.
+	// HTTP-POST binding is used. HTTPPostSimpleSignBinding may be listed: the
+	// logout validation functions accept HTTP-POST-SimpleSign messages.
 	LogoutBindings []string
 
 	// AssertionConsumerServiceBindings specify the bindings advertised for the
@@ -219,7 +225,9 @@ type ServiceProvider struct {
 	// preference. If empty, both HTTP-POST and HTTP-Artifact bindings are
 	// advertised. Set this to []string{HTTPPostBinding} to stop advertising
 	// the HTTP-Artifact binding, for example when the IDP does not publish an
-	// ArtifactResolutionService or the SP cannot reach it.
+	// ArtifactResolutionService or the SP cannot reach it. Include
+	// HTTPPostSimpleSignBinding to advertise that the ACS accepts
+	// HTTP-POST-SimpleSign responses (ParseResponse always accepts them).
 	AssertionConsumerServiceBindings []string
 
 	// ValidateAudienceRestriction allows you to override the default audience validation
@@ -461,7 +469,8 @@ func (r *AuthnRequest) Redirect(relayState string, sp *ServiceProvider) (*url.UR
 }
 
 // GetSSOBindingLocation returns URL for the IDP's Single Sign On Service binding
-// of the specified type (HTTPRedirectBinding or HTTPPostBinding)
+// of the specified type (HTTPRedirectBinding, HTTPPostBinding or
+// HTTPPostSimpleSignBinding)
 func (sp *ServiceProvider) GetSSOBindingLocation(binding string) string {
 	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
 		for _, singleSignOnService := range idpSSODescriptor.SingleSignOnServices {
@@ -531,12 +540,12 @@ func (sp *ServiceProvider) getIDPSigningCerts() ([]*x509.Certificate, error) {
 		certStr = regex.ReplaceAllString(certStr, "")
 		certBytes, err := base64.StdEncoding.DecodeString(certStr)
 		if err != nil {
-			return nil, fmt.Errorf("cannot parse certificate: %s", err)
+			return nil, classify(fmt.Errorf("cannot parse certificate: %w", err), ErrInvalidCertificate)
 		}
 
 		parsedCert, err := x509.ParseCertificate(certBytes)
 		if err != nil {
-			return nil, err
+			return nil, classify(err, ErrInvalidCertificate)
 		}
 		certs[i] = parsedCert
 	}
@@ -569,7 +578,7 @@ func (sp *ServiceProvider) getCertBasedOnFingerprint(el *etree.Element) ([]*x509
 	}
 
 	if *sp.IDPCertificateFingerprint != finP {
-		return nil, fmt.Errorf("cannot validate signature on %s: fingerprint mismatch", el.Tag)
+		return nil, classify(fmt.Errorf("cannot validate signature on %s: fingerprint mismatch", el.Tag), ErrUntrustedCertificate)
 	}
 
 	return []*x509.Certificate{cert}, nil
@@ -582,12 +591,12 @@ func parseCert(x509Data string) (*x509.Certificate, error) {
 	certStr := regex.ReplaceAllString(x509Data, "")
 	certBytes, err := base64.StdEncoding.DecodeString(certStr)
 	if err != nil {
-		return nil, fmt.Errorf("parse cert, cannot base64 decode cert string: %w", err)
+		return nil, classify(fmt.Errorf("parse cert, cannot base64 decode cert string: %w", err), ErrInvalidCertificate)
 	}
 
 	parsedCert, err := x509.ParseCertificate(certBytes)
 	if err != nil {
-		return nil, fmt.Errorf("parse cert, cannot parse certificate: %w", err)
+		return nil, classify(fmt.Errorf("parse cert, cannot parse certificate: %w", err), ErrInvalidCertificate)
 	}
 
 	return parsedCert, nil
@@ -671,6 +680,7 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding stri
 		},
 		ForceAuthn:            sp.ForceAuthn,
 		RequestedAuthnContext: sp.RequestedAuthnContext,
+		Scoping:               sp.Scoping,
 	}
 	if sp.AcsIndex != nil {
 		// AssertionConsumerServiceIndex is an xs:unsignedShort.
@@ -922,6 +932,18 @@ func (e ErrBadStatus) Error() string {
 
 // ParseResponse extracts the SAML IDP response received in req, resolves
 // artifacts when necessary, validates it, and returns the verified assertion.
+// req.ParseForm must have been called.
+//
+// A posted form that carries a SigAlg or Signature field is an
+// HTTP-POST-SimpleSign message (sstc-saml-binding-simplesign-cs-01 section
+// 2.10). Its SimpleSign signature must then be valid, or the response is
+// rejected; it is never accepted on the strength of XML signatures alone. A
+// valid SimpleSign signature authenticates the whole Response, so the
+// assertions need not be signed, and the Response must carry a Destination.
+// An enveloped XML signature on the Response is still checked when present.
+// Every other check (Destination, InResponseTo, Issuer, Status, assertion
+// conditions, decryption, ReplayCache) applies as for HTTP-POST. A form
+// without SigAlg and Signature is handled as HTTP-POST, as before.
 func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs []string) (*Assertion, error) {
 	if artifactID := req.Form.Get("SAMLart"); artifactID != "" {
 		return sp.handleArtifactRequest(req.Context(), artifactID, possibleRequestIDs)
@@ -934,20 +956,20 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 
 	artifactResolveRequest, err := sp.MakeArtifactResolveRequest(artifactID)
 	if err != nil {
-		retErr.PrivateErr = fmt.Errorf("cannot generate artifact resolution request: %s", err)
+		retErr.PrivateErr = classify(fmt.Errorf("cannot generate artifact resolution request: %w", err), ErrArtifactResolution)
 		return nil, retErr
 	}
 
 	requestBody, err := elementToBytes(artifactResolveRequest.SoapRequest())
 	if err != nil {
-		retErr.PrivateErr = err
+		retErr.PrivateErr = classify(err, ErrArtifactResolution)
 		return nil, retErr
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", sp.GetArtifactBindingLocation(SOAPBinding),
 		bytes.NewReader(requestBody))
 	if err != nil {
-		retErr.PrivateErr = err
+		retErr.PrivateErr = classify(err, ErrArtifactResolution)
 		return nil, retErr
 	}
 	req.Header.Set("Content-Type", "text/xml")
@@ -958,7 +980,7 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 	}
 	response, err := httpClient.Do(req)
 	if err != nil {
-		retErr.PrivateErr = fmt.Errorf("cannot resolve artifact: %s", err)
+		retErr.PrivateErr = classify(fmt.Errorf("cannot resolve artifact: %w", err), ErrArtifactResolution)
 		return nil, retErr
 	}
 	defer func() {
@@ -967,12 +989,12 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 		}
 	}()
 	if response.StatusCode != 200 {
-		retErr.PrivateErr = fmt.Errorf("Error during artifact resolution: HTTP status %d (%s)", response.StatusCode, response.Status)
+		retErr.PrivateErr = classify(fmt.Errorf("Error during artifact resolution: HTTP status %d (%s)", response.StatusCode, response.Status), ErrArtifactResolution)
 		return nil, retErr
 	}
 	responseBody, err := io.ReadAll(response.Body)
 	if err != nil {
-		retErr.PrivateErr = fmt.Errorf("Error during artifact resolution: %s", err)
+		retErr.PrivateErr = classify(fmt.Errorf("Error during artifact resolution: %w", err), ErrArtifactResolution)
 		return nil, retErr
 	}
 	assertion, err := sp.ParseXMLArtifactResponse(responseBody, possibleRequestIDs, artifactResolveRequest.ID, *req.URL)
@@ -987,9 +1009,18 @@ func (sp *ServiceProvider) parseResponseHTTP(req *http.Request, possibleRequestI
 		Now: sp.now(),
 	}
 
+	simpleSign, err := parseSimpleSignRequest(req, redirectParamSAMLResponse)
+	if err != nil {
+		retErr.PrivateErr = err
+		return nil, retErr
+	}
+	if simpleSign != nil {
+		return sp.parseSimpleSignResponse(simpleSign, possibleRequestIDs, *req.URL)
+	}
+
 	rawResponseBuf, err := base64.StdEncoding.DecodeString(req.PostForm.Get("SAMLResponse"))
 	if err != nil {
-		retErr.PrivateErr = fmt.Errorf("cannot parse base64: %s", err)
+		retErr.PrivateErr = classify(fmt.Errorf("cannot parse base64: %w", err), ErrMalformedMessage)
 		return nil, retErr
 	}
 
@@ -1019,22 +1050,22 @@ func (sp *ServiceProvider) ParseXMLArtifactResponse(soapResponseXML []byte, poss
 
 	// ensure that the response XML is well-formed before we parse it
 	if err := xrv.Validate(bytes.NewReader(soapResponseXML)); err != nil {
-		retErr.PrivateErr = fmt.Errorf("invalid xml: %s", err)
+		retErr.PrivateErr = classify(fmt.Errorf("invalid xml: %w", err), ErrMalformedMessage)
 		return nil, retErr
 	}
 
 	doc := etree.NewDocument()
 	if err := doc.ReadFromBytes(soapResponseXML); err != nil {
-		retErr.PrivateErr = fmt.Errorf("cannot unmarshal response: %s", err)
+		retErr.PrivateErr = classify(fmt.Errorf("cannot unmarshal response: %w", err), ErrMalformedMessage)
 		return nil, retErr
 	}
 	if doc.Root() == nil {
-		retErr.PrivateErr = errors.New("invalid xml: no root")
+		retErr.PrivateErr = classify(errors.New("invalid xml: no root"), ErrMalformedMessage)
 		return nil, retErr
 	}
 	if doc.Root().NamespaceURI() != "http://schemas.xmlsoap.org/soap/envelope/" ||
 		doc.Root().Tag != "Envelope" {
-		retErr.PrivateErr = fmt.Errorf("expected a SOAP Envelope")
+		retErr.PrivateErr = classify(fmt.Errorf("expected a SOAP Envelope"), ErrMalformedMessage)
 		return nil, retErr
 	}
 
@@ -1066,15 +1097,15 @@ func (sp *ServiceProvider) parseArtifactResponse(artifactResponseEl *etree.Eleme
 			return nil, retErr
 		}
 		if artifactResponse.InResponseTo != artifactRequestID {
-			retErr.PrivateErr = fmt.Errorf("`InResponseTo` does not match the artifact request ID (expected %s)", artifactRequestID)
+			retErr.PrivateErr = classify(fmt.Errorf("`InResponseTo` does not match the artifact request ID (expected %s)", artifactRequestID), ErrRequestIDMismatch)
 			return nil, retErr
 		}
 		if artifactResponse.IssueInstant.Add(MaxIssueDelay).Before(now) {
-			retErr.PrivateErr = fmt.Errorf("response IssueInstant expired at %s", artifactResponse.IssueInstant.Add(MaxIssueDelay))
+			retErr.PrivateErr = classify(fmt.Errorf("response IssueInstant expired at %s", artifactResponse.IssueInstant.Add(MaxIssueDelay)), ErrExpired)
 			return nil, retErr
 		}
 		if artifactResponse.Issuer != nil && artifactResponse.Issuer.Value != sp.IDPMetadata.EntityID {
-			retErr.PrivateErr = fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
+			retErr.PrivateErr = classify(fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
 			return nil, retErr
 		}
 		if artifactResponse.Status.StatusCode.Value != StatusSuccess {
@@ -1122,6 +1153,28 @@ func (sp *ServiceProvider) parseArtifactResponse(artifactResponseEl *etree.Eleme
 // failed. However, to discourage inadvertent disclosure the diagnostic
 // information, the Error() method returns a static string.
 func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleRequestIDs []string, currentURL url.URL) (*Assertion, error) {
+	return sp.parseXMLResponse(decodedResponseXML, possibleRequestIDs, currentURL, signatureRequired)
+}
+
+// parseSimpleSignResponse validates a Response received at the ACS with the
+// HTTP-POST-SimpleSign binding. The SimpleSign signature is checked before
+// anything else. A valid one authenticates the whole Response, as a valid
+// XML signature on the Response element does, so the assertions need no
+// signature of their own; everything else is validated as for HTTP-POST.
+func (sp *ServiceProvider) parseSimpleSignResponse(m *simpleSignMessage, possibleRequestIDs []string, currentURL url.URL) (*Assertion, error) {
+	if err := sp.verifySimpleSignSignature(m); err != nil {
+		return nil, &InvalidResponseError{
+			Now:        sp.now(),
+			Response:   string(m.XML),
+			PrivateErr: err,
+		}
+	}
+	return sp.parseXMLResponse(m.XML, possibleRequestIDs, currentURL, signatureVerifiedByBinding)
+}
+
+// parseXMLResponse is ParseXMLResponse with the signature requirement for
+// the Response element given by signatureRequirement.
+func (sp *ServiceProvider) parseXMLResponse(decodedResponseXML []byte, possibleRequestIDs []string, currentURL url.URL, signatureRequirement signatureRequirement) (*Assertion, error) {
 	now := sp.now()
 	var err error
 	retErr := &InvalidResponseError{
@@ -1131,21 +1184,21 @@ func (sp *ServiceProvider) ParseXMLResponse(decodedResponseXML []byte, possibleR
 
 	// ensure that the response XML is well-formed before we parse it
 	if err := xrv.Validate(bytes.NewReader(decodedResponseXML)); err != nil {
-		retErr.PrivateErr = fmt.Errorf("invalid xml: %s", err)
+		retErr.PrivateErr = classify(fmt.Errorf("invalid xml: %w", err), ErrMalformedMessage)
 		return nil, retErr
 	}
 
 	doc := etree.NewDocument()
 	if err := doc.ReadFromBytes(decodedResponseXML); err != nil {
-		retErr.PrivateErr = err
+		retErr.PrivateErr = classify(err, ErrMalformedMessage)
 		return nil, retErr
 	}
 	if doc.Root() == nil {
-		retErr.PrivateErr = errors.New("invalid xml: no root")
+		retErr.PrivateErr = classify(errors.New("invalid xml: no root"), ErrMalformedMessage)
 		return nil, retErr
 	}
 
-	assertion, err := sp.parseResponse(doc.Root(), possibleRequestIDs, now, signatureRequired, currentURL)
+	assertion, err := sp.parseResponse(doc.Root(), possibleRequestIDs, now, signatureRequirement, currentURL)
 	if err != nil {
 		retErr.PrivateErr = err
 		return nil, retErr
@@ -1159,6 +1212,13 @@ type signatureRequirement int
 const (
 	signatureRequired signatureRequirement = iota
 	signatureNotRequired
+
+	// signatureVerifiedByBinding means the binding (HTTP-POST-SimpleSign)
+	// has already authenticated the whole Response with a detached
+	// signature. The Response then counts as signed: its Destination is
+	// required, an enveloped XML signature it carries must still be valid,
+	// and the assertions need no signature of their own.
+	signatureVerifiedByBinding
 )
 
 // validateXMLResponse validates the SAML IDP response and returns
@@ -1170,7 +1230,8 @@ const (
 func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequestIDs []string, now time.Time, signatureRequirement signatureRequirement, currentURL url.URL) (*Assertion, error) {
 	var responseSignatureErr error
 	var responseHasSignature bool
-	if signatureRequirement == signatureRequired {
+	switch signatureRequirement {
+	case signatureRequired:
 		responseSignatureErr = sp.validateSignature(responseEl)
 		switch responseSignatureErr {
 		case nil:
@@ -1182,13 +1243,19 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 			// looking at any of its other contents.
 			return nil, responseSignatureErr
 		}
+	case signatureVerifiedByBinding:
+		responseHasSignature = true
+		if err := sp.validateSignature(responseEl); err != nil && err != errSignatureElementNotPresent {
+			return nil, err
+		}
+		signatureRequirement = signatureNotRequired
 	}
 
 	// validate request attributes
 	{
 		var response Response
 		if err := unmarshalElement(responseEl, &response); err != nil {
-			return nil, fmt.Errorf("cannot unmarshal response: %v", err)
+			return nil, classify(fmt.Errorf("cannot unmarshal response: %w", err), ErrMalformedMessage)
 		}
 
 		// If the response is *not* signed, the Destination may be omitted.
@@ -1197,7 +1264,7 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 			// Historically, we checked against the SP's ACS URL instead of currentURL, which is usually the same but may differ in query params.
 			// To mitigate the risk of switching to comparing against currentURL, we still allow it if the ACS URL matches, even if the current URL doesn't.
 			if response.Destination != currentURL.String() && response.Destination != sp.AcsURL.String() {
-				return nil, fmt.Errorf("`Destination` does not match requested URL or AcsURL (destination %q, requested %q, acs %q)", response.Destination, currentURL.String(), sp.AcsURL.String())
+				return nil, classify(fmt.Errorf("`Destination` does not match requested URL or AcsURL (destination %q, requested %q, acs %q)", response.Destination, currentURL.String(), sp.AcsURL.String()), ErrDestinationMismatch)
 			}
 		}
 
@@ -1206,10 +1273,10 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 		}
 
 		if response.IssueInstant.Add(MaxIssueDelay).Before(now) {
-			return nil, fmt.Errorf("response IssueInstant expired at %s", response.IssueInstant.Add(MaxIssueDelay))
+			return nil, classify(fmt.Errorf("response IssueInstant expired at %s", response.IssueInstant.Add(MaxIssueDelay)), ErrExpired)
 		}
 		if response.Issuer != nil && response.Issuer.Value != sp.IDPMetadata.EntityID {
-			return nil, fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
+			return nil, classify(fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
 		}
 		if response.Status.StatusCode.Value != StatusSuccess {
 			return nil, ErrBadStatus{Status: response.Status.StatusCode.Value}
@@ -1260,7 +1327,7 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 		if len(errs) > 0 {
 			return nil, errs[0]
 		}
-		return nil, fmt.Errorf("expected at least one valid Assertion, none found")
+		return nil, classify(fmt.Errorf("expected at least one valid Assertion, none found"), ErrMissingElement)
 	}
 
 	// if we have at least one assertion, return the first one. It is almost universally true that valid responses
@@ -1296,7 +1363,7 @@ func (sp *ServiceProvider) validateRequestID(response Response, possibleRequestI
 		}
 	}
 	if !requestIDvalid {
-		return fmt.Errorf("`InResponseTo` does not match any of the possible request IDs (expected %v)", possibleRequestIDs)
+		return classify(fmt.Errorf("`InResponseTo` does not match any of the possible request IDs (expected %v)", possibleRequestIDs), ErrRequestIDMismatch)
 	}
 	return nil
 }
@@ -1304,7 +1371,7 @@ func (sp *ServiceProvider) validateRequestID(response Response, possibleRequestI
 func (sp *ServiceProvider) parseEncryptedAssertion(encryptedAssertionEl *etree.Element, possibleRequestIDs []string, now time.Time, signatureRequirement signatureRequirement) (*Assertion, error) {
 	assertionEl, err := sp.decryptElement(encryptedAssertionEl)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt EncryptedAssertion: %v", err)
+		return nil, classify(fmt.Errorf("failed to decrypt EncryptedAssertion: %w", err), ErrDecryptionFailed)
 	}
 	return sp.parseAssertion(assertionEl, possibleRequestIDs, now, signatureRequirement)
 }
@@ -1344,15 +1411,15 @@ func (sp *ServiceProvider) decryptElement(encryptedEl *etree.Element) (*etree.El
 	}
 
 	if err := xrv.Validate(bytes.NewReader(plaintextEl)); err != nil {
-		return nil, fmt.Errorf("plaintext response contains invalid XML: %s", err)
+		return nil, classify(fmt.Errorf("plaintext response contains invalid XML: %w", err), ErrMalformedMessage)
 	}
 
 	doc := etree.NewDocument()
 	if err := doc.ReadFromBytes(plaintextEl); err != nil {
-		return nil, fmt.Errorf("cannot parse plaintext response %v", err)
+		return nil, classify(fmt.Errorf("cannot parse plaintext response %w", err), ErrMalformedMessage)
 	}
 	if doc.Root() == nil {
-		return nil, errors.New("plaintext response contains no root element")
+		return nil, classify(errors.New("plaintext response contains no root element"), ErrMalformedMessage)
 	}
 	return doc.Root(), nil
 }
@@ -1367,7 +1434,7 @@ func decryptWithKey(decryptionKey interface{}, encryptedEl, encryptedDataEl *etr
 		var err error
 		key, err = xmlenc.Decrypt(decryptionKey, keyEl)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt key from response: %s", err)
+			return nil, classify(fmt.Errorf("failed to decrypt key from response: %w", err), ErrDecryptionFailed)
 		}
 	}
 	return xmlenc.Decrypt(key, encryptedDataEl)
@@ -1400,46 +1467,46 @@ func (sp *ServiceProvider) parseAssertion(assertionEl *etree.Element, possibleRe
 // should be done before calling this function).
 func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleRequestIDs []string, now time.Time) error {
 	if issueDeadline(assertion).Before(now) {
-		return fmt.Errorf("expired on %s", issueDeadline(assertion))
+		return classify(fmt.Errorf("expired on %s", issueDeadline(assertion)), ErrExpired)
 	}
 	if assertion.Issuer.Value != sp.IDPMetadata.EntityID {
-		return fmt.Errorf("issuer is not %q", sp.IDPMetadata.EntityID)
+		return classify(fmt.Errorf("issuer is not %q", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
 	}
 	if assertion.Subject == nil {
-		return fmt.Errorf("assertion has no Subject")
+		return classify(fmt.Errorf("assertion has no Subject"), ErrMissingElement)
 	}
 	if assertion.Conditions == nil {
-		return fmt.Errorf("assertion has no Conditions")
+		return classify(fmt.Errorf("assertion has no Conditions"), ErrMissingElement)
 	}
 	for _, subjectConfirmation := range assertion.Subject.SubjectConfirmations {
 		if subjectConfirmation.SubjectConfirmationData == nil {
-			return fmt.Errorf("assertion SubjectConfirmation has no SubjectConfirmationData")
+			return classify(fmt.Errorf("assertion SubjectConfirmation has no SubjectConfirmationData"), ErrMissingElement)
 		}
 		if err := sp.validateAssertionInResponseTo(subjectConfirmation.SubjectConfirmationData.InResponseTo, possibleRequestIDs); err != nil {
 			return err
 		}
 		if subjectConfirmation.SubjectConfirmationData.Recipient != sp.AcsURL.String() {
-			return fmt.Errorf("assertion SubjectConfirmation Recipient is not %s", sp.AcsURL.String())
+			return classify(fmt.Errorf("assertion SubjectConfirmation Recipient is not %s", sp.AcsURL.String()), ErrDestinationMismatch)
 		}
 		// saml-profiles §4.1.4.2 says a bearer SubjectConfirmationData MUST
 		// NOT carry NotBefore, but some IdPs send one anyway; accept it as
 		// long as it is not in the future (saml-core §2.4.1.2). An omitted
 		// NotBefore is the zero time, which always passes.
 		if subjectConfirmation.SubjectConfirmationData.NotBefore.Add(-MaxClockSkew).After(now) {
-			return fmt.Errorf("assertion SubjectConfirmationData is not yet valid")
+			return classify(fmt.Errorf("assertion SubjectConfirmationData is not yet valid"), ErrNotYetValid)
 		}
 		if skewedDeadline(subjectConfirmation.SubjectConfirmationData.NotOnOrAfter).Before(now) {
-			return fmt.Errorf("assertion SubjectConfirmationData is expired")
+			return classify(fmt.Errorf("assertion SubjectConfirmationData is expired"), ErrExpired)
 		}
 	}
 	if !hasBearerSubjectConfirmation(assertion.Subject) {
-		return fmt.Errorf("assertion has no bearer SubjectConfirmation")
+		return classify(fmt.Errorf("assertion has no bearer SubjectConfirmation"), ErrMissingElement)
 	}
 	if assertion.Conditions.NotBefore.Add(-MaxClockSkew).After(now) {
-		return fmt.Errorf("assertion Conditions is not yet valid")
+		return classify(fmt.Errorf("assertion Conditions is not yet valid"), ErrNotYetValid)
 	}
 	if skewedDeadline(assertion.Conditions.NotOnOrAfter).Before(now) {
-		return fmt.Errorf("assertion Conditions is expired")
+		return classify(fmt.Errorf("assertion Conditions is expired"), ErrExpired)
 	}
 
 	if err := sp.validateAudienceRestriction(assertion); err != nil {
@@ -1463,7 +1530,7 @@ func (sp *ServiceProvider) validateAuthnContextClassRef(assertion *Assertion) er
 		return nil
 	}
 	if comparison := sp.RequestedAuthnContext.Comparison; comparison != "" && comparison != "exact" {
-		return fmt.Errorf("cannot validate AuthnContextClassRef for RequestedAuthnContext Comparison %q: only \"exact\" is supported", comparison)
+		return classify(fmt.Errorf("cannot validate AuthnContextClassRef for RequestedAuthnContext Comparison %q: only \"exact\" is supported", comparison), ErrUnsupported)
 	}
 	var got []string
 	for _, authnStatement := range assertion.AuthnStatements {
@@ -1478,7 +1545,7 @@ func (sp *ServiceProvider) validateAuthnContextClassRef(assertion *Assertion) er
 		}
 		got = append(got, classRef.Value)
 	}
-	return fmt.Errorf("assertion AuthnContextClassRef %q is not one of the requested %q", got, requested)
+	return classify(fmt.Errorf("assertion AuthnContextClassRef %q is not one of the requested %q", got, requested), ErrAuthnContextMismatch)
 }
 
 // validateAssertionInResponseTo checks the InResponseTo of an assertion's
@@ -1504,7 +1571,7 @@ func (sp *ServiceProvider) validateAssertionInResponseTo(inResponseTo string, po
 			return nil
 		}
 	}
-	return fmt.Errorf("assertion SubjectConfirmation one of the possible request IDs (%v)", possibleRequestIDs)
+	return classify(fmt.Errorf("assertion SubjectConfirmation one of the possible request IDs (%v)", possibleRequestIDs), ErrRequestIDMismatch)
 }
 
 // issueDeadline is the last moment validateAssertion accepts assertion by its
@@ -1550,7 +1617,7 @@ func (sp *ServiceProvider) consumeAssertion(assertion *Assertion) error {
 		return nil
 	}
 	if assertion.ID == "" {
-		return errors.New("assertion has no ID to check for replay")
+		return classify(errors.New("assertion has no ID to check for replay"), ErrMissingElement)
 	}
 	if err := sp.ReplayCache.Consume(assertion.ID, acceptableUntil(assertion)); err != nil {
 		return fmt.Errorf("assertion %q: %w", assertion.ID, err)
@@ -1581,7 +1648,7 @@ func hasBearerSubjectConfirmation(subject *Subject) bool {
 func (sp *ServiceProvider) validateAudienceRestriction(assertion *Assertion) error {
 	if sp.ValidateAudienceRestriction != nil {
 		if err := sp.ValidateAudienceRestriction(assertion); err != nil {
-			return fmt.Errorf("audience restriction validation failed: %w", err)
+			return classify(fmt.Errorf("audience restriction validation failed: %w", err), ErrAudienceMismatch)
 		}
 		return nil
 	}
@@ -1590,7 +1657,7 @@ func (sp *ServiceProvider) validateAudienceRestriction(assertion *Assertion) err
 	// An assertion with no AudienceRestriction is valid at every service
 	// provider trusting the IdP, so one naming this SP is required.
 	if len(assertion.Conditions.AudienceRestrictions) == 0 {
-		return fmt.Errorf("assertion Conditions has no AudienceRestriction for %q", audience)
+		return classify(fmt.Errorf("assertion Conditions has no AudienceRestriction for %q", audience), ErrAudienceMismatch)
 	}
 	audienceRestrictionsValid := false
 	for _, audienceRestriction := range assertion.Conditions.AudienceRestrictions {
@@ -1601,7 +1668,7 @@ func (sp *ServiceProvider) validateAudienceRestriction(assertion *Assertion) err
 		}
 	}
 	if !audienceRestrictionsValid {
-		return fmt.Errorf("assertion Conditions AudienceRestriction does not contain %q", audience)
+		return classify(fmt.Errorf("assertion Conditions AudienceRestriction does not contain %q", audience), ErrAudienceMismatch)
 	}
 	return nil
 }
@@ -1677,7 +1744,19 @@ func validateWithEachCert(base *dsig.ValidationContext, certs []*x509.Certificat
 }
 
 // validateSignature returns nil iff the Signature embedded in the element is valid
+//
+// Every error other than errSignatureElementNotPresent matches
+// ErrInvalidSignature with errors.Is, and also ErrUntrustedCertificate or
+// ErrCertificateNotValidNow when that is why validation failed.
 func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
+	err := sp.validateSignatureUnclassified(el)
+	if err == nil || err == errSignatureElementNotPresent {
+		return err
+	}
+	return classify(err, ErrInvalidSignature)
+}
+
+func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element) error {
 	sigEl, err := findChild(el, "http://www.w3.org/2000/09/xmldsig#", "Signature")
 	if err != nil {
 		return err
@@ -1690,13 +1769,13 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate == nil {
 		certs, err = sp.getIDPSigningCerts()
 		if err != nil {
-			return fmt.Errorf("cannot validate signature on %s: %v", el.Tag, err)
+			return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
 		}
 	}
 	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint != nil && sp.IDPCertificateFingerprintAlgorithm != nil && sp.IDPCertificate == nil {
 		certs, err = sp.getCertBasedOnFingerprint(el)
 		if err != nil {
-			return fmt.Errorf("cannot validate signature on %s: %v", el.Tag, err)
+			return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
 		}
 	}
 	if sp.IDPMetadata != nil && sp.IDPCertificateFingerprint == nil && sp.IDPCertificateFingerprintAlgorithm == nil && sp.IDPCertificate != nil {
@@ -1738,16 +1817,16 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	tag := el.Tag
 	ctx, err := unboundedParentContext(el)
 	if err != nil {
-		return fmt.Errorf("cannot validate signature on %s: %v", tag, err)
+		return fmt.Errorf("cannot validate signature on %s: %w", tag, err)
 	}
 	ctx, err = ctx.SubContext(el)
 	if err != nil {
-		return fmt.Errorf("cannot validate signature on %s: %v", tag, err)
+		return fmt.Errorf("cannot validate signature on %s: %w", tag, err)
 	}
 	// NSDetatch returns a nil element with its error, so the tag is kept above.
 	el, err = etreeutils.NSDetatch(ctx, el)
 	if err != nil {
-		return fmt.Errorf("cannot validate signature on %s: %v", tag, err)
+		return fmt.Errorf("cannot validate signature on %s: %w", tag, err)
 	}
 
 	if sp.SignatureVerifier != nil {
@@ -1765,13 +1844,17 @@ func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
 	// had the IdP named it in KeyInfo.
 	if noCertInKeyInfo && len(certs) > 1 {
 		if err := validateWithEachCert(validationContext, certs, el); err != nil {
-			return fmt.Errorf("cannot validate signature on %s: %v", tag, err)
+			return fmt.Errorf("cannot validate signature on %s: %w", tag, err)
 		}
 		return nil
 	}
 
 	if _, err := validationContext.Validate(el); err != nil {
-		return fmt.Errorf("cannot validate signature on %s: %v", tag, err)
+		err = fmt.Errorf("cannot validate signature on %s: %w", tag, err)
+		if kind := classifyCertificate(el, certs, validationContext.Clock.Now()); kind != nil {
+			return classify(err, kind)
+		}
+		return err
 	}
 
 	return nil
@@ -2153,11 +2236,14 @@ func (sp *ServiceProvider) metadataNameIDFormat() NameIDFormat {
 }
 
 // ValidateLogoutResponseRequest validates the LogoutResponse content from the
-// request, which may use either the HTTP-Redirect or the HTTP-POST binding.
+// request, which may use the HTTP-Redirect, HTTP-POST or HTTP-POST-SimpleSign
+// binding.
 //
 // With the HTTP-Redirect binding the response must be signed, either with a
 // query string signature (SigAlg and Signature parameters) or with an
-// enveloped XML signature.
+// enveloped XML signature. A posted form that carries a SigAlg or Signature
+// field is an HTTP-POST-SimpleSign message and must have a valid SimpleSign
+// signature; an enveloped XML signature it also carries must be valid too.
 //
 // It does not check the response's InResponseTo against the LogoutRequest
 // this service provider sent; use ParseLogoutResponse for that.
@@ -2167,7 +2253,7 @@ func (sp *ServiceProvider) ValidateLogoutResponseRequest(req *http.Request) erro
 }
 
 // ParseLogoutResponse validates the LogoutResponse content from the request,
-// which may use either the HTTP-Redirect or the HTTP-POST binding, as
+// which may use the HTTP-Redirect, HTTP-POST or HTTP-POST-SimpleSign binding, as
 // ValidateLogoutResponseRequest does, and returns it. In addition, the
 // response's InResponseTo must be one of possibleRequestIDs, the IDs of the
 // LogoutRequests this service provider sent and still expects an answer to,
@@ -2182,7 +2268,7 @@ func (sp *ServiceProvider) ParseLogoutResponse(req *http.Request, possibleReques
 			return resp, nil
 		}
 	}
-	return nil, fmt.Errorf("`InResponseTo` does not match any of the possible request IDs (expected %v)", possibleRequestIDs)
+	return nil, classify(fmt.Errorf("`InResponseTo` does not match any of the possible request IDs (expected %v)", possibleRequestIDs), ErrRequestIDMismatch)
 }
 
 func (sp *ServiceProvider) parseLogoutResponseRequest(req *http.Request) (*LogoutResponse, error) {
@@ -2192,10 +2278,41 @@ func (sp *ServiceProvider) parseLogoutResponseRequest(req *http.Request) (*Logou
 
 	err := req.ParseForm()
 	if err != nil {
-		return nil, fmt.Errorf("unable to parse form: %v", err)
+		return nil, classify(fmt.Errorf("unable to parse form: %w", err), ErrMalformedMessage)
 	}
 
+	if isSimpleSignRequest(req) {
+		return sp.parseLogoutResponseSimpleSign(req)
+	}
 	return sp.parseLogoutResponseForm(req.PostForm.Get("SAMLResponse"))
+}
+
+// parseLogoutResponseSimpleSign validates a LogoutResponse received via
+// the HTTP-POST-SimpleSign binding. Its SimpleSign signature must be valid.
+func (sp *ServiceProvider) parseLogoutResponseSimpleSign(req *http.Request) (*LogoutResponse, error) {
+	retErr := &InvalidResponseError{
+		Now: sp.now(),
+	}
+
+	m, err := parseSimpleSignRequest(req, redirectParamSAMLResponse)
+	if err != nil {
+		retErr.PrivateErr = err
+		return nil, retErr
+	}
+	root, err := sp.readSimpleSignMessage(m, retErr)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp LogoutResponse
+	if err := unmarshalElement(root, &resp); err != nil {
+		retErr.PrivateErr = err
+		return nil, retErr
+	}
+	if err := sp.validateLogoutResponse(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // ValidateLogoutResponseForm returns a nil error if the logout response is valid.
@@ -2213,23 +2330,23 @@ func (sp *ServiceProvider) parseLogoutResponseForm(postFormData string) (*Logout
 
 	rawResponseBuf, err := base64.StdEncoding.DecodeString(postFormData)
 	if err != nil {
-		retErr.PrivateErr = fmt.Errorf("unable to parse base64: %s", err)
+		retErr.PrivateErr = classify(fmt.Errorf("unable to parse base64: %w", err), ErrMalformedMessage)
 		return nil, retErr
 	}
 	retErr.Response = string(rawResponseBuf)
 
 	// TODO(ross): add test case for this (SLO does not have tests right now)
 	if err := xrv.Validate(bytes.NewReader(rawResponseBuf)); err != nil {
-		return nil, fmt.Errorf("response contains invalid XML: %s", err)
+		return nil, classify(fmt.Errorf("response contains invalid XML: %w", err), ErrMalformedMessage)
 	}
 
 	doc := etree.NewDocument()
 	if err := doc.ReadFromBytes(rawResponseBuf); err != nil {
-		retErr.PrivateErr = err
+		retErr.PrivateErr = classify(err, ErrMalformedMessage)
 		return nil, retErr
 	}
 	if doc.Root() == nil {
-		retErr.PrivateErr = errors.New("invalid xml: no root")
+		retErr.PrivateErr = classify(errors.New("invalid xml: no root"), ErrMalformedMessage)
 		return nil, retErr
 	}
 
@@ -2294,31 +2411,33 @@ func (sp *ServiceProvider) validateLogoutResponseRedirectQuery(rawQuery string) 
 // validateLogoutResponse validates the LogoutResponse fields. Returns a nil error if the LogoutResponse is valid.
 func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 	if resp.Destination != sp.SloURL.String() {
-		return fmt.Errorf("`Destination` does not match SloURL (expected %q)", sp.SloURL.String())
+		return classify(fmt.Errorf("`Destination` does not match SloURL (expected %q)", sp.SloURL.String()), ErrDestinationMismatch)
 	}
 
 	now := sp.now()
 	if resp.IssueInstant.Add(MaxIssueDelay).Before(now) {
-		return fmt.Errorf("issueInstant expired at %s", resp.IssueInstant.Add(MaxIssueDelay))
+		return classify(fmt.Errorf("issueInstant expired at %s", resp.IssueInstant.Add(MaxIssueDelay)), ErrExpired)
 	}
 	if resp.Issuer == nil || resp.Issuer.Value != sp.IDPMetadata.EntityID {
-		return fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
+		return classify(fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
 	}
 	if resp.Status.StatusCode.Value != StatusSuccess {
-		return fmt.Errorf("status code was not %s", StatusSuccess)
+		return classify(fmt.Errorf("status code was not %s", StatusSuccess), ErrBadStatus{Status: resp.Status.StatusCode.Value})
 	}
 
 	return nil
 }
 
 // ValidateLogoutRequest validates a LogoutRequest sent by the IDP (IDP
-// initiated single logout), using either the HTTP-Redirect or the HTTP-POST
-// binding. It returns the request only if it is valid.
+// initiated single logout), using the HTTP-Redirect, HTTP-POST or
+// HTTP-POST-SimpleSign binding. It returns the request only if it is valid.
 //
 // The request must be signed by the IDP. With the HTTP-Redirect binding that
 // is either a query string signature (SigAlg and Signature parameters) or an
 // enveloped XML signature; with the HTTP-POST binding it is an enveloped XML
-// signature.
+// signature. A posted form that carries a SigAlg or Signature field is an
+// HTTP-POST-SimpleSign message and must have a valid SimpleSign signature
+// (an enveloped XML signature it also carries must be valid too).
 //
 // The caller should end the session identified by the returned request's
 // NameID (and SessionIndex, if present) and then answer the IDP, for example
@@ -2329,10 +2448,32 @@ func (sp *ServiceProvider) ValidateLogoutRequest(req *http.Request) (*LogoutRequ
 	}
 
 	if err := req.ParseForm(); err != nil {
-		return nil, fmt.Errorf("unable to parse form: %v", err)
+		return nil, classify(fmt.Errorf("unable to parse form: %w", err), ErrMalformedMessage)
 	}
 
+	if isSimpleSignRequest(req) {
+		return sp.validateLogoutRequestSimpleSign(req)
+	}
 	return sp.ValidateLogoutRequestForm(req.PostForm.Get(redirectParamSAMLRequest))
+}
+
+// validateLogoutRequestSimpleSign validates a LogoutRequest received via the
+// HTTP-POST-SimpleSign binding. Its SimpleSign signature must be valid.
+func (sp *ServiceProvider) validateLogoutRequestSimpleSign(req *http.Request) (*LogoutRequest, error) {
+	retErr := &InvalidResponseError{
+		Now: sp.now(),
+	}
+
+	m, err := parseSimpleSignRequest(req, redirectParamSAMLRequest)
+	if err != nil {
+		retErr.PrivateErr = err
+		return nil, retErr
+	}
+	root, err := sp.readSimpleSignMessage(m, retErr)
+	if err != nil {
+		return nil, err
+	}
+	return sp.unmarshalAndValidateLogoutRequest(root, retErr)
 }
 
 // ValidateLogoutRequestForm validates a LogoutRequest received via the
@@ -2345,22 +2486,22 @@ func (sp *ServiceProvider) ValidateLogoutRequestForm(postFormData string) (*Logo
 
 	rawRequestBuf, err := base64.StdEncoding.DecodeString(postFormData)
 	if err != nil {
-		retErr.PrivateErr = fmt.Errorf("unable to parse base64: %s", err)
+		retErr.PrivateErr = classify(fmt.Errorf("unable to parse base64: %w", err), ErrMalformedMessage)
 		return nil, retErr
 	}
 	retErr.Response = string(rawRequestBuf)
 
 	if err := xrv.Validate(bytes.NewReader(rawRequestBuf)); err != nil {
-		return nil, fmt.Errorf("request contains invalid XML: %s", err)
+		return nil, classify(fmt.Errorf("request contains invalid XML: %w", err), ErrMalformedMessage)
 	}
 
 	doc := etree.NewDocument()
 	if err := doc.ReadFromBytes(rawRequestBuf); err != nil {
-		retErr.PrivateErr = err
+		retErr.PrivateErr = classify(err, ErrMalformedMessage)
 		return nil, retErr
 	}
 	if doc.Root() == nil {
-		retErr.PrivateErr = errors.New("invalid xml: no root")
+		retErr.PrivateErr = classify(errors.New("invalid xml: no root"), ErrMalformedMessage)
 		return nil, retErr
 	}
 
@@ -2403,24 +2544,24 @@ func (sp *ServiceProvider) unmarshalAndValidateLogoutRequest(root *etree.Element
 // validateLogoutRequest validates the LogoutRequest fields. Returns a nil error if the LogoutRequest is valid.
 func (sp *ServiceProvider) validateLogoutRequest(req *LogoutRequest) error {
 	if req.Destination != sp.SloURL.String() {
-		return fmt.Errorf("`Destination` does not match SloURL (expected %q)", sp.SloURL.String())
+		return classify(fmt.Errorf("`Destination` does not match SloURL (expected %q)", sp.SloURL.String()), ErrDestinationMismatch)
 	}
 
 	now := sp.now()
 	if req.IssueInstant.Add(MaxIssueDelay).Before(now) {
-		return fmt.Errorf("issueInstant expired at %s", req.IssueInstant.Add(MaxIssueDelay))
+		return classify(fmt.Errorf("issueInstant expired at %s", req.IssueInstant.Add(MaxIssueDelay)), ErrExpired)
 	}
 	if req.IssueInstant.Add(-MaxClockSkew).After(now) {
-		return fmt.Errorf("issueInstant %s is in the future", req.IssueInstant)
+		return classify(fmt.Errorf("issueInstant %s is in the future", req.IssueInstant), ErrNotYetValid)
 	}
 	if req.NotOnOrAfter != nil && !now.Before(req.NotOnOrAfter.Add(MaxClockSkew)) {
-		return fmt.Errorf("request expired at %s", req.NotOnOrAfter)
+		return classify(fmt.Errorf("request expired at %s", req.NotOnOrAfter), ErrExpired)
 	}
 	if req.Issuer == nil || req.Issuer.Value != sp.IDPMetadata.EntityID {
-		return fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
+		return classify(fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
 	}
 	if req.NameID == nil || req.NameID.Value == "" {
-		return errors.New("request does not contain a NameID")
+		return classify(errors.New("request does not contain a NameID"), ErrMissingElement)
 	}
 
 	return nil
@@ -2453,7 +2594,7 @@ func findChildren(parentEl *etree.Element, childNS string, childTag string) ([]*
 
 		ns, err := ctx.LookupPrefix(childEl.Space)
 		if err != nil {
-			return nil, fmt.Errorf("[%s]:%s cannot find prefix %s: %v", childNS, childTag, childEl.Space, err)
+			return nil, classify(fmt.Errorf("[%s]:%s cannot find prefix %s: %w", childNS, childTag, childEl.Space, err), ErrMalformedMessage)
 		}
 		if ns != childNS {
 			continue
@@ -2473,11 +2614,11 @@ func findOneChild(parentEl *etree.Element, childNS string, childTag string) (*et
 	}
 	switch len(children) {
 	case 0:
-		return nil, fmt.Errorf("cannot find %s:%s element", childNS, childTag)
+		return nil, classify(fmt.Errorf("cannot find %s:%s element", childNS, childTag), ErrMissingElement)
 	case 1:
 		return children[0], nil
 	default:
-		return nil, fmt.Errorf("expected exactly one %s:%s element", childNS, childTag)
+		return nil, classify(fmt.Errorf("expected exactly one %s:%s element", childNS, childTag), ErrMalformedMessage)
 	}
 }
 
@@ -2493,7 +2634,7 @@ func findChild(parentEl *etree.Element, childNS string, childTag string) (*etree
 	case 1:
 		return children[0], nil
 	default:
-		return nil, fmt.Errorf("expected at most one %s:%s element", childNS, childTag)
+		return nil, classify(fmt.Errorf("expected at most one %s:%s element", childNS, childTag), ErrMalformedMessage)
 	}
 }
 
@@ -2545,9 +2686,9 @@ func namespaceDeclPrefix(attr etree.Attr) (string, bool) {
 func unmarshalElement(el *etree.Element, v interface{}) error {
 	buf, err := elementToBytes(el)
 	if err != nil {
-		return err
+		return classify(err, ErrMalformedMessage)
 	}
-	return xml.Unmarshal(buf, v)
+	return classify(xml.Unmarshal(buf, v), ErrMalformedMessage)
 }
 
 func elementToString(el *etree.Element) string {
