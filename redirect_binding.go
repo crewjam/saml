@@ -168,6 +168,9 @@ func (sp *ServiceProvider) redirectBindingCerts() ([]*x509.Certificate, error) {
 // verifyRedirectBindingSignature checks the query string signature of an
 // HTTP-Redirect binding message against the IDP's signing certificates.
 func (sp *ServiceProvider) verifyRedirectBindingSignature(m *redirectBindingMessage) error {
+	if err := checkSigAlgNotSHA1(sp.RejectSHA1Signatures, m.SigAlg); err != nil {
+		return err
+	}
 	return checkRedirectBindingSignature(m, sp.redirectBindingCerts, sp.dsigClock().Now(), sp.IgnoreCertificateExpiry)
 }
 

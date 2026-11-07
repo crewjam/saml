@@ -173,6 +173,9 @@ func parseSimpleSignRequest(req *http.Request, messageParam string) (*simpleSign
 // control is ignored: the signature is only ever checked against trusted
 // certificates.
 func (sp *ServiceProvider) verifySimpleSignSignature(m *simpleSignMessage) error {
+	if err := checkSigAlgNotSHA1(sp.RejectSHA1Signatures, m.SigAlg); err != nil {
+		return err
+	}
 	algorithm, signature, err := decodeDetachedSignature(m.SigAlg, m.Signature, simpleSignBase64)
 	if err != nil {
 		return err

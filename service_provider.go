@@ -265,6 +265,16 @@ type ServiceProvider struct {
 	// them.
 	IgnoreCertificateExpiry bool
 
+	// RejectSHA1Signatures, if true, refuses messages from the IDP that are
+	// signed with a SHA-1 based algorithm: an XML signature whose
+	// SignatureMethod or any DigestMethod is SHA-1 based (rsa-sha1,
+	// ecdsa-sha1, dsa-sha1, hmac-sha1 or sha1), and an HTTP-Redirect or
+	// HTTP-POST-SimpleSign signature whose SigAlg is. The check applies to
+	// every signature the ServiceProvider verifies, including those checked
+	// by SignatureVerifier, and the error matches ErrUnsupported (and, for
+	// XML signatures, ErrInvalidSignature). If false, SHA-1 is accepted.
+	RejectSHA1Signatures bool
+
 	// ReplayCache, if set, records the ID of the assertion each accepted
 	// response is accepted for, and refuses a response whose assertion it
 	// has already recorded. Without it, a captured assertion is accepted
@@ -1763,6 +1773,9 @@ func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element) erro
 	}
 	if sigEl == nil {
 		return errSignatureElementNotPresent
+	}
+	if err := checkXMLSignatureNotSHA1(sp.RejectSHA1Signatures, sigEl); err != nil {
+		return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
 	}
 
 	var certs []*x509.Certificate

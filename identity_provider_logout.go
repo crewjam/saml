@@ -194,9 +194,15 @@ func (req *IdpLogoutRequest) verifySignature(root *etree.Element) error {
 	}
 
 	if req.redirectMessage != nil && req.redirectMessage.SignedContent != nil {
+		if err := checkSigAlgNotSHA1(req.IDP.RejectSHA1Signatures, req.redirectMessage.SigAlg); err != nil {
+			return err
+		}
 		return checkRedirectBindingSignature(req.redirectMessage, func() ([]*x509.Certificate, error) {
 			return certs, nil
 		}, req.Now, true)
+	}
+	if err := checkEnvelopedSignatureNotSHA1(req.IDP.RejectSHA1Signatures, root); err != nil {
+		return err
 	}
 	return verifyEnvelopedSignature(root, certs, Clock)
 }
