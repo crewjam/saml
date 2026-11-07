@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -73,6 +74,21 @@ type Options struct {
 	// UseArtifactResponse is true, HTTP-POST otherwise), or New returns an
 	// error.
 	AssertionConsumerServiceBindings []string
+
+	// Binding is the binding used to send authentication requests to the
+	// IDP: saml.HTTPRedirectBinding, saml.HTTPPostBinding or
+	// saml.HTTPPostSimpleSignBinding. If empty, HTTP-Redirect is used when
+	// the IDP metadata has an endpoint for it, HTTP-POST otherwise. The
+	// HTTP-POST-SimpleSign binding signs requests with Key, so it requires
+	// SignRequest. See Middleware.Binding.
+	Binding string
+
+	// UseSimpleSignResponse asks the IDP to send responses with the
+	// HTTP-POST-SimpleSign binding instead of HTTP-POST. It cannot be
+	// combined with UseArtifactResponse. When AssertionConsumerServiceBindings
+	// is empty, the metadata then advertises HTTP-POST-SimpleSign and
+	// HTTP-POST for the ACS. The ACS accepts both bindings either way.
+	UseSimpleSignResponse bool
 
 	// AcsIndex, if set, makes authentication requests name the
 	// AssertionConsumerService endpoint by its index in the SP metadata
@@ -244,6 +260,10 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		opts.LogoutBindings = []string{saml.HTTPPostBinding}
 	}
 
+	if opts.UseSimpleSignResponse && len(opts.AssertionConsumerServiceBindings) == 0 {
+		opts.AssertionConsumerServiceBindings = []string{saml.HTTPPostSimpleSignBinding, saml.HTTPPostBinding}
+	}
+
 	return saml.ServiceProvider{
 		EntityID:              opts.EntityID,
 		Key:                   opts.Key,
@@ -299,6 +319,30 @@ func defaultSigningMethodForKey(key crypto.Signer) string {
 	}
 }
 
+// applyBindingOptions sets the request and response bindings of m from
+// opts.Binding and opts.UseSimpleSignResponse, and checks that they can be
+// used together with the rest of opts.
+func applyBindingOptions(m *Middleware, opts Options) error {
+	switch opts.Binding {
+	case "", saml.HTTPRedirectBinding, saml.HTTPPostBinding:
+	case saml.HTTPPostSimpleSignBinding:
+		if !opts.SignRequest {
+			return errors.New("samlsp: the HTTP-POST-SimpleSign binding requires SignRequest")
+		}
+	default:
+		return fmt.Errorf("samlsp: unsupported Binding %q", opts.Binding)
+	}
+	m.Binding = opts.Binding
+
+	if opts.UseSimpleSignResponse {
+		if opts.UseArtifactResponse {
+			return errors.New("samlsp: UseSimpleSignResponse and UseArtifactResponse cannot both be set")
+		}
+		m.ResponseBinding = saml.HTTPPostSimpleSignBinding
+	}
+	return nil
+}
+
 // DefaultAssertionHandler returns the default AssertionHandler for the provided options,
 // a NopAssertionHandler configured to do nothing.
 func DefaultAssertionHandler(_ Options) NopAssertionHandler {
@@ -324,10 +368,13 @@ func New(opts Options) (*Middleware, error) {
 	if opts.UseArtifactResponse {
 		m.ResponseBinding = saml.HTTPArtifactBinding
 	}
+	if err := applyBindingOptions(m, opts); err != nil {
+		return nil, err
+	}
 
 	if len(opts.AssertionConsumerServiceBindings) > 0 &&
 		!slices.Contains(opts.AssertionConsumerServiceBindings, m.ResponseBinding) {
-		return nil, fmt.Errorf("samlsp: AssertionConsumerServiceBindings must include the response binding %q (set UseArtifactResponse to match)", m.ResponseBinding)
+		return nil, fmt.Errorf("samlsp: AssertionConsumerServiceBindings must include the response binding %q (set UseArtifactResponse or UseSimpleSignResponse to match)", m.ResponseBinding)
 	}
 
 	return m, nil

@@ -48,8 +48,8 @@ import (
 type Middleware struct {
 	ServiceProvider  saml.ServiceProvider
 	OnError          func(w http.ResponseWriter, r *http.Request, err error)
-	Binding          string // either saml.HTTPPostBinding or saml.HTTPRedirectBinding
-	ResponseBinding  string // either saml.HTTPPostBinding or saml.HTTPArtifactBinding
+	Binding          string // saml.HTTPRedirectBinding, saml.HTTPPostBinding or saml.HTTPPostSimpleSignBinding
+	ResponseBinding  string // saml.HTTPPostBinding, saml.HTTPArtifactBinding or saml.HTTPPostSimpleSignBinding
 	RequestTracker   RequestTracker
 	Session          SessionProvider
 	AssertionHandler AssertionHandler
@@ -222,26 +222,46 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if binding == saml.HTTPPostBinding {
-		w.Header().Add("Content-Security-Policy", ""+
-			"default-src; "+
-			"script-src 'sha256-AjPdJSbZmeWHnEc5ykvJFay8FTWeTeRbs9dutfZ0HqE='; "+
-			"reflected-xss block; referrer no-referrer;")
-		w.Header().Add("Content-type", "text/html")
-		var buf bytes.Buffer
-		buf.WriteString(`<!DOCTYPE html><html><body>`)
-		var nonce string
-		if m.ScriptNonce != nil {
-			nonce = m.ScriptNonce(r)
-		}
-		buf.Write(authReq.PostWithNonce(relayState, nonce))
-		buf.WriteString(`</body></html>`)
-		if _, err := w.Write(buf.Bytes()); err != nil {
+		writeAutoSubmitForm(w, authReq.PostWithNonce(relayState, m.scriptNonce(r)))
+		return
+	}
+	if binding == saml.HTTPPostSimpleSignBinding {
+		form, err := authReq.SimpleSignWithNonce(relayState, m.scriptNonce(r), &m.ServiceProvider)
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		writeAutoSubmitForm(w, form)
 		return
 	}
 	panic("not reached")
+}
+
+// scriptNonce returns the nonce for the auto-submit script of a form, or ""
+// if ScriptNonce is not set.
+func (m *Middleware) scriptNonce(r *http.Request) string {
+	if m.ScriptNonce == nil {
+		return ""
+	}
+	return m.ScriptNonce(r)
+}
+
+// writeAutoSubmitForm writes an HTML page holding form, an auto-submitting
+// form made by AuthnRequest.PostWithNonce or SimpleSignWithNonce. Both use
+// the same script, which the Content-Security-Policy allows by hash.
+func writeAutoSubmitForm(w http.ResponseWriter, form []byte) {
+	w.Header().Add("Content-Security-Policy", ""+
+		"default-src; "+
+		"script-src 'sha256-AjPdJSbZmeWHnEc5ykvJFay8FTWeTeRbs9dutfZ0HqE='; "+
+		"reflected-xss block; referrer no-referrer;")
+	w.Header().Add("Content-type", "text/html")
+	var buf bytes.Buffer
+	buf.WriteString(`<!DOCTYPE html><html><body>`)
+	buf.Write(form)
+	buf.WriteString(`</body></html>`)
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 // CreateSessionFromAssertion is invoked by ServeHTTP when we have a new, valid SAML assertion.
