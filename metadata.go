@@ -107,6 +107,16 @@ func (m *EntitiesDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement
 		d := time.Duration(*aux.CacheDuration)
 		m.CacheDuration = &d
 	}
+	var resolve func(ed *EntitiesDescriptor)
+	resolve = func(ed *EntitiesDescriptor) {
+		for i := range ed.EntityDescriptors {
+			resolveRoleDescriptorTypes(&ed.EntityDescriptors[i], start.Attr)
+		}
+		for i := range ed.EntitiesDescriptors {
+			resolve(&ed.EntitiesDescriptors[i])
+		}
+	}
+	resolve(m)
 	return nil
 }
 
@@ -138,8 +148,44 @@ type EntityDescriptor struct {
 	PDPDescriptors                []PDPDescriptor                `xml:"PDPDescriptor"`
 	AffiliationDescriptor         *AffiliationDescriptor
 	Organization                  *Organization
-	ContactPerson                 *ContactPerson
-	AdditionalMetadataLocations   []string `xml:"AdditionalMetadataLocation"`
+
+	// ContactPerson is the first contact person of the entity.
+	//
+	// Deprecated: an entity may have any number of contact persons
+	// (saml-metadata-2.0-os §2.3.2). Use ContactPersons. When metadata is
+	// parsed, ContactPerson is set to point to the first element of
+	// ContactPersons. When metadata is written, a non-nil ContactPerson
+	// replaces the first element of ContactPersons, or is the only contact
+	// person if ContactPersons is empty.
+	ContactPerson *ContactPerson `xml:"-"`
+
+	// ContactPersons are the md:ContactPerson elements of the entity.
+	ContactPersons []ContactPerson `xml:"ContactPerson"`
+
+	// AdditionalMetadataLocations are the locations of the
+	// md:AdditionalMetadataLocation elements.
+	//
+	// Deprecated: it loses the required namespace attribute
+	// (saml-metadata-2.0-os §2.3.2.3). Use AdditionalMetadataLocationElements.
+	// When metadata is parsed, it is set to the locations of
+	// AdditionalMetadataLocationElements. When metadata is written, it is
+	// used only if AdditionalMetadataLocationElements is empty, and the
+	// elements it produces have an empty namespace attribute.
+	AdditionalMetadataLocations []string `xml:"-"`
+
+	// AdditionalMetadataLocationElements are the md:AdditionalMetadataLocation
+	// elements of the entity.
+	AdditionalMetadataLocationElements []AdditionalMetadataLocation `xml:"AdditionalMetadataLocation"`
+}
+
+// AdditionalMetadataLocation represents the SAML element
+// AdditionalMetadataLocation: the location of other metadata for the entity,
+// and the namespace of the root element of the metadata found there.
+//
+// See http://docs.oasis-open.org/security/saml/v2.0/saml-metadata-2.0-os.pdf §2.3.2.3
+type AdditionalMetadataLocation struct {
+	Namespace string `xml:"namespace,attr"`
+	Value     string `xml:",chardata"`
 }
 
 // MarshalXML implements xml.Marshaler
@@ -156,17 +202,42 @@ func (m EntityDescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	for i := range m.RoleDescriptors {
 		roleDescriptors[i] = roleDescriptorXML(m.RoleDescriptors[i])
 	}
+
+	// m is a copy, so the slices below can be replaced (but not modified
+	// in place) without affecting the caller.
+	if m.ContactPerson != nil {
+		switch {
+		case len(m.ContactPersons) == 0:
+			m.ContactPersons = []ContactPerson{*m.ContactPerson}
+		case m.ContactPerson != &m.ContactPersons[0]:
+			m.ContactPersons = append([]ContactPerson{*m.ContactPerson}, m.ContactPersons[1:]...)
+		}
+	}
+	if len(m.AdditionalMetadataLocationElements) == 0 && len(m.AdditionalMetadataLocations) > 0 {
+		locations := make([]AdditionalMetadataLocation, len(m.AdditionalMetadataLocations))
+		for i, location := range m.AdditionalMetadataLocations {
+			locations[i] = AdditionalMetadataLocation{Value: location}
+		}
+		m.AdditionalMetadataLocationElements = locations
+	}
+
+	// Extensions and RoleDescriptors are declared here, in schema order
+	// (saml-metadata-2.0-os §2.3.2: ds:Signature, md:Extensions, then the
+	// role descriptors), because the fields of this struct are written
+	// before those of Alias.
 	type Alias EntityDescriptor
 	aux := &struct {
 		ValidUntil      *RelaxedTime        `xml:"validUntil,attr,omitempty"`
 		CacheDuration   Duration            `xml:"cacheDuration,attr,omitempty"`
 		Signature       *etreeElementXML    `xml:"Signature"`
+		Extensions      *Extensions         `xml:"urn:oasis:names:tc:SAML:2.0:metadata Extensions,omitempty"`
 		RoleDescriptors []roleDescriptorXML `xml:"RoleDescriptor"`
 		*Alias
 	}{
 		ValidUntil:      validUntil,
 		CacheDuration:   Duration(m.CacheDuration),
 		Signature:       (*etreeElementXML)(m.Signature),
+		Extensions:      m.Extensions,
 		RoleDescriptors: roleDescriptors,
 		Alias:           (*Alias)(&m),
 	}
@@ -192,8 +263,17 @@ func (m *EntityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 	for _, rd := range aux.RoleDescriptors {
 		m.RoleDescriptors = append(m.RoleDescriptors, RoleDescriptor(rd))
 	}
+	resolveRoleDescriptorTypes(m, start.Attr)
 	m.ValidUntil = time.Time(aux.ValidUntil)
 	m.CacheDuration = time.Duration(aux.CacheDuration)
+	m.ContactPerson = nil
+	if len(m.ContactPersons) > 0 {
+		m.ContactPerson = &m.ContactPersons[0]
+	}
+	m.AdditionalMetadataLocations = nil
+	for _, location := range m.AdditionalMetadataLocationElements {
+		m.AdditionalMetadataLocations = append(m.AdditionalMetadataLocations, location.Value)
+	}
 	return nil
 }
 
@@ -272,10 +352,10 @@ type LocalizedURI struct {
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-metadata-2.0-os.pdf §2.3.2.2
 type ContactPerson struct {
-	ContactType      string `xml:"contactType,attr"`
-	Company          string
-	GivenName        string
-	SurName          string
+	ContactType      string   `xml:"contactType,attr"`
+	Company          string   `xml:",omitempty"`
+	GivenName        string   `xml:",omitempty"`
+	SurName          string   `xml:",omitempty"`
 	EmailAddresses   []string `xml:"EmailAddress"`
 	TelephoneNumbers []string `xml:"TelephoneNumber"`
 }
@@ -294,6 +374,20 @@ type RoleDescriptor struct {
 	KeyDescriptors             []KeyDescriptor `xml:"KeyDescriptor,omitempty"`
 	Organization               *Organization   `xml:"Organization,omitempty"`
 	ContactPeople              []ContactPerson `xml:"ContactPerson,omitempty"`
+
+	// XSIType is the xsi:type of a md:RoleDescriptor element. RoleDescriptor
+	// is an abstract type (saml-metadata-2.0-os §2.4.1), so such an element
+	// names its concrete type, for example
+	// {Space: "http://docs.oasis-open.org/wsfed/federation/200706", Local:
+	// "SecurityTokenServiceType"}. It is read and written only for the
+	// elements of EntityDescriptor.RoleDescriptors, not for the concrete
+	// descriptor types that embed RoleDescriptor.
+	//
+	// The prefix in the attribute value is resolved with the namespace
+	// declarations of the RoleDescriptor, EntityDescriptor and
+	// EntitiesDescriptor elements. If it cannot be resolved, Space is empty
+	// and Local is the attribute value as written.
+	XSIType xml.Name `xml:"-"`
 }
 
 // marshalRoleDescriptorAttrs and unmarshalRoleDescriptorAttrs convert the
@@ -328,7 +422,9 @@ func unmarshalRoleDescriptorAttrs(m *RoleDescriptor, validUntil *RelaxedTime, ca
 
 // KeyDescriptor represents the XMLSEC object of the same name
 type KeyDescriptor struct {
-	Use               string             `xml:"use,attr"`
+	// Use is "signing", "encryption", or empty, which means the key is used
+	// for both (saml-metadata-2.0-os §2.4.1.1).
+	Use               string             `xml:"use,attr,omitempty"`
 	KeyInfo           KeyInfo            `xml:"http://www.w3.org/2000/09/xmldsig# KeyInfo"`
 	EncryptionMethods []EncryptionMethod `xml:"EncryptionMethod"`
 }
@@ -609,8 +705,21 @@ type IDPSSODescriptor struct {
 	SSODescriptor
 	WantAuthnRequestsSigned *bool `xml:",attr"`
 
-	SingleSignOnServices       []Endpoint  `xml:"SingleSignOnService"`
-	ArtifactResolutionServices []Endpoint  `xml:"ArtifactResolutionService"`
+	SingleSignOnServices []Endpoint `xml:"SingleSignOnService"`
+
+	// ArtifactResolutionServices are the md:ArtifactResolutionService
+	// endpoints of the identity provider, without their index and isDefault
+	// attributes.
+	//
+	// Deprecated: ArtifactResolutionService is an indexed endpoint
+	// (saml-metadata-2.0-os §2.4.2). Use
+	// SSODescriptor.ArtifactResolutionServices, which this field hides. When
+	// metadata is parsed, this field is set to the endpoints of
+	// SSODescriptor.ArtifactResolutionServices. When metadata is written, it
+	// is used only if SSODescriptor.ArtifactResolutionServices is empty, and
+	// its endpoints are given the indexes 1, 2, ...
+	ArtifactResolutionServices []Endpoint `xml:"-"`
+
 	NameIDMappingServices      []Endpoint  `xml:"NameIDMappingService"`
 	AssertionIDRequestServices []Endpoint  `xml:"AssertionIDRequestService"`
 	AttributeProfiles          []string    `xml:"AttributeProfile"`
@@ -620,6 +729,21 @@ type IDPSSODescriptor struct {
 // MarshalXML implements xml.Marshaler
 func (m IDPSSODescriptor) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias IDPSSODescriptor
+	if len(m.SSODescriptor.ArtifactResolutionServices) == 0 && len(m.ArtifactResolutionServices) > 0 {
+		services := make([]IndexedEndpoint, len(m.ArtifactResolutionServices))
+		for i, ep := range m.ArtifactResolutionServices {
+			services[i] = IndexedEndpoint{
+				Binding:  ep.Binding,
+				Location: ep.Location,
+				Index:    i + 1,
+			}
+			if ep.ResponseLocation != "" {
+				responseLocation := ep.ResponseLocation
+				services[i].ResponseLocation = &responseLocation
+			}
+		}
+		m.SSODescriptor.ArtifactResolutionServices = services
+	}
 	validUntil, cacheDuration := marshalRoleDescriptorAttrs(&m.RoleDescriptor)
 	aux := &struct {
 		ValidUntil    *RelaxedTime     `xml:"validUntil,attr,omitempty"`
@@ -656,6 +780,14 @@ func (m *IDPSSODescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 	m.XMLName = aux.XMLName
 	unmarshalRoleDescriptorAttrs(&m.RoleDescriptor, aux.ValidUntil, aux.CacheDuration)
 	m.Signature = (*etree.Element)(aux.Signature)
+	m.ArtifactResolutionServices = nil
+	for _, ep := range m.SSODescriptor.ArtifactResolutionServices {
+		endpoint := Endpoint{Binding: ep.Binding, Location: ep.Location}
+		if ep.ResponseLocation != nil {
+			endpoint.ResponseLocation = *ep.ResponseLocation
+		}
+		m.ArtifactResolutionServices = append(m.ArtifactResolutionServices, endpoint)
+	}
 	return nil
 }
 
@@ -880,7 +1012,7 @@ func (m *AttributeAuthorityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.St
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-metadata-2.0-os.pdf §2.5
 type AffiliationDescriptor struct {
 	AffiliationOwnerID string        `xml:"affiliationOwnerID,attr"`
-	ID                 string        `xml:",attr"`
+	ID                 string        `xml:",attr,omitempty"`
 	ValidUntil         time.Time     `xml:"validUntil,attr,omitempty"`
 	CacheDuration      time.Duration `xml:"cacheDuration,attr"`
 	Signature          *etree.Element
@@ -894,9 +1026,21 @@ type AffiliationDescriptor struct {
 // descriptors that embed it.
 type roleDescriptorXML RoleDescriptor
 
-// MarshalXML implements xml.Marshaler, writing Signature as XML.
+// MarshalXML implements xml.Marshaler, writing Signature as XML and XSIType
+// as xsi:type.
 func (m roleDescriptorXML) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	type Alias roleDescriptorXML
+	if m.XSIType.Local != "" {
+		// The namespaces are declared explicitly: encoding/xml does not
+		// declare a prefix that is used only in an attribute value.
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "xmlns:xsi"}, Value: xsiNamespaceURI})
+		value := m.XSIType.Local
+		if m.XSIType.Space != "" {
+			start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "xmlns:" + xsiTypePrefix}, Value: m.XSIType.Space})
+			value = xsiTypePrefix + ":" + value
+		}
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "xsi:type"}, Value: value})
+	}
 	aux := &struct {
 		Signature *etreeElementXML `xml:"Signature"`
 		*Alias
@@ -907,7 +1051,8 @@ func (m roleDescriptorXML) MarshalXML(e *xml.Encoder, start xml.StartElement) er
 	return e.EncodeElement(aux, start)
 }
 
-// UnmarshalXML implements xml.Unmarshaler, reading Signature as XML.
+// UnmarshalXML implements xml.Unmarshaler, reading Signature as XML and
+// xsi:type as XSIType.
 func (m *roleDescriptorXML) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias roleDescriptorXML
 	aux := &struct {
@@ -920,7 +1065,46 @@ func (m *roleDescriptorXML) UnmarshalXML(d *xml.Decoder, start xml.StartElement)
 		return err
 	}
 	m.Signature = (*etree.Element)(aux.Signature)
+	m.XSIType = xml.Name{}
+	for _, attr := range start.Attr {
+		if attr.Name.Space == xsiNamespaceURI && attr.Name.Local == "type" {
+			m.XSIType = resolveQName(xml.Name{Local: attr.Value}, start.Attr)
+		}
+	}
 	return nil
+}
+
+// xsiTypePrefix is the namespace prefix written for the value of the xsi:type
+// attribute of a RoleDescriptor element.
+const xsiTypePrefix = "xsitype"
+
+// resolveQName resolves the prefix of an unresolved QName (one with an empty
+// Space and a prefixed Local, as RoleDescriptor.XSIType holds it) with the
+// namespace declarations in attrs. It returns name unchanged if it has no
+// prefix or attrs does not declare it.
+func resolveQName(name xml.Name, attrs []xml.Attr) xml.Name {
+	if name.Space != "" {
+		return name
+	}
+	prefix, local, ok := strings.Cut(name.Local, ":")
+	if !ok {
+		return name
+	}
+	for _, attr := range attrs {
+		if attr.Name.Space == "xmlns" && attr.Name.Local == prefix {
+			return xml.Name{Space: attr.Value, Local: local}
+		}
+	}
+	return name
+}
+
+// resolveRoleDescriptorTypes resolves the prefixes of the XSIType of the
+// RoleDescriptors of ed that are still unresolved, with the namespace
+// declarations in attrs (those of an enclosing element).
+func resolveRoleDescriptorTypes(ed *EntityDescriptor, attrs []xml.Attr) {
+	for i := range ed.RoleDescriptors {
+		ed.RoleDescriptors[i].XSIType = resolveQName(ed.RoleDescriptors[i].XSIType, attrs)
+	}
 }
 
 // MarshalXML implements xml.Marshaler, writing Signature as XML,

@@ -632,7 +632,20 @@ func (sp *ServiceProvider) GetSSOBindingLocation(binding string) string {
 // specified type
 func (sp *ServiceProvider) GetArtifactBindingLocation(binding string) string {
 	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
+		// The deprecated IDPSSODescriptor.ArtifactResolutionServices is
+		// consulted first, so that a caller that changed it after parsing
+		// the metadata gets what it set. The indexed endpoints are used when
+		// it is empty, as it is when the descriptor was built in code with
+		// only SSODescriptor.ArtifactResolutionServices.
 		for _, artifactResolutionService := range idpSSODescriptor.ArtifactResolutionServices {
+			if artifactResolutionService.Binding == binding {
+				return artifactResolutionService.Location
+			}
+		}
+		if len(idpSSODescriptor.ArtifactResolutionServices) > 0 {
+			continue
+		}
+		for _, artifactResolutionService := range idpSSODescriptor.SSODescriptor.ArtifactResolutionServices {
 			if artifactResolutionService.Binding == binding {
 				return artifactResolutionService.Location
 			}
