@@ -446,7 +446,6 @@ func TestParseXMLAttributeQueryResponseUnsignedWithManyAssertions(t *testing.T) 
 	assert.Check(t, is.Error(spcovPrivateErr(t, err), "an unsigned Response must contain exactly one Assertion or EncryptedAssertion, not 200"))
 }
 
-
 // aqKeyPair returns a new RSA key and a certificate for it that is valid at
 // spcovNow.
 func aqKeyPair(t *testing.T) (*rsa.PrivateKey, *x509.Certificate) {
