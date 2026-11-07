@@ -41,6 +41,8 @@ type Config struct {
 	replayState            saml.AssertionReplayCache
 	authnContextComparator func(comparison string, requested []string, got string) bool
 	clock                  *dsig.Clock
+	httpClient             *http.Client
+	signatureMethod        string
 
 	spOptions  []ServiceProviderOption
 	spMetadata spMetadataOptions
@@ -115,6 +117,11 @@ func New(identityProvider MetadataFunc, entityID string, opts ...Option) (*Confi
 	}
 	if err := c.spMetadata.check(); err != nil {
 		return nil, err
+	}
+	if c.signatureMethod != "" {
+		if err := checkSignatureMethod(c.signatureMethod, c.key); err != nil {
+			return nil, err
+		}
 	}
 	if c.signRequests && signatureMethod(c.key) == "" {
 		return nil, errors.New("samlsp: SignAuthnRequests needs an RSA or ECDSA key (see WithKey)")
@@ -286,6 +293,50 @@ func WithAuthnContextComparator(satisfies func(comparison AuthnContextComparison
 	})
 }
 
+// WithSignatureMethod sets the XML signature algorithm of everything the
+// SP signs: AuthnRequests (with SignAuthnRequests), logout messages,
+// attribute queries and signed metadata. It must suit the key of WithKey:
+// dsig.RSASHA256SignatureMethod, RSASHA384 or RSASHA512 for an RSA key,
+// and dsig.ECDSASHA256SignatureMethod, ECDSASHA384 or ECDSASHA512 for an
+// ECDSA key. SHA-1 is refused. The default is SHA-256.
+func WithSignatureMethod(method string) Option {
+	return optionFunc(func(c *Config, _ *configOptions) { c.signatureMethod = method })
+}
+
+// checkSignatureMethod returns an error if method cannot be used with key.
+func checkSignatureMethod(method string, key crypto.Signer) error {
+	if signatureMethod(key) == "" {
+		return errors.New("samlsp: WithSignatureMethod needs an RSA or ECDSA key (see WithKey)")
+	}
+	_, isRSA := key.Public().(*rsa.PublicKey)
+	switch method {
+	case dsig.RSASHA256SignatureMethod, dsig.RSASHA384SignatureMethod, dsig.RSASHA512SignatureMethod:
+		if !isRSA {
+			return fmt.Errorf("samlsp: signature method %s needs an RSA key", method)
+		}
+	case dsig.ECDSASHA256SignatureMethod, dsig.ECDSASHA384SignatureMethod, dsig.ECDSASHA512SignatureMethod:
+		if isRSA {
+			return fmt.Errorf("samlsp: signature method %s needs an ECDSA key", method)
+		}
+	case dsig.RSASHA1SignatureMethod, dsig.ECDSASHA1SignatureMethod:
+		return fmt.Errorf("samlsp: SHA-1 signature method %s is refused", method)
+	default:
+		return fmt.Errorf("samlsp: unknown signature method %q", method)
+	}
+	return nil
+}
+
+// signWithLogoutMethod makes sp sign SOAP messages, attribute queries and
+// metadata with the method of LogoutSignatureMethod, which is the one of
+// WithSignatureMethod. Package saml signs those with SignatureMethod,
+// which also turns on the signing of AuthnRequests, so it is set only on
+// the ServiceProvider of a call that makes none.
+func signWithLogoutMethod(sp *saml.ServiceProvider) {
+	if sp.LogoutSignatureMethod != "" {
+		sp.SignatureMethod = sp.LogoutSignatureMethod
+	}
+}
+
 // WithClock sets the time source used to check validity periods. It is
 // mainly useful in tests.
 func WithClock(clock *dsig.Clock) Option {
@@ -343,7 +394,7 @@ func (c *Config) serviceProvider(ctx context.Context, opts []ServiceProviderOpti
 	if err := checkIDPMetadata(idpMetadata); err != nil {
 		return nil, err
 	}
-	sp := c.localServiceProvider(ctx)
+	sp := c.localServiceProvider()
 	sp.IDPMetadata = idpMetadata
 	c.applyServiceProviderOptions(sp, opts)
 	return sp, nil
@@ -352,7 +403,7 @@ func (c *Config) serviceProvider(ctx context.Context, opts []ServiceProviderOpti
 // localServiceProvider returns a new saml.ServiceProvider configured from
 // c, without the identity provider's metadata and without applying any
 // ServiceProviderOption.
-func (c *Config) localServiceProvider(ctx context.Context) *saml.ServiceProvider {
+func (c *Config) localServiceProvider() *saml.ServiceProvider {
 	sp := &saml.ServiceProvider{
 		EntityID:              c.entityID,
 		Key:                   c.key,
@@ -361,7 +412,7 @@ func (c *Config) localServiceProvider(ctx context.Context) *saml.ServiceProvider
 		DecryptionKeys:        c.decryptionKeys,
 		EncryptionKey:         c.encryptionKey,
 		EncryptionCertificate: c.encryptionCert,
-		HTTPClient:            clientFromContext(ctx),
+		HTTPClient:            c.httpClient,
 		AcsURL:                c.acsURL,
 		SloURL:                c.sloURL,
 		AuthnNameIDFormat:     c.nameIDFormat,
@@ -378,7 +429,10 @@ func (c *Config) localServiceProvider(ctx context.Context) *saml.ServiceProvider
 			sp.LogoutBindings = append(sp.LogoutBindings, saml.SOAPBinding)
 		}
 	}
-	method := signatureMethod(c.key)
+	method := c.signatureMethod
+	if method == "" {
+		method = signatureMethod(c.key)
+	}
 	if c.signRequests {
 		sp.SignatureMethod = method
 	}
@@ -408,8 +462,8 @@ func signatureMethod(key crypto.Signer) string {
 // Metadata returns the metadata of this service provider, to register it
 // with the identity provider. It does not call the identity provider's
 // MetadataFunc.
-func (c *Config) Metadata(ctx context.Context, opts ...ServiceProviderOption) *saml.EntityDescriptor {
-	md := c.spForMetadata(ctx, opts).Metadata()
+func (c *Config) Metadata(_ context.Context, opts ...ServiceProviderOption) *saml.EntityDescriptor {
+	md := c.spForMetadata(opts).Metadata()
 	c.spMetadata.apply(md)
 	return md
 }
@@ -417,8 +471,8 @@ func (c *Config) Metadata(ctx context.Context, opts ...ServiceProviderOption) *s
 // spForMetadata returns the saml.ServiceProvider that describes this SP's
 // metadata. The SP metadata does not depend on the IdP, so it is served
 // even when the IdP metadata cannot be had.
-func (c *Config) spForMetadata(ctx context.Context, opts []ServiceProviderOption) *saml.ServiceProvider {
-	sp := c.localServiceProvider(ctx)
+func (c *Config) spForMetadata(opts []ServiceProviderOption) *saml.ServiceProvider {
+	sp := c.localServiceProvider()
 	c.applyServiceProviderOptions(sp, opts)
 	return sp
 }
@@ -426,8 +480,8 @@ func (c *Config) spForMetadata(ctx context.Context, opts []ServiceProviderOption
 // ServeMetadata is an http.HandlerFunc that serves this service provider's
 // metadata, conventionally at the entity ID's URL. If New was passed
 // SignMetadata, the metadata is signed.
-func (c *Config) ServeMetadata(w http.ResponseWriter, r *http.Request) {
-	buf, err := c.metadataBytes(r.Context())
+func (c *Config) ServeMetadata(w http.ResponseWriter, _ *http.Request) {
+	buf, err := c.metadataBytes()
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
@@ -436,13 +490,14 @@ func (c *Config) ServeMetadata(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(buf) //nolint:gosec // our own metadata, served as application/samlmetadata+xml
 }
 
-func (c *Config) metadataBytes(ctx context.Context) ([]byte, error) {
-	sp := c.spForMetadata(ctx, nil)
+func (c *Config) metadataBytes() ([]byte, error) {
+	sp := c.spForMetadata(nil)
 	md := sp.Metadata()
 	c.spMetadata.apply(md)
 	if !sp.SignMetadata {
 		return xml.MarshalIndent(md, "", "  ")
 	}
+	signWithLogoutMethod(sp)
 	el, err := sp.SignEntityDescriptor(md)
 	if err != nil {
 		return nil, err

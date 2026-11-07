@@ -115,8 +115,8 @@ func withAttributeService(ti *testIDP, location string) samlsp.MetadataFunc {
 func TestQueryAttributes(t *testing.T) {
 	ti := newTestIDP(t)
 	aa := newAttributeAuthority(t, ti)
-	cfg := newTestConfigWithIDP(t, ti, withAttributeService(ti, aa.URL))
-	ctx := samlsp.ClientContext(t.Context(), aa.Client())
+	cfg := newTestConfigWithIDP(t, ti, withAttributeService(ti, aa.URL), samlsp.WithHTTPClient(aa.Client()))
+	ctx := t.Context()
 	alice := saml.NameID{Format: string(saml.EmailAddressNameIDFormat), Value: "alice@example.com"}
 
 	attrs, err := cfg.QueryAttributes(ctx, alice,

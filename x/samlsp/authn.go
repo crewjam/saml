@@ -372,7 +372,7 @@ var AllowUnsolicited ResponseOption = responseOptionFunc(func(o *responseOptions
 //
 // It accepts the HTTP-POST, HTTP-POST-SimpleSign and HTTP-Artifact
 // bindings. For HTTP-Artifact, it resolves the artifact with a request to
-// the IdP. That request uses ctx and the HTTP client from ClientContext.
+// the IdP. That request uses ctx and the HTTP client of WithHTTPClient.
 //
 // At least one WithRequestID or AllowUnsolicited is required. Otherwise
 // ParseResponse returns ErrNoRequestID.
