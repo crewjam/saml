@@ -102,3 +102,29 @@ func TestElementToBytesNearestDeclarationWins(t *testing.T) {
 	assert.Check(t, is.Equal("urn:own", out.Root().NamespaceURI()))
 	assert.Check(t, is.Equal("urn:inner", out.FindElement("//d").NamespaceURI()))
 }
+
+// Azure AD sends the Assertion and its Signature unprefixed, each declaring
+// its own default namespace. The serialized assertion must keep both
+// namespaces rather than emitting xmlns:="..." (issue #527).
+func TestElementToBytesAzureOwnDefaultNamespaces(t *testing.T) {
+	const response = `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="r" Version="2.0">` +
+		`<Issuer xmlns="urn:oasis:names:tc:SAML:2.0:assertion">idp</Issuer>` +
+		`<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion" ID="a" IssueInstant="2023-07-13T06:41:21.540Z" Version="2.0">` +
+		`<Issuer>idp</Issuer><Signature xmlns="http://www.w3.org/2000/09/xmldsig#"><SignedInfo/></Signature>` +
+		`<Subject><NameID>alice</NameID></Subject></Assertion></samlp:Response>`
+	el := mustFindElement(t, response, "//Assertion")
+	assertStandalone(t, el)
+
+	buf, err := elementToBytes(el)
+	assert.Assert(t, err)
+	out := etree.NewDocument()
+	assert.Assert(t, out.ReadFromBytes(buf))
+	assert.Check(t, is.Equal("urn:oasis:names:tc:SAML:2.0:assertion", out.Root().NamespaceURI()))
+	assert.Check(t, is.Equal("http://www.w3.org/2000/09/xmldsig#", out.FindElement("//Signature").NamespaceURI()))
+
+	var assertion Assertion
+	assert.Assert(t, unmarshalElement(el, &assertion))
+	assert.Check(t, assertion.Signature != nil)
+	assert.Assert(t, assertion.Subject != nil && assertion.Subject.NameID != nil)
+	assert.Check(t, is.Equal("alice", assertion.Subject.NameID.Value))
+}
