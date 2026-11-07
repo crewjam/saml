@@ -58,7 +58,7 @@ var durationUnmarshalTests = []struct {
 	{[]byte("P1D1M1Y"), 0, errors.New("invalid duration (P1D1M1Y)")},
 	{[]byte("P1H1M1S"), 0, errors.New("invalid duration (P1H1M1S)")},
 	{[]byte("PT1S1M1H"), 0, errors.New("invalid duration (PT1S1M1H)")},
-	{[]byte(" P1Y "), 0, errors.New("invalid duration ( P1Y )")},
+	{[]byte(" P1Y "), 8760 * time.Hour, nil},
 	{[]byte("P"), 0, errors.New("invalid duration (P)")},
 	{[]byte("-P"), 0, errors.New("invalid duration (-P)")},
 	{[]byte("PT"), 0, errors.New("invalid duration (PT)")},
