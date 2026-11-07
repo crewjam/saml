@@ -26,7 +26,10 @@ import (
 // InvalidateSession must terminate the IdP session (or sessions) that req
 // refers to. Use req.MatchesSession to decide whether a Session is one of
 // them: its NameID must be the request's NameID and, if the request carries
-// SessionIndexes, its Index must be one of them. Ending no session, for
+// SessionIndexes, its Index must be one of them. If the IdP's
+// AcceptLogoutRequestBaseID is set, the request may instead identify the
+// principal with req.Request.BaseID, leaving req.Request.NameID nil; then
+// MatchesSession matches no session. Ending no session, for
 // example because the user is already logged out, is not an error.
 //
 // InvalidateSession may set headers on w, for example to expire a session
@@ -117,10 +120,11 @@ func NewIdpLogoutRequest(idp *IdentityProvider, r *http.Request) (*IdpLogoutRequ
 // ServiceProviderMetadata and SLOEndpoint. It returns a non-nil error if the
 // request is not valid.
 //
-// The principal is identified by a NameID or an EncryptedID. An EncryptedID
-// is decrypted with the IdP's Key, the private key of the certificate the IdP
-// metadata publishes for encryption, which must be an *rsa.PrivateKey;
-// Request.NameID is then set to the NameID it holds.
+// The principal is identified by a NameID or an EncryptedID, or by a BaseID
+// if the IdP's AcceptLogoutRequestBaseID is set. An EncryptedID is decrypted
+// with the IdP's Key, if it is an *rsa.PrivateKey, then with each of its
+// DecryptionKeys; Request.NameID (or Request.BaseID) is then set to the
+// identifier it holds.
 //
 // The request must be signed: with the HTTP-Redirect binding, with a query
 // string signature (SigAlg and Signature) or an enveloped XML signature;
@@ -267,7 +271,7 @@ func (req *IdpLogoutRequest) validateFields() error {
 	if r.NotOnOrAfter != nil && !req.Now.Before(r.NotOnOrAfter.Add(MaxClockSkew)) {
 		return fmt.Errorf("logout request expired at %s", r.NotOnOrAfter)
 	}
-	if err := resolveLogoutRequestNameID(r, req.IDP.decryptElement); err != nil {
+	if err := resolveLogoutRequestNameID(r, req.IDP.decryptElement, req.IDP.AcceptLogoutRequestBaseID); err != nil {
 		return fmt.Errorf("logout request: %w", err)
 	}
 	return nil

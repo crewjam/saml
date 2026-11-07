@@ -187,14 +187,14 @@ func TestIDPServeSLOEncryptedIDRejected(t *testing.T) {
 	}{
 		{"both NameID and EncryptedID", func(_ *testing.T, test *sloTest, req *LogoutRequest) {
 			req.NameID = test.logoutRequest().NameID
-		}, "both a NameID and an EncryptedID"},
+		}, "more than one of BaseID, NameID and EncryptedID"},
 		{"encrypted to another key", func(t *testing.T, test *sloTest, req *LogoutRequest) {
 			req.EncryptedID = encryptedNameID(t, test.logoutRequest().NameID.Element(), test.SP.Certificate)
 		}, "cannot decrypt EncryptedID"},
 		{"IdP key is not RSA", func(_ *testing.T, test *sloTest, _ *LogoutRequest) {
 			test.IDP.Signer = test.IDP.Key.(*rsa.PrivateKey)
 			test.IDP.Key = nil
-		}, "IdentityProvider.Key is not an RSA private key"},
+		}, "Key is not an *rsa.PrivateKey and DecryptionKeys is empty"},
 		{"EncryptedID without EncryptedData", func(_ *testing.T, _ *sloTest, req *LogoutRequest) {
 			req.EncryptedID = etree.NewElement("saml:EncryptedID")
 		}, "cannot decrypt EncryptedID"},
@@ -202,7 +202,7 @@ func TestIDPServeSLOEncryptedIDRejected(t *testing.T) {
 			issuer := etree.NewElement("saml:Issuer")
 			issuer.SetText("x")
 			req.EncryptedID = encryptedNameID(t, issuer, test.IDP.Certificate)
-		}, "only saml:NameID is supported"},
+		}, "only saml:NameID and saml:BaseID are supported"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			test := newSLOTest(t)

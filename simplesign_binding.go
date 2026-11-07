@@ -413,7 +413,10 @@ func (r *AuthnRequest) SimpleSignWithNonce(relayState, nonce string, sp *Service
 // a SimpleSign signature made with Key and SignatureMethod, which must be
 // set. The request carries no XML signature.
 func (sp *ServiceProvider) MakeSimpleSignLogoutRequest(nameID, relayState string, opts ...LogoutRequestOption) ([]byte, error) {
-	req := sp.makeUnsignedLogoutRequest(sp.GetSLOBindingLocation(HTTPPostSimpleSignBinding), nameID, opts...)
+	req, err := sp.makeLogoutRequest(sp.GetSLOBindingLocation(HTTPPostSimpleSignBinding), nameID, opts...)
+	if err != nil {
+		return nil, err
+	}
 	return req.SimpleSign(relayState, sp)
 }
 
