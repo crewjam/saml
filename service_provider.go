@@ -720,8 +720,11 @@ func (r *AuthnRequest) Redirect(relayState string, sp *ServiceProvider) (*url.UR
 
 // GetSSOBindingLocation returns URL for the IDP's Single Sign On Service binding
 // of the specified type (HTTPRedirectBinding, HTTPPostBinding or
-// HTTPPostSimpleSignBinding)
+// HTTPPostSimpleSignBinding), or "" if there is none or IDPMetadata is nil.
 func (sp *ServiceProvider) GetSSOBindingLocation(binding string) string {
+	if sp.IDPMetadata == nil {
+		return ""
+	}
 	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
 		for _, singleSignOnService := range idpSSODescriptor.SingleSignOnServices {
 			if singleSignOnService.Binding == binding {
@@ -733,8 +736,11 @@ func (sp *ServiceProvider) GetSSOBindingLocation(binding string) string {
 }
 
 // GetArtifactBindingLocation returns URL for the IDP's Artifact binding of the
-// specified type
+// specified type, or "" if there is none or IDPMetadata is nil.
 func (sp *ServiceProvider) GetArtifactBindingLocation(binding string) string {
+	if sp.IDPMetadata == nil {
+		return ""
+	}
 	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
 		// The deprecated IDPSSODescriptor.ArtifactResolutionServices is
 		// consulted first, so that a caller that changed it after parsing
@@ -759,8 +765,12 @@ func (sp *ServiceProvider) GetArtifactBindingLocation(binding string) string {
 }
 
 // GetSLOBindingLocation returns URL for the IDP's Single Log Out Service binding
-// of the specified type (HTTPRedirectBinding or HTTPPostBinding)
+// of the specified type (HTTPRedirectBinding or HTTPPostBinding), or "" if
+// there is none or IDPMetadata is nil.
 func (sp *ServiceProvider) GetSLOBindingLocation(binding string) string {
+	if sp.IDPMetadata == nil {
+		return ""
+	}
 	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
 		for _, singleLogoutService := range idpSSODescriptor.SingleLogoutServices {
 			if singleLogoutService.Binding == binding {
