@@ -114,6 +114,20 @@ type IdentityProvider struct {
 	ValidDuration           *time.Duration
 	ResponseFormTemplate    *template.Template
 
+	// OnError, if non-nil, is called when ServeSSO or ServeIDPInitiated
+	// cannot complete a request, in place of DefaultOnError, which logs err
+	// to Logger and responds with status. status is the HTTP status the
+	// IdentityProvider would respond with: StatusBadRequest for a request
+	// that cannot be parsed or is invalid, StatusNotFound for an
+	// IdP-initiated request for an unknown service provider, and
+	// StatusInternalServerError otherwise. err can be matched with errors.Is
+	// against the error values of this package, such as
+	// ErrUnknownServiceProvider or ErrInvalidCertificate.
+	//
+	// OnError must write the response. When writing the SAML response
+	// failed part way, some of it may already have been written to w.
+	OnError func(w http.ResponseWriter, r *http.Request, status int, err error)
+
 	// ExtraCertificates are additional certificates published in the IdP
 	// metadata as signing keys, after Certificate. They are never used to
 	// sign anything. Use them to announce a new signing certificate before
@@ -299,6 +313,22 @@ func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, _ *http.Reques
 	}
 }
 
+// DefaultOnError is how ServeSSO and ServeIDPInitiated report an error when
+// OnError is nil: it logs err to Logger and responds with status. An OnError
+// can call it for the errors it does not handle itself.
+func (idp *IdentityProvider) DefaultOnError(w http.ResponseWriter, _ *http.Request, status int, err error) {
+	idp.Logger.Printf("%s", err)
+	http.Error(w, http.StatusText(status), status)
+}
+
+func (idp *IdentityProvider) onError(w http.ResponseWriter, r *http.Request, status int, err error) {
+	if idp.OnError != nil {
+		idp.OnError(w, r, status, err)
+		return
+	}
+	idp.DefaultOnError(w, r, status, err)
+}
+
 // ServeSSO handles SAML auth requests.
 //
 // When it gets a request for a user that does not have a valid session,
@@ -316,17 +346,17 @@ func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, _ *http.Reques
 //
 // If the assertion cannot be created or returned, a StatusInternalServerError
 // response is sent.
+//
+// Set OnError to handle these failures differently.
 func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 	req, err := NewIdpAuthnRequest(idp, r)
 	if err != nil {
-		idp.Logger.Printf("failed to parse request: %s", err)
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		idp.onError(w, r, http.StatusBadRequest, fmt.Errorf("failed to parse request: %w", err))
 		return
 	}
 
 	if err := req.Validate(); err != nil {
-		idp.Logger.Printf("failed to validate request: %s", err)
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		idp.onError(w, r, http.StatusBadRequest, fmt.Errorf("failed to validate request: %w", err))
 		return
 	}
 
@@ -343,13 +373,11 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 		assertionMaker = DefaultAssertionMaker{}
 	}
 	if err := assertionMaker.MakeAssertion(req, session); err != nil {
-		idp.Logger.Printf("failed to make assertion: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to make assertion: %w", err))
 		return
 	}
 	if err := req.WriteResponse(w); err != nil {
-		idp.Logger.Printf("failed to write response: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to write response: %w", err))
 		return
 	}
 }
@@ -361,17 +389,16 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 // It responds with StatusNotFound if the service provider is unknown, and
 // with StatusInternalServerError if the service provider cannot be looked up
 // or has no usable assertion consumer service, or the assertion cannot be
-// created or returned. To handle these failures differently, build a handler
-// from NewIdpInitiatedRequest, whose errors can be matched with errors.Is.
+// created or returned. Set OnError to handle these failures differently, or
+// build a handler from NewIdpInitiatedRequest.
 func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Request, serviceProviderID string, relayState string) {
 	req, err := idp.NewIdpInitiatedRequest(r, serviceProviderID, relayState)
 	if err != nil {
-		idp.Logger.Printf("%s", err)
 		status := http.StatusInternalServerError
 		if errors.Is(err, ErrUnknownServiceProvider) {
 			status = http.StatusNotFound
 		}
-		http.Error(w, http.StatusText(status), status)
+		idp.onError(w, r, status, err)
 		return
 	}
 
@@ -387,14 +414,12 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 		assertionMaker = DefaultAssertionMaker{}
 	}
 	if err := assertionMaker.MakeAssertion(req, session); err != nil {
-		idp.Logger.Printf("failed to make assertion: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to make assertion: %w", err))
 		return
 	}
 
 	if err := req.WriteResponse(w); err != nil {
-		idp.Logger.Printf("failed to write response: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to write response: %w", err))
 		return
 	}
 }

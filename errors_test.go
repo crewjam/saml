@@ -1,10 +1,12 @@
 package saml
 
 import (
+	"bytes"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/xml"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -423,4 +425,130 @@ func TestInvalidCertificateErrorKinds(t *testing.T) {
 			assert.Check(t, !errors.Is(err, ErrUntrustedCertificate))
 		})
 	}
+}
+
+func TestIdentityProviderOnError(t *testing.T) {
+	type call struct {
+		status int
+		err    error
+	}
+	setup := func(t *testing.T) (*IdentityProviderTest, *[]call) {
+		test := idpcovNewTest(t)
+		test.IDP.SessionProvider = &mockSessionProvider{GetSessionFunc: idpcovAliceSession}
+		var calls []call
+		test.IDP.OnError = func(w http.ResponseWriter, _ *http.Request, status int, err error) {
+			calls = append(calls, call{status, err})
+			w.WriteHeader(http.StatusTeapot)
+		}
+		return test, &calls
+	}
+	spMetadata := func(test *IdentityProviderTest, mutate func(*EntityDescriptor)) {
+		test.IDP.ServiceProviderProvider = &mockServiceProviderProvider{
+			GetServiceProviderFunc: func(_ *http.Request, id string) (*EntityDescriptor, error) {
+				if id != test.SP.MetadataURL.String() {
+					return nil, os.ErrNotExist
+				}
+				md := test.SP.Metadata()
+				mutate(md)
+				return md, nil
+			},
+		}
+	}
+	badEncryptionCert := func(md *EntityDescriptor) {
+		md.SPSSODescriptors[0].KeyDescriptors = []KeyDescriptor{idpcovCertKeyDescriptor("encryption", "!!!")}
+	}
+
+	t.Run("ServeSSO unparseable request", func(t *testing.T) {
+		test, calls := setup(t)
+		w := httptest.NewRecorder()
+		test.IDP.ServeSSO(w, httptest.NewRequest("PUT", "https://idp.example.com/saml/sso", nil))
+		assert.Equal(t, http.StatusTeapot, w.Code)
+		assert.Assert(t, len(*calls) == 1)
+		assert.Equal(t, http.StatusBadRequest, (*calls)[0].status)
+		assert.Error(t, (*calls)[0].err, "failed to parse request: method not allowed")
+		assert.Check(t, errors.Is((*calls)[0].err, ErrUnsupported))
+	})
+
+	t.Run("ServeSSO invalid request", func(t *testing.T) {
+		test, calls := setup(t)
+		r := idpcovSSORequest(t, test)
+		test.IDP.ServiceProviderProvider = &mockServiceProviderProvider{
+			GetServiceProviderFunc: func(*http.Request, string) (*EntityDescriptor, error) { return nil, os.ErrNotExist },
+		}
+		test.IDP.ServeSSO(httptest.NewRecorder(), r)
+		assert.Assert(t, len(*calls) == 1)
+		assert.Equal(t, http.StatusBadRequest, (*calls)[0].status)
+		assert.Check(t, errors.Is((*calls)[0].err, ErrUnknownServiceProvider))
+	})
+
+	t.Run("ServeSSO bad SP encryption certificate", func(t *testing.T) {
+		test, calls := setup(t)
+		spMetadata(test, badEncryptionCert)
+		test.IDP.ServeSSO(httptest.NewRecorder(), idpcovSSORequest(t, test))
+		assert.Assert(t, len(*calls) == 1)
+		assert.Equal(t, http.StatusInternalServerError, (*calls)[0].status)
+		assert.Check(t, errors.Is((*calls)[0].err, ErrInvalidCertificate))
+	})
+
+	t.Run("ServeSSO assertion maker error", func(t *testing.T) {
+		test, calls := setup(t)
+		makerErr := errors.New("no assertion for you")
+		test.IDP.AssertionMaker = idpcovAssertionMakerFunc(func(*IdpAuthnRequest, *Session) error { return makerErr })
+		test.IDP.ServeSSO(httptest.NewRecorder(), idpcovSSORequest(t, test))
+		assert.Assert(t, len(*calls) == 1)
+		assert.Equal(t, http.StatusInternalServerError, (*calls)[0].status)
+		assert.Error(t, (*calls)[0].err, "failed to make assertion: no assertion for you")
+		assert.Check(t, errors.Is((*calls)[0].err, makerErr))
+	})
+
+	t.Run("ServeIDPInitiated unknown service provider", func(t *testing.T) {
+		test, calls := setup(t)
+		test.IDP.ServeIDPInitiated(httptest.NewRecorder(), httptest.NewRequest("GET", "https://idp.example.com/", nil), "https://other-sp.example.com/metadata", "")
+		assert.Assert(t, len(*calls) == 1)
+		assert.Equal(t, http.StatusNotFound, (*calls)[0].status)
+		assert.Check(t, errors.Is((*calls)[0].err, ErrUnknownServiceProvider))
+	})
+
+	t.Run("ServeIDPInitiated bad SP encryption certificate", func(t *testing.T) {
+		test, calls := setup(t)
+		spMetadata(test, badEncryptionCert)
+		test.IDP.ServeIDPInitiated(httptest.NewRecorder(), httptest.NewRequest("GET", "https://idp.example.com/", nil), test.SP.MetadataURL.String(), "")
+		assert.Assert(t, len(*calls) == 1)
+		assert.Equal(t, http.StatusInternalServerError, (*calls)[0].status)
+		assert.Check(t, errors.Is((*calls)[0].err, ErrInvalidCertificate))
+	})
+
+	t.Run("OnError can delegate to DefaultOnError", func(t *testing.T) {
+		test, _ := setup(t)
+		var logged bytes.Buffer
+		test.IDP.Logger = log.New(&logged, "", 0)
+		test.IDP.OnError = func(w http.ResponseWriter, r *http.Request, status int, err error) {
+			if errors.Is(err, ErrUnknownServiceProvider) {
+				w.WriteHeader(http.StatusTeapot)
+				return
+			}
+			test.IDP.DefaultOnError(w, r, status, err)
+		}
+
+		w := httptest.NewRecorder()
+		test.IDP.ServeIDPInitiated(w, httptest.NewRequest("GET", "https://idp.example.com/", nil), "https://other-sp.example.com/metadata", "")
+		assert.Equal(t, http.StatusTeapot, w.Code)
+		assert.Equal(t, "", logged.String())
+
+		w = httptest.NewRecorder()
+		test.IDP.ServeSSO(w, httptest.NewRequest("PUT", "https://idp.example.com/saml/sso", nil))
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Equal(t, "failed to parse request: method not allowed\n", logged.String())
+	})
+
+	t.Run("without OnError the log line and status are unchanged", func(t *testing.T) {
+		test, _ := setup(t)
+		test.IDP.OnError = nil
+		var logged bytes.Buffer
+		test.IDP.Logger = log.New(&logged, "", 0)
+		w := httptest.NewRecorder()
+		test.IDP.ServeIDPInitiated(w, httptest.NewRequest("GET", "https://idp.example.com/", nil), "https://other-sp.example.com/metadata", "")
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Equal(t, "cannot find service provider: https://other-sp.example.com/metadata\n", logged.String())
+	})
 }
