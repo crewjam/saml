@@ -90,6 +90,16 @@ type Options struct {
 	// HTTP-POST for the ACS. The ACS accepts both bindings either way.
 	UseSimpleSignResponse bool
 
+	// LogoutBinding is the binding preferred for sending single logout
+	// messages to the IDP: saml.HTTPRedirectBinding, saml.HTTPPostBinding
+	// or saml.HTTPPostSimpleSignBinding. If empty, or if the IDP metadata
+	// has no SingleLogoutService endpoint for it, HTTP-Redirect is used when
+	// the IDP supports it, HTTP-POST otherwise. The HTTP-POST-SimpleSign
+	// binding requires SignRequest. See Middleware.LogoutBinding. (The
+	// bindings this SP advertises for receiving logout messages are set by
+	// LogoutBindings.)
+	LogoutBinding string
+
 	// AcsIndex, if set, makes authentication requests name the
 	// AssertionConsumerService endpoint by its index in the SP metadata
 	// instead of by URL and binding. See saml.ServiceProvider.AcsIndex.
@@ -342,8 +352,9 @@ func defaultSigningMethodForKey(key crypto.Signer) string {
 	}
 }
 
-// applyBindingOptions sets the request and response bindings of m from
-// opts.Binding and opts.UseSimpleSignResponse, and checks that they can be
+// applyBindingOptions sets the request, response and logout bindings of m
+// from opts.Binding, opts.UseSimpleSignResponse and opts.LogoutBinding, and
+// checks that they can be
 // used together with the rest of opts.
 func applyBindingOptions(m *Middleware, opts Options) error {
 	switch opts.Binding {
@@ -356,6 +367,17 @@ func applyBindingOptions(m *Middleware, opts Options) error {
 		return fmt.Errorf("samlsp: unsupported Binding %q", opts.Binding)
 	}
 	m.Binding = opts.Binding
+
+	switch opts.LogoutBinding {
+	case "", saml.HTTPRedirectBinding, saml.HTTPPostBinding:
+	case saml.HTTPPostSimpleSignBinding:
+		if !opts.SignRequest {
+			return errors.New("samlsp: the HTTP-POST-SimpleSign logout binding requires SignRequest")
+		}
+	default:
+		return fmt.Errorf("samlsp: unsupported LogoutBinding %q", opts.LogoutBinding)
+	}
+	m.LogoutBinding = opts.LogoutBinding
 
 	if opts.UseSimpleSignResponse {
 		if opts.UseArtifactResponse {
