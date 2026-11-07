@@ -58,11 +58,11 @@ func (s *Server) InvalidateSession(w http.ResponseWriter, r *http.Request, req *
 			if err := s.deleteSession(cookie.Value); err != nil {
 				return err
 			}
-			expireSessionCookie(w, r)
+			s.expireSessionCookie(w, r)
 			return nil
 		case errors.Is(err, ErrNotFound):
 			// The session is already gone; drop the stale cookie.
-			expireSessionCookie(w, r)
+			s.expireSessionCookie(w, r)
 		case err != nil:
 			return err
 		}
@@ -112,14 +112,39 @@ func sessionKey(id string) string {
 	return fmt.Sprintf("/sessions/%s", id)
 }
 
-// expireSessionCookie tells the browser to delete the session cookie.
-func expireSessionCookie(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure is set when served over https, as for the session cookie itself
+// expireSessionCookie tells the browser to delete the session cookie. It
+// has the attributes of the session cookie itself (see sessionCookie), so
+// that browsers replace it.
+func (s *Server) expireSessionCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, s.sessionCookie(r, "", -1))
+}
+
+// sessionCookie returns the session cookie with value and maxAge.
+//
+// The cookie is Secure when the IdP is served over https: when its
+// configured URL (Options.URL) is https, or when the request itself
+// arrived over TLS. The configured URL is what counts behind a proxy that
+// terminates TLS, where the request does not show that the browser used
+// https.
+//
+// A Secure cookie is also SameSite=None, so that browsers send it with the
+// cross-site POST of an AuthnRequest (HTTP-POST binding) to /sso and of a
+// LogoutRequest to /slo; with the default (Lax) they do not, and the user
+// would have to log in again on every such request. Browsers refuse
+// SameSite=None on a cookie that is not Secure, so a cookie served over
+// plain http keeps the browser default.
+func (s *Server) sessionCookie(r *http.Request, value string, maxAge int) *http.Cookie {
+	secure := r.TLS != nil || s.IDP.SSOURL.Scheme == "https"
+	cookie := &http.Cookie{ //nolint:gosec // G124: SameSite is set to None below when Secure; plain http keeps the browser default
 		Name:     sessionCookieName,
-		Value:    "",
-		MaxAge:   -1,
+		Value:    value,
+		MaxAge:   maxAge,
 		HttpOnly: true,
-		Secure:   r.TLS != nil || r.URL.Scheme == "https",
+		Secure:   secure,
 		Path:     "/",
-	})
+	}
+	if secure {
+		cookie.SameSite = http.SameSiteNoneMode
+	}
+	return cookie
 }

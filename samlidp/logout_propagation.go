@@ -162,7 +162,7 @@ func (s *Server) HandleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	expireSessionCookie(w, r)
+	s.expireSessionCookie(w, r)
 	s.IDP.StartLogout(w, r, session, "")
 	if session != nil {
 		if err := s.deleteSession(session.ID); err != nil {

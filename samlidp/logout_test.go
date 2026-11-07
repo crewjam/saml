@@ -130,8 +130,9 @@ func TestSLOPostWithoutSessionCookie(t *testing.T) {
 	session, _ := test.login(t, "alice", "alice@example.com")
 	bobSession, _ := test.login(t, "bob", "bob@example.com")
 
-	// A cross-site POST does not carry the SameSite=Lax session cookie: the
-	// session is found by its SessionIndex.
+	// A POST that does not carry the session cookie (for example from a
+	// browser that blocks third-party cookies): the session is found by its
+	// SessionIndex.
 	form := url.Values{
 		"SAMLRequest": {base64.StdEncoding.EncodeToString(test.logoutRequestBytes(t, session.NameID, session.Index))},
 		"RelayState":  {"relay"},

@@ -31,7 +31,7 @@ func TestSessionsCrud(t *testing.T) {
 	r.Header.Set("Content-type", "application/x-www-form-urlencoded")
 	test.Server.ServeHTTP(w, r)
 	assert.Check(t, is.Equal(http.StatusOK, w.Code))
-	assert.Check(t, is.Equal("session=AAIEBggKDA4QEhQWGBocHiAiJCYoKiwuMDI0Njg6PD4=; Path=/; Max-Age=3600; HttpOnly; Secure",
+	assert.Check(t, is.Equal("session=AAIEBggKDA4QEhQWGBocHiAiJCYoKiwuMDI0Njg6PD4=; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=None",
 		w.Header().Get("Set-Cookie")))
 	assert.Check(t, is.Equal("{\"ID\":\"AAIEBggKDA4QEhQWGBocHiAiJCYoKiwuMDI0Njg6PD4=\",\"CreateTime\":\"2015-12-01T01:57:09Z\",\"ExpireTime\":\"2015-12-01T02:57:09Z\",\"Index\":\"40424446484a4c4e50525456585a5c5e60626466686a6c6e70727476787a7c7e\",\"NameID\":\"\",\"NameIDFormat\":\"\",\"SubjectID\":\"\",\"Groups\":null,\"UserName\":\"alice\",\"UserEmail\":\"\",\"UserCommonName\":\"\",\"UserSurname\":\"\",\"UserGivenName\":\"\",\"UserScopedAffiliation\":\"\",\"CustomAttributes\":null}\n",
 		w.Body.String()))
