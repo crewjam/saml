@@ -2,6 +2,7 @@ package saml
 
 import (
 	"bytes"
+	"compress/flate"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/rsa"
@@ -253,6 +254,11 @@ type logoutState struct {
 	// sent a LogoutRequest or did not answer it with success.
 	Failed []string `json:"failed,omitempty"`
 
+	// Dropped counts the participants that were given up on because the
+	// state would not have fit in its cookie (see setLogoutStateCookie).
+	// They are not named in Failed, which would not fit either.
+	Dropped int `json:"dropped,omitempty"`
+
 	// Initiator is the service provider whose LogoutRequest started the
 	// logout, which is answered at the end, or nil for IdP-initiated logout,
 	// which ends at ReturnURL.
@@ -266,6 +272,12 @@ type logoutInitiator struct {
 	RequestID         string   `json:"id"`
 	RelayState        string   `json:"relayState,omitempty"`
 	SLOEndpoint       Endpoint `json:"endpoint"`
+}
+
+// partial reports whether some participant of the logout was not logged
+// out.
+func (state *logoutState) partial() bool {
+	return len(state.Failed) > 0 || state.Dropped > 0
 }
 
 // continueLogout sends a LogoutRequest to the next participant of state that
@@ -539,15 +551,19 @@ func (idp *IdentityProvider) finishLogout(w http.ResponseWriter, r *http.Request
 			SLOEndpoint: &endpoint,
 			Now:         idp.now(),
 		}
-		if err := req.WriteLogoutResponse(w, makeLogoutResponseWithStatus(req, len(state.Failed) > 0)); err != nil {
+		if err := req.WriteLogoutResponse(w, makeLogoutResponseWithStatus(req, state.partial())); err != nil {
 			idp.Logger.Printf("failed to write logout response to %s: %s", in.ServiceProviderID, err)
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		}
 		return
 	}
 
-	if len(state.Failed) > 0 {
-		idp.Logger.Printf("single logout could not be confirmed by %s", strings.Join(state.Failed, ", "))
+	failed := state.Failed
+	if state.Dropped > 0 {
+		failed = append(append([]string(nil), failed...), fmt.Sprintf("%d other services", state.Dropped))
+	}
+	if len(failed) > 0 {
+		idp.Logger.Printf("single logout could not be confirmed by %s", strings.Join(failed, ", "))
 	}
 	if state.ReturnURL != "" {
 		http.Redirect(w, r, state.ReturnURL, http.StatusFound) //nolint:gosec // ReturnURL is set by the application in StartLogout and carried in the signed state, never taken from the request
@@ -558,7 +574,7 @@ func (idp *IdentityProvider) finishLogout(w http.ResponseWriter, r *http.Request
 		tmpl = defaultLogoutCompleteTemplate
 	}
 	out := bytes.NewBuffer(nil)
-	if err := tmpl.Execute(out, IdpLogoutComplete{Failed: state.Failed}); err != nil {
+	if err := tmpl.Execute(out, IdpLogoutComplete{Failed: failed}); err != nil {
 		idp.Logger.Printf("failed to write logout page: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
@@ -760,6 +776,16 @@ func readLogoutResponseMessage(r *http.Request) ([]byte, *redirectBindingMessage
 	return buf, nil, nil, nil
 }
 
+// logoutStateDeflatedPrefix starts the encoded logout state when its JSON
+// is deflated. It is not in the base64url alphabet, so a state without it
+// is plain JSON.
+const logoutStateDeflatedPrefix = "z~"
+
+// maxLogoutStateCookieValue is the longest logout state cookie value the
+// IdP sets. Browsers drop a cookie whose name, value and attributes exceed
+// about 4096 bytes, without telling the server.
+const maxLogoutStateCookieValue = 3800
+
 // logoutStateSignaturePrefix is prepended to the encoded state before it is
 // signed, so that the signature cannot be mistaken for one over anything
 // else the IdP signs.
@@ -786,7 +812,20 @@ func (idp *IdentityProvider) encodeLogoutState(state *logoutState) (string, erro
 	if err != nil {
 		return "", err
 	}
-	encoded := base64.RawURLEncoding.EncodeToString(payload)
+	// The state is deflated: the participants' entity IDs and NameIDs
+	// repeat a lot, and browsers drop cookies over about 4 KB.
+	var compressed bytes.Buffer
+	fw, err := flate.NewWriter(&compressed, flate.BestCompression)
+	if err != nil {
+		return "", err
+	}
+	if _, err := fw.Write(payload); err != nil {
+		return "", err
+	}
+	if err := fw.Close(); err != nil {
+		return "", err
+	}
+	encoded := logoutStateDeflatedPrefix + base64.RawURLEncoding.EncodeToString(compressed.Bytes())
 	digest := sha256.Sum256([]byte(logoutStateSignaturePrefix + encoded))
 	signature, err := signer.Sign(RandReader, digest[:], crypto.SHA256)
 	if err != nil {
@@ -825,9 +864,16 @@ func (idp *IdentityProvider) decodeLogoutState(value string) (*logoutState, erro
 		return nil, fmt.Errorf("invalid logout state signature: %w", err)
 	}
 
-	payload, err := base64.RawURLEncoding.DecodeString(encoded)
+	deflated := strings.HasPrefix(encoded, logoutStateDeflatedPrefix)
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(encoded, logoutStateDeflatedPrefix))
 	if err != nil {
 		return nil, fmt.Errorf("malformed logout state: %w", err)
+	}
+	if deflated {
+		// A state written before the state was deflated has no prefix.
+		if payload, err = io.ReadAll(newSaferFlateReader(bytes.NewReader(payload))); err != nil {
+			return nil, fmt.Errorf("malformed logout state: %w", err)
+		}
 	}
 	state := &logoutState{}
 	if err := json.Unmarshal(payload, state); err != nil {
@@ -874,10 +920,30 @@ func (idp *IdentityProvider) logoutStateCookie(r *http.Request, value string, ma
 	}
 }
 
+// setLogoutStateCookie writes state to the logout state cookie.
+//
+// A browser would silently drop a cookie that is too large, and the logout
+// would then stop at the next LogoutResponse. So if the encoded state is
+// longer than maxLogoutStateCookieValue, the last pending participants are
+// given up on, and counted as not logged out (the logout ends with
+// StatusPartialLogout), until it fits. If it does not fit even then, an
+// error is returned.
 func (idp *IdentityProvider) setLogoutStateCookie(w http.ResponseWriter, r *http.Request, state *logoutState) error {
 	value, err := idp.encodeLogoutState(state)
 	if err != nil {
 		return err
+	}
+	for len(value) > maxLogoutStateCookieValue && len(state.Pending) > 0 {
+		dropped := state.Pending[len(state.Pending)-1]
+		state.Pending = state.Pending[:len(state.Pending)-1]
+		state.Dropped++
+		idp.Logger.Printf("cannot propagate logout to %s: too many session participants to track in the logout state cookie", dropped.ServiceProviderID)
+		if value, err = idp.encodeLogoutState(state); err != nil {
+			return err
+		}
+	}
+	if len(value) > maxLogoutStateCookieValue {
+		return fmt.Errorf("the logout state is %d bytes, more than the %d a cookie can hold", len(value), maxLogoutStateCookieValue)
 	}
 	maxAge := int(state.Expires.Sub(idp.now()).Seconds()) + 1
 	if maxAge < 1 {
