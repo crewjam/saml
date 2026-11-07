@@ -114,18 +114,19 @@ type IdentityProvider struct {
 	ValidDuration           *time.Duration
 	ResponseFormTemplate    *template.Template
 
-	// OnError, if non-nil, is called when ServeSSO or ServeIDPInitiated
-	// cannot complete a request, in place of DefaultOnError, which logs err
-	// to Logger and responds with status. status is the HTTP status the
-	// IdentityProvider would respond with: StatusBadRequest for a request
-	// that cannot be parsed or is invalid, StatusNotFound for an
+	// OnError, if non-nil, is called when ServeSSO, ServeIDPInitiated or
+	// ServeMetadata cannot complete a request, in place of DefaultOnError,
+	// which logs err to Logger and responds with status. status is the HTTP
+	// status the IdentityProvider would respond with: StatusBadRequest for a
+	// request that cannot be parsed or is invalid, StatusNotFound for an
 	// IdP-initiated request for an unknown service provider, and
 	// StatusInternalServerError otherwise. err can be matched with errors.Is
 	// against the error values of this package, such as
 	// ErrUnknownServiceProvider or ErrInvalidCertificate.
 	//
-	// OnError must write the response. When writing the SAML response
-	// failed part way, some of it may already have been written to w.
+	// OnError must write the response. When writing the SAML response or
+	// the metadata failed part way, some of it may already have been
+	// written to w.
 	OnError func(w http.ResponseWriter, r *http.Request, status int, err error)
 
 	// ExtraCertificates are additional certificates published in the IdP
@@ -287,20 +288,22 @@ func (idp *IdentityProvider) SignedMetadata() (*etree.Element, error) {
 
 // ServeMetadata is an http.HandlerFunc that serves the IDP metadata. If
 // SignMetadata is set, the metadata is signed.
-func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, _ *http.Request) {
+//
+// If the metadata cannot be signed, serialized or written, a
+// StatusInternalServerError response is sent. Set OnError to handle these
+// failures differently.
+func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, r *http.Request) {
 	var buf []byte
 	if idp.SignMetadata {
 		el, err := idp.SignedMetadata()
 		if err != nil {
-			idp.Logger.Printf("ERROR: failed to sign metadata: %s", err)
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to sign metadata: %w", err))
 			return
 		}
 		doc := etree.NewDocument()
 		doc.SetRoot(el)
 		if buf, err = doc.WriteToBytes(); err != nil {
-			idp.Logger.Printf("ERROR: %s", err)
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to serialize metadata: %w", err))
 			return
 		}
 	} else {
@@ -308,14 +311,13 @@ func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, _ *http.Reques
 	}
 	w.Header().Set("Content-Type", "application/samlmetadata+xml")
 	if _, err := w.Write(buf); err != nil {
-		idp.Logger.Printf("ERROR: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		idp.onError(w, r, http.StatusInternalServerError, fmt.Errorf("failed to write metadata: %w", err))
 	}
 }
 
-// DefaultOnError is how ServeSSO and ServeIDPInitiated report an error when
-// OnError is nil: it logs err to Logger and responds with status. An OnError
-// can call it for the errors it does not handle itself.
+// DefaultOnError is how ServeSSO, ServeIDPInitiated and ServeMetadata report
+// an error when OnError is nil: it logs err to Logger and responds with
+// status. An OnError can call it for the errors it does not handle itself.
 func (idp *IdentityProvider) DefaultOnError(w http.ResponseWriter, _ *http.Request, status int, err error) {
 	idp.Logger.Printf("%s", err)
 	http.Error(w, http.StatusText(status), status)

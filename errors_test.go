@@ -2,6 +2,7 @@ package saml
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/xml"
@@ -539,6 +540,38 @@ func TestIdentityProviderOnError(t *testing.T) {
 		test.IDP.ServeSSO(w, httptest.NewRequest("PUT", "https://idp.example.com/saml/sso", nil))
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Equal(t, "failed to parse request: method not allowed\n", logged.String())
+	})
+
+	t.Run("ServeMetadata signing error", func(t *testing.T) {
+		test, calls := setup(t)
+		test.IDP.SignMetadata = true
+		test.IDP.Signer = idpcovFailingSigner{Signer: mustParsePrivateKey(golden.Get(t, "idp_key.pem")).(crypto.Signer)}
+		w := httptest.NewRecorder()
+		test.IDP.ServeMetadata(w, httptest.NewRequest("GET", "https://idp.example.com/saml/metadata", nil))
+		assert.Equal(t, http.StatusTeapot, w.Code)
+		assert.Assert(t, len(*calls) == 1)
+		assert.Equal(t, http.StatusInternalServerError, (*calls)[0].status)
+		assert.ErrorContains(t, (*calls)[0].err, "failed to sign metadata: ")
+		assert.ErrorContains(t, (*calls)[0].err, "idpcov: sign failed")
+	})
+
+	t.Run("ServeMetadata write error", func(t *testing.T) {
+		test, calls := setup(t)
+		test.IDP.ServeMetadata(&idpcovFailingResponseWriter{}, httptest.NewRequest("GET", "https://idp.example.com/saml/metadata", nil))
+		assert.Assert(t, len(*calls) == 1)
+		assert.Equal(t, http.StatusInternalServerError, (*calls)[0].status)
+		assert.ErrorContains(t, (*calls)[0].err, "failed to write metadata: ")
+	})
+
+	t.Run("ServeMetadata without OnError", func(t *testing.T) {
+		test, _ := setup(t)
+		test.IDP.OnError = nil
+		var logged bytes.Buffer
+		test.IDP.Logger = log.New(&logged, "", 0)
+		w := &idpcovFailingResponseWriter{}
+		test.IDP.ServeMetadata(w, httptest.NewRequest("GET", "https://idp.example.com/saml/metadata", nil))
+		assert.Equal(t, http.StatusInternalServerError, w.code)
+		assert.Check(t, strings.HasPrefix(logged.String(), "failed to write metadata: "), logged.String())
 	})
 
 	t.Run("without OnError the log line and status are unchanged", func(t *testing.T) {
