@@ -28,6 +28,12 @@ type CookieSessionProvider struct {
 	MaxAge time.Duration
 	Path   string
 	Codec  SessionCodec
+
+	// legacyDomain, if set, is the Domain of a session cookie set by an
+	// earlier version of DefaultSessionProvider. CreateSession and
+	// DeleteSession expire that cookie too, so that a browser does not keep
+	// (and send) both the old domain cookie and the new one.
+	legacyDomain string
 }
 
 // CreateSession is called when we have received a valid SAML assertion and
@@ -53,6 +59,10 @@ func (c CookieSessionProvider) CreateSession(w http.ResponseWriter, r *http.Requ
 	if path == "" {
 		path = "/"
 	}
+
+	// Expire the legacy cookie before setting the new one: a browser that
+	// treats both as the same cookie then keeps the new one.
+	c.expireLegacyCookie(w, r, path)
 
 	http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure is set when served over https
 		Name:     c.Name,
@@ -96,7 +106,26 @@ func (c CookieSessionProvider) DeleteSession(w http.ResponseWriter, r *http.Requ
 	cookie.Path = path
 	cookie.Domain = c.Domain
 	http.SetCookie(w, cookie)
+	c.expireLegacyCookie(w, r, path)
 	return nil
+}
+
+// expireLegacyCookie expires the session cookie scoped to c.legacyDomain, if
+// any.
+func (c CookieSessionProvider) expireLegacyCookie(w http.ResponseWriter, r *http.Request, path string) {
+	if c.legacyDomain == "" || c.legacyDomain == c.Domain {
+		return
+	}
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure is set when served over https
+		Name:     c.Name,
+		Domain:   c.legacyDomain,
+		Value:    "",
+		Expires:  time.Unix(1, 0), // past time as close to epoch as possible, but not zero time.Time{}
+		HttpOnly: c.HTTPOnly,
+		Secure:   c.Secure || r.URL.Scheme == "https",
+		SameSite: c.SameSite,
+		Path:     path,
+	})
 }
 
 // GetSession returns the current Session associated with the request, or
