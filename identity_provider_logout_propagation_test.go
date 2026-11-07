@@ -2,6 +2,7 @@ package saml
 
 import (
 	"crypto/rsa"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/beevik/etree"
 	dsig "github.com/russellhaering/goxmldsig"
 	"gotest.tools/v3/assert"
 	is "gotest.tools/v3/assert/cmp"
@@ -604,4 +606,48 @@ func TestIDPRejectSHA1LogoutResponses(t *testing.T) {
 			})
 		}
 	}
+}
+
+// The IdP reads a propagated LogoutResponse from what its enveloped
+// signature covers: a namespace declaration added after signing, which
+// encoding/xml would read as the StatusCode's Value, must not turn a failed
+// logout into a successful one.
+func TestPropagatedLogoutResponseStatusIgnoresNamespaceDeclaration(t *testing.T) {
+	pt := newPropagationTest(t)
+	pt.login(t, pt.sps...)
+	pt.answer[pt.sps[1].MetadataURL.String()] = func(t *testing.T, sp *ServiceProvider, req *LogoutRequest) *http.Request {
+		resp := sp.makeUnsignedLogoutResponse(sp.GetSLOBindingLocation(HTTPPostBinding), req.ID)
+		resp.Status.StatusCode.Value = StatusRequester
+		assert.NilError(t, sp.SignLogoutResponse(resp))
+		action, fields := formFields(t, resp.Post(""))
+
+		doc := etree.NewDocument()
+		assert.NilError(t, doc.ReadFromString(string(mustBase64Decode(t, fields.Get("SAMLResponse")))))
+		statusCode := doc.FindElement("//StatusCode")
+		assert.Assert(t, statusCode != nil)
+		statusCode.CreateAttr("xmlns:Value", StatusSuccess)
+		buf, err := doc.WriteToBytes()
+		assert.NilError(t, err)
+		fields.Set("SAMLResponse", base64.StdEncoding.EncodeToString(buf))
+		return simpleSignPost(t, action, fields)
+	}
+
+	initiator := pt.sps[0]
+	logoutRequest, err := initiator.MakeLogoutRequest(pt.idp.LogoutURL.String(), "alice@example.com", WithSessionIndex("idp-session-index"))
+	assert.NilError(t, err)
+	u, err := initiator.RedirectLogoutRequestURL(logoutRequest, "")
+	assert.NilError(t, err)
+
+	w := pt.run(t, pt.serveIDP(httptest.NewRequest(http.MethodGet, u.String(), nil)))
+	resp, err := initiator.ParseLogoutResponse(next(t, w), []string{logoutRequest.ID})
+	assert.NilError(t, err)
+	assert.Assert(t, resp.Status.StatusCode.StatusCode != nil, "sp2's failure must be reported")
+	assert.Check(t, is.Equal(StatusPartialLogout, resp.Status.StatusCode.StatusCode.Value))
+}
+
+func mustBase64Decode(t *testing.T, s string) []byte {
+	t.Helper()
+	buf, err := base64.StdEncoding.DecodeString(s)
+	assert.NilError(t, err)
+	return buf
 }

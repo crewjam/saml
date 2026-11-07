@@ -54,6 +54,18 @@ const (
 	PersistentNameIDFormat   NameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
 )
 
+// SignedElementVerifier is a SignatureVerifier that also returns what the
+// signature covers: the element without its Signature, as dsig's
+// ValidationContext.Validate returns it. When the ServiceProvider's
+// SignatureVerifier implements it, the service provider reads the signed
+// message from the element it returns rather than from the message as
+// received. A SignatureVerifier that does not implement it keeps the old
+// behaviour: the message is read as received.
+type SignedElementVerifier interface {
+	SignatureVerifier
+	VerifySignedElement(validationContext *dsig.ValidationContext, el *etree.Element) (*etree.Element, error)
+}
+
 // SignatureVerifier verifies a signature
 //
 // Can be implemented in order to override ServiceProvider's default
@@ -1198,10 +1210,12 @@ func (sp *ServiceProvider) parseArtifactResponse(artifactResponseEl *etree.Eleme
 	}
 
 	var signatureRequirement signatureRequirement
-	sigErr := sp.validateSignature(artifactResponseEl)
+	signedArtifactResponseEl, sigErr := sp.validatedElement(artifactResponseEl)
 	switch sigErr {
 	case nil:
 		signatureRequirement = signatureNotRequired
+		// Take the Response from what the signature covers.
+		artifactResponseEl = signedArtifactResponseEl
 	case errSignatureElementNotPresent:
 		signatureRequirement = signatureRequired
 	default:
@@ -1316,10 +1330,14 @@ func (sp *ServiceProvider) parseResponse(responseEl *etree.Element, possibleRequ
 	var responseHasSignature bool
 	switch signatureRequirement {
 	case signatureRequired:
-		responseSignatureErr = sp.validateSignature(responseEl)
+		var signed *etree.Element
+		signed, responseSignatureErr = sp.validatedElement(responseEl)
 		switch responseSignatureErr {
 		case nil:
 			responseHasSignature = true
+			// Read the Response, and the assertions in it, from what the
+			// signature covers.
+			responseEl = signed
 		case errSignatureElementNotPresent:
 			// the Response is not signed, so each Assertion must be (checked below)
 		default:
@@ -1548,10 +1566,12 @@ func decryptWithKey(decryptionKey interface{}, encryptedEl, encryptedDataEl *etr
 
 func (sp *ServiceProvider) parseAssertion(assertionEl *etree.Element, possibleRequestIDs []string, now time.Time, signatureRequirement signatureRequirement) (*Assertion, error) {
 	if signatureRequirement == signatureRequired {
-		sigErr := sp.validateSignature(assertionEl)
+		signed, sigErr := sp.validatedElement(assertionEl)
 		if sigErr != nil {
 			return nil, sigErr
 		}
+		// Read the assertion from what the signature covers.
+		assertionEl = signed
 	}
 
 	// parse the assertion we just validated
@@ -1936,17 +1956,10 @@ func stripKeyInfoWithoutCertificate(el *etree.Element) bool {
 	return true
 }
 
-// validateWithEachCert validates the signature on el against each of certs
+// validatedWithEachCert validates the signature on el against each of certs
 // in turn, with a copy of base that trusts only that certificate, and
-// returns nil as soon as one of them verifies it. Otherwise it returns the
-// error from the last certificate tried.
-func validateWithEachCert(base *dsig.ValidationContext, certs []*x509.Certificate, el *etree.Element) error {
-	_, err := validatedWithEachCert(base, certs, el)
-	return err
-}
-
-// validatedWithEachCert is validateWithEachCert, returning the signed
-// element as dsig's Validate does.
+// returns the signed element as dsig's Validate does for the first that
+// succeeds, or the last error.
 func validatedWithEachCert(base *dsig.ValidationContext, certs []*x509.Certificate, el *etree.Element) (*etree.Element, error) {
 	var err error
 	for _, cert := range certs {
@@ -1969,36 +1982,49 @@ func validatedWithEachCert(base *dsig.ValidationContext, certs []*x509.Certifica
 // ErrInvalidSignature with errors.Is, and also ErrUntrustedCertificate or
 // ErrCertificateNotValidNow when that is why validation failed.
 func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
-	return sp.validateSignatureWith(el, sp.getIDPSigningCerts)
+	_, err := sp.verifySignedElement(el, sp.getIDPSigningCerts)
+	return err
 }
 
-// validateSignatureWith is validateSignature, trusting the certificates
+// validatedElement is validateSignature, returning on success the element
+// to read the message from: what the signature covers, parsed from the
+// canonical bytes that were digested, with el's Signature put back. Data
+// el holds that the signature does not cover (such as a namespace
+// declaration exclusive canonicalization leaves out) is not in it. If a
+// SignatureVerifier that does not implement SignedElementVerifier checked
+// the signature, it returns el.
+func (sp *ServiceProvider) validatedElement(el *etree.Element) (*etree.Element, error) {
+	return sp.verifySignedElement(el, sp.getIDPSigningCerts)
+}
+
+// verifySignedElement is validatedElement, trusting the certificates
 // metadataCerts returns when the IdP's certificates come from its metadata
-// (that is, when neither IDPCertificate nor IDPCertificateFingerprint is set).
-// Its errors are classified as validateSignature's are.
-func (sp *ServiceProvider) validateSignatureWith(el *etree.Element, metadataCerts func() ([]*x509.Certificate, error)) error {
-	err := sp.validateSignatureUnclassified(el, metadataCerts)
+// (that is, when neither IDPCertificate nor IDPCertificateFingerprint is
+// set). Its errors are classified as validateSignature's are.
+func (sp *ServiceProvider) verifySignedElement(el *etree.Element, metadataCerts func() ([]*x509.Certificate, error)) (*etree.Element, error) {
+	signed, err := sp.validateSignatureUnclassified(el, metadataCerts)
 	if err == nil || err == errSignatureElementNotPresent {
-		return err
+		return signed, err
 	}
-	return classify(err, ErrInvalidSignature)
+	return nil, classify(err, ErrInvalidSignature)
 }
 
-func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element, metadataCerts func() ([]*x509.Certificate, error)) error {
+func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element, metadataCerts func() ([]*x509.Certificate, error)) (*etree.Element, error) {
+	original := el
 	sigEl, err := findChild(el, "http://www.w3.org/2000/09/xmldsig#", "Signature")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if sigEl == nil {
-		return errSignatureElementNotPresent
+		return nil, errSignatureElementNotPresent
 	}
 	if err := checkXMLSignatureNotSHA1(sp.RejectSHA1Signatures, sigEl); err != nil {
-		return fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
+		return nil, fmt.Errorf("cannot validate signature on %s: %w", el.Tag, err)
 	}
 
 	certs, err := sp.signatureVerificationCerts(el, metadataCerts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if sp.IgnoreCertificateExpiry {
@@ -2029,20 +2055,41 @@ func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element, meta
 	tag := el.Tag
 	ctx, err := unboundedParentContext(el)
 	if err != nil {
-		return fmt.Errorf("cannot validate signature on %s: %w", tag, err)
+		return nil, fmt.Errorf("cannot validate signature on %s: %w", tag, err)
 	}
 	ctx, err = ctx.SubContext(el)
 	if err != nil {
-		return fmt.Errorf("cannot validate signature on %s: %w", tag, err)
+		return nil, fmt.Errorf("cannot validate signature on %s: %w", tag, err)
 	}
+	// A copy of the Signature, carrying the declarations it needs, to put
+	// back into the verified element (which does not include it).
+	sigCtx, err := ctx.SubContext(sigEl)
+	if err != nil {
+		return nil, fmt.Errorf("cannot validate signature on %s: %w", tag, err)
+	}
+	sigCopy, err := etreeutils.NSDetatch(sigCtx, sigEl)
+	if err != nil {
+		return nil, fmt.Errorf("cannot validate signature on %s: %w", tag, err)
+	}
+	sigIndex := sigEl.Index()
 	// NSDetatch returns a nil element with its error, so the tag is kept above.
 	el, err = etreeutils.NSDetatch(ctx, el)
 	if err != nil {
-		return fmt.Errorf("cannot validate signature on %s: %w", tag, err)
+		return nil, fmt.Errorf("cannot validate signature on %s: %w", tag, err)
 	}
 
 	if sp.SignatureVerifier != nil {
-		return sp.SignatureVerifier.VerifySignature(validationContext, el)
+		if v, ok := sp.SignatureVerifier.(SignedElementVerifier); ok {
+			signed, err := v.VerifySignedElement(validationContext, el)
+			if err != nil {
+				return nil, err
+			}
+			return withSignature(signed, sigCopy, sigIndex), nil
+		}
+		if err := sp.SignatureVerifier.VerifySignature(validationContext, el); err != nil {
+			return nil, err
+		}
+		return original, nil
 	}
 
 	// Without a certificate in KeyInfo, dsig can only pick the signing
@@ -2055,21 +2102,35 @@ func (sp *ServiceProvider) validateSignatureUnclassified(el *etree.Element, meta
 	// certificate, so this accepts exactly what one of them would accept
 	// had the IdP named it in KeyInfo.
 	if noCertInKeyInfo && len(certs) > 1 {
-		if err := validateWithEachCert(validationContext, certs, el); err != nil {
-			return fmt.Errorf("cannot validate signature on %s: %w", tag, err)
+		signed, err := validatedWithEachCert(validationContext, certs, el)
+		if err != nil {
+			return nil, fmt.Errorf("cannot validate signature on %s: %w", tag, err)
 		}
-		return nil
+		return withSignature(signed, sigCopy, sigIndex), nil
 	}
 
-	if _, err := validationContext.Validate(el); err != nil {
+	signed, err := validationContext.Validate(el)
+	if err != nil {
 		err = fmt.Errorf("cannot validate signature on %s: %w", tag, err)
 		if kind := classifyCertificate(el, certs, validationContext.Clock.Now()); kind != nil {
-			return classify(err, kind)
+			return nil, classify(err, kind)
 		}
-		return err
+		return nil, err
 	}
 
-	return nil
+	return withSignature(signed, sigCopy, sigIndex), nil
+}
+
+// withSignature puts sig back into signed, the element a signature
+// validation returned (which the enveloped-signature transform removed it
+// from), at index or after the last child if signed has fewer, so that the
+// message read from signed still has its Signature.
+func withSignature(signed, sig *etree.Element, index int) *etree.Element {
+	if index > len(signed.Child) {
+		index = len(signed.Child)
+	}
+	signed.InsertChildAt(index, sig)
+	return signed
 }
 
 // signatureVerificationCerts returns the IdP certificates that a signature on
@@ -2627,13 +2688,14 @@ func (sp *ServiceProvider) parseLogoutResponseForm(postFormData string) (*Logout
 		return nil, retErr
 	}
 
-	if err := sp.validateSignature(doc.Root()); err != nil {
+	signed, err := sp.validatedElement(doc.Root())
+	if err != nil {
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
 
 	var resp LogoutResponse
-	if err := unmarshalElement(doc.Root(), &resp); err != nil {
+	if err := unmarshalElement(signed, &resp); err != nil {
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
@@ -2792,12 +2854,13 @@ func (sp *ServiceProvider) ValidateLogoutRequestForm(postFormData string) (*Logo
 		return nil, retErr
 	}
 
-	if err := sp.validateSignature(doc.Root()); err != nil {
+	signed, err := sp.validatedElement(doc.Root())
+	if err != nil {
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
 
-	return sp.unmarshalAndValidateLogoutRequest(doc.Root(), retErr)
+	return sp.unmarshalAndValidateLogoutRequest(signed, retErr)
 }
 
 // validateLogoutRequestRedirectQuery validates a LogoutRequest received via

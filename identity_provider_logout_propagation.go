@@ -9,7 +9,6 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"html/template"
@@ -483,7 +482,7 @@ func (idp *IdentityProvider) validateLogoutResponse(r *http.Request, state *logo
 		return nil, errors.New("cannot parse logout response: no root element")
 	}
 	var resp LogoutResponse
-	if err := xml.Unmarshal(buf, &resp); err != nil { //nolint:gosec // parsing the untrusted response is the point; it was checked by xmlroundtrip.Validate above
+	if err := unmarshalElement(doc.Root(), &resp); err != nil {
 		return nil, fmt.Errorf("cannot parse logout response: %w", err)
 	}
 
@@ -507,13 +506,25 @@ func (idp *IdentityProvider) validateLogoutResponse(r *http.Request, state *logo
 	if err != nil {
 		return nil, fmt.Errorf("logout response from %s: %w", serviceProviderID, err)
 	}
+	var signed *etree.Element
 	if redirectMessage != nil && redirectMessage.SignedContent != nil {
 		err = checkRedirectBindingSignature(redirectMessage, func() ([]*x509.Certificate, error) { return certs, nil }, TimeNow(), true)
 	} else {
-		err = verifyEnvelopedSignature(doc.Root(), certs, Clock)
+		signed, err = verifiedEnvelopedElement(doc.Root(), certs, Clock)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("cannot verify signature of logout response from %s: %w", serviceProviderID, err)
+	}
+	if signed != nil {
+		// Read the response again from what the enveloped signature covers.
+		// The issuer it names must be the one whose keys verified it.
+		resp = LogoutResponse{}
+		if err := unmarshalElement(signed, &resp); err != nil {
+			return nil, fmt.Errorf("cannot parse logout response: %w", err)
+		}
+		if resp.Issuer == nil || resp.Issuer.Value != serviceProviderID {
+			return nil, fmt.Errorf("signed logout response is not from %s", serviceProviderID)
+		}
 	}
 	return &resp, idp.validateLogoutResponseFields(&resp, state.RequestID)
 }

@@ -156,8 +156,20 @@ func (req *IdpLogoutRequest) Validate() error {
 	}
 	req.ServiceProviderMetadata = serviceProvider
 
-	if err := req.verifySignature(root); err != nil {
+	signed, err := req.verifySignature(root)
+	if err != nil {
 		return fmt.Errorf("cannot verify signature of logout request from %s: %w", serviceProviderID, err)
+	}
+	if signed != nil {
+		// Read the request again from what the enveloped signature covers.
+		// The issuer it names must be the one whose keys verified it.
+		req.Request = LogoutRequest{}
+		if err := unmarshalElement(signed, &req.Request); err != nil {
+			return fmt.Errorf("cannot parse logout request: %w", err)
+		}
+		if req.Request.Issuer == nil || req.Request.Issuer.Value != serviceProviderID {
+			return fmt.Errorf("signed logout request is not from %s", serviceProviderID)
+		}
 	}
 	if err := req.validateFields(); err != nil {
 		return err
@@ -203,26 +215,30 @@ func (req *IdpLogoutRequest) parseRequest() (*etree.Element, error) {
 
 // verifySignature checks the signature of the request against the signing
 // certificates of the service provider that issued it.
-func (req *IdpLogoutRequest) verifySignature(root *etree.Element) error {
+//
+// For an enveloped XML signature it returns what the signature covers (see
+// verifiedEnvelopedElement); for a query string signature, which covers the
+// whole message, it returns nil.
+func (req *IdpLogoutRequest) verifySignature(root *etree.Element) (*etree.Element, error) {
 	// spSigningCerts (shared with the HTTP-POST-SimpleSign binding) fails if
 	// the metadata has no signing certificate.
 	certs, err := spSigningCerts(req.ServiceProviderMetadata)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if req.redirectMessage != nil && req.redirectMessage.SignedContent != nil {
 		if err := checkSigAlgNotSHA1(req.IDP.RejectSHA1Signatures, req.redirectMessage.SigAlg); err != nil {
-			return err
+			return nil, err
 		}
-		return checkRedirectBindingSignature(req.redirectMessage, func() ([]*x509.Certificate, error) {
+		return nil, checkRedirectBindingSignature(req.redirectMessage, func() ([]*x509.Certificate, error) {
 			return certs, nil
 		}, req.Now, true)
 	}
 	if err := checkEnvelopedSignatureNotSHA1(req.IDP.RejectSHA1Signatures, root); err != nil {
-		return err
+		return nil, err
 	}
-	return verifyEnvelopedSignature(root, certs, Clock)
+	return verifiedEnvelopedElement(root, certs, Clock)
 }
 
 // validateFields checks the fields of the (authenticated) request.
@@ -499,17 +515,11 @@ func (idp *IdentityProvider) ServeSLO(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// verifyEnvelopedSignature checks the enveloped XML signature of el, which
-// must be a direct child of el and reference it, against certs. The
-// certificates' validity periods are ignored. clock may be nil.
-func verifyEnvelopedSignature(el *etree.Element, certs []*x509.Certificate, clock *dsig.Clock) error {
-	_, err := verifiedEnvelopedElement(el, certs, clock)
-	return err
-}
-
-// verifiedEnvelopedElement is verifyEnvelopedSignature, returning what the
-// signature covers: el without its Signature, parsed from the canonical
-// bytes that were digested.
+// verifiedEnvelopedElement checks the enveloped XML signature of el, which
+// must be a direct child of el and reference it, against certs, and returns
+// what the signature covers: el without its Signature, parsed from the
+// canonical bytes that were digested. The certificates' validity periods are
+// ignored. clock may be nil.
 func verifiedEnvelopedElement(el *etree.Element, certs []*x509.Certificate, clock *dsig.Clock) (*etree.Element, error) {
 	sigEl, err := findChild(el, "http://www.w3.org/2000/09/xmldsig#", "Signature")
 	if err != nil {
