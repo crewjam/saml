@@ -80,7 +80,7 @@ func TestSpecProfile_4_1_3_4_NoAssertionWithoutValidSession(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodGet, "https://idp.example.com/sso", nil)
 			if cookie != "" {
-				r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookie})
+				r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookie, Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 			}
 			w := httptest.NewRecorder()
 			assert.Check(t, test.Server.GetSession(w, r, req) == nil)
