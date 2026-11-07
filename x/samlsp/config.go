@@ -34,7 +34,7 @@ type Config struct {
 	decryptionKeys []*rsa.PrivateKey
 	signRequests   bool
 	nameIDFormat   saml.NameIDFormat
-	replayCache    saml.AssertionReplayCache
+	replayState    saml.AssertionReplayCache
 	clock          *dsig.Clock
 
 	spOptions []ServiceProviderOption
@@ -180,11 +180,13 @@ func WithNameIDFormat(format saml.NameIDFormat) Option {
 	return optionFunc(func(c *Config, _ *configOptions) { c.nameIDFormat = format })
 }
 
-// WithReplayCache makes ParseResponse refuse an assertion that cache has
-// already seen. Applications served by several processes need a cache
-// that the processes share.
-func WithReplayCache(cache saml.AssertionReplayCache) Option {
-	return optionFunc(func(c *Config, _ *configOptions) { c.replayCache = cache })
+// WithReplayState makes ParseResponse refuse an assertion it has already
+// accepted. state records the IDs of accepted assertions until they
+// expire. saml/samlsp.NewMemoryReplayCache returns one for a single
+// process; applications served by several processes need state that the
+// processes share, such as a database table.
+func WithReplayState(state saml.AssertionReplayCache) Option {
+	return optionFunc(func(c *Config, _ *configOptions) { c.replayState = state })
 }
 
 // WithClock sets the time source used to check validity periods. It is
@@ -269,7 +271,7 @@ func (c *Config) localServiceProvider(ctx context.Context) *saml.ServiceProvider
 		AcsURL:            c.acsURL,
 		SloURL:            c.sloURL,
 		AuthnNameIDFormat: c.nameIDFormat,
-		ReplayCache:       c.replayCache,
+		ReplayCache:       c.replayState,
 		Clock:             c.clock,
 	}
 	if c.sloURL.String() != "" {
