@@ -36,7 +36,7 @@ func (test *MiddlewareTest) acsRequest(t *testing.T, uri string) *http.Request {
 	v.Set("RelayState", testTrackedIndex)
 	req := httptest.NewRequest(http.MethodPost, "/saml2/acs", strings.NewReader(v.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(&http.Cookie{Name: "saml_" + testTrackedIndex, Value: token})
+	req.Header.Set("Cookie", "saml_"+testTrackedIndex+"="+token)
 	return req
 }
 
