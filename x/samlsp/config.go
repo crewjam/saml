@@ -339,9 +339,16 @@ func signWithLogoutMethod(sp *saml.ServiceProvider) {
 
 // WithClock sets the time source used to check validity periods. It is
 // mainly useful in tests.
-func WithClock(clock *dsig.Clock) Option {
-	return optionFunc(func(c *Config, _ *configOptions) { c.clock = clock })
-}
+func WithClock(clock *dsig.Clock) ClockOption { return ClockOption{clock} }
+
+// ClockOption is the option that WithClock returns. It is both an Option,
+// for New, and a MetadataOption, for RemoteMetadata and MDQMetadata, whose
+// refresh times it judges.
+type ClockOption struct{ clock *dsig.Clock }
+
+func (o ClockOption) applyConfig(c *Config, _ *configOptions) { c.clock = o.clock }
+
+func (o ClockOption) applyMetadata(m *metadataOptions) { m.clock = o.clock }
 
 // EntityID returns the entityID of the service provider.
 func (c *Config) EntityID() string { return c.entityID }

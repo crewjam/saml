@@ -144,7 +144,7 @@ func FetchSignedMetadataByEntityID(ctx context.Context, httpClient *http.Client,
 var MaxMetadataSize int64 = 256 << 20
 
 func fetchMetadataBytes(ctx context.Context, httpClient *http.Client, metadataURL url.URL) ([]byte, error) {
-	data, err := idpmetadata.Fetch(ctx, httpClient, metadataURL, MaxMetadataSize)
+	data, err := idpmetadata.Fetch(ctx, httpClient, metadataURL, MaxMetadataSize, "")
 	var tooLarge *idpmetadata.TooLargeError
 	if errors.As(err, &tooLarge) {
 		return nil, fmt.Errorf("%s (MaxMetadataSize)", tooLarge)

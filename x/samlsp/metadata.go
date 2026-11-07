@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
+
+	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/internal/idpmetadata"
@@ -51,6 +54,8 @@ type metadataOptions struct {
 	certs           []*x509.Certificate
 	client          *http.Client
 	refreshInterval time.Duration
+	clock           *dsig.Clock
+	accept          string
 }
 
 // WithIdentityProviderEntityID selects the identity provider with this entityID from
@@ -151,7 +156,7 @@ func parseMetadata(data []byte, o metadataOptions) (*saml.EntityDescriptor, erro
 const maxMetadataSize = 256 << 20
 
 func fetchMetadata(ctx context.Context, metadataURL url.URL, o metadataOptions) (*saml.EntityDescriptor, error) {
-	data, err := idpmetadata.Fetch(ctx, o.client, metadataURL, maxMetadataSize)
+	data, err := idpmetadata.Fetch(ctx, o.client, metadataURL, maxMetadataSize, o.accept)
 	if err != nil {
 		return nil, err
 	}
@@ -161,16 +166,42 @@ func fetchMetadata(ctx context.Context, metadataURL url.URL, o metadataOptions) 
 // RemoteMetadata returns a MetadataFunc that fetches identity provider
 // metadata from metadataURL and caches it.
 //
-// The metadata is fetched on first use, with the caller's context. It is
-// fetched again once the refresh interval (see WithRefreshInterval), its
-// cacheDuration or its validUntil has passed. This picks up rotated
-// signing certificates. If a refresh fails, the cached metadata is still
-// returned until its validUntil, and the fetch is retried a minute later.
-// Callers wait while a fetch is in progress.
+// The metadata is fetched when first needed. It is due again once the
+// refresh interval (see WithRefreshInterval), its cacheDuration or its
+// validUntil has passed, which picks up rotated signing certificates.
+// While the cached metadata is still valid, callers get it at once and a
+// single refresh runs in the background; callers wait only when there is
+// no valid metadata, and then share one fetch. If a refresh fails, the
+// cached metadata is kept until its validUntil, and the fetch is retried a
+// minute later.
+//
+// Fetches are not cancelled with the context of the call that started
+// them, since other calls may be waiting for them, but time out after two
+// minutes. A caller that stops waiting gets its context's error.
 func RemoteMetadata(metadataURL string, opts ...MetadataOption) MetadataFunc {
-	r := &remoteMetadata{url: metadataURL, opts: newMetadataOptions(opts), now: time.Now}
+	o := newMetadataOptions(opts)
+	r := &remoteMetadata{url: metadataURL, opts: o, now: o.clock.Now}
 	return r.get
 }
+
+// MDQMetadata returns a MetadataFunc for the identity provider entityID,
+// fetched from a Metadata Query service at baseURL (the SAML MDQ protocol,
+// draft-young-md-query-saml): from baseURL/entities/{entityID}, URL-encoded.
+// Federations publish MDQ services so that each SP need not download the
+// whole aggregate. It caches and refreshes like RemoteMetadata, and takes
+// the same options. Their responses are signed: pass WithMetadataSigners
+// with the federation's certificate.
+func MDQMetadata(baseURL, entityID string, opts ...MetadataOption) MetadataFunc {
+	u := strings.TrimSuffix(baseURL, "/") + "/entities/" + url.PathEscape(entityID)
+	o := newMetadataOptions(append(opts, WithIdentityProviderEntityID(entityID)))
+	o.accept = "application/samlmetadata+xml"
+	r := &remoteMetadata{url: u, opts: o, now: o.clock.Now}
+	return r.get
+}
+
+// metadataFetchTimeout bounds a fetch that RemoteMetadata makes, which no
+// caller's context cancels.
+const metadataFetchTimeout = 2 * time.Minute
 
 type remoteMetadata struct {
 	url  string
@@ -180,42 +211,105 @@ type remoteMetadata struct {
 	mu        sync.Mutex
 	md        *saml.EntityDescriptor
 	refreshAt time.Time
+	inflight  *metadataFetch // the fetch in progress, or nil
+}
+
+// metadataFetch is a fetch in progress; done is closed when it ends.
+type metadataFetch struct {
+	done chan struct{}
+	md   *saml.EntityDescriptor
+	err  error
 }
 
 func (r *remoteMetadata) get(ctx context.Context) (*saml.EntityDescriptor, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	now := r.now()
 	if r.md != nil && now.Before(r.refreshAt) {
-		return r.md, nil
+		md := r.md
+		r.mu.Unlock()
+		return md, nil
 	}
+	f := r.startFetch(ctx)
+	if r.md != nil && r.usable(now) {
+		// Due for a refresh, but still valid: refresh in the background.
+		md := r.md
+		r.mu.Unlock()
+		return md, nil
+	}
+	r.mu.Unlock()
 
+	select {
+	case <-f.done:
+		return f.md, f.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// usable reports whether the cached metadata may still be used at now.
+// r.mu must be held.
+func (r *remoteMetadata) usable(now time.Time) bool {
+	return r.md.ValidUntil.IsZero() || now.Before(r.md.ValidUntil)
+}
+
+// startFetch returns the fetch in progress, starting one if there is none.
+// r.mu must be held.
+func (r *remoteMetadata) startFetch(ctx context.Context) *metadataFetch {
+	if r.inflight != nil {
+		return r.inflight
+	}
+	f := &metadataFetch{done: make(chan struct{})}
+	r.inflight = f
+	fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), metadataFetchTimeout)
+	go func() {
+		defer cancel()
+		md, err := r.fetch(fetchCtx)
+
+		r.mu.Lock()
+		now := r.now()
+		switch {
+		case err == nil:
+			r.md = md
+			r.refreshAt = r.nextRefresh(md, now)
+		case r.md != nil && r.usable(now):
+			// Keep the cached metadata and retry later.
+			r.refreshAt = now.Add(min(r.opts.refreshInterval, metadataRetryInterval))
+			md, err = r.md, nil
+		}
+		r.inflight = nil
+		r.mu.Unlock()
+
+		f.md, f.err = md, err
+		close(f.done)
+	}()
+	return f
+}
+
+func (r *remoteMetadata) fetch(ctx context.Context) (*saml.EntityDescriptor, error) {
 	u, err := url.Parse(r.url)
 	if err != nil {
 		return nil, fmt.Errorf("samlsp: invalid metadata URL: %w", err)
 	}
 	md, err := fetchMetadata(ctx, *u, r.opts)
-	if err == nil {
-		err = checkIDPMetadata(md)
-	}
 	if err != nil {
-		if r.md != nil && (r.md.ValidUntil.IsZero() || now.Before(r.md.ValidUntil)) {
-			r.refreshAt = now.Add(min(r.opts.refreshInterval, metadataRetryInterval))
-			return r.md, nil
-		}
 		return nil, err
 	}
-
-	r.md = md
-	r.refreshAt = now.Add(r.opts.refreshInterval)
-	if md.CacheDuration > 0 && md.CacheDuration < r.opts.refreshInterval {
-		r.refreshAt = now.Add(md.CacheDuration)
-	}
-	if !md.ValidUntil.IsZero() && md.ValidUntil.Before(r.refreshAt) {
-		r.refreshAt = md.ValidUntil
+	if err := checkIDPMetadata(md); err != nil {
+		return nil, err
 	}
 	return md, nil
+}
+
+// nextRefresh returns when md, fetched at now, is due to be fetched again.
+func (r *remoteMetadata) nextRefresh(md *saml.EntityDescriptor, now time.Time) time.Time {
+	next := now.Add(r.opts.refreshInterval)
+	if md.CacheDuration > 0 && md.CacheDuration < r.opts.refreshInterval {
+		next = now.Add(md.CacheDuration)
+	}
+	if !md.ValidUntil.IsZero() && md.ValidUntil.Before(next) {
+		next = md.ValidUntil
+	}
+	return next
 }
 
 // checkIDPMetadata returns an error if md does not describe an identity

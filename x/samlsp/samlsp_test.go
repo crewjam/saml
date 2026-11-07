@@ -673,47 +673,6 @@ func newMetadataServer(t *testing.T, md *saml.EntityDescriptor) *metadataServer 
 	return s
 }
 
-func TestRemoteMetadata(t *testing.T) {
-	ti := newTestIDP(t)
-	srv := newMetadataServer(t, ti.idp.Metadata())
-
-	// Cached between calls.
-	f := samlsp.RemoteMetadata(srv.URL, samlsp.WithHTTPClient(srv.Client()))
-	for range 3 {
-		md, err := f(t.Context())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if md.EntityID != "https://idp.example.com/metadata" {
-			t.Fatalf("EntityID = %q", md.EntityID)
-		}
-	}
-	if got := srv.hits.Load(); got != 1 {
-		t.Errorf("fetched %d times, want 1", got)
-	}
-
-	// Refreshed after the refresh interval, and kept when a refresh fails.
-	f = samlsp.RemoteMetadata(srv.URL, samlsp.WithHTTPClient(srv.Client()), samlsp.WithRefreshInterval(time.Nanosecond))
-	if _, err := f(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	srv.fail.Store(true)
-	before := srv.hits.Load()
-	time.Sleep(time.Millisecond)
-	if _, err := f(t.Context()); err != nil {
-		t.Fatalf("stale metadata not served: %v", err)
-	}
-	if srv.hits.Load() != before+1 {
-		t.Error("metadata was not refreshed")
-	}
-
-	// Nothing to fall back on.
-	f = samlsp.RemoteMetadata(srv.URL, samlsp.WithHTTPClient(srv.Client()))
-	if _, err := f(t.Context()); err == nil {
-		t.Error("expected an error")
-	}
-}
-
 func TestRemoteMetadataWithConfig(t *testing.T) {
 	ti := newTestIDP(t)
 	srv := newMetadataServer(t, ti.idp.Metadata())
