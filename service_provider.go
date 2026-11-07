@@ -147,7 +147,10 @@ type ServiceProvider struct {
 	// context in authentication requests
 	RequestedAuthnContext *RequestedAuthnContext
 
-	// AllowIdpInitiated
+	// AllowIDPInitiated accepts unsolicited (IdP-initiated) responses, which
+	// have no InResponseTo. A response or assertion that does carry an
+	// InResponseTo must still match a request this SP made; set
+	// ValidateRequestID to accept IdPs that send one on IdP-initiated logins.
 	AllowIDPInitiated bool
 
 	// DefaultRedirectURI where untracked requests (as of IDPInitiated) are redirected to
@@ -187,7 +190,9 @@ type ServiceProvider struct {
 	ValidateAudienceRestriction func(assertion *Assertion) error
 
 	// ValidateRequestID allows you to override the default request ID validation.
-	// If nil, the default request ID validation is used.
+	// If nil, the default request ID validation is used. With AllowIDPInitiated
+	// set, it also decides a non-empty assertion SubjectConfirmationData
+	// InResponseTo, passed as Response.InResponseTo.
 	ValidateRequestID func(response Response, possibleRequestIDs []string) error
 
 	// Clock, if non-nil, is the time source for everything this
@@ -1168,7 +1173,14 @@ func (sp *ServiceProvider) validateRequestID(response Response, possibleRequestI
 	}
 
 	requestIDvalid := false
-	if sp.AllowIDPInitiated {
+
+	// With AllowIDPInitiated set, an empty InResponseTo is an unsolicited
+	// response and is accepted. A non-empty one names an SP-initiated
+	// request and must match, so that a response issued for one login
+	// cannot be replayed as an IdP-initiated one. IdPs that send a
+	// non-empty InResponseTo on IdP-initiated responses (e.g. Rippling)
+	// need a ValidateRequestID hook.
+	if sp.AllowIDPInitiated && response.InResponseTo == "" {
 		requestIDvalid = true
 	} else {
 		for _, possibleRequestID := range possibleRequestIDs {
@@ -1273,35 +1285,8 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 		if subjectConfirmation.SubjectConfirmationData == nil {
 			return fmt.Errorf("assertion SubjectConfirmation has no SubjectConfirmationData")
 		}
-		requestIDvalid := false
-
-		// We *DO NOT* validate InResponseTo when AllowIDPInitiated is set. Here's why:
-		//
-		// The SAML specification does not provide clear guidance for handling InResponseTo for IDP-initiated
-		// requests where there is no request to be in response to. The specification says:
-		//
-		//   InResponseTo [Optional]
-		//       The ID of a SAML protocol message in response to which an attesting entity can present the
-		//       assertion. For example, this attribute might be used to correlate the assertion to a SAML
-		//       request that resulted in its presentation.
-		//
-		// The initial thought was that we should specify a single empty string in possibleRequestIDs for IDP-initiated
-		// requests so that we would ensure that an InResponseTo was *not* provided in those cases where it wasn't
-		// expected. Even that turns out to be frustrating for users. And in practice some IDPs (e.g. Rippling)
-		// set a specific non-empty value for InResponseTo in IDP-initiated requests.
-		//
-		// Finally, it is unclear that there is significant security value in checking InResponseTo when we allow
-		// IDP initiated assertions.
-		if !sp.AllowIDPInitiated {
-			for _, possibleRequestID := range possibleRequestIDs {
-				if subjectConfirmation.SubjectConfirmationData.InResponseTo == possibleRequestID {
-					requestIDvalid = true
-					break
-				}
-			}
-			if !requestIDvalid {
-				return fmt.Errorf("assertion SubjectConfirmation one of the possible request IDs (%v)", possibleRequestIDs)
-			}
+		if err := sp.validateAssertionInResponseTo(subjectConfirmation.SubjectConfirmationData.InResponseTo, possibleRequestIDs); err != nil {
+			return err
 		}
 		if subjectConfirmation.SubjectConfirmationData.Recipient != sp.AcsURL.String() {
 			return fmt.Errorf("assertion SubjectConfirmation Recipient is not %s", sp.AcsURL.String())
@@ -1324,6 +1309,32 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 		return err
 	}
 	return nil
+}
+
+// validateAssertionInResponseTo checks the InResponseTo of an assertion's
+// SubjectConfirmationData against the IDs of the requests this SP made.
+//
+// With AllowIDPInitiated set, an empty InResponseTo is an unsolicited
+// assertion and is accepted. A non-empty one names an SP-initiated request
+// and must match one of possibleRequestIDs, so that an assertion issued for
+// one login cannot be replayed as an IdP-initiated one. Some IdPs (e.g.
+// Rippling) send a non-empty InResponseTo on IdP-initiated assertions; a
+// ValidateRequestID hook decides those cases too.
+func (sp *ServiceProvider) validateAssertionInResponseTo(inResponseTo string, possibleRequestIDs []string) error {
+	if sp.AllowIDPInitiated {
+		if inResponseTo == "" {
+			return nil
+		}
+		if sp.ValidateRequestID != nil {
+			return sp.ValidateRequestID(Response{InResponseTo: inResponseTo}, possibleRequestIDs)
+		}
+	}
+	for _, possibleRequestID := range possibleRequestIDs {
+		if inResponseTo == possibleRequestID {
+			return nil
+		}
+	}
+	return fmt.Errorf("assertion SubjectConfirmation one of the possible request IDs (%v)", possibleRequestIDs)
 }
 
 // bearerSubjectConfirmationMethod is the SubjectConfirmation Method of the
