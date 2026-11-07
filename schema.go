@@ -13,20 +13,94 @@ import (
 
 // RequestedAuthnContext represents the SAML object of the same name, an indication of the
 // requirements on the authentication process.
+//
+// The SAML schema allows one or more AuthnContextClassRef elements
+// (saml-core section 3.3.2.2.1).
 type RequestedAuthnContext struct {
-	XMLName              xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol RequestedAuthnContext"`
-	Comparison           string   `xml:",attr"`
-	AuthnContextClassRef string   `xml:"urn:oasis:names:tc:SAML:2.0:assertion AuthnContextClassRef"`
+	XMLName    xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol RequestedAuthnContext"`
+	Comparison string   `xml:",attr"`
+
+	// AuthnContextClassRefs lists the requested authentication context
+	// classes, in order of preference. When parsing, it holds every
+	// AuthnContextClassRef element in the request.
+	AuthnContextClassRefs []string `xml:"-"`
+
+	// AuthnContextClassRef is a single requested authentication context
+	// class. When marshaling it is used only if AuthnContextClassRefs is
+	// empty. When parsing it is set to the first AuthnContextClassRef
+	// element.
+	//
+	// Deprecated: use AuthnContextClassRefs, which can carry more than one
+	// value.
+	AuthnContextClassRef string `xml:"-"`
+}
+
+// ClassRefs returns the requested authentication context classes: the
+// values of AuthnContextClassRefs if it is set, otherwise
+// AuthnContextClassRef, if that is set.
+func (r *RequestedAuthnContext) ClassRefs() []string {
+	if len(r.AuthnContextClassRefs) > 0 {
+		return r.AuthnContextClassRefs
+	}
+	if r.AuthnContextClassRef != "" {
+		return []string{r.AuthnContextClassRef}
+	}
+	return nil
 }
 
 // Element returns an etree.Element representing the object in XML form.
 func (r *RequestedAuthnContext) Element() *etree.Element {
 	el := etree.NewElement("samlp:RequestedAuthnContext")
 	el.CreateAttr("Comparison", r.Comparison)
-	elContext := etree.NewElement("saml:AuthnContextClassRef")
-	elContext.SetText(r.AuthnContextClassRef)
-	el.AddChild(elContext)
+	refs := r.ClassRefs()
+	if len(refs) == 0 {
+		// Preserve the historical output of a single, empty element.
+		refs = []string{""}
+	}
+	for _, ref := range refs {
+		elContext := etree.NewElement("saml:AuthnContextClassRef")
+		elContext.SetText(ref)
+		el.AddChild(elContext)
+	}
 	return el
+}
+
+// MarshalXML implements xml.Marshaler.
+func (r RequestedAuthnContext) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	type wire struct {
+		XMLName               xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol RequestedAuthnContext"`
+		Comparison            string   `xml:",attr"`
+		AuthnContextClassRefs []string `xml:"urn:oasis:names:tc:SAML:2.0:assertion AuthnContextClassRef"`
+	}
+	refs := r.ClassRefs()
+	if len(refs) == 0 {
+		refs = []string{""}
+	}
+	if start.Name.Space == "" {
+		start.Name.Space = "urn:oasis:names:tc:SAML:2.0:protocol"
+	}
+	return e.EncodeElement(wire{Comparison: r.Comparison, AuthnContextClassRefs: refs}, start)
+}
+
+// UnmarshalXML implements xml.Unmarshaler.
+func (r *RequestedAuthnContext) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	var w struct {
+		XMLName               xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:protocol RequestedAuthnContext"`
+		Comparison            string   `xml:",attr"`
+		AuthnContextClassRefs []string `xml:"urn:oasis:names:tc:SAML:2.0:assertion AuthnContextClassRef"`
+	}
+	if err := d.DecodeElement(&w, &start); err != nil {
+		return err
+	}
+	*r = RequestedAuthnContext{
+		XMLName:               w.XMLName,
+		Comparison:            w.Comparison,
+		AuthnContextClassRefs: w.AuthnContextClassRefs,
+	}
+	if len(w.AuthnContextClassRefs) > 0 {
+		r.AuthnContextClassRef = w.AuthnContextClassRefs[0]
+	}
+	return nil
 }
 
 // AuthnRequest represents the SAML object of the same name, a request from a service provider

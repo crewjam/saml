@@ -20,9 +20,14 @@ type CookieSessionProvider struct {
 	HTTPOnly bool
 	Secure   bool
 	SameSite http.SameSite
-	MaxAge   time.Duration
-	Path     string
-	Codec    SessionCodec
+
+	// MaxAge is the lifetime of the session cookie. When Codec is a
+	// JWTSessionCodec, set its MaxAge to the same value: the token expires on
+	// its own after that, whatever the cookie's lifetime. See the
+	// Example (SessionMaxAge).
+	MaxAge time.Duration
+	Path   string
+	Codec  SessionCodec
 
 	// legacyDomain, if set, is the Domain of a session cookie set by an
 	// earlier version of DefaultSessionProvider. CreateSession and

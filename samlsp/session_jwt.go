@@ -23,8 +23,11 @@ type JWTSessionCodec struct {
 	SigningMethod jwt.SigningMethod
 	Audience      string
 	Issuer        string
-	MaxAge        time.Duration
-	Key           crypto.Signer
+
+	// MaxAge is how long an issued session token is valid. It should match
+	// the MaxAge of the CookieSessionProvider that stores the token.
+	MaxAge time.Duration
+	Key    crypto.Signer
 }
 
 var _ SessionCodec = JWTSessionCodec{}
