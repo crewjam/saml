@@ -1621,8 +1621,8 @@ func (sp *ServiceProvider) decryptEncryptedIDs(subject *Subject) error {
 
 // decryptEncryptedID returns the NameID held by encryptedID, or nameID if
 // encryptedID is nil. The two are alternatives, so an element with both is
-// rejected, and an EncryptedID must hold a saml:NameID; other identifiers
-// (such as a BaseID) are not supported.
+// rejected. The EncryptedID is decrypted with the SP's decryption keys and
+// must hold a saml:NameID (see decryptNameID).
 func (sp *ServiceProvider) decryptEncryptedID(nameID *NameID, encryptedID *etree.Element) (*NameID, error) {
 	if encryptedID == nil {
 		return nameID, nil
@@ -1630,18 +1630,7 @@ func (sp *ServiceProvider) decryptEncryptedID(nameID *NameID, encryptedID *etree
 	if nameID != nil {
 		return nil, classify(errors.New("has both a NameID and an EncryptedID"), ErrMalformedMessage)
 	}
-	nameIDEl, err := sp.decryptElement(encryptedID)
-	if err != nil {
-		return nil, classify(fmt.Errorf("failed to decrypt EncryptedID: %w", err), ErrDecryptionFailed)
-	}
-	if nameIDEl.Tag != "NameID" || nameIDEl.NamespaceURI() != "urn:oasis:names:tc:SAML:2.0:assertion" {
-		return nil, classify(fmt.Errorf("EncryptedID holds a %s element, only saml:NameID is supported", nameIDEl.FullTag()), ErrUnsupported)
-	}
-	var decrypted NameID
-	if err := unmarshalElement(nameIDEl, &decrypted); err != nil {
-		return nil, err
-	}
-	return &decrypted, nil
+	return decryptNameID(encryptedID, sp.decryptElement)
 }
 
 // validateAssertion checks that the conditions specified in assertion match
