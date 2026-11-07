@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
+	dsig "github.com/russellhaering/goxmldsig"
 	"gotest.tools/v3/assert"
 	is "gotest.tools/v3/assert/cmp"
 	"gotest.tools/v3/golden"
@@ -485,4 +486,48 @@ func TestIDPCovSigningContextIntermediates(t *testing.T) {
 	certs := req.AssertionEl.FindElements("./Signature/KeyInfo/X509Data/X509Certificate")
 	assert.Check(t, is.Len(certs, 2))
 	assert.Check(t, is.Equal(base64.StdEncoding.EncodeToString(test.SPCertificate.Raw), certs[1].Text()))
+}
+
+func TestIDPDefaultSignatureMethod(t *testing.T) {
+	test := NewIdentityProviderTest(t, applyKey)
+
+	t.Run("RSA", func(t *testing.T) {
+		req := IdpAuthnRequest{IDP: &test.IDP}
+		ctx, err := req.signingContext()
+		assert.NilError(t, err)
+		assert.Check(t, is.Equal(dsig.RSASHA256SignatureMethod, ctx.GetSignatureMethodIdentifier()))
+	})
+
+	t.Run("ECDSA", func(t *testing.T) {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		assert.NilError(t, err)
+		tmpl := &x509.Certificate{
+			SerialNumber: big.NewInt(1),
+			Subject:      pkix.Name{CommonName: "idp.example.com"},
+			NotBefore:    time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC),
+			NotAfter:     time.Date(2035, 1, 1, 0, 0, 0, 0, time.UTC),
+		}
+		der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+		assert.NilError(t, err)
+		cert, err := x509.ParseCertificate(der)
+		assert.NilError(t, err)
+
+		idp := test.IDP
+		idp.Key = nil
+		idp.Signer = key
+		idp.Certificate = cert
+		req := IdpAuthnRequest{IDP: &idp}
+		ctx, err := req.signingContext()
+		assert.NilError(t, err)
+		assert.Check(t, is.Equal(dsig.ECDSASHA256SignatureMethod, ctx.GetSignatureMethodIdentifier()))
+	})
+
+	t.Run("Explicit", func(t *testing.T) {
+		idp := test.IDP
+		idp.SignatureMethod = dsig.RSASHA512SignatureMethod
+		req := IdpAuthnRequest{IDP: &idp}
+		ctx, err := req.signingContext()
+		assert.NilError(t, err)
+		assert.Check(t, is.Equal(dsig.RSASHA512SignatureMethod, ctx.GetSignatureMethodIdentifier()))
+	})
 }
