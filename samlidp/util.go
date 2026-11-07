@@ -6,11 +6,24 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 
 	"github.com/crewjam/saml/internal/xmlroundtrip"
 
 	"github.com/crewjam/saml"
 )
+
+// storeError answers a request whose Store operation failed with err: 404
+// Not Found if the item does not exist (ErrNotFound), otherwise 500
+// Internal Server Error, logging err.
+func (s *Server) storeError(w http.ResponseWriter, err error) {
+	if errors.Is(err, ErrNotFound) {
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		return
+	}
+	s.logger.Printf("ERROR: %s", err)
+	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+}
 
 func randomBytes(n int) []byte {
 	rv := make([]byte, n)

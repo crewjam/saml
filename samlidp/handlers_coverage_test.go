@@ -184,7 +184,7 @@ func TestCovDeleteServiceRemovesProvider(t *testing.T) {
 	assert.Check(t, is.Equal(http.StatusNoContent, w.Code))
 	assert.Check(t, is.Len(s.serviceProviders, 0))
 
-	// deleting a service that does not exist is reported as an error
+	// deleting a service that does not exist is reported as not found
 	w = covServe(s, "DELETE", "/services/sp", "")
-	assert.Check(t, is.Equal(http.StatusInternalServerError, w.Code))
+	assert.Check(t, is.Equal(http.StatusNotFound, w.Code))
 }

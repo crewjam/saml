@@ -314,7 +314,7 @@ func (s *Server) HandleGetSession(w http.ResponseWriter, r *http.Request) {
 	session := saml.Session{}
 	err := s.Store.Get(fmt.Sprintf("/sessions/%s", r.PathValue("id")), &session)
 	if err != nil {
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		s.storeError(w, err)
 		return
 	}
 	if err := json.NewEncoder(w).Encode(session); err != nil {
@@ -328,7 +328,7 @@ func (s *Server) HandleGetSession(w http.ResponseWriter, r *http.Request) {
 func (s *Server) HandleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	err := s.deleteSession(r.PathValue("id"))
 	if err != nil {
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		s.storeError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
