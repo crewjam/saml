@@ -100,22 +100,37 @@ func (idp *IdentityProvider) recordSessionParticipant(r *http.Request, req *IdpA
 // match selects, leaving out those of the service provider exclude. tracked
 // is false if the SessionProvider does not track participants.
 func (idp *IdentityProvider) sessionParticipants(r *http.Request, match func(*Session) bool, exclude string) (participants []SessionParticipant, tracked bool, err error) {
+	participants, _, tracked, err = idp.sessionParticipantsOf(r, match, exclude)
+	return participants, tracked, err
+}
+
+// sessionParticipantsOf is sessionParticipants, and also reports whether
+// exclude may be a participant of the sessions match selects: false only
+// when the tracker lists participants for them and exclude is not one of
+// them. With no tracker, a tracker error or no participants recorded,
+// nothing is known, and isParticipant is true.
+func (idp *IdentityProvider) sessionParticipantsOf(r *http.Request, match func(*Session) bool, exclude string) (participants []SessionParticipant, isParticipant bool, tracked bool, err error) {
 	tracker, ok := idp.SessionProvider.(SessionParticipantTracker)
 	if !ok {
-		return nil, false, nil
+		return nil, true, false, nil
 	}
 	all, err := tracker.SessionParticipants(r, match)
 	if err != nil {
-		return nil, true, err
+		return nil, true, true, err
 	}
+	isParticipant = len(all) == 0
 	seen := map[string]bool{}
 	for _, participant := range all {
-		if participant.ServiceProviderID == "" || participant.ServiceProviderID == exclude {
+		if participant.ServiceProviderID == exclude && exclude != "" {
+			isParticipant = true
+			continue
+		}
+		if participant.ServiceProviderID == "" {
 			continue
 		}
 		key, err := json.Marshal(participant)
 		if err != nil {
-			return nil, true, err
+			return nil, true, true, err
 		}
 		if seen[string(key)] {
 			continue
@@ -123,7 +138,7 @@ func (idp *IdentityProvider) sessionParticipants(r *http.Request, match func(*Se
 		seen[string(key)] = true
 		participants = append(participants, participant)
 	}
-	return participants, true, nil
+	return participants, isParticipant, true, nil
 }
 
 // participantsUnknown reports whether a logout cannot reach every other
@@ -583,7 +598,7 @@ func (idp *IdentityProvider) validateLogoutResponse(r *http.Request, state *logo
 	if state.Current == nil || state.RequestID == "" {
 		return nil, errors.New("no logout request is outstanding")
 	}
-	buf, redirectMessage, err := readLogoutResponseMessage(r)
+	buf, redirectMessage, simpleSign, err := readLogoutResponseMessage(r)
 	if err != nil {
 		return nil, err
 	}
@@ -614,18 +629,24 @@ func (idp *IdentityProvider) validateLogoutResponse(r *http.Request, state *logo
 	if err != nil {
 		return nil, err
 	}
-	if redirectMessage != nil && redirectMessage.SignedContent != nil {
+	switch {
+	case simpleSign != nil:
+		err = checkSigAlgNotSHA1(idp.RejectSHA1Signatures, simpleSign.SigAlg)
+	case redirectMessage != nil && redirectMessage.SignedContent != nil:
 		err = checkSigAlgNotSHA1(idp.RejectSHA1Signatures, redirectMessage.SigAlg)
-	} else {
+	default:
 		err = checkEnvelopedSignatureNotSHA1(idp.RejectSHA1Signatures, doc.Root())
 	}
 	if err != nil {
 		return nil, fmt.Errorf("logout response from %s: %w", serviceProviderID, err)
 	}
 	var signed *etree.Element
-	if redirectMessage != nil && redirectMessage.SignedContent != nil {
+	switch {
+	case simpleSign != nil:
+		err = checkSPSimpleSignSignature(idp.RejectSHA1Signatures, simpleSign, metadata, idp.now())
+	case redirectMessage != nil && redirectMessage.SignedContent != nil:
 		err = checkRedirectBindingSignature(redirectMessage, func() ([]*x509.Certificate, error) { return certs, nil }, idp.now(), true)
-	} else {
+	default:
 		signed, err = verifiedEnvelopedElement(doc.Root(), certs, idp.dsigClock())
 	}
 	if err != nil {
@@ -677,28 +698,37 @@ func validateLogoutResponseAnswer(resp *LogoutResponse, requestID string, now ti
 
 // readLogoutResponseMessage returns the XML of the LogoutResponse r carries,
 // with the HTTP-Redirect binding (and then also the parsed query, whose
-// signature the caller checks) or the HTTP-POST binding.
-func readLogoutResponseMessage(r *http.Request) ([]byte, *redirectBindingMessage, error) {
+// signature the caller checks), the HTTP-POST-SimpleSign binding (and then
+// also the SimpleSign message, whose signature the caller checks) or the
+// HTTP-POST binding.
+func readLogoutResponseMessage(r *http.Request) ([]byte, *redirectBindingMessage, *simpleSignMessage, error) {
 	if r.Method == http.MethodGet {
 		m, err := parseRedirectBindingQuery(r.URL.RawQuery, redirectParamSAMLResponse)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		compressed, err := base64.StdEncoding.DecodeString(m.Message)
 		if err != nil {
-			return nil, nil, fmt.Errorf("cannot decode response: %w", err)
+			return nil, nil, nil, fmt.Errorf("cannot decode response: %w", err)
 		}
 		buf, err := io.ReadAll(newSaferFlateReader(bytes.NewReader(compressed)))
 		if err != nil {
-			return nil, nil, fmt.Errorf("cannot decompress response: %w", err)
+			return nil, nil, nil, fmt.Errorf("cannot decompress response: %w", err)
 		}
-		return buf, m, nil
+		return buf, m, nil, nil
+	}
+	simpleSign, err := parseSimpleSignRequest(r, redirectParamSAMLResponse)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if simpleSign != nil {
+		return simpleSign.XML, nil, simpleSign, nil
 	}
 	buf, err := base64.StdEncoding.DecodeString(r.PostForm.Get(redirectParamSAMLResponse))
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot decode response: %w", err)
+		return nil, nil, nil, fmt.Errorf("cannot decode response: %w", err)
 	}
-	return buf, nil, nil
+	return buf, nil, nil, nil
 }
 
 // logoutStateSignaturePrefix is prepended to the encoded state before it is
