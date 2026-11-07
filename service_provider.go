@@ -148,6 +148,11 @@ type ServiceProvider struct {
 	// authentication requests
 	AuthnNameIDFormat NameIDFormat
 
+	// Scoping, when set, is sent in authentication requests. Proxying identity
+	// providers (gateways) use its IDPList to choose which identity provider to
+	// delegate authentication to.
+	Scoping *Scoping
+
 	// MetadataValidDuration is a duration used to calculate validUntil
 	// attribute in the metadata endpoint
 	MetadataValidDuration time.Duration
@@ -671,6 +676,7 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding stri
 		},
 		ForceAuthn:            sp.ForceAuthn,
 		RequestedAuthnContext: sp.RequestedAuthnContext,
+		Scoping:               sp.Scoping,
 	}
 	if sp.AcsIndex != nil {
 		// AssertionConsumerServiceIndex is an xs:unsignedShort.
