@@ -83,6 +83,36 @@ type AssertionMaker interface {
 	MakeAssertion(req *IdpAuthnRequest, session *Session) error
 }
 
+// ResponseWriter is an interface used by IdentityProvider to send the SAML
+// response for a request to the browser, once the assertion has been made.
+// The default implementation is DefaultResponseWriter, which is used if
+// IdentityProvider.ResponseWriter is not set.
+//
+// Implement it to control the whole HTTP response, for example to set
+// headers, to render the response inside the embedding application's own
+// pages, or to support a binding other than HTTP-POST. To only change the
+// markup of the default auto-submitting HTML form, set
+// IdentityProvider.ResponseFormTemplate instead.
+type ResponseWriter interface {
+	// WriteResponse writes the HTTP response carrying the SAML response for
+	// req. req.ResponseEl is nil until req.MakeResponse (or req.PostBinding,
+	// which calls it) has been called. If it returns an error, the caller
+	// logs it and replies with an HTTP 500 error, so an implementation
+	// should return errors before it starts writing to w.
+	WriteResponse(w http.ResponseWriter, req *IdpAuthnRequest) error
+}
+
+// DefaultResponseWriter is the default ResponseWriter. It calls
+// req.WriteResponse, which writes an auto-submitting HTML form (see
+// IdentityProvider.ResponseFormTemplate) that posts the response to the
+// service provider using the HTTP-POST binding.
+type DefaultResponseWriter struct{}
+
+// WriteResponse implements ResponseWriter.
+func (DefaultResponseWriter) WriteResponse(w http.ResponseWriter, req *IdpAuthnRequest) error {
+	return req.WriteResponse(w)
+}
+
 // IdentityProvider implements the SAML Identity Provider role (IDP).
 //
 // An identity provider receives SAML assertion requests and responds
@@ -113,6 +143,12 @@ type IdentityProvider struct {
 	SignatureMethod         string
 	ValidDuration           *time.Duration
 	ResponseFormTemplate    *template.Template
+
+	// ResponseWriter, if set, writes the HTTP response carrying the SAML
+	// response in ServeSSO and ServeIDPInitiated. If nil,
+	// DefaultResponseWriter is used, which posts the response with the
+	// HTML form from ResponseFormTemplate.
+	ResponseWriter ResponseWriter
 
 	// ExtraCertificates are additional certificates published in the IdP
 	// metadata as signing keys, after Certificate. They are never used to
@@ -347,7 +383,7 @@ func (idp *IdentityProvider) ServeSSO(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
-	if err := req.WriteResponse(w); err != nil {
+	if err := idp.responseWriter().WriteResponse(w, req); err != nil {
 		idp.Logger.Printf("failed to write response: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
@@ -426,11 +462,20 @@ func (idp *IdentityProvider) ServeIDPInitiated(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if err := req.WriteResponse(w); err != nil {
+	if err := idp.responseWriter().WriteResponse(w, req); err != nil {
 		idp.Logger.Printf("failed to write response: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+}
+
+// responseWriter returns idp.ResponseWriter, or DefaultResponseWriter if it
+// is not set.
+func (idp *IdentityProvider) responseWriter() ResponseWriter {
+	if idp.ResponseWriter != nil {
+		return idp.ResponseWriter
+	}
+	return DefaultResponseWriter{}
 }
 
 // IdpAuthnRequest is used by IdentityProvider to handle a single authentication request.
