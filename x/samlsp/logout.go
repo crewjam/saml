@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/crewjam/saml"
 )
@@ -18,6 +19,24 @@ type logoutOptions struct {
 	messageOptions
 	sessionIndexes []string
 	status         *saml.Status
+	reason         string
+	notOnOrAfter   *time.Time
+}
+
+// requestOptions returns the saml.LogoutRequestOptions for o.
+func (o *logoutOptions) requestOptions() []saml.LogoutRequestOption {
+	var opts []saml.LogoutRequestOption
+	if len(o.sessionIndexes) > 0 {
+		opts = append(opts, saml.WithSessionIndexes(o.sessionIndexes...))
+	}
+	if o.reason != "" || o.notOnOrAfter != nil {
+		reason, notOnOrAfter := o.reason, o.notOnOrAfter
+		opts = append(opts, func(req *saml.LogoutRequest) {
+			req.Reason = reason
+			req.NotOnOrAfter = notOnOrAfter
+		})
+	}
+	return opts
 }
 
 type logoutOptionFunc func(*logoutOptions)
@@ -31,6 +50,22 @@ func (f logoutOptionFunc) applyLogout(o *logoutOptions) { f(o) }
 func WithSessionIndex(indexes ...string) LogoutOption {
 	return logoutOptionFunc(func(o *logoutOptions) {
 		o.sessionIndexes = append(o.sessionIndexes, indexes...)
+	})
+}
+
+// WithReason says why the user is being logged out, in a LogoutRequest:
+// saml.LogoutReasonUser when the user asked, saml.LogoutReasonAdmin when an
+// administrator did, or a URI agreed with the IdP.
+func WithReason(reason string) LogoutOption {
+	return logoutOptionFunc(func(o *logoutOptions) { o.reason = reason })
+}
+
+// WithNotOnOrAfter sets the time after which the IdP must not act on a
+// LogoutRequest (saml-core §3.7.1).
+func WithNotOnOrAfter(t time.Time) LogoutOption {
+	return logoutOptionFunc(func(o *logoutOptions) {
+		t := t.UTC()
+		o.notOnOrAfter = &t
 	})
 }
 
@@ -75,9 +110,7 @@ func (c *Config) LogoutRequest(ctx context.Context, nameID saml.NameID, relaySta
 			req.NameID = &id
 		},
 	}
-	if len(o.sessionIndexes) > 0 {
-		samlOpts = append(samlOpts, saml.WithSessionIndexes(o.sessionIndexes...))
-	}
+	samlOpts = append(samlOpts, o.requestOptions()...)
 	req, err := sp.MakeLogoutRequest(location, nameID.Value, samlOpts...)
 	if err != nil {
 		return nil, err
@@ -235,28 +268,23 @@ func (c *Config) LogoutResponse(ctx context.Context, req *LogoutRequest, opts ..
 		if err != nil {
 			return nil, err
 		}
-		return &Message{Binding: saml.SOAPBinding, soapResponse: resp}, nil
+		return &Message{ID: resp.ID, Binding: saml.SOAPBinding, soapResponse: resp}, nil
 	}
 	binding, location, err := chooseBinding(o.binding, sp.GetSLOBindingLocation)
 	if err != nil {
 		return nil, err
 	}
 
-	// Message.ID is left empty: the response's own ID is of no use to
-	// the caller.
-	m := &Message{Binding: binding, Destination: location, RelayState: req.RelayState, scriptHash: responseScriptHash}
-	if binding == saml.HTTPRedirectBinding {
-		if m.redirectURL, err = sp.MakeRedirectLogoutResponseWithStatus(req.ID, req.RelayState, status); err != nil {
-			return nil, err
-		}
-		return m, nil
-	}
-
 	resp, err := sp.MakeLogoutResponseWithStatus(location, req.ID, status)
 	if err != nil {
 		return nil, err
 	}
+	m := &Message{ID: resp.ID, Binding: binding, Destination: location, RelayState: req.RelayState, scriptHash: responseScriptHash}
 	switch binding {
+	case saml.HTTPRedirectBinding:
+		if m.redirectURL, err = sp.RedirectLogoutResponseURL(resp, req.RelayState); err != nil {
+			return nil, err
+		}
 	case saml.HTTPPostBinding:
 		m.form = resp.PostWithNonce(req.RelayState, o.scriptNonce)
 	case saml.HTTPPostSimpleSignBinding:
@@ -323,11 +351,7 @@ func (c *Config) SendLogoutRequest(ctx context.Context, nameID saml.NameID, opts
 	if err != nil {
 		return nil, err
 	}
-	var samlOpts []saml.LogoutRequestOption
-	if len(o.sessionIndexes) > 0 {
-		samlOpts = append(samlOpts, saml.WithSessionIndexes(o.sessionIndexes...))
-	}
-	req, err := sp.MakeSOAPLogoutRequest(nameID, samlOpts...)
+	req, err := sp.MakeSOAPLogoutRequest(nameID, o.requestOptions()...)
 	if errors.Is(err, saml.ErrNoSOAPSingleLogoutService) {
 		return nil, fmt.Errorf("%w %s", ErrNoEndpoint, saml.SOAPBinding)
 	}

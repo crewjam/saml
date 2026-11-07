@@ -36,6 +36,7 @@ type Config struct {
 	encryptionCert         *x509.Certificate
 	signRequests           bool
 	backChannel            bool
+	encryptLogoutNameID    bool
 	nameIDFormat           saml.NameIDFormat
 	replayState            saml.AssertionReplayCache
 	authnContextComparator func(comparison string, requested []string, got string) bool
@@ -182,6 +183,13 @@ func WithACSURL(acsURL string) Option {
 func WithSLOURL(sloURL string) Option {
 	return optionFunc(func(_ *Config, o *configOptions) { o.sloURL = sloURL })
 }
+
+// EncryptLogoutNameID makes LogoutRequest and SendLogoutRequest identify the
+// user with an EncryptedID, encrypted to the IdP's encryption certificate,
+// instead of a NameID, so that the browser carrying the request does not
+// see it (saml-core §3.7.1). Some IdPs require it. Sending a LogoutRequest
+// fails if the IdP metadata has no encryption certificate.
+var EncryptLogoutNameID Option = optionFunc(func(c *Config, _ *configOptions) { c.encryptLogoutNameID = true })
 
 // BackChannelLogout enables single logout with the SAML SOAP binding, in
 // which the IdP and the SP exchange LogoutRequests and LogoutResponses
@@ -361,6 +369,7 @@ func (c *Config) localServiceProvider(ctx context.Context) *saml.ServiceProvider
 		Clock:                 c.clock,
 
 		AuthnContextClassRefComparator: c.authnContextComparator,
+		EncryptLogoutNameID:            c.encryptLogoutNameID,
 	}
 	harden(sp)
 	if c.sloURL.String() != "" {

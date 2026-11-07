@@ -149,6 +149,11 @@ type LogoutRequest struct {
 	Destination  string     `xml:",attr,omitempty"`
 	Issuer       *Issuer    `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
 	NameID       *NameID    `xml:"urn:oasis:names:tc:SAML:2.0:assertion NameID"`
+
+	// Reason, if set, says why the principal is being logged out, as a
+	// URI: LogoutReasonUser or LogoutReasonAdmin, or one agreed between
+	// the parties (saml-core §3.7.1, §3.7.3).
+	Reason string `xml:",attr,omitempty"`
 	Signature    *etree.Element
 
 	// EncryptedID is the saml:EncryptedID element that identifies the
@@ -212,6 +217,9 @@ func (r *LogoutRequest) Element() *etree.Element {
 	}
 	if r.Destination != "" {
 		el.CreateAttr("Destination", r.Destination)
+	}
+	if r.Reason != "" {
+		el.CreateAttr("Reason", r.Reason)
 	}
 	if r.Issuer != nil {
 		el.AddChild(r.Issuer.Element())
@@ -976,6 +984,15 @@ func (s *StatusCode) Element() *etree.Element {
 	}
 	return el
 }
+
+// The reasons for logout that saml-core §3.7.3 defines, for
+// LogoutRequest.Reason.
+const (
+	// LogoutReasonUser means the user decided to end the session.
+	LogoutReasonUser = "urn:oasis:names:tc:SAML:2.0:logout:user"
+	// LogoutReasonAdmin means an administrator ended the session.
+	LogoutReasonAdmin = "urn:oasis:names:tc:SAML:2.0:logout:admin"
+)
 
 // StatusSuccess means the request succeeded. Additional information MAY be returned in the <StatusMessage> and/or <StatusDetail> elements.
 //
