@@ -149,6 +149,78 @@ func TestSpecProfile_4_1_6_IdPUsesDefaultACSWhenUnspecified(t *testing.T) {
 	assert.Check(t, is.Equal("https://sp.example.com/acs/default", req.ACSEndpoint.Location))
 }
 
+// saml-metadata §2.2.3 (lines 272-275): when no endpoint has isDefault set
+// to true, "the default endpoint is the first such endpoint without the
+// isDefault attribute set to false". An endpoint explicitly marked
+// isDefault="false" is passed over for a request that names no ACS, and
+// used only if every endpoint is marked so.
+func TestSpecMetadata_2_2_3_IsDefaultFalseIsNotTheDefault(t *testing.T) {
+	notDefault := false
+	for _, tc := range []struct {
+		name      string
+		endpoints []IndexedEndpoint
+		want      string
+	}{
+		{"isDefault=false skipped", []IndexedEndpoint{
+			{Binding: HTTPPostBinding, Location: "https://sp.example.com/acs/not-default", Index: 1, IsDefault: &notDefault},
+			{Binding: HTTPPostBinding, Location: "https://sp.example.com/acs/default", Index: 2},
+		}, "https://sp.example.com/acs/default"},
+		{"all isDefault=false: the first", []IndexedEndpoint{
+			{Binding: HTTPPostBinding, Location: "https://sp.example.com/acs/first", Index: 1, IsDefault: &notDefault},
+			{Binding: HTTPPostBinding, Location: "https://sp.example.com/acs/second", Index: 2, IsDefault: &notDefault},
+		}, "https://sp.example.com/acs/first"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			test := specProfIDPTest(t)
+			md := test.SP.Metadata()
+			md.SPSSODescriptors[0].AssertionConsumerServices = tc.endpoints
+			specProfServeSPMetadata(test, md)
+
+			req := specProfAuthnRequest(test, "")
+			assert.NilError(t, req.Validate())
+			assert.Check(t, is.Equal(tc.want, req.ACSEndpoint.Location))
+		})
+	}
+}
+
+// saml-profiles §4.1.5 (lines 609-611): an unsolicited "<Response> or
+// artifact SHOULD be delivered to the <md:AssertionConsumerService> endpoint
+// of the service provider designated as the default", chosen by the
+// saml-metadata §2.2.3 rules.
+func TestSpecProfile_4_1_5_IdPInitiatedUsesDefaultACS(t *testing.T) {
+	isDefault, notDefault := true, false
+	for _, tc := range []struct {
+		name      string
+		endpoints []IndexedEndpoint
+		want      string
+	}{
+		{"isDefault=true", []IndexedEndpoint{
+			{Binding: HTTPPostBinding, Location: "https://sp.example.com/acs/first", Index: 0},
+			{Binding: HTTPPostBinding, Location: "https://sp.example.com/acs/default", Index: 1, IsDefault: &isDefault},
+		}, "https://sp.example.com/acs/default"},
+		{"isDefault=false skipped", []IndexedEndpoint{
+			{Binding: HTTPPostBinding, Location: "https://sp.example.com/acs/not-default", Index: 0, IsDefault: &notDefault},
+			{Binding: HTTPPostBinding, Location: "https://sp.example.com/acs/default", Index: 1},
+		}, "https://sp.example.com/acs/default"},
+		{"HTTP-Redirect is not used", []IndexedEndpoint{
+			{Binding: HTTPRedirectBinding, Location: "https://sp.example.com/acs/redirect", Index: 0, IsDefault: &isDefault},
+			{Binding: HTTPPostBinding, Location: "https://sp.example.com/acs/post", Index: 1},
+		}, "https://sp.example.com/acs/post"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			test := specProfIDPTest(t)
+			md := test.SP.Metadata()
+			md.SPSSODescriptors[0].AssertionConsumerServices = tc.endpoints
+			specProfServeSPMetadata(test, md)
+
+			r := httptest.NewRequest(http.MethodGet, "https://idp.example.com/services/sp/whoami", nil)
+			req, err := test.IDP.NewIdpInitiatedRequest(r, test.SP.MetadataURL.String(), "")
+			assert.NilError(t, err)
+			assert.Check(t, is.Equal(tc.want, req.ACSEndpoint.Location))
+		})
+	}
+}
+
 // saml-profiles §4.1.2 step 5: for the <Response>, "The HTTP Redirect binding
 // MUST NOT be used". The IdP refuses to deliver a Response to an ACS endpoint
 // that has the HTTP-Redirect binding.

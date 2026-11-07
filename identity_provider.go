@@ -642,11 +642,12 @@ func (idp *IdentityProvider) NewIdpInitiatedRequest(r *http.Request, serviceProv
 		return nil, fmt.Errorf("cannot find service provider %s: %w", serviceProviderID, err)
 	}
 
-	// find an ACS endpoint that we can use: the first HTTP-POST one, or,
-	// if there is none, the first HTTP-POST-SimpleSign one.
-	if !req.selectACSEndpoint(func(ep *IndexedEndpoint) bool { return ep.Binding == HTTPPostBinding }) {
-		req.selectACSEndpoint(func(ep *IndexedEndpoint) bool { return ep.Binding == HTTPPostSimpleSignBinding })
-	}
+	// An unsolicited Response "SHOULD be delivered to the
+	// <md:AssertionConsumerService> endpoint of the service provider
+	// designated as the default" (saml-profiles §4.1.5): the default among
+	// the endpoints the IdP can send a Response to, HTTP-POST before
+	// HTTP-POST-SimpleSign.
+	req.selectDefaultACSEndpoint(func(binding string) bool { return binding == HTTPPostBinding }, isSimpleSign)
 	if req.ACSEndpoint == nil {
 		return nil, classify(errors.New("saml metadata does not contain an Assertion Customer Service url"), ErrUnknownAssertionConsumerService)
 	}
@@ -840,9 +841,10 @@ func (req *IdpAuthnRequest) Validate() error {
 // endpoint with another binding has that Location and ProtocolBinding is
 // empty. So a service provider that lists both bindings at one URL keeps
 // getting HTTP-POST unless it asks for SimpleSign. Without either, the
-// default endpoint (HTTP-POST, HTTP-Redirect or HTTP-POST-SimpleSign) is
-// used, then any HTTP-POST or HTTP-Redirect endpoint, then any
-// HTTP-POST-SimpleSign endpoint.
+// response goes to "the default location associated with the requester"
+// (saml-core §3.4.1): the default HTTP-POST, HTTP-Redirect or
+// HTTP-POST-SimpleSign endpoint, chosen as selectDefaultACSEndpoint
+// describes, HTTP-POST and HTTP-Redirect before HTTP-POST-SimpleSign.
 func (req *IdpAuthnRequest) getACSEndpoint() error {
 	if index := req.Request.AssertionConsumerServiceIndex; index != "" {
 		if req.selectACSEndpoint(func(ep *IndexedEndpoint) bool { return strconv.Itoa(ep.Index) == index }) {
@@ -859,18 +861,7 @@ func (req *IdpAuthnRequest) getACSEndpoint() error {
 	// Some service providers, like the Microsoft Azure AD service provider, issue
 	// assertion requests that don't specify an ACS url at all.
 	if req.Request.AssertionConsumerServiceURL == "" && req.Request.AssertionConsumerServiceIndex == "" {
-		// find a default ACS binding in the metadata that we can use
-		if req.selectACSEndpoint(func(ep *IndexedEndpoint) bool {
-			return ep.IsDefault != nil && *ep.IsDefault && (isPostOrRedirect(ep.Binding) || ep.Binding == HTTPPostSimpleSignBinding)
-		}) {
-			return nil
-		}
-
-		// if we can't find a default, use *any* ACS binding
-		if req.selectACSEndpoint(func(ep *IndexedEndpoint) bool { return isPostOrRedirect(ep.Binding) }) {
-			return nil
-		}
-		if req.selectACSEndpoint(func(ep *IndexedEndpoint) bool { return ep.Binding == HTTPPostSimpleSignBinding }) {
+		if req.selectDefaultACSEndpoint(isPostOrRedirect, isSimpleSign) {
 			return nil
 		}
 	}
@@ -896,6 +887,48 @@ func (req *IdpAuthnRequest) selectACSEndpointByURL(acsURL string) bool {
 	}
 }
 
+// selectDefaultACSEndpoint selects the service provider's default
+// AssertionConsumerService endpoint among those with a binding one of tiers
+// accepts, and reports whether there is one. saml-metadata §2.2.3: "the
+// default endpoint is the first such endpoint with the isDefault attribute
+// set to true. If no such endpoints exist, the default endpoint is the first
+// such endpoint without the isDefault attribute set to false. If no such
+// endpoints exist, the default endpoint is the first element in the
+// sequence."
+//
+// An endpoint with isDefault="true" is chosen whatever its tier. For the
+// next two steps the tiers are tried in order, so that, say, an HTTP-POST
+// endpoint is preferred to an HTTP-POST-SimpleSign one listed before it
+// when neither is marked as the default.
+func (req *IdpAuthnRequest) selectDefaultACSEndpoint(tiers ...func(binding string) bool) bool {
+	usable := func(binding string) bool {
+		for _, tier := range tiers {
+			if tier(binding) {
+				return true
+			}
+		}
+		return false
+	}
+	if req.selectACSEndpoint(func(ep *IndexedEndpoint) bool {
+		return usable(ep.Binding) && ep.IsDefault != nil && *ep.IsDefault
+	}) {
+		return true
+	}
+	for _, tier := range tiers {
+		if req.selectACSEndpoint(func(ep *IndexedEndpoint) bool {
+			return tier(ep.Binding) && ep.IsDefault == nil
+		}) {
+			return true
+		}
+	}
+	for _, tier := range tiers {
+		if req.selectACSEndpoint(func(ep *IndexedEndpoint) bool { return tier(ep.Binding) }) {
+			return true
+		}
+	}
+	return false
+}
+
 // selectACSEndpoint sets SPSSODescriptor and ACSEndpoint to the first
 // AssertionConsumerService endpoint in the service provider metadata for
 // which match returns true, and reports whether there is one.
@@ -916,6 +949,10 @@ func (req *IdpAuthnRequest) selectACSEndpoint(match func(*IndexedEndpoint) bool)
 
 func isPostOrRedirect(binding string) bool {
 	return binding == HTTPPostBinding || binding == HTTPRedirectBinding
+}
+
+func isSimpleSign(binding string) bool {
+	return binding == HTTPPostSimpleSignBinding
 }
 
 // hostFromRemoteAddr returns the host part of an http.Request RemoteAddr,
