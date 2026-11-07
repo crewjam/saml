@@ -84,7 +84,10 @@ func (sp *ServiceProvider) GetAttributeServiceLocation(binding string) string {
 // SignatureMethod is: attribute authorities usually release attributes only to
 // requesters they can authenticate (saml-profiles §6.3.1). Without Key the
 // query is unsigned, and the requester must be authenticated some other way,
-// such as with a TLS client certificate in HTTPClient.
+// such as with a TLS client certificate in HTTPClient. The SP metadata
+// publishes the certificate for signing only when SignatureMethod or
+// LogoutSignatureMethod is set or SOAP single logout is offered; set one of
+// them so that the attribute authority can verify the query.
 func (sp *ServiceProvider) MakeAttributeQuery(nameID NameID, attributes ...Attribute) (*AttributeQuery, error) {
 	if sp.IDPMetadata == nil {
 		return nil, errors.New("cannot make an attribute query: IDPMetadata is not set")

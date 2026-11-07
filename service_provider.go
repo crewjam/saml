@@ -623,7 +623,7 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 	}
 
 	if sp.Certificate != nil {
-		if len(sp.SignatureMethod) > 0 {
+		if sp.signsMessages() {
 			keyDescriptors = append(keyDescriptors, KeyDescriptor{
 				Use: "signing",
 				KeyInfo: KeyInfo{
@@ -1029,6 +1029,31 @@ func (sp *ServiceProvider) SignedMetadata() (*etree.Element, error) {
 // GetSigningContext returns a dsig.SigningContext initialized based on the Service Provider's configuration
 func GetSigningContext(sp *ServiceProvider) (*dsig.SigningContext, error) {
 	return sp.signingContext(sp.SignatureMethod)
+}
+
+// signsMessages reports whether the SP signs messages the IdP must verify
+// with the certificate in the SP metadata, so that the metadata must publish
+// it for signing: AuthnRequests (SignatureMethod), logout messages
+// (LogoutSignatureMethod), and SOAP LogoutRequests and LogoutResponses,
+// which are signed whenever Key is set.
+//
+// Attribute queries are also signed whenever Key is set, but advertising an
+// AttributeService in IDPMetadata does not mean the SP queries it; an SP
+// that sends attribute queries sets SignatureMethod or LogoutSignatureMethod
+// to publish its signing certificate.
+func (sp *ServiceProvider) signsMessages() bool {
+	if sp.SignatureMethod != "" || sp.LogoutSignatureMethod != "" {
+		return true
+	}
+	if signerutil.IsNil(sp.Key) {
+		return false
+	}
+	for _, binding := range sp.LogoutBindings {
+		if binding == SOAPBinding {
+			return true
+		}
+	}
+	return false
 }
 
 // logoutSignatureMethod returns the signature method for the logout
