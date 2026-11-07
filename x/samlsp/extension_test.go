@@ -160,6 +160,8 @@ func TestSignElementAndServiceProvider(t *testing.T) {
 	}
 	el := etree.NewElement("Thing")
 	el.CreateAttr("ID", "id-thing")
+	el.CreateElement("Issuer").SetText("me")
+	el.CreateElement("Body")
 	signed, err := cfg.SignElement(el)
 	if err != nil {
 		t.Fatal(err)
@@ -167,6 +169,18 @@ func TestSignElementAndServiceProvider(t *testing.T) {
 	if el.FindElement("./Signature") != nil {
 		t.Error("SignElement modified its argument")
 	}
+	if c := signed.ChildElements(); len(c) != 3 || c[1].Tag != "Signature" {
+		t.Error("the Signature is not right after the Issuer")
+	}
+	// As received: serialized and parsed again.
+	doc := etree.NewDocument()
+	doc.SetRoot(signed)
+	buf, _ := doc.WriteToBytes()
+	reparsed := etree.NewDocument()
+	if err := reparsed.ReadFromBytes(buf); err != nil {
+		t.Fatal(err)
+	}
+	signed = reparsed.Root()
 	if m := signed.FindElement("./Signature/SignedInfo/SignatureMethod"); m == nil || m.SelectAttrValue("Algorithm", "") != dsig.RSASHA512SignatureMethod {
 		t.Error("not signed with the configured method")
 	}
