@@ -434,7 +434,7 @@ func (s *Service) Response(ctx context.Context, req *Request, opts ...ResponseOp
 		return nil, err
 	}
 	resp := &saml.LogoutResponse{
-		ID:           newID(),
+		ID:           newID(s.config.Rand()),
 		InResponseTo: req.ID,
 		Version:      "2.0",
 		IssueInstant: s.config.Now(),
@@ -718,10 +718,10 @@ func soapEnvelope(el *etree.Element) ([]byte, error) {
 	return doc.WriteToBytes()
 }
 
-// newID returns a new random XML ID.
-func newID() string {
+// newID returns a new random XML ID, read from randReader.
+func newID(randReader io.Reader) string {
 	b := make([]byte, 20)
-	if _, err := io.ReadFull(saml.RandReader, b); err != nil {
+	if _, err := io.ReadFull(randReader, b); err != nil {
 		panic(err)
 	}
 	return fmt.Sprintf("id-%x", b)

@@ -54,6 +54,17 @@ func TestMiscCovSaferFlateReaderClose(t *testing.T) {
 }
 
 func TestMiscCovRandomBytesPanicsOnReadError(t *testing.T) {
+	readErr := errors.New("idpcov: entropy exhausted")
+
+	defer func() {
+		r := recover()
+		assert.Check(t, is.Equal(readErr, r))
+	}()
+	randomBytes(iotest.ErrReader(readErr), 20)
+	t.Fatal("randomBytes did not panic")
+}
+
+func TestMiscCovRandomBytesFallsBackToRandReader(t *testing.T) {
 	oldRandReader := RandReader
 	t.Cleanup(func() { RandReader = oldRandReader })
 	readErr := errors.New("idpcov: entropy exhausted")
@@ -63,6 +74,6 @@ func TestMiscCovRandomBytesPanicsOnReadError(t *testing.T) {
 		r := recover()
 		assert.Check(t, is.Equal(readErr, r))
 	}()
-	randomBytes(20)
+	randomBytes(nil, 20)
 	t.Fatal("randomBytes did not panic")
 }

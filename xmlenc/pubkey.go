@@ -20,8 +20,15 @@ type RSA struct {
 	BlockCipher  BlockCipher
 	DigestMethod DigestMethod // only for OAEP
 
+	// Rand, if non-nil, is the source of the session key, the element IDs
+	// and the key transport padding that Encrypt generates, and of the IV or
+	// nonce of BlockCipher if it is one of this package's block ciphers and
+	// has no Rand of its own. If nil, crypto/rand is used (through the
+	// deprecated package-level RandReader). Decrypt does not use it.
+	Rand io.Reader
+
 	algorithm    string
-	keyEncrypter func(e RSA, pubKey *rsa.PublicKey, plaintext []byte) ([]byte, error)
+	keyEncrypter func(e RSA, randReader io.Reader, pubKey *rsa.PublicKey, plaintext []byte) ([]byte, error)
 	keyDecrypter func(e RSA, privKey *rsa.PrivateKey, ciphertext []byte) ([]byte, error)
 
 	// The fields below are only set while decrypting, from the EncryptionMethod
@@ -48,9 +55,11 @@ func (e RSA) Encrypt(certificate interface{}, plaintext []byte, nonce []byte) (*
 		return nil, ErrIncorrectKeyType("x.509 certificate with an RSA public key")
 	}
 
+	randReader := randOrDefault(e.Rand)
+
 	// generate a key
 	key := make([]byte, e.BlockCipher.KeySize())
-	if _, err := io.ReadFull(RandReader, key); err != nil {
+	if _, err := io.ReadFull(randReader, key); err != nil {
 		return nil, err
 	}
 
@@ -60,7 +69,7 @@ func (e RSA) Encrypt(certificate interface{}, plaintext []byte, nonce []byte) (*
 	encryptedKey := keyInfoEl.CreateElement("xenc:EncryptedKey")
 	{
 		randBuf := make([]byte, 16)
-		if _, err := io.ReadFull(RandReader, randBuf); err != nil {
+		if _, err := io.ReadFull(randReader, randBuf); err != nil {
 			return nil, err
 		}
 		encryptedKey.CreateAttr("Id", fmt.Sprintf("_%x", randBuf))
@@ -92,7 +101,7 @@ func (e RSA) Encrypt(certificate interface{}, plaintext []byte, nonce []byte) (*
 		)
 	}
 
-	buf, err := e.keyEncrypter(e, pubKey, key)
+	buf, err := e.keyEncrypter(e, randReader, pubKey, key)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +109,12 @@ func (e RSA) Encrypt(certificate interface{}, plaintext []byte, nonce []byte) (*
 	cd := encryptedKey.CreateElement("xenc:CipherData")
 	cd.CreateAttr("xmlns:xenc", "http://www.w3.org/2001/04/xmlenc#")
 	cd.CreateElement("xenc:CipherValue").SetText(base64.StdEncoding.EncodeToString(buf))
-	encryptedDataEl, err := e.BlockCipher.Encrypt(key, plaintext, nonce)
+	var encryptedDataEl *etree.Element
+	if bc, ok := e.BlockCipher.(randEncrypter); ok {
+		encryptedDataEl, err = bc.encryptWithRand(randReader, key, plaintext, nonce)
+	} else {
+		encryptedDataEl, err = e.BlockCipher.Encrypt(key, plaintext, nonce)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -179,8 +193,8 @@ func OAEP() RSA {
 		BlockCipher:  AES256CBC,
 		DigestMethod: SHA256,
 		algorithm:    algorithmRSAOAEPMGF1P,
-		keyEncrypter: func(e RSA, pubKey *rsa.PublicKey, plaintext []byte) ([]byte, error) {
-			return encryptOAEP(e.DigestMethod, crypto.SHA1, pubKey, plaintext)
+		keyEncrypter: func(e RSA, randReader io.Reader, pubKey *rsa.PublicKey, plaintext []byte) ([]byte, error) {
+			return encryptOAEP(randReader, e.DigestMethod, crypto.SHA1, pubKey, plaintext)
 		},
 		keyDecrypter: func(e RSA, privKey *rsa.PrivateKey, ciphertext []byte) ([]byte, error) {
 			return decryptOAEP(e.DigestMethod, crypto.SHA1, true, e.oaepLabel, privKey, ciphertext)
@@ -243,12 +257,12 @@ func oaep11() RSA {
 	return RSA{
 		BlockCipher: AES256CBC,
 		algorithm:   algorithmRSAOAEP11,
-		keyEncrypter: func(e RSA, pubKey *rsa.PublicKey, plaintext []byte) ([]byte, error) {
+		keyEncrypter: func(e RSA, randReader io.Reader, pubKey *rsa.PublicKey, plaintext []byte) ([]byte, error) {
 			mgfHash, err := cryptoHashOf(e.DigestMethod)
 			if err != nil {
 				return nil, err
 			}
-			return encryptOAEP(e.DigestMethod, mgfHash, pubKey, plaintext)
+			return encryptOAEP(randReader, e.DigestMethod, mgfHash, pubKey, plaintext)
 		},
 		keyDecrypter: func(e RSA, privKey *rsa.PrivateKey, ciphertext []byte) ([]byte, error) {
 			mgfHash := e.mgfHash
@@ -275,11 +289,12 @@ func PKCS1v15() RSA {
 		BlockCipher:  AES256CBC,
 		DigestMethod: nil,
 		algorithm:    "http://www.w3.org/2001/04/xmlenc#rsa-1_5",
-		keyEncrypter: func(_ RSA, pubKey *rsa.PublicKey, plaintext []byte) ([]byte, error) {
-			return rsa.EncryptPKCS1v15(RandReader, pubKey, plaintext) //nolint:staticcheck // SA1019: rsa-1_5 is an XML-Enc algorithm; opt-in only, see note below
+		keyEncrypter: func(_ RSA, randReader io.Reader, pubKey *rsa.PublicKey, plaintext []byte) ([]byte, error) {
+			return rsa.EncryptPKCS1v15(randReader, pubKey, plaintext) //nolint:staticcheck // SA1019: rsa-1_5 is an XML-Enc algorithm; opt-in only, see note below
 		},
 		keyDecrypter: func(_ RSA, privKey *rsa.PrivateKey, ciphertext []byte) ([]byte, error) {
-			return rsa.DecryptPKCS1v15(RandReader, privKey, ciphertext) //nolint:staticcheck // SA1019: rsa-1_5 is an XML-Enc algorithm; opt-in only, see note below
+			// The random parameter is ignored by crypto/rsa.
+			return rsa.DecryptPKCS1v15(nil, privKey, ciphertext) //nolint:staticcheck // SA1019: rsa-1_5 is an XML-Enc algorithm; opt-in only, see note below
 		},
 	}
 }

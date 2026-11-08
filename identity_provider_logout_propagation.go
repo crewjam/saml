@@ -370,7 +370,7 @@ func (idp *IdentityProvider) MakeLogoutRequest(metadata *EntityDescriptor, parti
 func (idp *IdentityProvider) participantLogoutRequest(participant SessionParticipant, destination string, metadata *EntityDescriptor) (*LogoutRequest, error) {
 	nameID := participant.NameID
 	logoutRequest := &LogoutRequest{
-		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
+		ID:           fmt.Sprintf("id-%x", randomBytes(idp.randReader(), 20)),
 		Version:      "2.0",
 		IssueInstant: idp.now(),
 		Destination:  destination,
@@ -441,7 +441,7 @@ func (idp *IdentityProvider) encryptLogoutNameID(logoutRequest *LogoutRequest, m
 			return err
 		}
 	}
-	encryptedID, err := encryptIdentifier(logoutRequest.NameID.Element(), cert, encrypter)
+	encryptedID, err := encryptIdentifier(logoutRequest.NameID.Element(), cert, encrypterWithRand(encrypter, idp.Rand))
 	if err != nil {
 		return fmt.Errorf("cannot encrypt NameID: %w", err)
 	}
@@ -877,7 +877,7 @@ func (idp *IdentityProvider) encodeLogoutState(state *logoutState) (string, erro
 	}
 	encoded := logoutStateDeflatedPrefix + base64.RawURLEncoding.EncodeToString(compressed.Bytes())
 	digest := sha256.Sum256([]byte(logoutStateSignaturePrefix + encoded))
-	signature, err := signer.Sign(RandReader, digest[:], crypto.SHA256)
+	signature, err := signer.Sign(idp.randReader(), digest[:], crypto.SHA256)
 	if err != nil {
 		return "", err
 	}

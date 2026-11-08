@@ -85,7 +85,7 @@ func (req *IdpAuthnRequest) MakeErrorResponse(topLevel, secondLevel, message str
 	}
 	response := &Response{
 		Destination:  req.ACSEndpoint.Location,
-		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
+		ID:           fmt.Sprintf("id-%x", randomBytes(req.IDP.randReader(), 20)),
 		InResponseTo: req.Request.ID,
 		IssueInstant: req.Now,
 		Version:      "2.0",

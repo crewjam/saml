@@ -6,21 +6,45 @@ package xmlenc
 import (
 	"crypto/rand"
 	"hash"
+	"io"
 	"sync"
 
 	"github.com/beevik/etree"
 )
 
-// RandReader is a thunk that allows test to replace the source of randomness used by
-// this package. By default it is Reader from crypto/rand.
+// RandReader is the source of randomness used by an RSA, CBC or GCM whose
+// Rand field is nil. By default it is Reader from crypto/rand.
+//
+// Deprecated: set the Rand field of RSA, CBC or GCM instead. Replacing this
+// global changes the randomness for every user of the package in the
+// process, so it cannot be done safely by concurrent tests.
 var RandReader = rand.Reader
+
+// randOrDefault returns the first of randReaders that is not nil or, if
+// there is none, the deprecated package-level RandReader.
+func randOrDefault(randReaders ...io.Reader) io.Reader {
+	for _, randReader := range randReaders {
+		if randReader != nil {
+			return randReader
+		}
+	}
+	return RandReader
+}
+
+// randEncrypter is implemented by the block ciphers of this package, so that
+// RSA.Encrypt can give them its own source of randomness.
+type randEncrypter interface {
+	// encryptWithRand is Encrypt, reading from the block cipher's own Rand
+	// if it is set, and otherwise from fallback.
+	encryptWithRand(fallback io.Reader, key interface{}, plaintext []byte, nonce []byte) (*etree.Element, error)
+}
 
 // Encrypter is an interface that encrypts things. Given a plaintext it returns an
 // XML EncryptedData or EncryptedKey element. The required type of `key` varies
 // depending on the implementation.
 //
 // nonce should be nil, so that the implementation generates any nonce or IV
-// it needs from RandReader. Implementations that use a nonce (GCM) accept a
+// it needs from its source of randomness. Implementations that use a nonce (GCM) accept a
 // caller-supplied one only for reproducible tests: see GCM.Encrypt.
 type Encrypter interface {
 	Encrypt(key interface{}, plaintext []byte, nonce []byte) (*etree.Element, error)

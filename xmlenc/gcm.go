@@ -13,6 +13,12 @@ import (
 
 // GCM implements Decrypter and Encrypter for block ciphers in struct mode
 type GCM struct {
+	// Rand, if non-nil, is the source of the nonce and the element ID that
+	// Encrypt generates. If nil, crypto/rand is used (through the
+	// deprecated package-level RandReader). RSA.Encrypt uses its own Rand
+	// when this one is nil.
+	Rand io.Reader
+
 	keySize   int
 	algorithm string
 	cipher    func([]byte) (cipher.Block, error)
@@ -32,12 +38,17 @@ func (e GCM) Algorithm() string {
 // Encrypt encrypts plaintext with key, which should be a []byte of length
 // KeySize(), and returns an xenc:EncryptedData element.
 //
-// Pass a nil nonce, and Encrypt generates a random one from RandReader,
+// Pass a nil nonce, and Encrypt generates a random one from Rand,
 // which is what callers should do. A non-nil nonce must be NonceSize (12)
 // bytes and must never be used again with the same key: reusing a GCM nonce
 // reveals the XOR of the two plaintexts and lets anyone forge messages
 // under that key. It is accepted only for reproducible test vectors.
 func (e GCM) Encrypt(key interface{}, plaintext []byte, nonce []byte) (*etree.Element, error) {
+	return e.encryptWithRand(nil, key, plaintext, nonce)
+}
+
+func (e GCM) encryptWithRand(fallback io.Reader, key interface{}, plaintext []byte, nonce []byte) (*etree.Element, error) {
+	randReader := randOrDefault(e.Rand, fallback)
 	keyBuf, ok := key.([]byte)
 	if !ok {
 		return nil, ErrIncorrectKeyType("[]byte")
@@ -55,7 +66,7 @@ func (e GCM) Encrypt(key interface{}, plaintext []byte, nonce []byte) (*etree.El
 	encryptedDataEl.CreateAttr("xmlns:xenc", "http://www.w3.org/2001/04/xmlenc#")
 	{
 		randBuf := make([]byte, 16)
-		if _, err := io.ReadFull(RandReader, randBuf); err != nil {
+		if _, err := io.ReadFull(randReader, randBuf); err != nil {
 			return nil, err
 		}
 		encryptedDataEl.CreateAttr("Id", fmt.Sprintf("_%x", randBuf))
@@ -73,7 +84,7 @@ func (e GCM) Encrypt(key interface{}, plaintext []byte, nonce []byte) (*etree.El
 	if nonce == nil {
 		// generate random nonce when it's nil
 		nonce = make([]byte, aesgcm.NonceSize())
-		if _, err := io.ReadFull(RandReader, nonce); err != nil {
+		if _, err := io.ReadFull(randReader, nonce); err != nil {
 			return nil, err
 		}
 	} else if len(nonce) != aesgcm.NonceSize() {

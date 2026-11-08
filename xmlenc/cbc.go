@@ -14,6 +14,12 @@ import (
 
 // CBC implements Decrypter and Encrypter for block ciphers in CBC mode
 type CBC struct {
+	// Rand, if non-nil, is the source of the IV and the element ID that
+	// Encrypt generates. If nil, crypto/rand is used (through the
+	// deprecated package-level RandReader). RSA.Encrypt uses its own Rand
+	// when this one is nil.
+	Rand io.Reader
+
 	keySize   int
 	algorithm string
 	cipher    func([]byte) (cipher.Block, error)
@@ -32,7 +38,12 @@ func (e CBC) Algorithm() string {
 
 // Encrypt encrypts plaintext with key, which should be a []byte of length KeySize().
 // It returns an xenc:EncryptedData element.
-func (e CBC) Encrypt(key interface{}, plaintext []byte, _ []byte) (*etree.Element, error) {
+func (e CBC) Encrypt(key interface{}, plaintext []byte, nonce []byte) (*etree.Element, error) {
+	return e.encryptWithRand(nil, key, plaintext, nonce)
+}
+
+func (e CBC) encryptWithRand(fallback io.Reader, key interface{}, plaintext []byte, _ []byte) (*etree.Element, error) {
+	randReader := randOrDefault(e.Rand, fallback)
 	keyBuf, ok := key.([]byte)
 	if !ok {
 		return nil, ErrIncorrectKeyType("[]byte")
@@ -50,7 +61,7 @@ func (e CBC) Encrypt(key interface{}, plaintext []byte, _ []byte) (*etree.Elemen
 	encryptedDataEl.CreateAttr("xmlns:xenc", "http://www.w3.org/2001/04/xmlenc#")
 	{
 		randBuf := make([]byte, 16)
-		if _, err := io.ReadFull(RandReader, randBuf); err != nil {
+		if _, err := io.ReadFull(randReader, randBuf); err != nil {
 			return nil, err
 		}
 		encryptedDataEl.CreateAttr("Id", fmt.Sprintf("_%x", randBuf))
@@ -63,7 +74,7 @@ func (e CBC) Encrypt(key interface{}, plaintext []byte, _ []byte) (*etree.Elemen
 	plaintext = appendPadding(plaintext, block.BlockSize())
 
 	iv := make([]byte, block.BlockSize(), block.BlockSize()+len(plaintext))
-	if _, err := io.ReadFull(RandReader, iv); err != nil {
+	if _, err := io.ReadFull(randReader, iv); err != nil {
 		return nil, err
 	}
 

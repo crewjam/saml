@@ -4,6 +4,7 @@ import (
 	"crypto"
 	"crypto/rsa"
 	"fmt"
+	"io"
 )
 
 const (
@@ -59,20 +60,20 @@ func mgfURIFor(dm DigestMethod) (string, error) {
 }
 
 // encryptOAEP wraps plaintext with RSA-OAEP using dm as the OAEP digest and
-// MGF1 with mgfHash.
+// MGF1 with mgfHash, reading randomness from randReader.
 //
 // A digest method registered by the caller that this package does not know
 // cannot be given to MGF1 separately, so it is used for both, as earlier
 // releases did.
-func encryptOAEP(dm DigestMethod, mgfHash crypto.Hash, pubKey *rsa.PublicKey, plaintext []byte) ([]byte, error) {
+func encryptOAEP(randReader io.Reader, dm DigestMethod, mgfHash crypto.Hash, pubKey *rsa.PublicKey, plaintext []byte) ([]byte, error) {
 	h, err := cryptoHashOf(dm)
 	if err != nil {
 		if dm == nil {
 			return nil, err
 		}
-		return rsa.EncryptOAEP(dm.Hash(), RandReader, pubKey, plaintext, nil)
+		return rsa.EncryptOAEP(dm.Hash(), randReader, pubKey, plaintext, nil)
 	}
-	return rsaEncryptOAEP(RandReader, pubKey, plaintext, &rsa.OAEPOptions{
+	return rsaEncryptOAEP(randReader, pubKey, plaintext, &rsa.OAEPOptions{
 		Hash:    h,
 		MGFHash: mgfHash,
 	})
@@ -86,15 +87,18 @@ func encryptOAEP(dm DigestMethod, mgfHash crypto.Hash, pubKey *rsa.PublicKey, pl
 // MGF is stated. When allowLegacyMGF is set (the document names no MGF), a
 // failed unwrap is retried that way so documents from those releases still
 // decrypt. Both attempts fail with the same error.
+//
+// crypto/rsa ignores the random parameter of its decryption functions, so
+// none is passed.
 func decryptOAEP(dm DigestMethod, mgfHash crypto.Hash, allowLegacyMGF bool, label []byte, privKey *rsa.PrivateKey, ciphertext []byte) ([]byte, error) {
 	h, err := cryptoHashOf(dm)
 	if err != nil {
 		if dm == nil || !allowLegacyMGF {
 			return nil, err
 		}
-		return rsa.DecryptOAEP(dm.Hash(), RandReader, privKey, ciphertext, label)
+		return rsa.DecryptOAEP(dm.Hash(), nil, privKey, ciphertext, label)
 	}
-	plaintext, err := privKey.Decrypt(RandReader, ciphertext, &rsa.OAEPOptions{
+	plaintext, err := privKey.Decrypt(nil, ciphertext, &rsa.OAEPOptions{
 		Hash:    h,
 		MGFHash: mgfHash,
 		Label:   label,
@@ -102,7 +106,7 @@ func decryptOAEP(dm DigestMethod, mgfHash crypto.Hash, allowLegacyMGF bool, labe
 	if err == nil || !allowLegacyMGF || mgfHash == h {
 		return plaintext, err
 	}
-	return privKey.Decrypt(RandReader, ciphertext, &rsa.OAEPOptions{
+	return privKey.Decrypt(nil, ciphertext, &rsa.OAEPOptions{
 		Hash:    h,
 		MGFHash: h,
 		Label:   label,

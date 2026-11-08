@@ -75,8 +75,8 @@ type soapLogout struct {
 }
 
 // prepareSOAPLogout makes and signs the LogoutRequest logoutParticipantSOAP
-// sends, changed by opts before it is signed. It uses RandReader, so it is
-// not run concurrently.
+// sends, changed by opts before it is signed. It reads the
+// IdentityProvider's Rand, so it is not run concurrently.
 func (idp *IdentityProvider) prepareSOAPLogout(metadata *EntityDescriptor, participant SessionParticipant, opts ...LogoutRequestOption) (*soapLogout, error) {
 	endpoint := idp.soapLogoutEndpoint(metadata)
 	if endpoint == nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
@@ -44,6 +45,7 @@ type Config struct {
 	nameIDFormats   []saml.NameIDFormat
 	replayState     ReplayState
 	clock           *dsig.Clock
+	randReader      io.Reader
 	clockSkew       time.Duration
 	issueDelay      time.Duration
 	metadataValid   time.Duration
@@ -276,6 +278,16 @@ type ClockOption struct{ clock *dsig.Clock }
 func (o ClockOption) applyConfig(c *Config, _ *configOptions) { c.clock = o.clock }
 
 func (o ClockOption) applyMetadata(m *metadataOptions) { m.clock = o.clock }
+
+// WithRand sets the source of the cryptographically random bytes the
+// identity provider needs: the IDs of the messages and metadata it issues,
+// the keys, IVs and nonces used to encrypt assertions and NameIDs, and the
+// artifacts and messages of x/samlidp/idpartifact and x/samlidp/idpslo. It
+// sets saml.IdentityProvider.Rand, so it applies to this Config only. It is
+// mainly useful in tests. Without it, crypto/rand is used.
+func WithRand(randReader io.Reader) Option {
+	return optionFunc(func(c *Config, _ *configOptions) { c.randReader = randReader })
+}
 
 // WithClockSkew sets how far a service provider's clock may be from the
 // IdP's: the leeway allowed when checking IssueInstant and NotOnOrAfter
@@ -549,6 +561,7 @@ func (c *Config) unrestrictedIdentityProvider(opts []IdentityProviderOption) *sa
 		SignatureMethod:         method,
 		NameIDFormats:           slices.Clone(c.nameIDFormats),
 		Clock:                   c.clock,
+		Rand:                    c.Rand(),
 		MaxClockSkew:            c.clockSkew,
 		MaxIssueDelay:           c.issueDelay,
 		ServiceProviderProvider: serviceProviderProvider{c.serviceProviders, c.clock},
@@ -685,7 +698,7 @@ func signMetadata(idp *saml.IdentityProvider, md *saml.EntityDescriptor) (*etree
 	unsigned := *md
 	unsigned.Signature = nil
 	if unsigned.ID == "" {
-		unsigned.ID = newID()
+		unsigned.ID = newID(idp.Rand)
 	}
 	buf, err := xml.Marshal(unsigned)
 	if err != nil {
@@ -704,10 +717,14 @@ func signMetadata(idp *saml.IdentityProvider, md *saml.EntityDescriptor) (*etree
 	return el, nil
 }
 
-// newID returns a new random XML ID.
-func newID() string {
+// newID returns a new random XML ID, read from randReader or, if it is
+// nil, from crypto/rand.
+func newID(randReader io.Reader) string {
+	if randReader == nil {
+		randReader = rand.Reader
+	}
 	b := make([]byte, 20)
-	if _, err := io.ReadFull(saml.RandReader, b); err != nil {
+	if _, err := io.ReadFull(randReader, b); err != nil {
 		panic(err)
 	}
 	return fmt.Sprintf("id-%x", b)

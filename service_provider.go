@@ -371,6 +371,17 @@ type ServiceProvider struct {
 	// concurrently, for example in parallel tests.
 	Clock *dsig.Clock
 
+	// Rand, if non-nil, is the source of the cryptographically random
+	// bytes this ServiceProvider needs: the IDs of the requests, responses
+	// and metadata it issues, and the keys, IVs and nonces used to encrypt
+	// NameIDs in its LogoutRequests (unless LogoutNameIDEncrypter has a
+	// source of its own). It must be safe for concurrent use if the
+	// ServiceProvider is.
+	//
+	// If nil, crypto/rand is used (through the deprecated package-level
+	// RandReader, and xmlenc.RandReader for encryption).
+	Rand io.Reader
+
 	// MaxClockSkew, if not zero, replaces the package-level MaxClockSkew for
 	// this ServiceProvider: the leeway allowed for the IDP's clock when
 	// checking IssueInstant, NotBefore and NotOnOrAfter times.
@@ -1013,7 +1024,7 @@ func fingerprintFormat(fp []byte) (string, error) {
 // MakeArtifactResolveRequest produces a new ArtifactResolve object to send to the idp's Artifact resolver
 func (sp *ServiceProvider) MakeArtifactResolveRequest(artifactID string) (*ArtifactResolve, error) {
 	req := ArtifactResolve{
-		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
+		ID:           fmt.Sprintf("id-%x", randomBytes(sp.randReader(), 20)),
 		IssueInstant: sp.now(),
 		Version:      "2.0",
 		Issuer: &Issuer{
@@ -1042,7 +1053,7 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding stri
 		AssertionConsumerServiceURL: sp.AcsURL.String(),
 		Destination:                 idpURL,
 		ProtocolBinding:             resultBinding, // default binding for the response
-		ID:                          fmt.Sprintf("id-%x", randomBytes(20)),
+		ID:                          fmt.Sprintf("id-%x", randomBytes(sp.randReader(), 20)),
 		IssueInstant:                sp.now(),
 		Version:                     "2.0",
 		Issuer: &Issuer{
@@ -1104,7 +1115,7 @@ func (sp *ServiceProvider) SignEntityDescriptor(ed *EntityDescriptor) (*etree.El
 	if err != nil {
 		return nil, err
 	}
-	return signMetadata(ed, signingContext)
+	return signMetadata(ed, signingContext, sp.randReader())
 }
 
 // GetSigningContext returns a dsig.SigningContext initialized based on the Service Provider's configuration
@@ -2986,7 +2997,7 @@ func (sp *ServiceProvider) MakeLogoutRequest(idpURL, nameID string, opts ...Logo
 
 func (sp *ServiceProvider) makeUnsignedLogoutRequest(idpURL, nameID string, opts ...LogoutRequestOption) *LogoutRequest {
 	req := &LogoutRequest{
-		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
+		ID:           fmt.Sprintf("id-%x", randomBytes(sp.randReader(), 20)),
 		IssueInstant: sp.now(),
 		Version:      "2.0",
 		Destination:  idpURL,
@@ -3034,7 +3045,7 @@ func (sp *ServiceProvider) EncryptLogoutRequestNameID(req *LogoutRequest) error 
 	if err != nil {
 		return err
 	}
-	encryptedID, err := encryptIdentifier(req.NameID.Element(), cert, identifierEncrypter(sp.LogoutNameIDEncrypter, methods))
+	encryptedID, err := encryptIdentifier(req.NameID.Element(), cert, encrypterWithRand(identifierEncrypter(sp.LogoutNameIDEncrypter, methods), sp.Rand))
 	if err != nil {
 		return fmt.Errorf("cannot encrypt NameID: %w", err)
 	}
@@ -3223,7 +3234,7 @@ func (sp *ServiceProvider) MakeLogoutResponseWithStatus(idpURL, logoutRequestID 
 
 func (sp *ServiceProvider) makeUnsignedLogoutResponse(idpURL, logoutRequestID string) *LogoutResponse {
 	return &LogoutResponse{
-		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
+		ID:           fmt.Sprintf("id-%x", randomBytes(sp.randReader(), 20)),
 		InResponseTo: logoutRequestID,
 		Version:      "2.0",
 		IssueInstant: sp.now(),
