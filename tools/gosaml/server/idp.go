@@ -248,6 +248,12 @@ func (s *Server) samlIdP(in *store.Instance, cfg *IdPConfig) (*samlidp.Config, e
 		}))
 	case "cbc", "cbc256", "gcm128":
 		cipher := map[string]xmlenc.BlockCipher{"cbc": xmlenc.AES128CBC, "cbc256": xmlenc.AES256CBC, "gcm128": xmlenc.AES128GCM}[cfg.Encryption]
+		// These imitate IdPs that still use SHA-1 key transport (and,
+		// except for gcm128, AES-CBC), which samlidp refuses unless told.
+		opts = append(opts, samlidp.EnableInsecureRSAOAEPSHA1)
+		if cfg.Encryption != "gcm128" {
+			opts = append(opts, samlidp.EnableInsecureAESCBC)
+		}
 		opts = append(opts, samlidp.WithIdentityProvider(func(idp *saml.IdentityProvider) {
 			enc := xmlenc.OAEP() // RSA-OAEP-MGF1P, SHA-1 digest
 			enc.BlockCipher = cipher
