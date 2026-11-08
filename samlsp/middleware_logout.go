@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"slices"
 
 	"github.com/crewjam/saml"
 )
@@ -239,8 +240,12 @@ func (m *Middleware) sloBinding() string {
 // the browser is redirected to "/".
 //
 // A LogoutRequest is IDP initiated single logout. Once it is validated, the
-// session of the requesting browser is deleted and the browser is sent back
-// to the IDP with a LogoutResponse. If Session implements
+// session of the requesting browser is deleted if the request names it (its
+// NameID and, if the request has any, one of its SessionIndexes; see
+// browserSessionNamedBy), and the browser is sent back to the IDP with a
+// LogoutResponse. A browser whose session belongs to someone else keeps it:
+// otherwise anyone could log others out by having their browsers deliver a
+// LogoutRequest captured from their own logout. If Session implements
 // SessionTerminator, the sessions the request names are also ended there,
 // as for a request sent with the SOAP binding, so that other copies of the
 // session, in other browsers, are refused too: those with one of its
@@ -323,6 +328,54 @@ func (m *Middleware) serveSLOResponse(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
+// browserSessionNamedBy reports whether the session of the browser that
+// delivered req, a validated LogoutRequest from the IdP, is one that req
+// names (saml-core §3.7.1): a session of its NameID with one of its
+// SessionIndexes, or any session of its NameID if it has none. A session
+// without a SessionIndex counts as having any, as TerminateSessions has it.
+//
+// A signed LogoutRequest is only a message from the IdP about one
+// principal, and anyone who logged in can capture one about themselves (by
+// stopping their own logout before the IdP's redirect back to the SP) and
+// have other users' browsers deliver it. Deleting whatever session the
+// delivering browser holds would let them log anyone out, so a session that
+// names another principal is kept.
+//
+// A browser without a valid session has nothing to lose, so it is told to
+// delete its cookie anyway, as is one whose session does not implement
+// SessionWithNameID, which cannot be compared.
+func (m *Middleware) browserSessionNamedBy(r *http.Request, req *saml.LogoutRequest) bool {
+	session, err := m.Session.GetSession(r)
+	if err != nil {
+		return errors.Is(err, ErrNoSession)
+	}
+	withNameID, ok := session.(SessionWithNameID)
+	if !ok {
+		return true
+	}
+	if req.NameID == nil || withNameID.GetNameID() != req.NameID.Value {
+		return false
+	}
+	requested := req.AllSessionIndexes()
+	if len(requested) == 0 {
+		return true
+	}
+	withAttributes, ok := session.(SessionWithAttributes)
+	if !ok {
+		return true
+	}
+	held := withAttributes.GetAttributes()[claimNameSessionIndex]
+	if len(held) == 0 {
+		return true
+	}
+	for _, index := range requested {
+		if slices.Contains(held, index.Value) {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *Middleware) serveSLORequest(w http.ResponseWriter, r *http.Request) {
 	logoutRequest, err := m.ServiceProvider.ValidateLogoutRequest(r)
 	if err != nil {
@@ -330,9 +383,12 @@ func (m *Middleware) serveSLORequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := m.Session.DeleteSession(w, r); err != nil {
-		m.OnError(w, r, err)
-		return
+	// Decide before TerminateSessions, which would revoke the session.
+	if m.browserSessionNamedBy(r, logoutRequest) {
+		if err := m.Session.DeleteSession(w, r); err != nil {
+			m.OnError(w, r, err)
+			return
+		}
 	}
 	status := m.terminateFrontChannelSessions(r, logoutRequest)
 
