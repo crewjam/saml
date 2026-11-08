@@ -241,9 +241,9 @@
 //
 // # Getting Started as an Identity Provider
 //
-// Please see example/idp/ for a substantially complete example of how to use the library and helpers to be an identity provider.
+// An identity provider built into an application should use github.com/crewjam/saml/x/samlidp, with x/samlidp/idpslo for single logout and x/samlidp/idpartifact for the HTTP-Artifact binding. Like x/samlsp, it handles only the protocol: it verifies AuthnRequests and makes signed Responses, and the application keeps its own users, sessions and login pages. example/idp/ is a complete example: a login page and in-memory sessions, a portal for IdP-initiated login, single logout that visits each service provider the session was used for, and service providers trusted by entity ID, whose metadata it fetches. Run it with go run ./example/idp, then go run ./example for a service provider that logs in with it.
 //
-// samlidp registers service providers from the metadata sent to PUT /services/:id, and does not check signatures on it by default. Set samlidp.Options.SPMetadataCertificates to the service providers' (or their federation's) metadata signing certificates to accept only metadata signed with one of them; only what the signature covers is stored. A service provider served by this package signs its metadata with ServiceProvider.SignedMetadata.
+// The older package samlidp is a stand-alone IdP server with its own users and store, which is useful for testing. It registers service providers from the metadata sent to PUT /services/:id, and does not check signatures on it by default. Set samlidp.Options.SPMetadataCertificates to the service providers' (or their federation's) metadata signing certificates to accept only metadata signed with one of them; only what the signature covers is stored. A service provider served by this package signs its metadata with ServiceProvider.SignedMetadata.
 //
 // # Single logout
 //

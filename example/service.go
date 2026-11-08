@@ -9,14 +9,14 @@
 // The identity provider signs its metadata and writes the certificate it
 // signs with to idp-cert.pem. The service trusts the metadata only if that
 // certificate signed it: the metadata names the certificates trusted to sign
-// assertions, so it must not be taken from the network unchecked.
+// assertions, so it must not be taken from the network unchecked. The
+// identity provider trusts this service by its entity ID,
+// http://localhost:8000/saml/metadata, and fetches its metadata from there.
 //
 // Then browse to http://localhost:8000/ and log in as alice / hunter2.
 package main
 
 import (
-	"bytes"
-	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -238,13 +238,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Register with the identity provider. The example IdP accepts this
-	// unauthenticated request because its admin API is meant only for local
-	// development; see example/idp.
-	if err := registerWithIDP(*idpMetadataURL); err != nil {
-		log.Fatal(err)
-	}
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+config.MetadataPath(), config.ServeMetadata)
 	mux.HandleFunc("POST "+config.ACSPath(), acs)
@@ -262,37 +255,4 @@ func main() {
 		IdleTimeout:       2 * time.Minute,
 	}
 	log.Fatal(server.ListenAndServe())
-}
-
-// registerWithIDP uploads the service provider's metadata to the example
-// identity provider's /services API.
-func registerWithIDP(idpMetadataURL string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	spMetadata, err := config.MetadataXML(ctx)
-	if err != nil {
-		return fmt.Errorf("cannot make the SP metadata: %w", err)
-	}
-	spURL, err := url.Parse(idpMetadataURL)
-	if err != nil {
-		return err
-	}
-	spURL.Path = "/services/sp"
-	spURL.RawQuery = ""
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, spURL.String(), bytes.NewReader(spMetadata))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "text/xml")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("cannot register with the IDP: %w", err)
-	}
-	defer resp.Body.Close() //nolint:errcheck // nothing useful to do with a close error here
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("cannot register with the IDP: %s: %s", resp.Status, strings.TrimSpace(string(body)))
-	}
-	return nil
 }
