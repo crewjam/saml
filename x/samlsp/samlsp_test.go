@@ -360,6 +360,28 @@ func TestAssertionInResponseToFromAcceptedConfirmation(t *testing.T) {
 	}
 }
 
+// Assertion.InResponseTo judges the confirmation by package saml's clock,
+// saml.TimeNow when there is no WithClock, as package saml did.
+func TestAssertionInResponseToTimeNow(t *testing.T) {
+	past := time.Now().Add(-24 * time.Hour)
+	restore := saml.TimeNow                         //nolint:staticcheck // the deprecated fallback is what is tested
+	saml.TimeNow = func() time.Time { return past } //nolint:staticcheck // as above
+	defer func() { saml.TimeNow = restore }()       //nolint:staticcheck // as above
+	ti := newTestIDP(t)
+	cfg := newTestConfig(t, ti)
+	msg, err := cfg.AuthnRequest(t.Context(), "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID(msg.ID))
+	if err != nil {
+		t.Fatalf("ParseResponse: %v (%v)", err, errors.Unwrap(err))
+	}
+	if a.InResponseTo != msg.ID {
+		t.Errorf("InResponseTo = %q, want %q", a.InResponseTo, msg.ID)
+	}
+}
+
 // WithMaxAuthnAge refuses an assertion whose AuthnInstant is older than
 // it allows, beyond saml.MaxClockSkew.
 func TestWithMaxAuthnAge(t *testing.T) {

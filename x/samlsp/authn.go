@@ -474,12 +474,14 @@ func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...Res
 	// saml does only with SignatureMethod: the IdP must authenticate the
 	// SP before it hands over the Response (saml-bindings §3.6.3).
 	c.signWithGeneralMethod(sp)
-	start := sp.Clock.Now() // the real time if Clock is nil
+	// The times between which package saml checked the confirmations,
+	// by its clock: that of WithClock, or else saml.TimeNow.
+	start := clockNow(sp.Clock)
 	a, err := sp.ParseResponse(r.WithContext(ctx), o.requestIDs)
 	if err != nil {
 		return nil, err
 	}
-	now := sp.Clock.Now()
+	now := clockNow(sp.Clock)
 	skew := timelimit.SPClockSkew(sp)
 	if o.maxAuthnAge > 0 {
 		if err := checkAuthnAge(a, o.maxAuthnAge, skew, now); err != nil {
