@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
+	dsig "github.com/russellhaering/goxmldsig"
 )
 
 // StoredMessage is a message waiting for its artifact to be resolved.
@@ -29,15 +30,24 @@ type Store interface {
 	// Save keeps m under artifact.
 	Save(ctx context.Context, artifact string, m StoredMessage) error
 
-	// Take returns the message kept under artifact and forgets it, so
-	// that it is given out at most once, or nil if there is none. It may
-	// return a message whose ExpiresAt has passed; the Binding refuses it.
-	Take(ctx context.Context, artifact string) (*StoredMessage, error)
+	// Take returns the message kept under artifact for recipient and
+	// forgets it, so that it is given out at most once. It returns nil if
+	// there is none, or if the message is for another recipient, which it
+	// then keeps: a party that learns an artifact meant for another cannot
+	// make it unusable. It may return a message whose ExpiresAt has
+	// passed; the Binding refuses it.
+	Take(ctx context.Context, artifact, recipient string) (*StoredMessage, error)
 }
 
 // MemoryStore is a Store in memory, for a single process. Each message is
-// forgotten when it expires. It is safe for concurrent use.
+// forgotten when it expires. It is safe for concurrent use. The zero value
+// is ready to use.
 type MemoryStore struct {
+	// Clock is the time source by which messages expire; nil means the
+	// system clock. Use the clock passed to samlsp.WithClock. Set it
+	// before the first Save.
+	Clock *dsig.Clock
+
 	mu       sync.Mutex
 	messages map[string]memoryEntry
 }
@@ -59,17 +69,22 @@ func (s *MemoryStore) Save(_ context.Context, artifact string, m StoredMessage) 
 	if old, ok := s.messages[artifact]; ok {
 		old.timer.Stop()
 	}
-	timer := time.AfterFunc(time.Until(m.ExpiresAt), func() { s.forget(artifact, m.ExpiresAt) })
+	if s.messages == nil {
+		s.messages = map[string]memoryEntry{}
+	}
+	// The timer runs on the system clock, for as long as m has left by
+	// s.Clock.
+	timer := time.AfterFunc(m.ExpiresAt.Sub(s.Clock.Now()), func() { s.forget(artifact, m.ExpiresAt) })
 	s.messages[artifact] = memoryEntry{message: m, timer: timer}
 	return nil
 }
 
 // Take implements Store.
-func (s *MemoryStore) Take(_ context.Context, artifact string) (*StoredMessage, error) {
+func (s *MemoryStore) Take(_ context.Context, artifact, recipient string) (*StoredMessage, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.messages[artifact]
-	if !ok {
+	if !ok || e.message.Recipient != recipient {
 		return nil, nil
 	}
 	e.timer.Stop()

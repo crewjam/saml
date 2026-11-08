@@ -11,6 +11,10 @@
 //	config, err := samlsp.New(idp, entityID, samlsp.WithKey(key, cert),
 //		artifact.ResolutionService("https://sp.example.com/saml/artifact", 1))
 //	binding := artifact.New(config, artifact.NewMemoryStore(), 1)
+//
+// With samlsp.WithClock, give the MemoryStore the same clock:
+//
+//	binding := artifact.New(config, &artifact.MemoryStore{Clock: clock}, 1)
 //	http.Handle("/saml/artifact", binding)
 //
 //	msg, err := config.AuthnRequest(ctx, relayState, samlsp.WithCustomBinding(binding))
@@ -233,10 +237,11 @@ func (b *Binding) resolve(r *http.Request) (*etree.Element, error) {
 	}
 
 	var message *etree.Element
-	stored, err := b.store.Take(r.Context(), req.Artifact)
+	stored, err := b.store.Take(r.Context(), req.Artifact, req.Issuer.Value)
 	if err != nil {
 		return nil, err
 	}
+	// The recipient is checked again, in case the Store does not.
 	if stored != nil && stored.Recipient == req.Issuer.Value && !t.After(stored.ExpiresAt) {
 		msgDoc := etree.NewDocument()
 		if err := msgDoc.ReadFromBytes(stored.XML); err != nil {
