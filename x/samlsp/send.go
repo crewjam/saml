@@ -124,6 +124,10 @@ func (c *Config) send(ctx context.Context, msg OutgoingMessage, o messageOptions
 		return nil, err
 	}
 
+	// Sign with the ServiceProvider of this call, as it is before Build,
+	// which may change it.
+	signer, method := messageSigner(sp, msg.Service)
+
 	el, err := msg.Build(sp, location, o.modifier())
 	if err != nil {
 		return nil, err
@@ -132,7 +136,6 @@ func (c *Config) send(ctx context.Context, msg OutgoingMessage, o messageOptions
 		return nil, fmt.Errorf("samlsp: the RelayState is longer than %d bytes", saml.MaxRelayStateLength)
 	}
 
-	method := c.method()
 	signMethod := ""
 	if msg.Sign {
 		signMethod = method
@@ -141,7 +144,7 @@ func (c *Config) send(ctx context.Context, msg OutgoingMessage, o messageOptions
 		if signMethod == "" {
 			return el, nil
 		}
-		return c.SignElement(el)
+		return signElement(signer, el)
 	}
 
 	out := &OutboundMessage{
@@ -153,7 +156,7 @@ func (c *Config) send(ctx context.Context, msg OutgoingMessage, o messageOptions
 	}
 	switch binding {
 	case saml.HTTPRedirectBinding:
-		u, err := sp.RedirectBindingURL(location, msg.Param, el, msg.RelayState, signMethod)
+		u, err := signer.RedirectBindingURL(location, msg.Param, el, msg.RelayState, signMethod)
 		if err != nil {
 			return nil, err
 		}
@@ -178,7 +181,7 @@ func (c *Config) send(ctx context.Context, msg OutgoingMessage, o messageOptions
 		if method == "" {
 			return nil, errors.New("samlsp: the HTTP-POST-SimpleSign binding needs an RSA or ECDSA key (see WithKey)")
 		}
-		fields, err := sp.SimpleSignValues(msg.Param, el, msg.RelayState, method)
+		fields, err := signer.SimpleSignValues(msg.Param, el, msg.RelayState, method)
 		if err != nil {
 			return nil, err
 		}
@@ -204,14 +207,23 @@ func (c *Config) Prepare(ctx context.Context, opts ...MessageOption) (*saml.Serv
 	return sp, o.modifier(), nil
 }
 
-// method returns the signature method of the key: that of
-// WithSignatureMethod, or SHA-256 for the key type, or "" without a key
-// that can sign.
-func (c *Config) method() string {
-	if c.signatureMethod != "" {
-		return c.signatureMethod
+// messageSigner returns a copy of sp, the ServiceProvider of a call, that
+// signs a message for service, and the signature method it uses: the
+// SignatureMethod of an AuthnRequest, if set, and otherwise
+// LogoutSignatureMethod, which is that of WithSignatureMethod unless a
+// ServiceProviderOption changed it. The method is "" without a key that
+// can sign.
+func messageSigner(sp *saml.ServiceProvider, service Service) (*saml.ServiceProvider, string) {
+	method := sp.LogoutSignatureMethod
+	if service == SingleSignOnService && sp.SignatureMethod != "" {
+		method = sp.SignatureMethod
 	}
-	return signatureMethod(c.key)
+	if signatureMethod(sp.Key) == "" {
+		method = ""
+	}
+	signer := *sp
+	signer.SignatureMethod = method
+	return &signer, method
 }
 
 // NewMessage returns a Message whose Write calls write: for example, the

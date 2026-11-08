@@ -345,22 +345,31 @@ var AllowUnsolicited ResponseOption = responseOptionFunc(func(o *responseOptions
 // bindings. For HTTP-Artifact, it resolves the artifact with a request to
 // the IdP. That request uses ctx and the HTTP client of WithHTTPClient.
 //
-// At least one WithRequestID or AllowUnsolicited is required. Otherwise
-// ParseResponse returns ErrNoRequestID.
+// At least one WithRequestID or AllowUnsolicited is required (or
+// AllowIDPInitiated set with WithServiceProvider). Otherwise ParseResponse
+// returns ErrNoRequestID.
+//
+// AllowUnsolicited and an AuthnContextOption passed to ParseResponse take
+// precedence over the corresponding settings made with WithServiceProvider;
+// without them, those settings apply.
 func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...ResponseOption) (*Assertion, error) {
 	var o responseOptions
 	for _, opt := range opts {
 		opt.applyResponse(&o)
 	}
-	if len(o.requestIDs) == 0 && !o.unsolicited {
-		return nil, ErrNoRequestID
-	}
 	sp, err := c.serviceProvider(ctx, o.sp)
 	if err != nil {
 		return nil, err
 	}
-	sp.AllowIDPInitiated = o.unsolicited
-	sp.RequestedAuthnContext = o.authnContext
+	if o.unsolicited {
+		sp.AllowIDPInitiated = true
+	}
+	if o.authnContext != nil {
+		sp.RequestedAuthnContext = o.authnContext
+	}
+	if len(o.requestIDs) == 0 && !sp.AllowIDPInitiated {
+		return nil, ErrNoRequestID
+	}
 
 	if err := r.ParseForm(); err != nil {
 		return nil, err
