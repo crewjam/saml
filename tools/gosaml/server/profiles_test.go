@@ -1,12 +1,13 @@
 package server
 
 import (
-	"github.com/crewjam/saml/x/samlidp"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/crewjam/saml/x/samlidp"
 )
 
 func TestProfiles(t *testing.T) {
@@ -34,7 +35,7 @@ func TestProfiles(t *testing.T) {
 		},
 		{
 			profile: "shibboleth",
-			issuer:  regexp.MustCompile(`http://127\.0\.0\.1:\d+/idp/[a-z0-9]+/idp/shibboleth`),
+			issuer:  regexp.MustCompile(`http://127\.0\.0\.1:\d+/idp/[a-z0-9-]+/idp/shibboleth`),
 			id:      regexp.MustCompile(`_[0-9a-f]{32}`),
 			want: []string{"nameid-format:transient", "urn:oid:1.3.6.1.4.1.5923.1.1.1.6", "eduPersonPrincipalName",
 				"urn:oasis:names:tc:SAML:attribute:pairwise-id", "member@"},
@@ -45,7 +46,7 @@ func TestProfiles(t *testing.T) {
 			h := newHarness(t)
 			resp, body := h.do(http.MethodPost, "/new/idp", url.Values{"profile": {tc.profile}})
 			idpSecret := strings.TrimPrefix(resp.Request.URL.Path, "/manage/")
-			idpID := regexp.MustCompile(`/idp/([a-z0-9]+)/metadata`).FindStringSubmatch(body)[1]
+			idpID := regexp.MustCompile(`/idp/([a-z0-9-]+)/metadata`).FindStringSubmatch(body)[1]
 			mustContain(t, body, "Profile: ")
 			if !tc.issuer.MatchString(body) {
 				t.Fatalf("no entity ID like %s on the manage page", tc.issuer)

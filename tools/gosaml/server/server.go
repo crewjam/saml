@@ -384,29 +384,37 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request, kind sto
 		s.fail(w, r, http.StatusServiceUnavailable, "Too many instances exist right now. Try again later: they expire after "+roundDuration(s.TTL)+".", nil)
 		return
 	}
-	id := strings.ToLower(rand.Text()[:16])
-	secret := rand.Text()
-	keyPEM, certPEM, err := newKeyPair(s.BaseURL+"/"+string(kind)+"/"+id, s.TTL+24*time.Hour)
-	if err != nil {
-		s.fail(w, r, http.StatusInternalServerError, "Cannot create a key.", err)
+	// Names are memorable words (see names.go), so a new one may be taken:
+	// try again with another.
+	for attempt := 0; ; attempt++ {
+		id, secret := newInstanceID(attempt), newInstanceSecret(attempt)
+		keyPEM, certPEM, err := newKeyPair(s.BaseURL+"/"+string(kind)+"/"+id, s.TTL+24*time.Hour)
+		if err != nil {
+			s.fail(w, r, http.StatusInternalServerError, "Cannot create a key.", err)
+			return
+		}
+		b, err := encodeConfig(config(id))
+		if err != nil {
+			s.fail(w, r, http.StatusInternalServerError, "Cannot create the instance.", err)
+			return
+		}
+		now := time.Now()
+		in := &store.Instance{
+			ID: id, Secret: secret, Kind: kind, KeyPEM: keyPEM, CertPEM: certPEM,
+			Config: b, CreatedAt: now, ExpiresAt: now.Add(s.TTL),
+		}
+		err = s.Store.CreateInstance(r.Context(), in)
+		if errors.Is(err, store.ErrTaken) && attempt < 10 {
+			continue
+		}
+		if err != nil {
+			s.fail(w, r, http.StatusInternalServerError, "Cannot create the instance.", err)
+			return
+		}
+		s.setMine(w, append(mine(r), secret))
+		http.Redirect(w, r, "/manage/"+secret, http.StatusSeeOther)
 		return
 	}
-	b, err := encodeConfig(config(id))
-	if err != nil {
-		s.fail(w, r, http.StatusInternalServerError, "Cannot create the instance.", err)
-		return
-	}
-	now := time.Now()
-	in := &store.Instance{
-		ID: id, Secret: secret, Kind: kind, KeyPEM: keyPEM, CertPEM: certPEM,
-		Config: b, CreatedAt: now, ExpiresAt: now.Add(s.TTL),
-	}
-	if err := s.Store.CreateInstance(r.Context(), in); err != nil {
-		s.fail(w, r, http.StatusInternalServerError, "Cannot create the instance.", err)
-		return
-	}
-	s.setMine(w, append(mine(r), secret))
-	http.Redirect(w, r, "/manage/"+secret, http.StatusSeeOther)
 }
 
 func (s *Server) manage(w http.ResponseWriter, r *http.Request) {

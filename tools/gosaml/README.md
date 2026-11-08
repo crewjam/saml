@@ -56,6 +56,11 @@ in-memory hub, since one process holds all the state, with catch-up from
 - The SQLite database is deleted at startup, and on Fly.io it lives on the
   machine's root filesystem with no volume, so every deploy or restart
   starts from nothing.
+- Instances are named with memorable words from
+  [`golang-petname`](https://github.com/dustinkirkland/golang-petname): a
+  two-word public ID in protocol URLs (`/idp/comic-krill/metadata`) and a
+  three-word management page (`/manage/wholly-blessed-mammoth`). They are
+  easy to read and to guess; this is a testing service.
 - There are no accounts. Each instance has a public ID (in its protocol
   URLs) and a secret management URL, `/manage/{secret}`, which is its only
   credential. A cookie remembers the instances a browser created, so the

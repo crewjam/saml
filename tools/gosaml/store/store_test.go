@@ -127,3 +127,27 @@ func TestSessionsAndArtifacts(t *testing.T) {
 		t.Errorf("expired session: %v", err)
 	}
 }
+
+func TestCreateInstanceTaken(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close() //nolint:errcheck // test
+	now := time.Now()
+	in := &Instance{ID: "comic-krill", Secret: "wholly-blessed-mammoth", Kind: KindIdP, Config: []byte(`{}`), CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
+	if err := s.CreateInstance(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	sameID := *in
+	sameID.Secret = "other-secret-name"
+	if err := s.CreateInstance(ctx, &sameID); !errors.Is(err, ErrTaken) {
+		t.Errorf("same ID: %v", err)
+	}
+	sameSecret := *in
+	sameSecret.ID = "other-name"
+	if err := s.CreateInstance(ctx, &sameSecret); !errors.Is(err, ErrTaken) {
+		t.Errorf("same secret: %v", err)
+	}
+}

@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/crewjam/saml"
@@ -32,6 +33,10 @@ const (
 // ErrNotFound is returned for an instance, or a pending login, that does
 // not exist or has expired.
 var ErrNotFound = errors.New("not found or expired")
+
+// ErrTaken is returned by CreateInstance when an instance already has the
+// new one's ID or secret.
+var ErrTaken = errors.New("the name is taken")
 
 // Instance is a test IdP or SP.
 type Instance struct {
@@ -160,11 +165,15 @@ func (s *Store) CountInstances(ctx context.Context) (int, error) {
 	return n, err
 }
 
-// CreateInstance stores a new instance.
+// CreateInstance stores a new instance. It returns ErrTaken if another
+// instance, even an expired one not yet reaped, has its ID or secret.
 func (s *Store) CreateInstance(ctx context.Context, in *Instance) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO instances (id, secret, kind, key_pem, cert_pem, config, created_at, expires_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.ID, in.Secret, string(in.Kind), in.KeyPEM, in.CertPEM, string(in.Config), in.CreatedAt.Unix(), in.ExpiresAt.Unix())
+	if err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed") {
+		return fmt.Errorf("%w: %v", ErrTaken, err)
+	}
 	return err
 }
 

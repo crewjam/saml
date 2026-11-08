@@ -96,7 +96,7 @@ func (h *harness) create(kind string) (secret, id string) {
 	h.t.Helper()
 	resp, body := h.do(http.MethodPost, "/new/"+kind, nil)
 	secret = strings.TrimPrefix(resp.Request.URL.Path, "/manage/")
-	m := regexp.MustCompile(`/` + kind + `/([a-z0-9]+)/metadata`).FindStringSubmatch(body)
+	m := regexp.MustCompile(`/` + kind + `/([a-z0-9-]+)/metadata`).FindStringSubmatch(body)
 	if resp.StatusCode != http.StatusOK || m == nil {
 		h.t.Fatalf("create %s: %d\n%s", kind, resp.StatusCode, body)
 	}
