@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"time"
@@ -45,6 +46,7 @@ type Config struct {
 
 	idpOptions    []IdentityProviderOption
 	metadataHooks []func(*saml.EntityDescriptor)
+	checks        []func(*saml.IdentityProvider) error
 }
 
 // New returns a Config for the identity provider entityID, which serves the
@@ -109,7 +111,35 @@ func New(entityID string, serviceProviders ServiceProviderFunc, opts ...Option) 
 	if c.replayState == nil {
 		c.replayState = &replay.Memory{Clock: c.clock}
 	}
+	if len(c.checks) > 0 {
+		idp := c.identityProvider(nil)
+		for _, check := range c.checks {
+			if err := check(idp); err != nil {
+				return nil, err
+			}
+		}
+	}
 	return c, nil
+}
+
+// WithCheck adds a check that New runs on the saml.IdentityProvider it
+// builds, with the IdentityProviderOptions passed to New applied: New
+// returns its error. Packages that add options with
+// IdentityProviderOptions use it to refuse settings that cannot work.
+func WithCheck(check func(idp *saml.IdentityProvider) error) Option {
+	return optionFunc(func(c *Config, _ *configOptions) { c.checks = append(c.checks, check) })
+}
+
+// Options returns an Option that applies opts in order, so that a package
+// can offer a group of settings as one Option.
+func Options(opts ...Option) Option {
+	return optionFunc(func(c *Config, o *configOptions) {
+		for _, opt := range opts {
+			if opt != nil {
+				opt.applyConfig(c, o)
+			}
+		}
+	})
 }
 
 // harden turns on every check that package saml leaves off by default only
@@ -399,6 +429,9 @@ func (c *Config) identityProvider(opts []IdentityProviderOption) *saml.IdentityP
 		NameIDFormats:           c.nameIDFormats,
 		Clock:                   c.clock,
 		ServiceProviderProvider: serviceProviderProvider(c.serviceProviders),
+		// Package saml logs what it refuses and ignores; this package
+		// returns errors instead.
+		Logger: log.New(io.Discard, "", 0),
 	}
 	if c.metadataValid > 0 {
 		d := c.metadataValid

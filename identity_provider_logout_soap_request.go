@@ -135,7 +135,7 @@ const backChannelLogoutConcurrency = 8
 // SingleLogoutService cannot be reached, and is one of them.
 func (idp *IdentityProvider) logoutParticipantsSOAP(r *http.Request, participants []SessionParticipant) int {
 	logFailure := func(participant SessionParticipant, err error) {
-		if errors.Is(err, errNoSOAPLogoutEndpoint) {
+		if errors.Is(err, ErrNoSOAPLogoutEndpoint) {
 			idp.Logger.Printf("cannot propagate a back-channel logout to %s: it has no SOAP SingleLogoutService", participant.ServiceProviderID)
 			return
 		}

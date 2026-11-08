@@ -121,9 +121,13 @@
 //
 // # Single logout
 //
-// This package does not implement single logout yet. Config.IdentityProvider
-// returns the saml.IdentityProvider the other methods use, for an
-// application that handles it with package saml.
+// Single logout is in a separate package,
+// github.com/crewjam/saml/x/samlidp/idpslo, built on this package's public
+// API: Send signs and sends any protocol message, SignElement signs with
+// the IdP's key, Consume records messages for replay protection, and
+// IdentityProvider reaches the configuration. Keep the Participant of
+// each Response with the user's IdP session: it names the session that
+// single logout must end at the SP.
 //
 // # Stability
 //

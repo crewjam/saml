@@ -78,6 +78,13 @@ func lookupServiceProvider(ctx context.Context, lookup ServiceProviderFunc, enti
 	return md, nil
 }
 
+// ServiceProvider returns the metadata of the service provider entityID,
+// from the ServiceProviderFunc passed to New. The error matches
+// ErrUnknownServiceProvider if it does not know the SP.
+func (c *Config) ServiceProvider(ctx context.Context, entityID string) (*saml.EntityDescriptor, error) {
+	return lookupServiceProvider(ctx, c.serviceProviders, entityID)
+}
+
 // serviceProviderProvider is the saml.ServiceProviderProvider of the
 // IdentityProviders a Config builds. It calls the ServiceProviderFunc with
 // the context of the request.

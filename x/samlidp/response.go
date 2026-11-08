@@ -164,10 +164,22 @@ func (c *Config) Response(ctx context.Context, req *AuthnRequest, subject Subjec
 	if err := ireq.CheckRequestSubject(); err != nil {
 		return nil, err
 	}
+	participant := &saml.SessionParticipant{
+		ServiceProviderID: ireq.ServiceProviderMetadata.EntityID,
+		SessionIndex:      subject.SessionIndex,
+	}
+	if a.Subject != nil && a.Subject.NameID != nil {
+		participant.NameID = *a.Subject.NameID
+	}
 	if err := ireq.MakeResponse(); err != nil {
 		return nil, err
 	}
-	return postResponse(ireq, o.nonce)
+	msg, err := postResponse(ireq, o.nonce)
+	if err != nil {
+		return nil, err
+	}
+	msg.Participant = participant
+	return msg, nil
 }
 
 // ErrorResponse returns a Response to req that carries status and no
