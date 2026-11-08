@@ -365,6 +365,7 @@ func TestIDPCanHandleRequestWithNewSession(t *testing.T) {
 
 func TestIDPCanHandleRequestWithExistingSession(t *testing.T) {
 	test := NewIdentityProviderTest(t, applyKey)
+	test.IDP.AssertionEncrypter = cbcAssertionEncrypter() // keep the golden file stable
 	test.IDP.SessionProvider = &mockSessionProvider{
 		GetSessionFunc: func(_ http.ResponseWriter, _ *http.Request, _ *IdpAuthnRequest) *Session {
 			return &Session{
@@ -390,6 +391,7 @@ func TestIDPCanHandleRequestWithExistingSession(t *testing.T) {
 
 func TestIDPCanHandlePostRequestWithExistingSession(t *testing.T) {
 	test := NewIdentityProviderTest(t, applyKey)
+	test.IDP.AssertionEncrypter = cbcAssertionEncrypter() // keep the golden file stable
 	test.IDP.SessionProvider = &mockSessionProvider{
 		GetSessionFunc: func(_ http.ResponseWriter, _ *http.Request, _ *IdpAuthnRequest) *Session {
 			return &Session{
@@ -827,6 +829,7 @@ func TestIDPMakeAssertionAddressWithoutPort(t *testing.T) {
 
 func TestIDPMarshalAssertion(t *testing.T) {
 	test := NewIdentityProviderTest(t, applyKey)
+	test.IDP.AssertionEncrypter = cbcAssertionEncrypter() // keep the golden file stable
 	req := IdpAuthnRequest{
 		Now: TimeNow(),
 		IDP: &test.IDP,
@@ -968,6 +971,7 @@ func TestIDPIDPInitiatedNewSession(t *testing.T) {
 
 func TestIDPIDPInitiatedExistingSession(t *testing.T) {
 	test := NewIdentityProviderTest(t, applyKey)
+	test.IDP.AssertionEncrypter = cbcAssertionEncrypter() // keep the golden file stable
 	test.IDP.SessionProvider = &mockSessionProvider{
 		GetSessionFunc: func(_ http.ResponseWriter, _ *http.Request, _ *IdpAuthnRequest) *Session {
 			return &Session{

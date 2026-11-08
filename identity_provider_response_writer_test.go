@@ -112,6 +112,7 @@ func TestIDPDefaultResponseWriter(t *testing.T) {
 	t.Run("ServeSSO", func(t *testing.T) {
 		test := newExistingSessionIDPTest(t)
 		test.IDP.ResponseWriter = DefaultResponseWriter{}
+		test.IDP.AssertionEncrypter = cbcAssertionEncrypter() // same golden file as the tests it compares with
 		requestURL, err := test.SP.MakeRedirectAuthenticationRequest("ThisIsTheRelayState")
 		assert.NilError(t, err)
 		w := httptest.NewRecorder()
@@ -124,6 +125,7 @@ func TestIDPDefaultResponseWriter(t *testing.T) {
 	t.Run("ServeIDPInitiated", func(t *testing.T) {
 		test := newExistingSessionIDPTest(t)
 		test.IDP.ResponseWriter = DefaultResponseWriter{}
+		test.IDP.AssertionEncrypter = cbcAssertionEncrypter() // same golden file as the tests it compares with
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "https://idp.example.com/services/sp/whoami", nil)
 		test.IDP.ServeIDPInitiated(w, r, test.SP.MetadataURL.String(), "ThisIsTheRelayState")
