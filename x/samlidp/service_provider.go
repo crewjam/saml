@@ -3,7 +3,6 @@ package samlidp
 import (
 	"context"
 	"crypto/x509"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,7 +12,7 @@ import (
 	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/internal/xmlroundtrip"
+	"github.com/crewjam/saml/internal/samlmd"
 )
 
 // ServiceProviderFunc returns the metadata of the service provider (SP)
@@ -29,9 +28,10 @@ import (
 // Config calls it every time it handles a request or makes a Response for
 // an SP, with that call's context, so it must be cheap and safe for
 // concurrent use. Config refuses metadata whose validUntil, or that of its
-// SPSSODescriptor, has passed, with an error that matches saml.ErrExpired. Use StaticServiceProviders, or write your own: for
-// example, to read metadata from a database. The returned metadata must not
-// be modified afterwards.
+// SPSSODescriptor, has passed, with an error that matches saml.ErrExpired.
+// Use StaticServiceProviders or MDQServiceProviders, or write your own:
+// for example, to read metadata from a database. The returned metadata
+// must not be modified afterwards.
 type ServiceProviderFunc func(ctx context.Context, entityID string) (*saml.EntityDescriptor, error)
 
 // ErrUnknownServiceProvider matches the errors of a request from, or a
@@ -90,16 +90,7 @@ func lookupServiceProvider(ctx context.Context, lookup ServiceProviderFunc, enti
 // validUntil (saml-metadata §2.2.1) of md, service provider metadata, or of
 // one of its SPSSODescriptors has passed at now.
 func checkNotExpired(md *saml.EntityDescriptor, now time.Time) error {
-	validUntil := md.ValidUntil
-	for i := range md.SPSSODescriptors {
-		if v := md.SPSSODescriptors[i].ValidUntil; v != nil && !v.IsZero() && (validUntil.IsZero() || v.Before(validUntil)) {
-			validUntil = *v
-		}
-	}
-	if !validUntil.IsZero() && !now.Before(validUntil) {
-		return fmt.Errorf("metadata expired at %s: %w", validUntil.UTC().Format(time.RFC3339), saml.ErrExpired)
-	}
-	return nil
+	return samlmd.Expired(md, samlmd.SPRoles, now)
 }
 
 // ServiceProvider returns the metadata of the service provider entityID,
@@ -123,7 +114,7 @@ func (p serviceProviderProvider) GetServiceProvider(r *http.Request, entityID st
 	return lookupServiceProvider(r.Context(), p.lookup, entityID, p.clock)
 }
 
-// MetadataOption configures ParseMetadata.
+// MetadataOption configures ParseMetadata and MDQServiceProviders.
 type MetadataOption interface {
 	applyMetadata(*metadataOptions)
 }
@@ -136,6 +127,14 @@ type metadataOptions struct {
 	entityID string
 	certs    []*x509.Certificate
 	clock    *dsig.Clock
+
+	// For MDQServiceProviders.
+	client          *http.Client
+	refreshInterval time.Duration
+	maxStale        time.Duration
+	maxSize         int64
+	onFetchError    func(error)
+	maxCached       int
 }
 
 // WithServiceProviderEntityID selects the service provider with this
@@ -158,7 +157,7 @@ func WithMetadataSigners(certs ...*x509.Certificate) MetadataOption {
 //
 // data may be an EntityDescriptor or an EntitiesDescriptor aggregate; the
 // result is the SP's EntityDescriptor, which takes the earliest validUntil
-// of the EntitiesDescriptors around it. It returns an error if data is not
+// and the shortest cacheDuration of the EntitiesDescriptors around it. It returns an error if data is not
 // metadata, is not signed by one of the WithMetadataSigners certificates,
 // or describes no single service provider; and one that matches
 // saml.ErrExpired if, by the clock of WithClock, the validUntil
@@ -189,29 +188,9 @@ func parseMetadata(data []byte, o metadataOptions) (*saml.EntityDescriptor, erro
 		}
 		data = signed
 	}
-	if err := xmlroundtrip.Validate(data); err != nil {
+	candidates, err := samlmd.Entities(data)
+	if err != nil {
 		return nil, err
-	}
-	var root struct{ XMLName xml.Name }
-	if err := xml.Unmarshal(data, &root); err != nil {
-		return nil, err
-	}
-	var candidates []*saml.EntityDescriptor
-	switch root.XMLName {
-	case xml.Name{Space: "urn:oasis:names:tc:SAML:2.0:metadata", Local: "EntityDescriptor"}:
-		md := &saml.EntityDescriptor{}
-		if err := xml.Unmarshal(data, md); err != nil {
-			return nil, err
-		}
-		candidates = []*saml.EntityDescriptor{md}
-	case xml.Name{Space: "urn:oasis:names:tc:SAML:2.0:metadata", Local: "EntitiesDescriptor"}:
-		entities := &saml.EntitiesDescriptor{}
-		if err := xml.Unmarshal(data, entities); err != nil {
-			return nil, err
-		}
-		candidates = spEntities(entities, time.Time{})
-	default:
-		return nil, fmt.Errorf("the root element is %s %s, not a metadata EntityDescriptor", root.XMLName.Space, root.XMLName.Local)
 	}
 
 	var found []*saml.EntityDescriptor
@@ -230,25 +209,4 @@ func parseMetadata(data []byte, o metadataOptions) (*saml.EntityDescriptor, erro
 	default:
 		return nil, fmt.Errorf("the metadata describes %d service providers; use WithServiceProviderEntityID to choose one", len(found))
 	}
-}
-
-// spEntities returns the entities in entities and in any EntitiesDescriptor
-// nested in it. Each takes the earliest validUntil of outer, its own and
-// those of the EntitiesDescriptors around it.
-func spEntities(entities *saml.EntitiesDescriptor, outer time.Time) []*saml.EntityDescriptor {
-	if v := entities.ValidUntil; v != nil && !v.IsZero() && (outer.IsZero() || v.Before(outer)) {
-		outer = *v
-	}
-	out := make([]*saml.EntityDescriptor, 0, len(entities.EntityDescriptors))
-	for i := range entities.EntityDescriptors {
-		md := &entities.EntityDescriptors[i]
-		if !outer.IsZero() && (md.ValidUntil.IsZero() || outer.Before(md.ValidUntil)) {
-			md.ValidUntil = outer
-		}
-		out = append(out, md)
-	}
-	for i := range entities.EntitiesDescriptors {
-		out = append(out, spEntities(&entities.EntitiesDescriptors[i], outer)...)
-	}
-	return out
 }

@@ -25,7 +25,9 @@
 //
 // The second argument is a ServiceProviderFunc that supplies the metadata
 // of an SP by its entity ID. StaticServiceProviders serves a fixed set,
-// ParseMetadata checks metadata an administrator uploads, and an
+// MDQServiceProviders fetches and caches each SP's metadata from a
+// federation's Metadata Query service, ParseMetadata checks metadata an
+// administrator uploads, and an
 // application can supply its own function: for example, one that reads
 // metadata from a database.
 //

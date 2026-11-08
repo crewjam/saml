@@ -9,7 +9,7 @@ import (
 	"net/url"
 
 	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/internal/idpmetadata"
+	"github.com/crewjam/saml/internal/samlmd"
 )
 
 // ParseMetadata parses arbitrary SAML IDP metadata.
@@ -38,8 +38,8 @@ import (
 // metadata must come from a source the caller trusts. See
 // ParseSignedMetadata.
 func ParseMetadata(data []byte) (*saml.EntityDescriptor, error) {
-	entity, err := idpmetadata.Parse(data)
-	var multiple *idpmetadata.MultipleIDPsError
+	entity, err := samlmd.Parse(data)
+	var multiple *samlmd.MultipleIDPsError
 	if errors.As(err, &multiple) {
 		return nil, fmt.Errorf("%s; use ParseMetadataByEntityID to choose one", multiple)
 	}
@@ -60,7 +60,7 @@ func ParseMetadata(data []byte) (*saml.EntityDescriptor, error) {
 //
 // It returns an error if no entity with that entityID is found.
 func ParseMetadataByEntityID(data []byte, entityID string) (*saml.EntityDescriptor, error) {
-	return idpmetadata.ParseByEntityID(data, entityID)
+	return samlmd.ParseByEntityID(data, entityID)
 }
 
 // ParseSignedMetadata is ParseMetadata for metadata whose root element must
@@ -151,8 +151,8 @@ func FetchSignedMetadataByEntityID(ctx context.Context, httpClient *http.Client,
 var MaxMetadataSize int64 = 256 << 20
 
 func fetchMetadataBytes(ctx context.Context, httpClient *http.Client, metadataURL url.URL) ([]byte, error) {
-	data, err := idpmetadata.Fetch(ctx, httpClient, metadataURL, MaxMetadataSize, "")
-	var tooLarge *idpmetadata.TooLargeError
+	data, err := samlmd.Fetch(ctx, httpClient, metadataURL, MaxMetadataSize, "")
+	var tooLarge *samlmd.TooLargeError
 	if errors.As(err, &tooLarge) {
 		return nil, fmt.Errorf("%s (MaxMetadataSize)", tooLarge)
 	}
