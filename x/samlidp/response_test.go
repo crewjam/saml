@@ -128,3 +128,47 @@ func TestSPNameQualifier(t *testing.T) {
 		t.Fatalf("got %+v, %v", req, err)
 	}
 }
+
+func TestForceAuthnInstant(t *testing.T) {
+	p := newPair(t, nil, nil)
+	_, req, err := p.parse(t, samlsp.ForceAuthn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A login from an existing session is not a new authentication.
+	subject := testSubject
+	subject.AuthnInstant = req.IssueInstant.Add(-saml.MaxClockSkew - time.Second)
+	_, err = p.idp.Response(context.Background(), req, subject)
+	var status *saml.StatusError
+	if err == nil || errors.As(err, &status) {
+		t.Fatalf("got %v, want an error for the application", err)
+	}
+	// Within the clock skew, it is.
+	subject.AuthnInstant = req.IssueInstant.Add(-saml.MaxClockSkew + time.Second)
+	if _, err := p.idp.Response(context.Background(), req, subject); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEncryptedNameIDFormat(t *testing.T) {
+	const encrypted = saml.NameIDFormat("urn:oasis:names:tc:SAML:2.0:nameid-format:encrypted")
+
+	// The SP cannot be sent an encrypted assertion.
+	p := newPair(t, nil, []samlsp.Option{samlsp.WithNameIDFormat(encrypted)})
+	_, req, err := p.parse(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.NameIDFormat != encrypted {
+		t.Fatalf("NameIDFormat = %q", req.NameIDFormat)
+	}
+	_, err = p.idp.Response(context.Background(), req, testSubject)
+	_ = asStatus(t, err, saml.StatusRequester, saml.StatusInvalidNameIDPolicy)
+
+	// It can: the NameID is in the encrypted assertion.
+	p = newPair(t, nil, []samlsp.Option{samlsp.WithNameIDFormat(encrypted), samlsp.WithEncryptionKey(spKey, spCert)})
+	a, _ := p.login(t, nil, testSubject)
+	if a.Subject != testSubject.NameID {
+		t.Fatalf("got %+v", a)
+	}
+}

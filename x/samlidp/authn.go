@@ -54,7 +54,8 @@ type AuthnRequest struct {
 
 	// ForceAuthn asks the IdP to authenticate the user again, even if it
 	// has a session for them (saml-core §3.4.1). The Subject's
-	// AuthnInstant must then be that of the new authentication.
+	// AuthnInstant must then be that of the new authentication: Response
+	// refuses one before IssueInstant.
 	ForceAuthn bool
 
 	// IsPassive asks the IdP not to interact with the user. If it cannot
@@ -65,7 +66,9 @@ type AuthnRequest struct {
 	// NameIDFormat is the format of the NameID the SP asked for, if any
 	// (the Format of its NameIDPolicy). Response refuses a Subject whose
 	// NameIDFormat differs, unless this is unspecified or
-	// "urn:oasis:names:tc:SAML:2.0:nameid-format:encrypted".
+	// "urn:oasis:names:tc:SAML:2.0:nameid-format:encrypted". For the
+	// latter, the assertion must be encrypted: Response refuses it, with
+	// StatusInvalidNameIDPolicy, if the SP publishes no encryption key.
 	NameIDFormat saml.NameIDFormat
 
 	// SPNameQualifier is the SPNameQualifier of the NameIDPolicy, if any:
