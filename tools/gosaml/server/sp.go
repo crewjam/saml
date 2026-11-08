@@ -311,7 +311,10 @@ func (s *Server) spACS(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, http.StatusInternalServerError, "Cannot read the login.", err)
 		return
 	}
-	if login, err := t.Take(w, r); err == nil {
+	// Find the login without clearing it, and forget it only once the
+	// Response is accepted, so that a refused Response leaves it in place.
+	login, err := t.Find(w, r)
+	if err == nil {
 		opts = append(opts, samlsp.WithRequestID(login.ID))
 		if login.Data != "" {
 			opts = append(opts, samlsp.WithAuthnContext(saml.AuthnContextComparisonExact, saml.AuthnContextClass(login.Data)))
@@ -347,6 +350,7 @@ func (s *Server) spACS(w http.ResponseWriter, r *http.Request) {
 		s.renderStatus(w, r, http.StatusForbidden, "sp_result", cfg.Name, res)
 		return
 	}
+	t.Forget(w, login)
 	res.Assertion = assertion
 	if assertion.Raw != nil {
 		doc := etree.NewDocument()

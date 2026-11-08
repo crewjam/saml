@@ -69,7 +69,7 @@ new file mode 100644
 index 0000000..fe0966e
 --- /dev/null
 +++ b/server/auth.go
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,143 @@
 +package server
 +
 +import (
@@ -144,7 +144,13 @@ index 0000000..fe0966e
 +		return
 +	}
 +	// Remember the request, and where to return to, until the IdP answers.
-+	if err := a.pending.Remember(w, msg, a.returnURI(r)); err != nil {
++	// The URL is the requester's to make long: keep it within the
++	// cookie's share of the Cookie header (pending.WithMaxCookiesSize).
++	returnTo := a.returnURI(r)
++	if len(returnTo) > 100 {
++		returnTo = "/"
++	}
++	if err := a.pending.Remember(w, msg, returnTo); err != nil {
 +		a.logger.Error("Failed to remember the login", zap.Error(err))
 +		w.WriteHeader(http.StatusInternalServerError)
 +		return
@@ -166,7 +172,8 @@ index 0000000..fe0966e
 +func (a *authenticator) acs(w http.ResponseWriter, r *http.Request) {
 +	var opts []samlsp.ResponseOption
 +	returnTo := "/"
-+	if login, err := a.pending.Take(w, r); err == nil {
++	login, err := a.pending.Find(w, r)
++	if err == nil {
 +		opts = append(opts, samlsp.WithRequestID(login.ID))
 +		returnTo = login.Data
 +	} else if !errors.Is(err, pending.ErrNotFound) {
@@ -186,6 +193,7 @@ index 0000000..fe0966e
 +		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 +		return
 +	}
++	a.pending.Forget(w, login) // nil for an IdP-initiated login
 +
 +	token, err := a.codec.Encode(newSession(assertion, a.sp.EntityID(), a.cfg.CookieMaxAge))
 +	if err != nil {

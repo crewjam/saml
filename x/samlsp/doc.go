@@ -106,10 +106,11 @@
 // check that its InResponseTo is the remembered ID:
 //
 //	func acs(w http.ResponseWriter, r *http.Request) {
-//		login, err := tracker.Take(w, r)
+//		login, err := tracker.Find(w, r)
 //		if err != nil { ... }
 //		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
 //		if err != nil { ... }
+//		tracker.Forget(w, login) // only once the Response is verified
 //		startSession(w, assertion.NameID, assertion.SessionIndexes, assertion.Attributes)
 //	}
 //

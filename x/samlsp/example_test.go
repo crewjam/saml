@@ -50,7 +50,7 @@ func Example() {
 	})
 
 	http.HandleFunc(config.ACSPath(), func(w http.ResponseWriter, r *http.Request) {
-		login, err := tracker.Take(w, r)
+		login, err := tracker.Find(w, r)
 		if err != nil {
 			http.Error(w, "no login in progress", http.StatusBadRequest)
 			return
@@ -60,6 +60,7 @@ func Example() {
 			http.Error(w, "login failed", http.StatusForbidden)
 			return
 		}
+		tracker.Forget(w, login) // only once the Response is verified
 
 		var user struct {
 			Email  string   `saml:"urn:oid:0.9.2342.19200300.100.1.3"`

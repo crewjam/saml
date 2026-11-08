@@ -253,7 +253,7 @@ func ExampleNew_perRequest() {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		login, err := tracker.Take(w, r)
+		login, err := tracker.Find(w, r)
 		if err != nil {
 			http.Error(w, "no login in progress", http.StatusBadRequest)
 			return
@@ -263,6 +263,7 @@ func ExampleNew_perRequest() {
 			http.Error(w, "login failed", http.StatusForbidden)
 			return
 		}
+		tracker.Forget(w, login)
 		startSession(w, assertion)
 	})
 }
@@ -303,7 +304,7 @@ func ExampleWithIdentityProvider() {
 	})
 
 	http.HandleFunc(config.ACSPath(), func(w http.ResponseWriter, r *http.Request) {
-		login, err := tracker.Take(w, r)
+		login, err := tracker.Find(w, r)
 		if err != nil {
 			http.Error(w, "no login in progress", http.StatusBadRequest)
 			return
@@ -318,6 +319,7 @@ func ExampleWithIdentityProvider() {
 			http.Error(w, "login failed", http.StatusForbidden)
 			return
 		}
+		tracker.Forget(w, login)
 		startSession(w, assertion)
 	})
 }

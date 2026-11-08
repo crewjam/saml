@@ -44,7 +44,7 @@ func Example() {
 	})
 
 	http.HandleFunc("/saml/acs", func(w http.ResponseWriter, r *http.Request) {
-		login, err := tracker.Find(r)
+		login, err := tracker.Find(w, r)
 		if err != nil {
 			http.Error(w, "no login in progress; please sign in again", http.StatusBadRequest)
 			return
@@ -70,14 +70,14 @@ func Example() {
 
 // An ACS that also accepts IdP-initiated logins requires a matching request
 // only when the browser has a login in progress.
-func ExampleTracker_Take_unsolicited() {
+func ExampleTracker_Find_unsolicited() {
 	var (
 		config  *samlsp.Config
 		tracker *pending.Tracker
 	)
 	http.HandleFunc("/saml/acs", func(w http.ResponseWriter, r *http.Request) {
 		opts := []samlsp.ResponseOption{samlsp.AllowUnsolicited}
-		login, err := tracker.Take(w, r)
+		login, err := tracker.Find(w, r)
 		switch {
 		case err == nil:
 			opts = append(opts, samlsp.WithRequestID(login.ID))
@@ -92,6 +92,7 @@ func ExampleTracker_Take_unsolicited() {
 			http.Error(w, "login failed", http.StatusForbidden)
 			return
 		}
+		tracker.Forget(w, login) // does nothing for an unsolicited login
 		startSession(w, assertion)
 		http.Redirect(w, r, "/", http.StatusFound)
 	})

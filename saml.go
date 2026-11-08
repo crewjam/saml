@@ -102,7 +102,7 @@
 //
 //	// acs verifies the IDP's Response to the request this browser started.
 //	func acs(w http.ResponseWriter, r *http.Request) {
-//		login, err := tracker.Take(w, r)
+//		login, err := tracker.Find(w, r)
 //		if err != nil {
 //			http.Error(w, "no login in progress", http.StatusForbidden)
 //			return
@@ -112,6 +112,9 @@
 //			http.Error(w, "login failed", http.StatusForbidden)
 //			return
 //		}
+//		// The login is done: forget it only now, so that a junk Response
+//		// posted with this browser's RelayState cannot cancel it.
+//		tracker.Forget(w, login)
 //		// Start the application's own session here.
 //		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 //		fmt.Fprintf(w, "Hello, %s!\n", assertion.Subject)

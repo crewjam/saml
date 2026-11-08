@@ -171,12 +171,12 @@ func TestLogin(t *testing.T) {
 	r := acsRequest(form, w)
 
 	acsW := httptest.NewRecorder()
-	login, err := tr.Take(acsW, r)
+	login, err := take(tr, acsW, r)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if login.ID != msg.ID || login.RelayState != "state-1" || login.Data != "/reports?id=7" {
-		t.Errorf("Take = %+v, want ID %q", login, msg.ID)
+		t.Errorf("Find = %+v, want ID %q", login, msg.ID)
 	}
 	if _, err := cfg.ParseResponse(t.Context(), r, samlsp.WithRequestID(login.ID)); err != nil {
 		t.Fatal(err)
@@ -185,10 +185,10 @@ func TestLogin(t *testing.T) {
 	// The cookie is cleared, so the login is found once.
 	cleared := onlyCookie(t, acsW)
 	if cleared.MaxAge >= 0 || cleared.Value != "" || cleared.Path != "/saml/acs" {
-		t.Errorf("Take did not clear the cookie: %+v", cleared)
+		t.Errorf("Forget did not clear the cookie: %+v", cleared)
 	}
-	if _, err := tr.Take(httptest.NewRecorder(), acsRequest(form, acsW)); !errors.Is(err, pending.ErrNotFound) {
-		t.Errorf("second Take: err = %v, want ErrNotFound", err)
+	if _, err := take(tr, httptest.NewRecorder(), acsRequest(form, acsW)); !errors.Is(err, pending.ErrNotFound) {
+		t.Errorf("second Find: err = %v, want ErrNotFound", err)
 	}
 }
 
@@ -242,7 +242,7 @@ func TestRelayStates(t *testing.T) {
 		ids[s] = msg.ID
 	}
 	for _, s := range states {
-		login, err := tr.Take(httptest.NewRecorder(), acsRequest(url.Values{"RelayState": {s}}, browser))
+		login, err := take(tr, httptest.NewRecorder(), acsRequest(url.Values{"RelayState": {s}}, browser))
 		if err != nil {
 			t.Fatalf("RelayState %q: %v", s, err)
 		}
@@ -264,7 +264,7 @@ func TestInvalid(t *testing.T) {
 		for _, c := range cookies {
 			r.AddCookie(c)
 		}
-		_, err := tr.Take(httptest.NewRecorder(), r)
+		_, err := take(tr, httptest.NewRecorder(), r)
 		return err
 	}
 	// requestCookie is a cookie as the browser sends it, by name and value.
@@ -318,7 +318,7 @@ func TestExpiry(t *testing.T) {
 	_, w := remember(t, cfg, at(0), "s", "")
 	r := func() *http.Request { return acsRequest(url.Values{"RelayState": {"s"}}, w) }
 
-	login, err := at(5*time.Minute-time.Second).Take(httptest.NewRecorder(), r())
+	login, err := take(at(5*time.Minute-time.Second), httptest.NewRecorder(), r())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +328,7 @@ func TestExpiry(t *testing.T) {
 
 	// The browser should have dropped the cookie by now, but the server
 	// does not rely on that.
-	if _, err := at(5*time.Minute).Take(httptest.NewRecorder(), r()); !errors.Is(err, pending.ErrNotFound) {
+	if _, err := take(at(5*time.Minute), httptest.NewRecorder(), r()); !errors.Is(err, pending.ErrNotFound) {
 		t.Errorf("expired: err = %v, want ErrNotFound", err)
 	}
 }
@@ -408,16 +408,16 @@ func TestConcurrentLogins(t *testing.T) {
 		}
 		for _, s := range order {
 			w := httptest.NewRecorder()
-			login, err := tr.Take(w, browser.request(s))
+			login, err := take(tr, w, browser.request(s))
 			if err != nil {
 				t.Fatalf("%s: %v", s, err)
 			}
 			if login.ID != ids[s] || login.Data != "/"+s {
-				t.Errorf("%s: Take = %+v, want ID %q", s, login, ids[s])
+				t.Errorf("%s: Find = %+v, want ID %q", s, login, ids[s])
 			}
-			// Take clears its own slot only.
+			// Forget clears its own slot only.
 			if c := onlyCookie(t, w); c.MaxAge >= 0 {
-				t.Errorf("%s: Take set %+v", s, c)
+				t.Errorf("%s: set %+v", s, c)
 			}
 			browser.set(w)
 		}
@@ -443,13 +443,13 @@ func TestSameSlot(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	if _, err := tr.Take(w, browser.request(a)); !errors.Is(err, pending.ErrNotFound) {
+	if _, err := take(tr, w, browser.request(a)); !errors.Is(err, pending.ErrNotFound) {
 		t.Errorf("replaced login: err = %v, want ErrNotFound", err)
 	}
 	if n := len(w.Result().Cookies()); n != 0 {
-		t.Errorf("Take of the replaced login set %d cookies, want 0", n)
+		t.Errorf("Find of the replaced login set %d cookies, want 0", n)
 	}
-	login, err := tr.Take(httptest.NewRecorder(), browser.request(b))
+	login, err := take(tr, httptest.NewRecorder(), browser.request(b))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -477,16 +477,17 @@ func TestManyAbandoned(t *testing.T) {
 		if len(browser) > slots {
 			t.Errorf("%d slots: %d cookies", slots, len(browser))
 		}
-		login, err := tr.Take(httptest.NewRecorder(), browser.request(last.RelayState))
+		login, err := take(tr, httptest.NewRecorder(), browser.request(last.RelayState))
 		if err != nil || login.ID != last.ID {
-			t.Errorf("%d slots: Take = %+v, %v; want ID %q", slots, login, err, last.ID)
+			t.Errorf("%d slots: Find = %+v, %v; want ID %q", slots, login, err, last.ID)
 		}
 	}
 }
 
-// TestTakeClears checks that Take clears the slots of expired and invalid
-// logins, but not those of other logins in progress or other cookies.
-func TestTakeClears(t *testing.T) {
+// TestFindClears checks that Find clears the slots of expired and invalid
+// logins, and Forget the login's own, but not those of other logins in
+// progress or other cookies.
+func TestFindClears(t *testing.T) {
 	cfg, _ := newConfig(t)
 	start := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	at := func(d time.Duration) *pending.Tracker {
@@ -518,13 +519,13 @@ func TestTakeClears(t *testing.T) {
 
 	// "old" has expired when "taken" is taken; "live" has not.
 	w := httptest.NewRecorder()
-	if _, err := at(2*pending.DefaultMaxAge).Take(w, browser.request(names["taken"])); err != nil {
+	if _, err := take(at(2*pending.DefaultMaxAge), w, browser.request(names["taken"])); err != nil {
 		t.Fatal(err)
 	}
 	cleared := map[string]bool{}
 	for _, c := range w.Result().Cookies() {
 		if c.MaxAge >= 0 {
-			t.Errorf("Take set %+v", c)
+			t.Errorf("set %+v", c)
 		}
 		cleared[names[c.Name]] = true
 	}
@@ -540,9 +541,9 @@ func TestChangeSlots(t *testing.T) {
 	msg, w := remember(t, cfg, newTracker(t, cfg, pending.WithSlots(pending.MaxSlots), pending.WithMaxCookiesSize(pending.MaxSlots*512)), "s", "")
 	browser := jar{}
 	browser.set(w)
-	login, err := newTracker(t, cfg, pending.WithSlots(1)).Take(httptest.NewRecorder(), browser.request("s"))
+	login, err := take(newTracker(t, cfg, pending.WithSlots(1)), httptest.NewRecorder(), browser.request("s"))
 	if err != nil || login.ID != msg.ID {
-		t.Errorf("Take = %+v, %v; want ID %q", login, err, msg.ID)
+		t.Errorf("Find = %+v, %v; want ID %q", login, err, msg.ID)
 	}
 }
 
@@ -642,7 +643,7 @@ func TestKeyCopied(t *testing.T) {
 	}
 	_, w := remember(t, cfg, tr, "s", "")
 	key[0] ^= 1
-	if _, err := tr.Take(httptest.NewRecorder(), acsRequest(url.Values{"RelayState": {"s"}}, w)); err != nil {
+	if _, err := take(tr, httptest.NewRecorder(), acsRequest(url.Values{"RelayState": {"s"}}, w)); err != nil {
 		t.Error(err)
 	}
 }
@@ -722,4 +723,14 @@ func TestCookiesSizeBounded(t *testing.T) {
 	if len(header) > pending.DefaultMaxCookiesSize {
 		t.Fatalf("Cookie header of %d bytes, more than %d", len(header), pending.DefaultMaxCookiesSize)
 	}
+}
+
+// take finds the login of r, as an ACS does, and forgets it, writing the
+// cookies of both to w.
+func take(tr *pending.Tracker, w http.ResponseWriter, r *http.Request) (*pending.Login, error) {
+	login, err := tr.Find(w, r)
+	if err == nil {
+		tr.Forget(w, login)
+	}
+	return login, err
 }

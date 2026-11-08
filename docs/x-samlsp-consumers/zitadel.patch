@@ -32,7 +32,7 @@ index 9dcfd13..0bdc2d2 100644
  )
  
  var keyPair = func() tls.Certificate {
-@@ -86,8 +87,79 @@ FHHEZ+dR4eMaJp6PhNm8hu2O
+@@ -86,8 +87,86 @@ FHHEZ+dR4eMaJp6PhNm8hu2O
  	return kp
  }()
  
@@ -76,7 +76,13 @@ index 9dcfd13..0bdc2d2 100644
 +		http.Error(w, err.Error(), http.StatusInternalServerError)
 +		return
 +	}
-+	if err := s.tracker.Remember(w, msg, r.URL.RequestURI()); err != nil {
++	// The URL is the requester's to make long: keep it within the
++	// cookie's share of the Cookie header (pending.WithMaxCookiesSize).
++	returnTo := r.URL.RequestURI()
++	if len(returnTo) > 100 {
++		returnTo = "/"
++	}
++	if err := s.tracker.Remember(w, msg, returnTo); err != nil {
 +		http.Error(w, err.Error(), http.StatusInternalServerError)
 +		return
 +	}
@@ -84,7 +90,7 @@ index 9dcfd13..0bdc2d2 100644
 +}
 +
 +func (s *serviceProvider) acs(w http.ResponseWriter, r *http.Request) {
-+	login, err := s.tracker.Take(w, r)
++	login, err := s.tracker.Find(w, r)
 +	if err != nil {
 +		http.Error(w, err.Error(), http.StatusForbidden)
 +		return
@@ -94,6 +100,7 @@ index 9dcfd13..0bdc2d2 100644
 +		http.Error(w, err.Error(), http.StatusForbidden)
 +		return
 +	}
++	s.tracker.Forget(w, login)
 +	sessionID := rand.Text()
 +	s.mu.Lock()
 +	s.sessions[sessionID] = assertion.Attributes.Get("UserName")
@@ -114,7 +121,7 @@ index 9dcfd13..0bdc2d2 100644
  }
  
  func main() {
-@@ -99,37 +171,37 @@ func main() {
+@@ -99,37 +178,37 @@ func main() {
  	host := os.Getenv("HOST")
  	port := os.Getenv("PORT")
  
@@ -169,7 +176,7 @@ index 9dcfd13..0bdc2d2 100644
  	go func() {
  		if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
  			log.Fatalf("HTTP server error: %v", err)
-@@ -137,7 +209,7 @@ func main() {
+@@ -137,7 +216,7 @@ func main() {
  		log.Println("Stopped serving new connections.")
  	}()
  

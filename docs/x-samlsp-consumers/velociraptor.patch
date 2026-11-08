@@ -156,7 +156,7 @@ index 9689cbb..b0cba5e 100644
  	logger.Info("Authentication via SAML enabled")
  	return nil
  }
-@@ -115,44 +113,79 @@ func (self *SamlAuthenticator) AuthenticateUserHandler(
+@@ -115,44 +113,81 @@ func (self *SamlAuthenticator) AuthenticateUserHandler(
  	parent http.Handler,
  	permission acls.ACL_PERMISSION,
  ) http.Handler {
@@ -198,7 +198,8 @@ index 9689cbb..b0cba5e 100644
  		func(w http.ResponseWriter, r *http.Request) {
 -			w.Header().Set("X-CSRF-Token", csrf.Token(r))
 +			var opts []samlsp.ResponseOption
-+			if login, err := self.pending.Take(w, r); err == nil {
++			login, err := self.pending.Find(w, r)
++			if err == nil {
 +				opts = append(opts, samlsp.WithRequestID(login.ID))
 +			}
 +			if self.authenticator.SamlAllowIdpInitiated {
@@ -215,6 +216,7 @@ index 9689cbb..b0cba5e 100644
 +					errors.New("SAML login failed"))
  				return
  			}
++			self.pending.Forget(w, login) // nil for an IdP-initiated login
  
 -			sa, ok := session.(samlsp.SessionWithAttributes)
 -			if !ok {
@@ -257,7 +259,7 @@ index 9689cbb..b0cba5e 100644
  				http.Error(w,
  					fmt.Sprintf("authorization failed: %v", err),
  					http.StatusUnauthorized)
-@@ -160,56 +193,44 @@ func (self *SamlAuthenticator) AuthenticateUserHandler(
+@@ -160,56 +195,44 @@ func (self *SamlAuthenticator) AuthenticateUserHandler(
  			}
  			err = self.MaybeAssignRoles(r.Context(), username)
  			if err != nil {

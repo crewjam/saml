@@ -54,7 +54,7 @@ index 2ce7841..5942422 100644
  			ctx.Redirect(callbackSaml2, iris.StatusFound)
  		default:
  			ctx.StatusCode(iris.StatusInternalServerError)
-@@ -236,72 +248,120 @@ func (h *Handler) AuthSso() iris.Handler {
+@@ -236,72 +248,121 @@ func (h *Handler) AuthSso() iris.Handler {
  	}
  }
  
@@ -157,7 +157,7 @@ index 2ce7841..5942422 100644
 +		r := ctx.Request()
 +		// IdP-initiated logins were not allowed, so the Response must
 +		// answer a login started in this browser.
-+		login, err := sp.pending.Take(ctx.ResponseWriter(), r)
++		login, err := sp.pending.Find(ctx.ResponseWriter(), r)
 +		if err != nil {
 +			server.Logger().Errorf("SAML2 login failed: %s", err)
 +			ctx.StatusCode(iris.StatusForbidden)
@@ -171,6 +171,7 @@ index 2ce7841..5942422 100644
 +			ctx.Values().Set("message", "SAML2 login failed")
 +			return
 +		}
++		sp.pending.Forget(ctx.ResponseWriter(), login)
 +
 +		language := ctx.GetHeader("Accept-Language")
 +		if strings.Contains(language, "zh-CN") {
