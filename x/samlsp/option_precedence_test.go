@@ -36,7 +36,7 @@ func parseIDPInitiated(t *testing.T, opts []samlsp.Option, respOpts ...samlsp.Re
 		samlsp.WithSigningKey(key, cert),
 		samlsp.WithClock(dsig.NewFakeClockAt(fx.now)),
 	}, opts...)
-	cfg, err := samlsp.New(samlsp.StaticMetadataBytes(coreTestdata(t, fx.metadata)), fx.entityID, opts...)
+	cfg, err := samlsp.New(fx.entityID, samlsp.StaticMetadataBytes(coreTestdata(t, fx.metadata)), opts...)
 	if err != nil {
 		t.Fatal(err)
 	}

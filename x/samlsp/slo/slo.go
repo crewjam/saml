@@ -4,7 +4,7 @@
 // Configure the SP's single logout service with Endpoint when making the
 // Config, then use a Service:
 //
-//	config, err := samlsp.New(idp, entityID, samlsp.WithSigningKey(key, cert),
+//	config, err := samlsp.New(entityID, idp, samlsp.WithSigningKey(key, cert),
 //		slo.Endpoint("https://sp.example.com/saml/slo"))
 //	logout, err := slo.New(config)
 //	http.HandleFunc(logout.Path(), sloHandler)

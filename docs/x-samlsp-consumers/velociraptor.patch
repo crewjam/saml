@@ -95,7 +95,7 @@ index 9689cbb..05858ef 100644
 +	// The same entity ID and ACS URL that samlsp.Middleware derived from
 +	// saml_root_url, so the registration at the IdP does not change.
 +	rootURL := strings.TrimSuffix(self.authenticator.SamlRootUrl, "/")
-+	self.sp, err = samlsp.New(idpMetadata, rootURL+"/saml/metadata",
++	self.sp, err = samlsp.New(rootURL+"/saml/metadata", idpMetadata,
 +		samlsp.WithSigningKey(key, cert),
 +		samlsp.WithEncryptionKey(key, cert)) // as samlsp.Middleware did
  	if err != nil {

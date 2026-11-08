@@ -42,7 +42,8 @@ func exampleIDP() samlsp.MetadataFunc {
 // The entity ID is usually the URL of the SP metadata, and the other
 // ACS is beside it unless WithACSURL says otherwise.
 func ExampleNew() {
-	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata")
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, exampleIDP())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -53,7 +54,8 @@ func ExampleNew() {
 
 // Use WithACSURL when the ACS is elsewhere.
 func ExampleNew_customURLs() {
-	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, exampleIDP(),
 		samlsp.WithACSURL("https://sp.example.com/auth/saml/callback"))
 	if err != nil {
 		log.Fatal(err)
@@ -65,10 +67,11 @@ func ExampleNew_customURLs() {
 
 // An entity ID that is not a URL, such as a URN, needs WithACSURL.
 func ExampleNew_urnEntityID() {
-	_, err := samlsp.New(exampleIDP(), "urn:example:sp")
+	entityID := "urn:example:sp"
+	_, err := samlsp.New(entityID, exampleIDP())
 	fmt.Println(err)
 
-	config, err := samlsp.New(exampleIDP(), "urn:example:sp",
+	config, err := samlsp.New(entityID, exampleIDP(),
 		samlsp.WithACSURL("https://sp.example.com/saml/acs"))
 	if err != nil {
 		log.Fatal(err)
@@ -82,7 +85,8 @@ func ExampleNew_urnEntityID() {
 // ServeMetadata serves the SP metadata, which the IdP administrator needs
 // to register the SP. Serve it at the entity ID.
 func ExampleConfig_ServeMetadata() {
-	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata")
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, exampleIDP())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -100,7 +104,8 @@ func ExampleConfig_ServeMetadata() {
 // WithServiceProvider reaches settings of saml.ServiceProvider that have no
 // Option of their own. Passed to New, it applies to every call.
 func ExampleWithServiceProvider() {
-	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, exampleIDP(),
 		samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
 			// This IdP signs only its assertions and encrypts them with
 			// AES-CBC, which the default hardening refuses.
@@ -116,7 +121,8 @@ func ExampleWithServiceProvider() {
 // A ServiceProviderOption passed to a single call applies to that call
 // only, after the ones passed to New.
 func ExampleServiceProviderOption_perCall() {
-	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata")
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, exampleIDP())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -173,7 +179,8 @@ func (s sqlReplayState) Consume(ctx context.Context, key []byte, expiresAt time.
 func ExampleWithReplayState() {
 	var db *sql.DB // opened by the application
 
-	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, exampleIDP(),
 		samlsp.WithReplayState(sqlReplayState{db}))
 	if err != nil {
 		log.Fatal(err)
@@ -203,8 +210,8 @@ func ExampleNew_perRequest() {
 	var cookieKey []byte           // 32 or more random bytes, from the application's secrets
 
 	configFor := func(t *tenant) (*samlsp.Config, *pending.Tracker, error) {
-		config, err := samlsp.New(samlsp.StaticMetadata(t.idpMetadata),
-			"https://sp.example.com/t/"+t.name+"/saml/metadata", // the ACS is .../saml/acs
+		entityID := "https://sp.example.com/t/" + t.name + "/saml/metadata" // the ACS is .../saml/acs
+		config, err := samlsp.New(entityID, samlsp.StaticMetadata(t.idpMetadata),
 			samlsp.WithReplayState(accepted))
 		if err != nil {
 			return nil, nil, err
@@ -264,7 +271,8 @@ func ExampleNew_perRequest() {
 // call names the tenant's IdP. The pending login remembers the tenant, so
 // the ACS knows which IdP the Response must come from.
 func ExampleWithIdentityProvider() {
-	config, err := samlsp.New(nil, "https://sp.example.com/saml/metadata")
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, nil)
 	if err != nil {
 		log.Fatal(err)
 	}

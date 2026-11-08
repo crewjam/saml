@@ -72,7 +72,8 @@ func currentSession(*http.Request) (nameID saml.NameID, sessionIndexes []string,
 // Endpoint adds the SP's single logout service to the Config, and New
 // makes the Service that sends and receives logout messages.
 func Example() {
-	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, exampleIDP(),
 		samlsp.WithSigningKey(spKey, spCert), // logout messages are signed
 		slo.Endpoint("https://sp.example.com/saml/slo"))
 	if err != nil {
@@ -92,7 +93,8 @@ func Example() {
 // Request starts single logout at the IdP. End the local session first, so
 // the user is logged out of this SP even if the IdP never answers.
 func ExampleService_Request() {
-	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, exampleIDP(),
 		samlsp.WithSigningKey(spKey, spCert), slo.Endpoint("https://sp.example.com/saml/slo"))
 	if err != nil {
 		log.Fatal(err)
@@ -128,7 +130,8 @@ func ExampleService_Request() {
 // logout the SP started, and a LogoutRequest when the IdP starts logout
 // (for example, because the user logged out of another SP).
 func ExampleService_ParseRequest() {
-	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, exampleIDP(),
 		samlsp.WithSigningKey(spKey, spCert), slo.Endpoint("https://sp.example.com/saml/slo"))
 	if err != nil {
 		log.Fatal(err)
@@ -179,7 +182,8 @@ func ExampleService_ParseRequest() {
 // could be ended. Logout options mix with those of samlsp, such as
 // samlsp.WithBinding.
 func ExampleWithStatus() {
-	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, exampleIDP(),
 		samlsp.WithSigningKey(spKey, spCert), slo.Endpoint("https://sp.example.com/saml/slo"))
 	if err != nil {
 		log.Fatal(err)
@@ -209,7 +213,8 @@ func ExampleWithStatus() {
 // can do the same to the SP: ParseRequest accepts its SOAP LogoutRequests
 // at the SLO URL, and Response answers them.
 func ExampleService_SendRequest() {
-	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, exampleIDP(),
 		samlsp.WithSigningKey(spKey, spCert),
 		slo.Endpoint("https://sp.example.com/saml/slo", slo.BackChannel))
 	if err != nil {

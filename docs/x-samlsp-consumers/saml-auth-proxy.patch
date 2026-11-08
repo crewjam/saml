@@ -505,7 +505,7 @@ index 9747373..bcbe6eb 100644
 +	if cfg.SignRequests {
 +		samlOpts = append(samlOpts, samlsp.SignAuthnRequests)
 +	}
-+	sp, err := samlsp.New(idpMetadata, entityID, samlOpts...)
++	sp, err := samlsp.New(entityID, idpMetadata, samlOpts...)
  	if err != nil {
  		return fmt.Errorf("failed to initialize SP: %w", err)
  	}

@@ -135,7 +135,7 @@ func newTestConfigWithIDP(t *testing.T, ti *testIDP, idp samlsp.MetadataFunc, op
 	t.Helper()
 	key, cert := newKeyPair(t, "sp")
 	opts = append([]samlsp.Option{samlsp.WithSigningKey(key, cert)}, opts...)
-	cfg, err := samlsp.New(idp, spEntityID, opts...)
+	cfg, err := samlsp.New(spEntityID, idp, opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +330,7 @@ func TestAuthnRequestBindingErrors(t *testing.T) {
 	if _, err := cfg.AuthnRequest(t.Context(), "s", samlsp.WithBinding(saml.HTTPArtifactBinding)); err == nil {
 		t.Error("expected an error for an unsupported binding")
 	}
-	noKey, err := samlsp.New(staticIDP(ti), spEntityID)
+	noKey, err := samlsp.New(spEntityID, staticIDP(ti))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,13 +397,13 @@ func TestNewErrors(t *testing.T) {
 	ti := newTestIDP(t)
 	idp := staticIDP(ti)
 	for name, f := range map[string]func() (*samlsp.Config, error){
-		"no entity ID":     func() (*samlsp.Config, error) { return samlsp.New(idp, "") },
-		"URN, default ACS": func() (*samlsp.Config, error) { return samlsp.New(idp, "urn:example:sp") },
+		"no entity ID":     func() (*samlsp.Config, error) { return samlsp.New("", idp) },
+		"URN, default ACS": func() (*samlsp.Config, error) { return samlsp.New("urn:example:sp", idp) },
 		"relative ACS": func() (*samlsp.Config, error) {
-			return samlsp.New(idp, spEntityID, samlsp.WithACSURL("/saml/acs"))
+			return samlsp.New(spEntityID, idp, samlsp.WithACSURL("/saml/acs"))
 		},
-		"ACS without host": func() (*samlsp.Config, error) { return samlsp.New(idp, spEntityID, samlsp.WithACSURL("file:///acs")) },
-		"sign without key": func() (*samlsp.Config, error) { return samlsp.New(idp, spEntityID, samlsp.SignAuthnRequests) },
+		"ACS without host": func() (*samlsp.Config, error) { return samlsp.New(spEntityID, idp, samlsp.WithACSURL("file:///acs")) },
+		"sign without key": func() (*samlsp.Config, error) { return samlsp.New(spEntityID, idp, samlsp.SignAuthnRequests) },
 	} {
 		if _, err := f(); err == nil {
 			t.Errorf("%s: expected an error", name)
@@ -424,7 +424,7 @@ func TestNewURLs(t *testing.T) {
 		{"https://sp.example.com/saml/metadata", []samlsp.Option{samlsp.WithACSURL("https://sp.example.com/sso/consume")}, "https://sp.example.com/sso/consume"},
 		{"urn:example:sp", []samlsp.Option{samlsp.WithACSURL("https://sp.example.com/acs")}, "https://sp.example.com/acs"},
 	} {
-		cfg, err := samlsp.New(idp, tt.entityID, tt.opts...)
+		cfg, err := samlsp.New(tt.entityID, idp, tt.opts...)
 		if err != nil {
 			t.Errorf("%s: %v", tt.entityID, err)
 			continue

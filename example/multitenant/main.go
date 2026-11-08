@@ -96,7 +96,8 @@ func main() {
 // tenant's.
 func NewApp(db *DB, baseURL string, key *rsa.PrivateKey, cert *x509.Certificate) (*App, error) {
 	baseURL = strings.TrimSuffix(baseURL, "/")
-	config, err := samlsp.New(nil, baseURL+"/saml/metadata", // the ACS is at /saml/acs
+	entityID := baseURL + "/saml/metadata"   // the ACS is beside it, at /saml/acs
+	config, err := samlsp.New(entityID, nil, // each call names its tenant's IdP
 		samlsp.WithSigningKey(key, cert),
 		samlsp.WithEncryptionKey(key, cert), // for IdPs that encrypt assertions
 		samlsp.WithReplayState(db),

@@ -418,8 +418,8 @@ index 2a8c361..da41003 100644
 +	samlProvider.FormatSAMLProviderURLs(hostUrl)
 +
 +	return samlsp.New(
-+		samlsp.StaticMetadataBytes(samlProvider.MetadataXML),
 +		samlProvider.ServiceProviderIssuerURI.String(),
++		samlsp.StaticMetadataBytes(samlProvider.MetadataXML),
 +		samlsp.WithACSURL(samlProvider.ServiceProviderACSURI.String()),
 +		samlsp.WithSigningKey(spKey, spCert),
 +		samlsp.WithEncryptionKey(spKey, spCert), // as before, the IdP may encrypt to the SP key
@@ -846,7 +846,7 @@ index 0990048..e56de73 100644
  			require.NoError(t, req.ParseForm())
  
 -			validatedResponse, err := client.ParseResponse(saml.ServiceProvider{}, req, nil)
-+			config, err := samlsp.New(samlsp.StaticMetadataBytes(nil), "https://bloodhound.example/api/v2/sso/slug")
++			config, err := samlsp.New("https://bloodhound.example/api/v2/sso/slug", samlsp.StaticMetadataBytes(nil))
 +			require.NoError(t, err)
 +
 +			validatedResponse, err := client.ParseResponse(t.Context(), config, req, samlsp.AllowUnsolicited)

@@ -70,8 +70,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	config, err = samlsp.New(samlsp.StaticMetadataBytes(idpMetadata),
-		"http://localhost:8000/saml/metadata", // the entity ID; the ACS is at /saml/acs
+	entityID := "http://localhost:8000/saml/metadata" // the ACS is beside it, at /saml/acs
+	config, err = samlsp.New(entityID, samlsp.StaticMetadataBytes(idpMetadata),
 		samlsp.WithSigningKey(key, cert),
 		samlsp.WithEncryptionKey(key, cert), // for IdPs that encrypt assertions
 		slo.Endpoint("http://localhost:8000/saml/slo"))

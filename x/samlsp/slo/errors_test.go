@@ -37,7 +37,7 @@ func TestModifyErrors(t *testing.T) {
 func TestMetadataUnavailable(t *testing.T) {
 	key, cert := newKeyPair(t)
 	down := func(context.Context) (*saml.EntityDescriptor, error) { return nil, errors.New("metadata unavailable") }
-	cfg, err := samlsp.New(down, spEntityID, samlsp.WithSigningKey(key, cert), slo.Endpoint(spSLOURL, slo.BackChannel))
+	cfg, err := samlsp.New(spEntityID, down, samlsp.WithSigningKey(key, cert), slo.Endpoint(spSLOURL, slo.BackChannel))
 	if err != nil {
 		t.Fatal(err)
 	}

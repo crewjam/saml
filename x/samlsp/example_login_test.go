@@ -18,7 +18,8 @@ import (
 // AuthnRequest returns a Message to send the browser to the IdP with. By
 // default it uses HTTP-Redirect when the IdP supports it.
 func ExampleConfig_AuthnRequest() {
-	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata")
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, exampleIDP())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -44,7 +45,8 @@ func ExampleConfig_AuthnRequest() {
 // form's script, for an application whose Content-Security-Policy allows
 // scripts by nonce.
 func ExampleConfig_AuthnRequest_post() {
-	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata")
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, exampleIDP())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -72,7 +74,8 @@ func ExampleConfig_AuthnRequest_post() {
 // passed to ParseResponse too, it refuses an assertion that does not
 // satisfy it.
 func ExampleWithAuthnContext() {
-	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata")
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, exampleIDP())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -114,7 +117,8 @@ func ExampleWithAuthnContextComparator() {
 		samlsp.AuthnContextMobileTwoFactorContract:    3,
 		samlsp.AuthnContextSmartcardPKI:               4,
 	}
-	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, exampleIDP(),
 		samlsp.WithAuthnContextComparator(func(comparison samlsp.AuthnContextComparison, requested []samlsp.AuthnContextClass, got samlsp.AuthnContextClass) bool {
 			if comparison != samlsp.ComparisonMinimum {
 				return false
@@ -136,7 +140,8 @@ func ExampleWithAuthnContextComparator() {
 // ParseResponse verifies the Response at the ACS. Its errors come from
 // package saml and can be told apart with errors.Is and errors.As.
 func ExampleConfig_ParseResponse() {
-	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata")
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, exampleIDP())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -175,7 +180,8 @@ func ExampleConfig_ParseResponse() {
 // AuthnRequest (IdP-initiated login), such as from an IdP's app launcher.
 // Their RelayState is not ours, so redirect only to a known local path.
 func ExampleConfig_ParseResponse_unsolicited() {
-	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata")
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, exampleIDP())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -204,7 +210,8 @@ func ExampleConfig_ParseResponse_unsolicited() {
 // without showing them anything. If not, the IdP answers with the status
 // NoPassive.
 func Example_passiveLogin() {
-	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata")
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, exampleIDP())
 	if err != nil {
 		log.Fatal(err)
 	}

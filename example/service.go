@@ -228,10 +228,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	config, err = samlsp.New(
-		// Metadata is accepted only if the IdP's certificate signed it.
-		samlsp.RemoteMetadata(*idpMetadataURL, samlsp.WithMetadataSigners(idpCert)),
-		strings.TrimSuffix(*rootURLstr, "/")+"/saml/metadata",
+	entityID := strings.TrimSuffix(*rootURLstr, "/") + "/saml/metadata"
+	// Metadata is accepted only if the IdP's certificate signed it.
+	idp := samlsp.RemoteMetadata(*idpMetadataURL, samlsp.WithMetadataSigners(idpCert))
+	config, err = samlsp.New(entityID, idp,
 		samlsp.WithSigningKey(key, cert),
 		samlsp.WithEncryptionKey(key, cert))
 	if err != nil {

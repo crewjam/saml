@@ -12,8 +12,8 @@ import (
 func ExampleNewMemory() {
 	accepted := replay.NewMemory()
 	for _, tenant := range []string{"acme", "globex"} {
-		config, err := samlsp.New(samlsp.StaticMetadataBytes(idpMetadata(tenant)),
-			"https://"+tenant+".example.com/saml/metadata",
+		entityID := "https://" + tenant + ".example.com/saml/metadata"
+		config, err := samlsp.New(entityID, samlsp.StaticMetadataBytes(idpMetadata(tenant)),
 			samlsp.WithReplayState(accepted))
 		if err != nil {
 			log.Fatal(err)

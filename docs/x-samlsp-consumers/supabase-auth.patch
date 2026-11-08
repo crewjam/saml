@@ -133,7 +133,7 @@ index 5eb762b..b133bcf 100644
  
 +	// The metadata is at <base>/sso/[<id>/]saml/metadata and the ACS
 +	// beside it at .../saml/acs, as samlsp.DefaultServiceProvider had them.
-+	return samlsp.New(nil, u.String()+"saml/metadata", opts...)
++	return samlsp.New(u.String()+"saml/metadata", nil, opts...)
 +}
 +
 +// adjustSAMLMetadata adjusts GoTrue's SP metadata.

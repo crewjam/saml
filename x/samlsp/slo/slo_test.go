@@ -113,7 +113,7 @@ func newService(t *testing.T, ti *testIDP, endpointOpts []slo.EndpointOption, op
 	key, cert := newKeyPair(t)
 	idp := func(context.Context) (*saml.EntityDescriptor, error) { return ti.idp.Metadata(), nil }
 	opts = append([]samlsp.Option{samlsp.WithSigningKey(key, cert), slo.Endpoint(spSLOURL, endpointOpts...)}, opts...)
-	cfg, err := samlsp.New(idp, spEntityID, opts...)
+	cfg, err := samlsp.New(spEntityID, idp, opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,11 +430,11 @@ func TestConfiguration(t *testing.T) {
 		"relative URL":         {samlsp.WithSigningKey(key, cert), slo.Endpoint("/slo")},
 		"back channel, no key": {slo.Endpoint(spSLOURL, slo.BackChannel)},
 	} {
-		if _, err := samlsp.New(idp, spEntityID, opts...); err == nil {
+		if _, err := samlsp.New(spEntityID, idp, opts...); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
 	}
-	plain, err := samlsp.New(idp, spEntityID, samlsp.WithSigningKey(key, cert))
+	plain, err := samlsp.New(spEntityID, idp, samlsp.WithSigningKey(key, cert))
 	if err != nil {
 		t.Fatal(err)
 	}

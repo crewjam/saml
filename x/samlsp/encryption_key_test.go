@@ -82,7 +82,7 @@ func TestWithEncryptionKeyErrors(t *testing.T) {
 		"no key":     samlsp.WithEncryptionKey(nil, encCert),
 		"mismatched": samlsp.WithEncryptionKey(otherKey, encCert),
 	} {
-		if _, err := samlsp.New(staticIDP(ti), spEntityID, opt); err == nil {
+		if _, err := samlsp.New(spEntityID, staticIDP(ti), opt); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
 	}
@@ -115,7 +115,7 @@ func TestDecryptionKeysForRotation(t *testing.T) {
 	}
 
 	sigKey, sigCert := newKeyPair(t, "signing")
-	rotated, err := samlsp.New(staticIDP(ti), spEntityID, samlsp.WithSigningKey(sigKey, sigCert),
+	rotated, err := samlsp.New(spEntityID, staticIDP(ti), samlsp.WithSigningKey(sigKey, sigCert),
 		samlsp.WithEncryptionKey(newKey, newCert), samlsp.WithDecryptionKeys(oldKey))
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestDecryptionKeysForRotation(t *testing.T) {
 		t.Errorf("with the old key kept: %v (%v)", err, errors.Unwrap(err))
 	}
 
-	forgot, err := samlsp.New(staticIDP(ti), spEntityID, samlsp.WithSigningKey(sigKey, sigCert),
+	forgot, err := samlsp.New(spEntityID, staticIDP(ti), samlsp.WithSigningKey(sigKey, sigCert),
 		samlsp.WithEncryptionKey(newKey, newCert))
 	if err != nil {
 		t.Fatal(err)

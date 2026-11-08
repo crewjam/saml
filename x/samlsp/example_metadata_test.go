@@ -49,10 +49,10 @@ func t0() context.Context { return context.Background() }
 // again when it gets stale, which picks up rotated signing certificates.
 func ExampleRemoteMetadata() {
 	config, err := samlsp.New(
+		"https://sp.example.com/saml/metadata",
 		samlsp.RemoteMetadata("https://idp.example.com/metadata",
 			samlsp.WithHTTPClient(&http.Client{Timeout: 10 * time.Second}),
-			samlsp.WithRefreshInterval(6*time.Hour)),
-		"https://sp.example.com/saml/metadata")
+			samlsp.WithRefreshInterval(6*time.Hour)))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -69,7 +69,8 @@ func ExampleRemoteMetadata_federation() {
 		samlsp.WithIdentityProviderEntityID("https://idp.university.example.edu/idp/shibboleth"),
 		samlsp.WithMetadataSigners(federationCert))
 
-	config, err := samlsp.New(idp, "https://sp.example.com/saml/metadata")
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, idp)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -85,7 +86,8 @@ func ExampleStaticMetadataBytes() {
   </IDPSSODescriptor>
 </EntityDescriptor>`)
 
-	config, err := samlsp.New(samlsp.StaticMetadataBytes(data), "https://sp.example.com/saml/metadata")
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, samlsp.StaticMetadataBytes(data))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -104,7 +106,8 @@ func ExampleStaticMetadataBytes_file() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	config, err := samlsp.New(samlsp.StaticMetadataBytes(data), "https://sp.example.com/saml/metadata")
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, samlsp.StaticMetadataBytes(data))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -130,7 +133,8 @@ func ExampleMetadataFunc() {
 		return md(ctx)
 	}
 
-	config, err := samlsp.New(idp, "https://sp.example.com/saml/metadata")
+	entityID := "https://sp.example.com/saml/metadata"
+	config, err := samlsp.New(entityID, idp)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -160,8 +164,8 @@ func ExampleWithHTTPClient() {
 	var mtlsClient *http.Client // configured with the SP's client certificate
 
 	config, err := samlsp.New(
-		samlsp.RemoteMetadata("https://idp.example.com/metadata", samlsp.WithHTTPClient(mtlsClient)),
 		"https://sp.example.com/saml/metadata",
+		samlsp.RemoteMetadata("https://idp.example.com/metadata", samlsp.WithHTTPClient(mtlsClient)),
 		samlsp.WithSigningKey(spKey, spCert),
 		samlsp.WithHTTPClient(mtlsClient))
 	if err != nil {

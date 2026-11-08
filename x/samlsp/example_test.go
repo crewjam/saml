@@ -20,8 +20,8 @@ func Example() {
 	)
 
 	config, err := samlsp.New(
-		samlsp.RemoteMetadata("https://idp.example.com/metadata"),
-		"https://sp.example.com/saml/metadata", // the ACS is at https://sp.example.com/saml/acs
+		"https://sp.example.com/saml/metadata",
+		samlsp.RemoteMetadata("https://idp.example.com/metadata"), // the ACS is at https://sp.example.com/saml/acs
 		samlsp.WithSigningKey(key, cert),
 	)
 	if err != nil {

@@ -60,11 +60,11 @@ func TestWithSignatureMethodErrors(t *testing.T) {
 		"SHA-1":       {samlsp.WithSigningKey(rsaKey, rsaCert), samlsp.WithSignatureMethod(dsig.RSASHA1SignatureMethod)},
 		"unknown":     {samlsp.WithSigningKey(rsaKey, rsaCert), samlsp.WithSignatureMethod("rot13")},
 	} {
-		if _, err := samlsp.New(staticIDP(ti), spEntityID, opts...); err == nil {
+		if _, err := samlsp.New(spEntityID, staticIDP(ti), opts...); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
 	}
-	if _, err := samlsp.New(staticIDP(ti), spEntityID, samlsp.WithSigningKey(ecKey, ecCert),
+	if _, err := samlsp.New(spEntityID, staticIDP(ti), samlsp.WithSigningKey(ecKey, ecCert),
 		samlsp.WithSignatureMethod(dsig.ECDSASHA384SignatureMethod)); err != nil {
 		t.Errorf("ECDSA-SHA384 with an EC key: %v", err)
 	}

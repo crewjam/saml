@@ -107,7 +107,7 @@ func TestWithCheckAndOptions(t *testing.T) {
 	ti := newTestIDP(t)
 	refuse := errors.New("refused")
 	var seen *saml.ServiceProvider
-	_, err := samlsp.New(staticIDP(ti), spEntityID,
+	_, err := samlsp.New(spEntityID, staticIDP(ti),
 		samlsp.Options(
 			samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) { sp.AllowIDPInitiated = true }),
 			samlsp.WithCheck(func(sp *saml.ServiceProvider) error { seen = sp; return nil }),
@@ -118,7 +118,7 @@ func TestWithCheckAndOptions(t *testing.T) {
 	if seen == nil || !seen.AllowIDPInitiated {
 		t.Error("the check did not see the ServiceProviderOptions")
 	}
-	if _, err := samlsp.New(staticIDP(ti), spEntityID, samlsp.WithCheck(func(*saml.ServiceProvider) error { return refuse })); !errors.Is(err, refuse) {
+	if _, err := samlsp.New(spEntityID, staticIDP(ti), samlsp.WithCheck(func(*saml.ServiceProvider) error { return refuse })); !errors.Is(err, refuse) {
 		t.Errorf("err = %v", err)
 	}
 }

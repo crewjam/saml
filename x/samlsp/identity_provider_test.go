@@ -113,7 +113,7 @@ func TestNoIdentityProvider(t *testing.T) {
 // tenant of an unsolicited Response by its Issuer, then verifies the
 // Response against that tenant's IdP.
 func ExamplePeekIssuer() {
-	config, err := samlsp.New(nil, "https://sp.example.com/saml/metadata")
+	config, err := samlsp.New("https://sp.example.com/saml/metadata", nil)
 	if err != nil {
 		log.Fatal(err)
 	}

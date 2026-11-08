@@ -1,29 +1,21 @@
-// Package samlsp is an experimental, minimal API for implementing a SAML 2.0
-// service provider (SP) with the Web Browser SSO profile.
-//
-// It is a thin layer over saml.ServiceProvider that builds AuthnRequests,
-// verifies Responses, and serves the SP metadata. Single logout is in
-// github.com/crewjam/saml/x/samlsp/slo. Sessions are the application's;
-// github.com/crewjam/saml/x/samlsp/pending keeps the one piece of state
-// every login needs, the ID of the request in progress, in a cookie. For a
-// ready-made middleware with sessions, see github.com/crewjam/saml/samlsp.
-//
-// The shape of the API follows golang.org/x/oauth2 and
-// github.com/coreos/go-oidc: a Config made once with New, a function that
-// supplies the identity provider's metadata, functional options per call,
-// and verified results as plain structs.
+// Package samlsp implements the SAML 2.0 Web Browser SSO profile
+// (saml-profiles §4.1) for a service provider (SP): it builds
+// AuthnRequests, verifies the identity provider's Responses, and serves
+// the SP metadata. Single logout is in github.com/crewjam/saml/x/samlsp/slo.
+// Sessions are the application's; github.com/crewjam/saml/x/samlsp/pending
+// keeps the one piece of state every login needs, the ID of the request in
+// progress, in a cookie.
 //
 // # Setup
 //
-//	config, err := samlsp.New(
-//		samlsp.RemoteMetadata("https://idp.example.com/metadata"),
-//		"https://sp.example.com/saml/metadata", // the SP's entity ID
-//		samlsp.WithSigningKey(key, cert),
-//	)
+//	entityID := "https://sp.example.com/saml/metadata"
+//	idp := samlsp.RemoteMetadata("https://idp.example.com/metadata")
+//	config, err := samlsp.New(entityID, idp, samlsp.WithSigningKey(key, cert))
 //	http.HandleFunc(config.MetadataPath(), config.ServeMetadata)
 //	http.HandleFunc(config.ACSPath(), acs)
 //
-// The entity ID is conventionally the URL of the SP metadata. Unless
+// The entity ID names the SP to the IdP. It is conventionally the URL of
+// the SP metadata. Unless
 // WithACSURL says otherwise, the ACS is beside it, at "acs": here,
 // https://sp.example.com/saml/acs. MetadataPath and ACSPath return the
 // paths of those URLs, so that the handlers are served where the IdP
@@ -32,7 +24,7 @@
 // The key of WithSigningKey signs. The IdP can encrypt assertions only to
 // the key of WithEncryptionKey, which may be the same RSA key.
 //
-// The first argument is a MetadataFunc that supplies the identity
+// The second argument is a MetadataFunc that supplies the identity
 // provider's metadata. The methods that deal with the IdP call it with
 // their context; those that only describe the SP, such as ServeMetadata,
 // do not. RemoteMetadata fetches and caches metadata from a URL, StaticMetadata and
@@ -55,7 +47,7 @@
 // method builds. Pass it to New for every call, or to a single call
 // alongside its other options:
 //
-//	config, err := samlsp.New(idp, entityID, samlsp.WithSigningKey(key, cert), samlsp.SignMetadata)
+//	config, err := samlsp.New(entityID, idp, samlsp.WithSigningKey(key, cert), samlsp.SignMetadata)
 //	config.ParseResponse(ctx, r, samlsp.WithRequestID(id), samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
 //		sp.ValidateAudienceRestriction = func(*saml.Assertion) error { return nil }
 //	}))

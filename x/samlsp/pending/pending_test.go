@@ -89,7 +89,7 @@ func newConfig(t *testing.T, opts ...samlsp.Option) (*samlsp.Config, *testIDP) {
 	}
 	key, cert := newKeyPair(t)
 	idp := func(context.Context) (*saml.EntityDescriptor, error) { return ti.idp.Metadata(), nil }
-	cfg, err := samlsp.New(idp, entityID, append([]samlsp.Option{samlsp.WithSigningKey(key, cert)}, opts...)...)
+	cfg, err := samlsp.New(entityID, idp, append([]samlsp.Option{samlsp.WithSigningKey(key, cert)}, opts...)...)
 	if err != nil {
 		t.Fatal(err)
 	}

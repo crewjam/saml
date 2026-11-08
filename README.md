@@ -15,7 +15,7 @@ The core package contains the implementation of SAML. Service providers should u
 
 ## Getting Started as a Service Provider
 
-New service providers should use `github.com/crewjam/saml/x/samlsp`. It is a thin layer over `saml.ServiceProvider` shaped after `golang.org/x/oauth2` and `go-oidc`: it builds requests, verifies responses and serves the SP metadata, and the application keeps its own sessions. It lives under `x/` while its API settles.
+New service providers should use `github.com/crewjam/saml/x/samlsp`. It implements the SAML Web Browser SSO profile: it builds requests, verifies responses and serves the SP metadata, and the application keeps its own sessions. It lives under `x/` while its API settles.
 
 Each service provider must have an self-signed X.509 key pair established. You can generate your own with something like this:
 
@@ -73,8 +73,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	config, err = samlsp.New(samlsp.StaticMetadataBytes(idpMetadata),
-		"http://localhost:8000/saml/metadata", // the entity ID; the ACS is beside it, at /saml/acs
+	entityID := "http://localhost:8000/saml/metadata" // the ACS is beside it, at /saml/acs
+	config, err = samlsp.New(entityID, samlsp.StaticMetadataBytes(idpMetadata),
 		samlsp.WithSigningKey(key, cert),
 		samlsp.WithEncryptionKey(key, cert)) // so that the IDP can encrypt assertions
 	if err != nil {
@@ -184,7 +184,7 @@ Attributes the IDP encrypts (`EncryptedAttribute`) are decrypted with the key of
 Single logout is in `github.com/crewjam/saml/x/samlsp/slo`. Configure the SP's SLO endpoint when making the Config, and keep the NameID and session indexes of each login:
 
 ```golang
-config, err := samlsp.New(idp, entityID,
+config, err := samlsp.New(entityID, idp,
 	samlsp.WithSigningKey(key, cert), // logout messages are signed
 	slo.Endpoint("http://localhost:8000/saml/slo"))
 logout, err := slo.New(config)
@@ -245,7 +245,7 @@ Each accepted assertion (and logout request) is recorded until it expires, and r
 Some IDPs need a check relaxed. Microsoft Entra ID with token encryption, and Okta with an encrypted assertion, sign the assertion but not the Response, and encrypt with AES-CBC; older IDPs sign with SHA-1. Relax only the check the IDP needs:
 
 ```golang
-config, err := samlsp.New(idp, entityID, samlsp.WithSigningKey(key, cert),
+config, err := samlsp.New(entityID, idp, samlsp.WithSigningKey(key, cert),
 	samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
 		sp.RequireSignedResponseForCBC = false // this IDP signs only assertions
 	}))

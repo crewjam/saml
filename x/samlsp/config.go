@@ -52,7 +52,8 @@ type Config struct {
 	metadataHooks []func(*saml.EntityDescriptor)
 }
 
-// New returns a Config for the service provider entityID.
+// New returns a Config for the service provider entityID, which trusts
+// the identity provider whose metadata identityProvider supplies.
 //
 // identityProvider supplies the metadata of the IdP that the SP trusts.
 // It is called with the context of each method. See RemoteMetadata,
@@ -79,7 +80,7 @@ type Config struct {
 // with WithReplayState, such as one replay.NewMemory or a database table.
 // When only the IdP differs per tenant, one Config with
 // WithIdentityProvider serves them all.
-func New(identityProvider MetadataFunc, entityID string, opts ...Option) (*Config, error) {
+func New(entityID string, identityProvider MetadataFunc, opts ...Option) (*Config, error) {
 	if entityID == "" {
 		return nil, errors.New("samlsp: the entity ID is empty")
 	}

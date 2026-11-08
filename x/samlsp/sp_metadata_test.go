@@ -83,7 +83,7 @@ func TestSPMetadataAdditionsSigned(t *testing.T) {
 	ti := newTestIDP(t)
 	key, cert := newKeyPair(t, "sp")
 	opts := append(spMetadataOptions(), samlsp.WithSigningKey(key, cert), samlsp.SignMetadata)
-	cfg, err := samlsp.New(staticIDP(ti), spEntityID, opts...)
+	cfg, err := samlsp.New(spEntityID, staticIDP(ti), opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestSPMetadataAdditionsErrors(t *testing.T) {
 		"bad contact":     {samlsp.WithContactPerson(saml.ContactPerson{ContactType: "sales"})},
 		"thin org":        {samlsp.WithOrganization(saml.Organization{OrganizationNames: testOrganization.OrganizationNames})},
 	} {
-		if _, err := samlsp.New(staticIDP(ti), spEntityID, opts...); err == nil {
+		if _, err := samlsp.New(spEntityID, staticIDP(ti), opts...); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
 	}

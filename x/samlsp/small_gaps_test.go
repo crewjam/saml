@@ -72,13 +72,13 @@ func TestServeMetadataSigningFails(t *testing.T) {
 	ti := newTestIDP(t)
 
 	// SignMetadata without a key is refused at once.
-	if _, err := samlsp.New(staticIDP(ti), spEntityID, samlsp.SignMetadata); err == nil {
+	if _, err := samlsp.New(spEntityID, staticIDP(ti), samlsp.SignMetadata); err == nil {
 		t.Error("SignMetadata without a key was accepted")
 	}
 
 	// A key that fails when it signs: the metadata endpoint answers 500.
 	key, cert := newKeyPair(t, "sp")
-	cfg, err := samlsp.New(staticIDP(ti), spEntityID, samlsp.WithSigningKey(failingSigner{key}, cert), samlsp.SignMetadata)
+	cfg, err := samlsp.New(spEntityID, staticIDP(ti), samlsp.WithSigningKey(failingSigner{key}, cert), samlsp.SignMetadata)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,7 +8,7 @@
 // Binding with samlsp.WithCustomBinding to Config.AuthnRequest, or to the
 // messages of github.com/crewjam/saml/x/samlsp/slo:
 //
-//	config, err := samlsp.New(idp, entityID, samlsp.WithSigningKey(key, cert),
+//	config, err := samlsp.New(entityID, idp, samlsp.WithSigningKey(key, cert),
 //		artifact.ResolutionService("https://sp.example.com/saml/artifact", 1))
 //	binding := artifact.New(config, artifact.NewMemoryStore(), 1)
 //	http.Handle(binding.Path(), binding)

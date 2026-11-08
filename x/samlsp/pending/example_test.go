@@ -17,8 +17,8 @@ import (
 // RelayState.
 func Example() {
 	config, err := samlsp.New(
-		samlsp.RemoteMetadata("https://idp.example.com/metadata"),
 		"https://sp.example.com/saml/metadata",
+		samlsp.RemoteMetadata("https://idp.example.com/metadata"),
 	)
 	if err != nil {
 		log.Fatal(err)

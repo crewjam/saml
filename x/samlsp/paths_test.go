@@ -20,7 +20,7 @@ func TestPaths(t *testing.T) {
 		{"https://sp.example.com/saml/metadata", []samlsp.Option{samlsp.WithACSURL("https://sp.example.com/auth/callback")}, "/saml/metadata", "/auth/callback"},
 		{"urn:example:sp", []samlsp.Option{samlsp.WithACSURL("https://sp.example.com/saml/acs")}, "", "/saml/acs"},
 	} {
-		cfg, err := samlsp.New(staticIDP(ti), tt.entityID, tt.opts...)
+		cfg, err := samlsp.New(tt.entityID, staticIDP(ti), tt.opts...)
 		if err != nil {
 			t.Fatal(err)
 		}

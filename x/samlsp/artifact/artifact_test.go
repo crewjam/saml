@@ -253,7 +253,7 @@ func setup(t *testing.T) (*fakeIDP, *samlsp.Config, *artifact.Binding, *artifact
 	idpKey, idpCert := keyPair(t)
 	idp := &fakeIDP{key: idpKey, cert: idpCert}
 	spKey, spCert := keyPair(t)
-	cfg, err := samlsp.New(samlsp.StaticMetadata(idp.metadata()), spEntityID,
+	cfg, err := samlsp.New(spEntityID, samlsp.StaticMetadata(idp.metadata()),
 		samlsp.WithSigningKey(spKey, spCert), samlsp.SignAuthnRequests,
 		slo.Endpoint("https://sp.example.com/saml/slo"),
 		artifact.ResolutionService(arsURL, 3))
@@ -550,9 +550,9 @@ func TestResolveFailures(t *testing.T) {
 	// The IdP's metadata cannot be had when the request comes.
 	idp, _, _, _, _ := setup(t)
 	spKey, spCert := keyPair(t)
-	down, err := samlsp.New(func(context.Context) (*saml.EntityDescriptor, error) {
+	down, err := samlsp.New(spEntityID, func(context.Context) (*saml.EntityDescriptor, error) {
 		return nil, errors.New("metadata unavailable")
-	}, spEntityID, samlsp.WithSigningKey(spKey, spCert))
+	}, samlsp.WithSigningKey(spKey, spCert))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -570,7 +570,7 @@ func TestIdentityProviderPerCall(t *testing.T) {
 	idpKey, idpCert := keyPair(t)
 	idp := &fakeIDP{key: idpKey, cert: idpCert}
 	spKey, spCert := keyPair(t)
-	cfg, err := samlsp.New(nil, spEntityID, samlsp.WithSigningKey(spKey, spCert),
+	cfg, err := samlsp.New(spEntityID, nil, samlsp.WithSigningKey(spKey, spCert),
 		artifact.ResolutionService(arsURL, 3))
 	if err != nil {
 		t.Fatal(err)
@@ -611,7 +611,7 @@ func TestResolutionServiceChecks(t *testing.T) {
 		"no signing key": {artifact.ResolutionService(arsURL, 1)},
 		"relative URL":   {samlsp.WithSigningKey(key, cert), artifact.ResolutionService("/saml/artifact", 1)},
 	} {
-		if _, err := samlsp.New(samlsp.StaticMetadata(idp.metadata()), spEntityID, opts...); err == nil {
+		if _, err := samlsp.New(spEntityID, samlsp.StaticMetadata(idp.metadata()), opts...); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
