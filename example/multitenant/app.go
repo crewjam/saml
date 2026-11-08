@@ -158,10 +158,10 @@ func (a *App) acs(w http.ResponseWriter, r *http.Request) {
 	a.db.AddSession(s)
 	a.setCookie(w, sessionCookie, s.ID, "/", int(time.Until(expires)/time.Second), false)
 
-	if !saferedirect.IsSafe(redirectTo) {
+	if !isLocalPath(redirectTo) {
 		redirectTo = "/"
 	}
-	http.Redirect(w, r, redirectTo, http.StatusFound) //nolint:gosec // G710: redirectTo passed saferedirect.IsSafe
+	http.Redirect(w, r, redirectTo, http.StatusFound) //nolint:gosec // G710: redirectTo passed isLocalPath
 }
 
 // loginInProgress returns the options that ParseResponse needs for the
@@ -319,6 +319,17 @@ func (a *App) setCookie(w http.ResponseWriter, name, value, path string, maxAge 
 		c.SameSite = http.SameSiteLaxMode
 	}
 	http.SetCookie(w, c)
+}
+
+// isLocalPath reports whether p, a return path from the request, is safe
+// to redirect to (see saferedirect.IsSafe). It repeats the checks of the
+// start of p that saferedirect.IsSafe makes, so that static analyzers,
+// which may not look into another package, see the redirect guarded.
+func isLocalPath(p string) bool {
+	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.HasPrefix(p, "/\\") {
+		return false
+	}
+	return saferedirect.IsSafe(p)
 }
 
 // mustParseURL parses a URL known to be valid.
