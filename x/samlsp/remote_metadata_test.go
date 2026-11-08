@@ -383,10 +383,10 @@ func TestWithRefreshIntervalNotPositive(t *testing.T) {
 // TestMDQMetadataKeepsOptions checks that MDQMetadata does not write into
 // the caller's slice of options.
 func TestMDQMetadataKeepsOptions(t *testing.T) {
-	opts := make([]MetadataOption, 1, 2)
-	opts[0] = WithRefreshInterval(time.Minute)
-	MDQMetadata("https://mdq.example.com", "https://idp.example.com/metadata", opts...)
-	if extra := opts[:2][1]; extra != nil {
+	backing := make([]MetadataOption, 2)
+	backing[0] = WithRefreshInterval(time.Minute)
+	MDQMetadata("https://mdq.example.com", "https://idp.example.com/metadata", backing[:1]...)
+	if backing[1] != nil {
 		t.Error("MDQMetadata appended to the caller's options")
 	}
 }
