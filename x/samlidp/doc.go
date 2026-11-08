@@ -36,8 +36,16 @@
 //	config, err := samlidp.New(entityID, sps, samlidp.WithSigningKey(key, cert),
 //		samlidp.SignMetadata,
 //		samlidp.WithIdentityProvider(func(idp *saml.IdentityProvider) {
-//			idp.AssertionEncrypter = xmlenc.OAEP()
+//			enc := xmlenc.OAEP_SHA256()
+//			enc.BlockCipher = xmlenc.AES256GCM
+//			idp.AssertionEncrypter = enc
 //		}))
+//
+// Assertions are encrypted for SPs whose metadata publishes an encryption
+// certificate, only with AES-GCM and with RSA-OAEP key transport using
+// SHA-256: the IdP refuses to encrypt to an SP whose metadata lists only
+// AES-CBC, or only SHA-1 key transport, unless New is passed
+// EnableInsecureAESCBC or EnableInsecureRSAOAEPSHA1.
 //
 // # Web Browser SSO
 //

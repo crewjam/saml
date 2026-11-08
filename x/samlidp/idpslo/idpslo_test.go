@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"math/big"
@@ -588,6 +589,16 @@ func TestEncryptedNameID(t *testing.T) {
 	}
 	if strings.Contains(toSP2.FormValues()["SAMLRequest"], "alice") {
 		t.Fatal("not encrypted")
+	}
+	// With the encryption policy of package samlidp: no SHA-1, no CBC.
+	raw, err := base64.StdEncoding.DecodeString(toSP2.FormValues()["SAMLRequest"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"http://www.w3.org/2009/xmlenc11#rsa-oaep"`, `"http://www.w3.org/2009/xmlenc11#aes256-gcm"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("the EncryptedID does not use %s", want)
+		}
 	}
 	sp2req, err := w.sps[1].slo.ParseRequest(ctx, deliver(t, toSP2))
 	if err != nil {

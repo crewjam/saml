@@ -18,6 +18,17 @@ import (
 // the Response, its XML, and the SP's verdict on it.
 func (p *pair) respond(t *testing.T, subject samlidp.Subject, opts ...samlidp.ResponseOption) (*samlidp.Message, *etree.Element, *samlsp.Assertion, error) {
 	t.Helper()
+	resp, root, a, err := p.tryRespond(t, subject, opts...)
+	if resp == nil {
+		t.Fatal(err)
+	}
+	return resp, root, a, err
+}
+
+// tryRespond is respond, but returns the error of Response, with a nil
+// Message, instead of failing the test.
+func (p *pair) tryRespond(t *testing.T, subject samlidp.Subject, opts ...samlidp.ResponseOption) (*samlidp.Message, *etree.Element, *samlsp.Assertion, error) {
+	t.Helper()
 	ctx := context.Background()
 	msg, err := p.sp.AuthnRequest(ctx, "relay-state")
 	if err != nil {
@@ -29,7 +40,7 @@ func (p *pair) respond(t *testing.T, subject samlidp.Subject, opts ...samlidp.Re
 	}
 	resp, err := p.idp.Response(ctx, req, subject, opts...)
 	if err != nil {
-		t.Fatal(err)
+		return nil, nil, nil, err
 	}
 	form := formOf(t, resp)
 	raw, err := base64.StdEncoding.DecodeString(form.Get("SAMLResponse"))
@@ -88,7 +99,7 @@ func TestResponseSigning(t *testing.T) {
 // Entra ID sends with token encryption; x/samlsp refuses it by default.
 func TestSignAssertionOnlyWithCBC(t *testing.T) {
 	keys(t)
-	idpOpts := []samlidp.Option{samlidp.WithIdentityProvider(func(idp *saml.IdentityProvider) {
+	idpOpts := []samlidp.Option{samlidp.EnableInsecureAESCBC, samlidp.EnableInsecureRSAOAEPSHA1, samlidp.WithIdentityProvider(func(idp *saml.IdentityProvider) {
 		idp.ResponseSigning = saml.SignAssertionOnly
 		enc := xmlenc.OAEP()
 		enc.BlockCipher = xmlenc.AES256CBC
