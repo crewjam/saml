@@ -2,7 +2,7 @@
 
 [![](https://godoc.org/github.com/crewjam/saml?status.svg)](http://godoc.org/github.com/crewjam/saml)
 
-![Build Status](https://github.com/crewjam/saml/actions/workflows/gosamldev-production.yml/badge.svg?branch=main)
+![Build Status](https://github.com/crewjam/saml/actions/workflows/merge.yml/badge.svg?branch=main)
 
 Package saml contains a partial implementation of the SAML standard in golang.
 SAML is a standard for identity federation, i.e. either allowing a third party to authenticate your users or allowing third parties to rely on us to authenticate their users.

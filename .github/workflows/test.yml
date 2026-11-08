@@ -1,6 +1,6 @@
 name: test
 
-# Pushes to main run this through gosamldev-production.yml, which deploys
+# Pushes to main run this through merge.yml, which deploys
 # only once it and the other checks pass.
 on:
   pull_request:

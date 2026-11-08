@@ -18,7 +18,7 @@
 #   - There is no pull_request_target or workflow_run trigger, every
 #     action is pinned to a commit, and the GITHUB_TOKEN is read-only and
 #     is not left in the checkout.
-name: gosamldev-production
+name: merge
 
 on:
   push:

@@ -120,7 +120,7 @@ fly certs add gosaml.dev    # then set DNS as `fly certs show gosaml.dev` says
 ### Deploying from GitHub Actions
 
 Each push to `main` is deployed by
-`.github/workflows/gosamldev-production.yml`. It can also be run by hand
+`.github/workflows/merge.yml`. It can also be run by hand
 from the Actions tab (main only). It first runs the test and lint workflows
 (`test.yml` and `lint.yml`, with no secrets); only if every check passes
 does the deploy job build and deploy in one step (`./deploy.sh deploy
