@@ -52,15 +52,24 @@ import (
 //
 // A field that is a slice of one of these types (other than []byte, which
 // is one value) receives all the values of its attribute, and an array as
-// many as there are, or an error if there are more; any other field
-// receives the first. A field of type any receives a string, or a []string
-// if the attribute has several values.
+// many as there are, or an error if there are more. A field of type any
+// receives a []string of all the values, however many there are, so that
+// its type does not depend on what the IdP sent.
+//
+// Any other field holds one value, and DecodeAttributes returns an error
+// if its attribute has more than one: which one an IdP sends first is
+// not defined, and a decision made on the first, such as a role, could
+// change with the order. Use a slice for an attribute that may have
+// several values. The tag option first, as in `saml:"mail,first"`, takes
+// the first value instead, as earlier versions did; with it, a field of
+// type any receives the first value as a string.
 //
 // A tag may restrict the attribute to a NameFormat, after a comma:
 // `saml:"mail,format=basic"` matches an attribute named mail only if its
 // NameFormat is basic. The format is "uri", "basic", "unspecified" or a
 // full URI; an attribute without a NameFormat has the unspecified one.
-// Without the option, any NameFormat matches.
+// Without the option, any NameFormat matches. Options may be combined:
+// `saml:"mail,format=basic,first"`.
 //
 // The fields of an embedded struct without a saml tag are decoded as if
 // they were fields of the outer struct, as encoding/json does; an embedded
@@ -71,8 +80,9 @@ import (
 // only null values, is left unchanged.
 //
 // DecodeAttributes returns an error, naming the attribute and the field,
-// if a value cannot be parsed or a field has a type it cannot fill.
-// Fields set before the error keep their new values.
+// if a value cannot be parsed, a field that holds one value would receive
+// several, or a field has a type it cannot fill. Fields set before the
+// error keep their new values.
 func (a *Assertion) DecodeAttributes(v any) error {
 	return a.Attributes.Decode(v)
 }
@@ -111,7 +121,7 @@ func (as Attributes) decodeStruct(rv reflect.Value) (bool, error) {
 		if !tagged || !f.IsExported() {
 			continue
 		}
-		name, format, err := parseTag(tag)
+		name, format, first, err := parseTag(tag)
 		if err != nil {
 			return set, fmt.Errorf("samlsp: DecodeAttributes: field %s: %w", f.Name, err)
 		}
@@ -122,7 +132,7 @@ func (as Attributes) decodeStruct(rv reflect.Value) (bool, error) {
 		if !ok {
 			continue
 		}
-		if err := decodeField(rv.Field(i), attr); err != nil {
+		if err := decodeField(rv.Field(i), attr, first); err != nil {
 			return set, fmt.Errorf("samlsp: DecodeAttributes: attribute %q into field %s (%s): %w", name, f.Name, f.Type, err)
 		}
 		set = true
@@ -160,17 +170,21 @@ const (
 	basicNameFormat       = "urn:oasis:names:tc:SAML:2.0:attrname-format:basic"
 )
 
-// parseTag splits a saml struct tag into the attribute name and, if a
-// format option is given, its NameFormat.
-func parseTag(tag string) (name, format string, err error) {
+// parseTag splits a saml struct tag into the attribute name, the
+// NameFormat if a format option is given, and whether the first option is.
+func parseTag(tag string) (name, format string, first bool, err error) {
 	name, opts, _ := strings.Cut(tag, ",")
 	for opt := range strings.SplitSeq(opts, ",") {
 		if opt == "" {
 			continue
 		}
+		if opt == "first" {
+			first = true
+			continue
+		}
 		key, value, _ := strings.Cut(opt, "=")
 		if key != "format" || value == "" {
-			return "", "", fmt.Errorf("unknown tag option %q", opt)
+			return "", "", false, fmt.Errorf("unknown tag option %q", opt)
 		}
 		switch value {
 		case "uri":
@@ -183,7 +197,7 @@ func parseTag(tag string) (name, format string, err error) {
 			format = value
 		}
 	}
-	return name, format, nil
+	return name, format, first, nil
 }
 
 // AttributeUnmarshaler is implemented by types that decode themselves from
@@ -286,9 +300,10 @@ var (
 )
 
 // decodeField sets field from attr: the whole attribute for an
-// AttributeUnmarshaler, every value for a slice (other than []byte), and
-// the first value otherwise.
-func decodeField(field reflect.Value, attr Attribute) error {
+// AttributeUnmarshaler, every value for a slice (other than []byte), an
+// array or any (unless first), and the only value otherwise, or the first
+// if first.
+func decodeField(field reflect.Value, attr Attribute, first bool) error {
 	t := field.Type()
 	if unmarshalsAttribute(t) {
 		return decodeValue(field, attr)
@@ -296,13 +311,17 @@ func decodeField(field reflect.Value, attr Attribute) error {
 	if t.Kind() == reflect.Pointer {
 		// A pointer, such as *[]string, to what the attribute fills.
 		p := reflect.New(t.Elem())
-		if err := decodeField(p.Elem(), attr); err != nil {
+		if err := decodeField(p.Elem(), attr, first); err != nil {
 			return err
 		}
 		field.Set(p)
 		return nil
 	}
 	n := len(attr.Values)
+	if first {
+		attr = attr.one(0)
+		n = 1
+	}
 	switch {
 	case t.Kind() == reflect.Slice && !isScalar(t):
 		s := reflect.MakeSlice(t, n, n)
@@ -322,14 +341,16 @@ func decodeField(field reflect.Value, attr Attribute) error {
 		field.Set(a)
 		return nil
 	case t.Kind() == reflect.Interface && t.NumMethod() == 0:
-		if n == 1 {
+		if first {
 			field.Set(reflect.ValueOf(attr.Values[0]))
 		} else {
 			field.Set(reflect.ValueOf(append([]string(nil), attr.Values...)))
 		}
 		return nil
+	case n > 1:
+		return fmt.Errorf("the attribute has %d values, but the field holds one: use a slice, or the tag option first", n)
 	}
-	return decodeValue(field, attr.one(0))
+	return decodeValue(field, attr)
 }
 
 // decodeElements decodes the values of attr into the first elements of s,

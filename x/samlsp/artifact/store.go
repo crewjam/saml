@@ -1,6 +1,7 @@
 package artifact
 
 import (
+	"container/list"
 	"context"
 	"encoding/xml"
 	"errors"
@@ -43,8 +44,10 @@ type Store interface {
 // unless MemoryStore.MaxEntries says otherwise.
 const DefaultMaxEntries = 10000
 
-// ErrStoreFull is returned by MemoryStore.Save when the store already
-// keeps as many messages as it may.
+// ErrStoreFull is an error for a Store to return from Save when it keeps
+// as many messages as it may and will not forget one to make room. The
+// Binding's Encode returns it as it is. MemoryStore no longer returns it:
+// it forgets its oldest message instead.
 var ErrStoreFull = errors.New("artifact: the store is full")
 
 // MemoryStore is a Store in memory, for a single process. Each message is
@@ -53,13 +56,25 @@ var ErrStoreFull = errors.New("artifact: the store is full")
 //
 // A message's timer waits until its expiry, but at most maxTimerDelay by
 // the system clock, and then checks again by Now, so that messages are
-// still forgotten when Now is not the system clock. Save also forgets the
-// expired messages when the store is full.
+// still forgotten when Now is not the system clock.
 //
 // Anyone who can start a login can make a Binding store a message, so the
-// store keeps at most MaxEntries of them: while it is full, Save, and so
-// the Binding's Encode, fail with ErrStoreFull, until messages are
-// resolved or expire.
+// store keeps at most MaxEntries of them. Save into a full store first
+// forgets the messages that have expired by Now, and then, if it is still
+// full, the message saved longest ago, so that a flood of logins cannot
+// stop the store from taking new messages, as refusing them would. A
+// legitimate message is resolved within moments of being saved: the IdP
+// fetches it as soon as the browser brings it the artifact. To make such
+// a message be forgotten before it is resolved, an attacker must make the
+// Binding save MaxEntries messages within that moment: with the default
+// MaxEntries, thousands of logins a second, rather than the hundred or so
+// a second that kept the store full before. The store still bounds the
+// memory such a flood can take, but it cannot tell an attacker's logins
+// from a user's: limit the rate at which each client may start logins
+// with the artifact binding, in front of the handler that calls
+// Config.AuthnRequest (or, at an IdP, of the SSO service), and size
+// MaxEntries for the peak rate of logins times the time they take to be
+// resolved.
 type MemoryStore struct {
 	// Now is the time source by which messages expire; nil means
 	// time.Now. It must be the time source by which ExpiresAt is set: New,
@@ -76,6 +91,7 @@ type MemoryStore struct {
 
 	mu       sync.Mutex
 	messages map[string]memoryEntry
+	order    list.List // of artifacts (strings), the one saved longest ago first
 }
 
 // maxTimerDelay bounds how long a message's timer waits, by the system
@@ -87,6 +103,7 @@ const maxTimerDelay = time.Minute
 type memoryEntry struct {
 	message StoredMessage
 	stop    func() bool
+	elem    *list.Element // in MemoryStore.order
 }
 
 // NewMemoryStore returns an empty MemoryStore.
@@ -98,21 +115,33 @@ func NewMemoryStore() *MemoryStore {
 func (s *MemoryStore) Save(_ context.Context, artifact string, m StoredMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	old, replaced := s.messages[artifact]
-	if !replaced && len(s.messages) >= s.maxEntries() {
-		s.removeExpired(s.now())
-		if len(s.messages) >= s.maxEntries() {
-			return ErrStoreFull
-		}
+	if old, replaced := s.messages[artifact]; replaced {
+		s.remove(artifact, old)
 	}
-	if replaced {
-		old.stop()
+	if len(s.messages) >= s.maxEntries() {
+		s.removeExpired(s.now())
+		for len(s.messages) >= s.maxEntries() {
+			oldest := s.order.Front().Value.(string)
+			s.remove(oldest, s.messages[oldest])
+		}
 	}
 	if s.messages == nil {
 		s.messages = map[string]memoryEntry{}
 	}
-	s.messages[artifact] = memoryEntry{message: m, stop: s.arm(artifact, m.ExpiresAt, s.now())}
+	s.messages[artifact] = memoryEntry{
+		message: m,
+		stop:    s.arm(artifact, m.ExpiresAt, s.now()),
+		elem:    s.order.PushBack(artifact),
+	}
 	return nil
+}
+
+// remove forgets e, the message under artifact, and stops its timer. s.mu
+// must be held.
+func (s *MemoryStore) remove(artifact string, e memoryEntry) {
+	e.stop()
+	s.order.Remove(e.elem)
+	delete(s.messages, artifact)
 }
 
 func (s *MemoryStore) now() time.Time {
@@ -140,8 +169,7 @@ func (s *MemoryStore) arm(artifact string, expiresAt, now time.Time) func() bool
 func (s *MemoryStore) removeExpired(now time.Time) {
 	for artifact, e := range s.messages {
 		if now.After(e.message.ExpiresAt) {
-			e.stop()
-			delete(s.messages, artifact)
+			s.remove(artifact, e)
 		}
 	}
 }
@@ -172,8 +200,7 @@ func (s *MemoryStore) Take(_ context.Context, artifact, recipient string) (*Stor
 	if !ok || e.message.Recipient != recipient {
 		return nil, nil
 	}
-	e.stop()
-	delete(s.messages, artifact)
+	s.remove(artifact, e)
 	return &e.message, nil
 }
 
@@ -189,6 +216,7 @@ func (s *MemoryStore) expire(artifact string, expiresAt time.Time) {
 	}
 	now := s.now()
 	if now.After(expiresAt) {
+		s.order.Remove(e.elem)
 		delete(s.messages, artifact)
 		return
 	}

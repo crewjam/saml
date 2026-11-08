@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"net/http"
 	"net/url"
+	"slices"
+
+	"github.com/crewjam/saml"
 )
 
 // Message is a SAML protocol message that is ready to send to the identity
@@ -26,11 +29,33 @@ type Message struct {
 	// RelayState is the RelayState that goes with the message.
 	RelayState string
 
+	authnContext *saml.RequestedAuthnContext // of an AuthnRequest
+
 	redirectURL *url.URL
 	formFields  url.Values
 	form        []byte
 	scriptHash  string
 	write       func(http.ResponseWriter)
+}
+
+// RequestedAuthnContext returns the authentication context that an
+// AuthnRequest asked for with WithAuthnContext, or nil if it asked for
+// none or the message is not an AuthnRequest. Keep it with Message.ID and
+// pass both to ParseResponse with WithRequest, which then enforces it
+// (x/samlsp/pending does this for you).
+func (m *Message) RequestedAuthnContext() *saml.RequestedAuthnContext {
+	return cloneRequestedAuthnContext(m.authnContext)
+}
+
+// cloneRequestedAuthnContext returns a copy of rac that shares nothing
+// with it, or nil.
+func cloneRequestedAuthnContext(rac *saml.RequestedAuthnContext) *saml.RequestedAuthnContext {
+	if rac == nil {
+		return nil
+	}
+	c := *rac
+	c.AuthnContextClassRefs = slices.Clone(rac.AuthnContextClassRefs)
+	return &c
 }
 
 // RedirectURL returns the URL to redirect the browser to, for a message

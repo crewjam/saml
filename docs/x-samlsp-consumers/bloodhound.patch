@@ -370,7 +370,7 @@ index 7d87c7c..1f428b8 100644
 +	// it expires with the login, and ParseResponse accepts each assertion
 +	// only once.
 +	if login, err := tracker.Find(response, request); err == nil {
-+		opts = append(opts, samlsp.WithRequestID(login.ID))
++		opts = append(opts, login.ResponseOption())
 +	} else if !errors.Is(err, pending.ErrNotFound) {
 +		slog.WarnContext(request.Context(), "[SAML] Invalid pending login cookie", attr.Error(err))
 +	}

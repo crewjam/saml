@@ -2,7 +2,6 @@ package artifact
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -64,22 +63,88 @@ func TestMemoryStoreTimerFollowsNow(t *testing.T) {
 }
 
 // TestMemoryStoreFullForgetsExpired checks that Save into a full store
-// first forgets the messages that have expired by Now.
+// first forgets the messages that have expired by Now, before any that
+// has not, however recently the expired ones were saved.
 func TestMemoryStoreFullForgetsExpired(t *testing.T) {
 	now := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-	s := &MemoryStore{MaxEntries: 1, Now: func() time.Time { return now }, afterFunc: (&fakeTimers{}).afterFunc}
+	s := &MemoryStore{MaxEntries: 2, Now: func() time.Time { return now }, afterFunc: (&fakeTimers{}).afterFunc}
 	ctx := context.Background()
-	if err := s.Save(ctx, "a", StoredMessage{ExpiresAt: now.Add(time.Minute)}); err != nil {
+	if err := s.Save(ctx, "a", StoredMessage{Recipient: "idp", ExpiresAt: now.Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Save(ctx, "b", StoredMessage{ExpiresAt: now.Add(time.Minute)}); !errors.Is(err, ErrStoreFull) {
-		t.Fatalf("Save into a full store: %v", err)
+	if err := s.Save(ctx, "b", StoredMessage{Recipient: "idp", ExpiresAt: now.Add(time.Minute)}); err != nil {
+		t.Fatal(err)
 	}
 	now = now.Add(2 * time.Minute)
-	if err := s.Save(ctx, "b", StoredMessage{ExpiresAt: now.Add(time.Minute)}); err != nil {
-		t.Fatalf("Save into a store full of expired messages: %v", err)
+	if err := s.Save(ctx, "c", StoredMessage{Recipient: "idp", ExpiresAt: now.Add(time.Minute)}); err != nil {
+		t.Fatalf("Save into a full store: %v", err)
 	}
-	if s.Len() != 1 {
-		t.Errorf("Len = %d, want 1", s.Len())
+	if got, _ := s.Take(ctx, "a", "idp"); got == nil {
+		t.Error("the oldest message was forgotten rather than the expired one")
+	}
+	if got, _ := s.Take(ctx, "b", "idp"); got != nil {
+		t.Error("the expired message was kept")
+	}
+}
+
+// TestMemoryStoreEvictsOldest checks that Save into a full store forgets
+// the message saved longest ago, in the order they were saved, that
+// saving under an artifact again counts as saving it anew, and that the
+// store never keeps more than MaxEntries.
+func TestMemoryStoreEvictsOldest(t *testing.T) {
+	now := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	s := &MemoryStore{MaxEntries: 3, Now: func() time.Time { return now }, afterFunc: (&fakeTimers{}).afterFunc}
+	ctx := context.Background()
+	save := func(art string) {
+		t.Helper()
+		if err := s.Save(ctx, art, StoredMessage{Recipient: "idp", ExpiresAt: now.Add(time.Minute)}); err != nil {
+			t.Fatalf("Save(%s): %v", art, err)
+		}
+		if s.Len() > 3 {
+			t.Fatalf("Len = %d after Save(%s), more than MaxEntries", s.Len(), art)
+		}
+	}
+	// a b c; saving a again makes it the newest: b c a.
+	for _, art := range []string{"a", "b", "c", "a"} {
+		save(art)
+	}
+	save("d") // forgets b: c a d
+	save("e") // forgets c: a d e
+	for art, want := range map[string]bool{"a": true, "b": false, "c": false, "d": true, "e": true} {
+		got, err := s.Take(ctx, art, "idp")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (got != nil) != want {
+			t.Errorf("Take(%s) found the message: %v, want %v", art, got != nil, want)
+		}
+	}
+	if s.Len() != 0 || s.order.Len() != 0 {
+		t.Errorf("Len = %d, order has %d, after taking every message", s.Len(), s.order.Len())
+	}
+}
+
+// TestMemoryStoreExpiryKeepsOrder checks that a message forgotten by its
+// timer leaves the eviction order too.
+func TestMemoryStoreExpiryKeepsOrder(t *testing.T) {
+	now := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	timers := &fakeTimers{}
+	s := &MemoryStore{MaxEntries: 2, Now: func() time.Time { return now }, afterFunc: timers.afterFunc}
+	ctx := context.Background()
+	if err := s.Save(ctx, "a", StoredMessage{Recipient: "idp", ExpiresAt: now.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	timers.fireLast(t)
+	if s.Len() != 0 || s.order.Len() != 0 {
+		t.Fatalf("Len = %d, order has %d, after the message expired", s.Len(), s.order.Len())
+	}
+	for _, art := range []string{"b", "c", "d"} {
+		if err := s.Save(ctx, art, StoredMessage{Recipient: "idp", ExpiresAt: now.Add(time.Minute)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _ := s.Take(ctx, "d", "idp"); got == nil {
+		t.Error("the newest message was forgotten")
 	}
 }

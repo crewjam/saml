@@ -114,7 +114,7 @@ func acs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no login in progress", http.StatusForbidden)
 		return
 	}
-	assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
+	assertion, err := config.ParseResponse(r.Context(), r, login.ResponseOption())
 	if err != nil {
 		http.Error(w, "login failed", http.StatusForbidden)
 		return
@@ -128,7 +128,7 @@ func acs(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-Login has two steps. `/login` sends the browser to the IDP with an `AuthnRequest`, and `x/samlsp/pending` remembers the request's ID in a cookie, found again by the RelayState. The ACS checks that the Response answers that request, so a Response is accepted only in the browser that asked for it. The cookie is authenticated with `SAML_COOKIE_KEY`, and over `https` it is `Secure` and `SameSite=None`, since the IDP's POST to the ACS is a cross-site request. `example/trivial` is a complete version of this program, with sessions and single logout.
+Login has two steps. `/login` sends the browser to the IDP with an `AuthnRequest`, and `x/samlsp/pending` remembers the request's ID in a cookie, found again by the RelayState. The ACS checks that the Response answers that request, so a Response is accepted only in the browser that asked for it. The cookie is authenticated with `SAML_COOKIE_KEY`, and over `https` it is `Secure` and `SameSite=None`, since the IDP's POST to the ACS is a cross-site request. To send the user back where they started, pass the return path to `Remember` as its data, and check `login.Data` with `redirect.IsSafe` (package `pkg/redirect`) before redirecting to it: browsers read paths such as `//evil.example`, `/\evil.example` and `/<tab>/evil.example` as naming another host. `example/trivial` is a complete version of this program, with sessions and single logout.
 
 Next we'll have to register our service provider with the identity provider to establish trust from the service provider to the IDP. samltest.dev doesn't take an uploaded metadata file. Instead, set the app's SP ACS URL and SP Entity ID, either under "SAML SP Settings" on `https://www.samltest.dev/apps/<APP_ID>` or with the API:
 
@@ -179,7 +179,7 @@ if err := assertion.DecodeAttributes(&user); err != nil {
 }
 ```
 
-Attributes are looked up by their `Name`, never by `FriendlyName`, which is only a hint for people. The IDP decides which attributes it sends and what they are called, so if one you expect is missing, check the IDP's attribute release settings; listing every attribute as above shows exactly what you received. `DecodeAttributes` parses values by the XML Schema rules into strings, bools, numbers, times, durations, bytes and URLs, and calls `UnmarshalSAMLAttribute` or `UnmarshalText` on types that have them.
+Attributes are looked up by their `Name`, never by `FriendlyName`, which is only a hint for people. The IDP decides which attributes it sends and what they are called, so if one you expect is missing, check the IDP's attribute release settings; listing every attribute as above shows exactly what you received. `DecodeAttributes` parses values by the XML Schema rules into strings, bools, numbers, times, durations, bytes and URLs, and calls `UnmarshalSAMLAttribute` or `UnmarshalText` on types that have them. A field that holds one value is not filled from an attribute with several, whose order the IDP decides: it returns an error instead, unless the tag says `,first`. Use a slice for attributes such as groups.
 
 Attributes the IDP encrypts (`EncryptedAttribute`) are decrypted with the key of `WithEncryptionKey`, like an encrypted assertion, and read like the others. An assertion whose Subject identifies the user with a `BaseID` rather than a NameID is refused unless the Config is made with `samlsp.AcceptBaseID`; `Assertion.BaseID` then holds the element, which your code must interpret.
 
@@ -326,7 +326,8 @@ With `idpslo.BackChannel`, the IdP sends LogoutRequests to the SOAP endpoints in
 
 The SAML standard is huge and complex with many dark corners and strange, unused features. This package implements the most commonly used subset of these features required to provide a single sign on experience. The package supports at least the subset of SAML known as [interoperable SAML](https://kantarainitiative.github.io/SAMLprofiles/saml2int.html).
 
-This package supports the **Web SSO** profile. Message flows from the service provider to the IDP are supported using the **HTTP Redirect** binding and the **HTTP POST** binding, and with `x/samlsp/artifact` the **HTTP Artifact** binding. Message flows from the IDP to the service provider are supported via the **HTTP POST** binding and, on the service provider side, the **HTTP Artifact** binding (`ParseResponse` resolves the artifact with the IDP's ArtifactResolutionService over SOAP). The identity provider in this package answers with HTTP POST, or HTTP POST SimpleSign (below); it does not issue artifacts.
+This package supports the **Web SSO** profile. Message flows from the service provider to the IDP are supported using the **HTTP Redirect** binding and the **HTTP POST** binding, and with `x/samlsp/artifact` the **HTTP Artifact** binding. Message flows from the IDP to the service provider are supported via the **HTTP POST** binding and, on the service provider side, the **HTTP Artifact** binding (`ParseResponse` resolves the artifact with the IDP's ArtifactResolutionService over SOAP; in `x/samlsp`, only with `samlsp.AcceptArtifactResponses`, which lists the HTTP-Artifact ACS in the SP metadata).
+ The identity provider in this package answers with HTTP POST, or HTTP POST SimpleSign (below); it does not issue artifacts.
 
 The **Single Logout** profile is supported with the HTTP Redirect and HTTP POST bindings: SP initiated and IDP initiated logout on the service provider side (see [Logging out](#logging-out)), and SP initiated logout on the identity provider side (see [Single logout](#single-logout)).
 

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/internal/safehttp"
+	"github.com/crewjam/saml/pkg/safehttp"
 )
 
 // FetchTimeout bounds a fetch that a Remote makes, which no caller's

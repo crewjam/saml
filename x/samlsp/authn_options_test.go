@@ -154,8 +154,12 @@ func TestResponseBindingListedInMetadata(t *testing.T) {
 	if _, err := cfg.AuthnRequest(t.Context(), "s", samlsp.WithResponseBinding(saml.HTTPPostSimpleSignBinding)); err == nil || !strings.Contains(err.Error(), "AssertionConsumerServiceBindings") {
 		t.Errorf("SimpleSign, not in the metadata: %v", err)
 	}
-	if _, err := cfg.AuthnRequest(t.Context(), "s", samlsp.WithResponseBinding(saml.HTTPArtifactBinding)); err != nil {
-		t.Errorf("Artifact, in the metadata by default: %v", err)
+	if _, err := cfg.AuthnRequest(t.Context(), "s", samlsp.WithResponseBinding(saml.HTTPArtifactBinding)); err == nil || !strings.Contains(err.Error(), "AcceptArtifactResponses") {
+		t.Errorf("Artifact, not in the metadata by default: %v", err)
+	}
+	artifacts := newTestConfig(t, ti, samlsp.AcceptArtifactResponses)
+	if _, err := artifacts.AuthnRequest(t.Context(), "s", samlsp.WithResponseBinding(saml.HTTPArtifactBinding)); err != nil {
+		t.Errorf("Artifact, with AcceptArtifactResponses: %v", err)
 	}
 	listed := newTestConfig(t, ti, samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
 		sp.AssertionConsumerServiceBindings = []string{saml.HTTPPostBinding, saml.HTTPPostSimpleSignBinding}

@@ -258,7 +258,7 @@ func ExampleNew_perRequest() {
 			http.Error(w, "no login in progress", http.StatusBadRequest)
 			return
 		}
-		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
+		assertion, err := config.ParseResponse(r.Context(), r, login.ResponseOption())
 		if err != nil {
 			http.Error(w, "login failed", http.StatusForbidden)
 			return
@@ -314,7 +314,7 @@ func ExampleWithIdentityProvider() {
 			http.Error(w, "unknown tenant", http.StatusBadRequest)
 			return
 		}
-		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID), idpOf(t))
+		assertion, err := config.ParseResponse(r.Context(), r, login.ResponseOption(), idpOf(t))
 		if err != nil {
 			http.Error(w, "login failed", http.StatusForbidden)
 			return

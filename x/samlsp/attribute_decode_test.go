@@ -352,6 +352,7 @@ func TestDecodeAttributesStructure(t *testing.T) {
 		Groups   [3]string `saml:"groups"`
 		AnyMany  any       `saml:"groups"`
 		AnyOne   any       `saml:"one"`
+		AnyFirst any       `saml:"groups,first"`
 		Basic    string    `saml:"role,format=basic"`
 		URI      string    `saml:"role,format=uri"`
 		Full     string    `saml:"role,format=urn:oasis:names:tc:SAML:2.0:attrname-format:uri"`
@@ -374,8 +375,13 @@ func TestDecodeAttributesStructure(t *testing.T) {
 	if many, ok := got.AnyMany.([]string); !ok || len(many) != 2 {
 		t.Errorf("AnyMany = %#v", got.AnyMany)
 	}
-	if got.AnyOne != "x" {
+	// any is a []string however many values there are, and with first,
+	// the first value as a string.
+	if one, ok := got.AnyOne.([]string); !ok || len(one) != 1 || one[0] != "x" {
 		t.Errorf("AnyOne = %#v", got.AnyOne)
+	}
+	if got.AnyFirst != "a" {
+		t.Errorf("AnyFirst = %#v", got.AnyFirst)
 	}
 	if got.Basic != "basic-role" || got.URI != "uri-role" || got.Full != "uri-role" {
 		t.Errorf("by format: %q %q %q", got.Basic, got.URI, got.Full)

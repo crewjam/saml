@@ -14,7 +14,7 @@
 //
 //	func login(w http.ResponseWriter, r *http.Request) {
 //		next := r.URL.Query().Get("next")
-//		if len(next) > 100 || safeLocalPath(next) != next {
+//		if !redirect.IsSafe(next) || len(next) > 100 {
 //			next = "/"
 //		}
 //		msg, err := config.AuthnRequest(r.Context(), rand.Text())
@@ -26,18 +26,24 @@
 //	func acs(w http.ResponseWriter, r *http.Request) {
 //		login, err := tracker.Find(w, r)
 //		if err != nil { ... } // no login in progress in this browser
-//		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
+//		assertion, err := config.ParseResponse(r.Context(), r, login.ResponseOption())
 //		if err != nil { ... }
 //		tracker.Forget(w, login)
 //		startSession(w, assertion)
-//		http.Redirect(w, r, safeLocalPath(login.Data), http.StatusFound)
+//		next := login.Data
+//		if !redirect.IsSafe(next) {
+//			next = "/"
+//		}
+//		http.Redirect(w, r, next, http.StatusFound)
 //	}
 //
 // The cookie is authenticated with an HMAC key, so the browser cannot
-// change the request ID, the RelayState it belongs to, its expiry, the
+// change the request ID, the RelayState it belongs to, the authentication
+// context the request asked for (samlsp.WithAuthnContext), its expiry, the
 // application's data or the slot it is in. It is not encrypted: do not put
 // secrets in the data. Every server that serves the ACS must use the same
-// key.
+// key. Login.ResponseOption gives ParseResponse both the request ID and
+// the authentication context, so that the context is enforced.
 //
 // The cookie's path is that of the ACS URL, so the browser sends it there
 // only. Since the IdP sends its Response with a cross-site POST, which
@@ -133,6 +139,7 @@ import (
 
 	dsig "github.com/russellhaering/goxmldsig"
 
+	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/x/samlsp"
 )
 
@@ -180,17 +187,22 @@ var ErrInvalid = errors.New("pending: the login cookie is not valid")
 // Login is a login in progress that Find found.
 type Login struct {
 	// ID is the ID of the AuthnRequest. Pass it to ParseResponse with
-	// samlsp.WithRequestID.
+	// ResponseOption, which also carries AuthnContext.
 	ID string
+
+	// AuthnContext is the authentication context that the AuthnRequest
+	// asked for with samlsp.WithAuthnContext, or nil.
+	AuthnContext *saml.RequestedAuthnContext
 
 	// RelayState is the RelayState of the AuthnRequest.
 	RelayState string
 
 	// Data is the data passed to Remember, such as where to send the
 	// user after login. The browser cannot change it, but it is only as
-	// trustworthy as what Remember was given. Check a return path before
-	// redirecting to it: it must start with "/", but not with "//" or
-	// "/\", which browsers read as another host.
+	// trustworthy as what Remember was given. Check a return path with
+	// redirect.IsSafe (package pkg/redirect) before redirecting to it: browsers read
+	// many paths that merely start with "/" as naming another host, such
+	// as "//evil.example", "/\evil.example" and "/<tab>/evil.example".
 	Data string
 
 	// Expires is when the login would have stopped being accepted.
@@ -199,6 +211,18 @@ type Login struct {
 	// slot is the name of the slot cookie the login was found in, which
 	// Forget clears.
 	slot string
+}
+
+// ResponseOption returns the option that makes ParseResponse accept only
+// a Response to this login's AuthnRequest and enforce the authentication
+// context it asked for: samlsp.WithRequest with ID and AuthnContext. Pass
+// it rather than samlsp.WithRequestID(login.ID), which would not enforce
+// the context. It returns nil, which ParseResponse ignores, if l is nil.
+func (l *Login) ResponseOption() samlsp.ResponseOption {
+	if l == nil {
+		return nil
+	}
+	return samlsp.WithRequest(l.ID, l.AuthnContext)
 }
 
 // Tracker keeps logins in progress in cookies. Create one with New. It is
@@ -354,17 +378,76 @@ func (t *Tracker) maxCookieSize() int {
 
 // payload is what a cookie holds.
 type payload struct {
-	ID         string `json:"i"`
-	RelayState string `json:"r"`
-	Expires    int64  `json:"e"`
-	Data       string `json:"d,omitempty"`
+	ID           string        `json:"i"`
+	RelayState   string        `json:"r"`
+	Expires      int64         `json:"e"`
+	Data         string        `json:"d,omitempty"`
+	AuthnContext *authnContext `json:"a,omitempty"`
+}
+
+// authnContext is a saml.RequestedAuthnContext, kept small: the
+// Comparison only if it is not exact, and each class reference that
+// begins with classPrefix, as all of saml-authn-context's do, as "~" and
+// the rest, and any other as "=" and the whole.
+type authnContext struct {
+	Comparison string   `json:"c,omitempty"`
+	ClassRefs  []string `json:"r"`
+}
+
+// classPrefix begins the URI of each class of saml-authn-context-2.0-os.
+const classPrefix = "urn:oasis:names:tc:SAML:2.0:ac:classes:"
+
+func compactAuthnContext(rac *saml.RequestedAuthnContext) *authnContext {
+	if rac == nil {
+		return nil
+	}
+	c := &authnContext{Comparison: rac.Comparison, ClassRefs: make([]string, len(rac.AuthnContextClassRefs))}
+	if c.Comparison == string(saml.AuthnContextComparisonExact) {
+		c.Comparison = ""
+	}
+	for i, ref := range rac.AuthnContextClassRefs {
+		if rest, ok := strings.CutPrefix(ref, classPrefix); ok {
+			c.ClassRefs[i] = "~" + rest
+		} else {
+			c.ClassRefs[i] = "=" + ref
+		}
+	}
+	return c
+}
+
+// expand returns the saml.RequestedAuthnContext that c keeps, and false if
+// c is malformed.
+func (c *authnContext) expand() (*saml.RequestedAuthnContext, bool) {
+	if c == nil {
+		return nil, true
+	}
+	rac := &saml.RequestedAuthnContext{Comparison: c.Comparison, AuthnContextClassRefs: make([]string, len(c.ClassRefs))}
+	if rac.Comparison == "" {
+		rac.Comparison = string(saml.AuthnContextComparisonExact)
+	}
+	for i, ref := range c.ClassRefs {
+		switch {
+		case strings.HasPrefix(ref, "~"):
+			rac.AuthnContextClassRefs[i] = classPrefix + ref[1:]
+		case strings.HasPrefix(ref, "="):
+			rac.AuthnContextClassRefs[i] = ref[1:]
+		default:
+			return nil, false
+		}
+	}
+	return rac, true
 }
 
 // Remember sets the slot cookie that remembers msg, an AuthnRequest made
-// by Config.AuthnRequest, until Find finds it, with data for the
+// by Config.AuthnRequest, until Find finds it, with the authentication
+// context it asked for (msg.RequestedAuthnContext) and data for the
 // application, such as where to send the user after login. Call it before
 // msg.Write. It replaces the login in progress in the same slot, if any,
 // and leaves the other slots alone.
+//
+// A requested authentication context takes room in the cookie: 56 bytes
+// for PasswordProtectedTransport alone, and 4/3 of 4 bytes more than its
+// name for each further class of saml-authn-context-2.0-os.
 //
 // It returns an error if msg has no ID, or if the cookie would take more
 // than its share of the Cookie header (see WithMaxCookiesSize): keep data
@@ -375,10 +458,11 @@ func (t *Tracker) Remember(w http.ResponseWriter, msg *samlsp.Message, data stri
 		return errors.New("pending: the message has no ID")
 	}
 	p := payload{
-		ID:         msg.ID,
-		RelayState: msg.RelayState,
-		Expires:    t.clock.Now().Add(t.maxAge).Unix(),
-		Data:       data,
+		ID:           msg.ID,
+		RelayState:   msg.RelayState,
+		Expires:      t.clock.Now().Add(t.maxAge).Unix(),
+		Data:         data,
+		AuthnContext: compactAuthnContext(msg.RequestedAuthnContext()),
 	}
 	body, err := json.Marshal(p)
 	if err != nil {
@@ -405,11 +489,18 @@ func (t *Tracker) Remember(w http.ResponseWriter, msg *samlsp.Message, data stri
 //
 // It returns ErrNotFound if there is no login in progress for the
 // RelayState in this browser, and ErrInvalid if there is none and the
-// cookie of the RelayState's slot is not valid. An ACS that also accepts
+// cookie of the RelayState's slot is not valid, and another error if the
+// form cannot be read. It reads the RelayState with r.ParseForm, from the
+// urlencoded body of a POST or else from the query, as ParseResponse
+// does; it does not read a multipart body, whose files could be spooled
+// to disk. An ACS that also accepts
 // IdP-initiated logins with samlsp.AllowUnsolicited passes
 // samlsp.WithRequestID only when Find succeeds.
 func (t *Tracker) Find(w http.ResponseWriter, r *http.Request) (*Login, error) {
-	relayState := r.FormValue("RelayState")
+	if err := r.ParseForm(); err != nil {
+		return nil, fmt.Errorf("pending: cannot read the form: %w", err)
+	}
+	relayState := r.Form.Get("RelayState")
 	own := t.cookieName(t.slot(relayState))
 	now := t.clock.Now().Unix()
 	var (
@@ -430,7 +521,8 @@ func (t *Tracker) Find(w http.ResponseWriter, r *http.Request) (*Login, error) {
 			expired = expired || subtle.ConstantTimeCompare([]byte(p.RelayState), []byte(relayState)) == 1
 			stale = append(stale, c.Name)
 		case login == nil && subtle.ConstantTimeCompare([]byte(p.RelayState), []byte(relayState)) == 1:
-			login = &Login{ID: p.ID, RelayState: p.RelayState, Data: p.Data, Expires: time.Unix(p.Expires, 0), slot: c.Name}
+			rac, _ := p.AuthnContext.expand() // open checked it
+			login = &Login{ID: p.ID, RelayState: p.RelayState, AuthnContext: rac, Data: p.Data, Expires: time.Unix(p.Expires, 0), slot: c.Name}
 		}
 	}
 	// A browser may send two cookies of one name, such as one tossed by
@@ -487,6 +579,9 @@ func (t *Tracker) open(name, value string) (payload, bool) {
 		return p, false
 	}
 	if err := json.Unmarshal(body, &p); err != nil || p.ID == "" {
+		return p, false
+	}
+	if _, ok := p.AuthnContext.expand(); !ok {
 		return p, false
 	}
 	return p, true

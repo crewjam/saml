@@ -42,6 +42,7 @@ type Config struct {
 	encryptionCert         *x509.Certificate
 	signRequests           bool
 	acceptBaseID           bool
+	acceptArtifact         bool
 	nameIDFormat           saml.NameIDFormat
 	replayState            ReplayState
 	authnContextComparator func(comparison string, requested []string, got string) bool
@@ -210,6 +211,29 @@ func WithACSURL(acsURL string) Option {
 // it, such assertions are refused. (For LogoutRequests, see
 // x/samlsp/slo.AcceptBaseID.)
 var AcceptBaseID Option = optionFunc(func(c *Config, _ *configOptions) { c.acceptBaseID = true })
+
+// AcceptArtifactResponses lists the ACS with the HTTP-Artifact binding in
+// the SP metadata, after HTTP-POST, and makes ParseResponse resolve the
+// SAMLart that the IdP sends there (saml-bindings §3.6), so that an
+// AuthnRequest may ask for it with WithResponseBinding.
+//
+// Without it, the SP metadata lists the ACS with HTTP-POST only, and
+// ParseResponse refuses a SAMLart with ErrArtifactNotAccepted: resolving
+// one makes the SP sign an ArtifactResolve and send it to the IdP, which
+// anyone can make it do with a forged artifact. Listing the bindings in
+// the saml.ServiceProvider's AssertionConsumerServiceBindings, with
+// WithServiceProvider, takes precedence over this option, and
+// ParseResponse resolves artifacts whenever that list has HTTP-Artifact.
+var AcceptArtifactResponses Option = optionFunc(func(c *Config, _ *configOptions) { c.acceptArtifact = true })
+
+// acsBindings returns the bindings with which the SP metadata lists the
+// ACS unless a ServiceProviderOption says otherwise.
+func (c *Config) acsBindings() []string {
+	if c.acceptArtifact {
+		return []string{saml.HTTPPostBinding, saml.HTTPArtifactBinding}
+	}
+	return []string{saml.HTTPPostBinding}
+}
 
 // ACSURL returns the URL of the SP's assertion consumer service.
 func (c *Config) ACSURL() string { return c.acsURL.String() }
@@ -636,6 +660,8 @@ func (c *Config) localServiceProvider() *saml.ServiceProvider {
 
 		AuthnContextClassRefComparator: c.authnContextComparator,
 		AcceptAssertionBaseID:          c.acceptBaseID,
+
+		AssertionConsumerServiceBindings: c.acsBindings(),
 	}
 	harden(sp)
 	method := c.signatureMethod

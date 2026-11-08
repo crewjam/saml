@@ -100,7 +100,7 @@ func newWorldWith(t *testing.T, configure func(*idpartifact.Binding), spOpts []s
 	for i := range w.sps {
 		key, cert := keyPair(t, i+1)
 		base := "https://sp" + string(rune('1'+i)) + ".example.com"
-		opts := append([]samlsp.Option{samlsp.WithSigningKey(key, cert), samlsp.WithHTTPClient(w.server.Client())}, spOpts...)
+		opts := append([]samlsp.Option{samlsp.WithSigningKey(key, cert), samlsp.WithHTTPClient(w.server.Client()), samlsp.AcceptArtifactResponses}, spOpts...)
 		sp, err := samlsp.New(base+"/saml/metadata", idpMetadata, opts...)
 		if err != nil {
 			t.Fatal(err)
@@ -308,7 +308,7 @@ func TestResolvedOnce(t *testing.T) {
 	// Response again.
 	key, cert := keyPair(t, 1)
 	again, err := samlsp.New(w.sps[0].EntityID(), func(context.Context) (*saml.EntityDescriptor, error) { return w.idp.Metadata(), nil },
-		samlsp.WithSigningKey(key, cert), samlsp.WithHTTPClient(w.server.Client()))
+		samlsp.WithSigningKey(key, cert), samlsp.WithHTTPClient(w.server.Client()), samlsp.AcceptArtifactResponses)
 	if err != nil {
 		t.Fatal(err)
 	}

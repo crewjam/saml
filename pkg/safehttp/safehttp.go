@@ -1,8 +1,9 @@
-// Package safehttp makes the HTTP transport of the clients the saml
-// packages use when the application gives none: one that connects only to
-// public addresses, so that a URL taken from metadata, or a metadata URL
-// someone else chose, cannot make the server reach services on its own
-// network (server-side request forgery).
+// Package safehttp makes HTTP transports and clients that connect only to
+// public addresses, so that a URL taken from a peer's metadata, or a
+// metadata URL someone else chose, cannot make the server reach services
+// on its own network (server-side request forgery). The saml packages use
+// them when the application gives no *http.Client of its own; applications
+// can use them for their own requests to such URLs.
 package safehttp
 
 import (
@@ -40,7 +41,7 @@ func control(network, address string, c syscall.RawConn) error {
 // refused wraps err, the reason a destination is refused, with what to do
 // about it.
 func refused(err error) error {
-	return fmt.Errorf("%w (the default HTTP client of package saml connects only to public addresses: "+
+	return fmt.Errorf("%w (this HTTP client, the default of package saml, connects only to public addresses: "+
 		"to reach this one, such as an IdP on your own network, give your own *http.Client)", err)
 }
 

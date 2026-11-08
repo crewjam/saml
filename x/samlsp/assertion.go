@@ -274,7 +274,10 @@ func (as Attributes) LegacyGet(name string) string {
 }
 
 // Get returns the first value of the attribute whose Name is name, or "" if
-// there is none. FriendlyName is not matched.
+// there is none. FriendlyName is not matched. Which value an IdP sends
+// first is not defined: for an attribute that may have several values,
+// such as a role or a group, decide on all of them, with Values or a
+// slice field of DecodeAttributes, not on the first.
 func (as Attributes) Get(name string) string {
 	if v := as.Values(name); len(v) > 0 {
 		return v[0]

@@ -103,26 +103,31 @@
 //	}
 //
 // Second, at the assertion consumer service (ACS), verify the Response and
-// check that its InResponseTo is the remembered ID:
+// check that its InResponseTo is the remembered ID, and that the
+// authentication context is one the request asked for, if it asked for
+// one with WithAuthnContext:
 //
 //	func acs(w http.ResponseWriter, r *http.Request) {
 //		login, err := tracker.Find(w, r)
 //		if err != nil { ... }
-//		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
+//		assertion, err := config.ParseResponse(r.Context(), r, login.ResponseOption())
 //		if err != nil { ... }
 //		tracker.Forget(w, login) // only once the Response is verified
 //		startSession(w, assertion.NameID, assertion.SessionIndexes, assertion.Attributes)
 //	}
 //
 // An application can keep the ID elsewhere instead, such as in a
-// server-side session. A cookie for it must reach the ACS with the IdP's
-// cross-site POST, so it must be SameSite=None and Secure.
+// server-side session, with the Message's RequestedAuthnContext, and pass
+// both to ParseResponse with WithRequest. A cookie for them must reach the
+// ACS with the IdP's cross-site POST, so it must be SameSite=None and
+// Secure.
 //
-// ParseResponse returns a verified Assertion. It accepts the HTTP-POST,
-// HTTP-POST-SimpleSign and HTTP-Artifact bindings. For HTTP-Artifact it
-// resolves the artifact with the IdP, using the HTTP client of
-// WithHTTPClient. It accepts an unsolicited (IdP-initiated) Response only
-// with AllowUnsolicited.
+// ParseResponse returns a verified Assertion. It accepts the HTTP-POST
+// and HTTP-POST-SimpleSign bindings, and, with AcceptArtifactResponses,
+// which lists the ACS with it in the SP metadata, the HTTP-Artifact
+// binding: it then resolves the artifact with the IdP, using the HTTP
+// client of WithHTTPClient. It accepts an unsolicited (IdP-initiated)
+// Response only with AllowUnsolicited.
 //
 // # Single Logout and other extensions
 //

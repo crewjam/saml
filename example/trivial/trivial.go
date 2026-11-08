@@ -25,7 +25,6 @@ import (
 	"html"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -33,6 +32,7 @@ import (
 	"time"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/pkg/redirect"
 	"github.com/crewjam/saml/x/samlsp"
 	"github.com/crewjam/saml/x/samlsp/pending"
 	"github.com/crewjam/saml/x/samlsp/slo"
@@ -160,7 +160,7 @@ func acs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
+	assertion, err := config.ParseResponse(r.Context(), r, login.ResponseOption())
 	if err != nil {
 		log.Printf("login failed: %v", errors.Unwrap(err))
 		http.Error(w, "login failed", http.StatusForbidden)
@@ -172,10 +172,10 @@ func acs(w http.ResponseWriter, r *http.Request) {
 	startSession(w, assertion)
 
 	returnTo := login.Data
-	if !isLocalURL(returnTo) {
+	if !redirect.IsSafe(returnTo) {
 		returnTo = "/hello"
 	}
-	http.Redirect(w, r, returnTo, http.StatusFound) //nolint:gosec // G710: returnTo passed isLocalURL
+	http.Redirect(w, r, returnTo, http.StatusFound) //nolint:gosec // G710: returnTo passed redirect.IsSafe
 }
 
 // startLogout ends the local session, then sends the browser to the IdP to
@@ -324,17 +324,4 @@ func setTempCookie(w http.ResponseWriter, name, path, value string) {
 
 func deleteCookie(w http.ResponseWriter, name, path string) {
 	http.SetCookie(w, &http.Cookie{Name: name, Path: path, MaxAge: -1, HttpOnly: true, Secure: secure()}) //nolint:gosec // G124: deletes the cookie
-}
-
-// isLocalURL reports whether p is a URL path on this site, safe to redirect
-// to: it starts with "/", but not with "//" or "/\", which browsers read as
-// another host, and is a plain path.
-func isLocalURL(p string) bool {
-	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.HasPrefix(p, "/\\") {
-		return false
-	}
-	// url.Parse refuses control characters, such as the tab in "/\t/host",
-	// which browsers drop, leaving "//host".
-	u, err := url.Parse(p)
-	return err == nil && u.Scheme == "" && u.Host == ""
 }

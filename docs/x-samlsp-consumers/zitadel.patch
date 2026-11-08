@@ -2,7 +2,7 @@ diff --git a/apps/login/acceptance/samlsp/main.go b/apps/login/acceptance/samlsp
 index 9dcfd13..0bdc2d2 100644
 --- a/apps/login/acceptance/samlsp/main.go
 +++ b/apps/login/acceptance/samlsp/main.go
-@@ -3,25 +3,26 @@ package main
+@@ -3,25 +3,27 @@ package main
  import (
  	"bytes"
  	"context"
@@ -27,12 +27,13 @@ index 9dcfd13..0bdc2d2 100644
  	"time"
  
 -	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/pkg/redirect"
 +	"github.com/crewjam/saml/x/samlsp"
 +	"github.com/crewjam/saml/x/samlsp/pending"
  )
  
  var keyPair = func() tls.Certificate {
-@@ -86,8 +87,86 @@ FHHEZ+dR4eMaJp6PhNm8hu2O
+@@ -86,8 +88,86 @@ FHHEZ+dR4eMaJp6PhNm8hu2O
  	return kp
  }()
  
@@ -95,7 +96,7 @@ index 9dcfd13..0bdc2d2 100644
 +		http.Error(w, err.Error(), http.StatusForbidden)
 +		return
 +	}
-+	assertion, err := s.config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
++	assertion, err := s.config.ParseResponse(r.Context(), r, login.ResponseOption())
 +	if err != nil {
 +		http.Error(w, err.Error(), http.StatusForbidden)
 +		return
@@ -113,15 +114,15 @@ index 9dcfd13..0bdc2d2 100644
 +		Secure:   r.TLS != nil,
 +		SameSite: http.SameSiteLaxMode,
 +	})
-+	redirect := login.Data
-+	if !strings.HasPrefix(redirect, "/") || strings.HasPrefix(redirect, "//") || strings.HasPrefix(redirect, "/\\") {
-+		redirect = "/"
++	next := login.Data
++	if !redirect.IsSafe(next) {
++		next = "/"
 +	}
-+	http.Redirect(w, r, redirect, http.StatusFound)
++	http.Redirect(w, r, next, http.StatusFound)
  }
  
  func main() {
-@@ -99,37 +178,37 @@ func main() {
+@@ -99,37 +179,37 @@ func main() {
  	host := os.Getenv("HOST")
  	port := os.Getenv("PORT")
  
@@ -176,7 +177,7 @@ index 9dcfd13..0bdc2d2 100644
  	go func() {
  		if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
  			log.Fatalf("HTTP server error: %v", err)
-@@ -137,7 +216,7 @@ func main() {
+@@ -137,7 +217,7 @@ func main() {
  		log.Println("Stopped serving new connections.")
  	}()
  

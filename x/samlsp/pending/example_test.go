@@ -6,8 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
 
+	"github.com/crewjam/saml/pkg/redirect"
 	"github.com/crewjam/saml/x/samlsp"
 	"github.com/crewjam/saml/x/samlsp/pending"
 )
@@ -49,7 +49,7 @@ func Example() {
 			http.Error(w, "no login in progress; please sign in again", http.StatusBadRequest)
 			return
 		}
-		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
+		assertion, err := config.ParseResponse(r.Context(), r, login.ResponseOption())
 		if err != nil {
 			// The login stays in progress, for the real Response.
 			http.Error(w, "login failed", http.StatusForbidden)
@@ -61,10 +61,10 @@ func Example() {
 		// The data came from the login request, so check it as such: a
 		// path on this site, not one that browsers read as another host.
 		next := login.Data
-		if !isLocalPath(next) {
+		if !redirect.IsSafe(next) {
 			next = "/"
 		}
-		http.Redirect(w, r, next, http.StatusFound) //nolint:gosec // G710: next is checked by isLocalPath
+		http.Redirect(w, r, next, http.StatusFound) //nolint:gosec // G710: next is checked by redirect.IsSafe
 	})
 }
 
@@ -80,7 +80,7 @@ func ExampleTracker_Find_unsolicited() {
 		login, err := tracker.Find(w, r)
 		switch {
 		case err == nil:
-			opts = append(opts, samlsp.WithRequestID(login.ID))
+			opts = append(opts, login.ResponseOption())
 		case errors.Is(err, pending.ErrNotFound):
 			// IdP-initiated, or the login took too long.
 		default:
@@ -99,10 +99,3 @@ func ExampleTracker_Find_unsolicited() {
 }
 
 func startSession(http.ResponseWriter, *samlsp.Assertion) {}
-
-// isLocalPath reports whether p is a path on this site, safe to redirect
-// to: it starts with "/", but not with "//" or "/\", which browsers read as
-// another host.
-func isLocalPath(p string) bool {
-	return strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "//") && !strings.HasPrefix(p, "/\\")
-}

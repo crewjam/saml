@@ -130,6 +130,7 @@ func (s *Server) samlSP(in *store.Instance, cfg *SPConfig) (*samlsp.Config, erro
 	opts = append(opts, samlsp.WithNameIDFormat(format))
 	opts = append(opts,
 		samlsp.WithHTTPClient(s.soap),
+		samlsp.AcceptArtifactResponses, // the SP may ask for it per login
 		artifact.ResolutionService(s.BaseURL+"/sp/"+in.ID+"/artifact", 1))
 	var sloOpts []slo.EndpointOption
 	if cfg.BackChannelLogout {
@@ -230,7 +231,7 @@ func (s *Server) spLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	t, err := s.tracker(in, c)
 	if err == nil {
-		err = t.Remember(w, msg, authnContext)
+		err = t.Remember(w, msg, "")
 	}
 	if err != nil {
 		s.fail(w, r, http.StatusInternalServerError, "Cannot remember the login.", err)
@@ -315,10 +316,9 @@ func (s *Server) spACS(w http.ResponseWriter, r *http.Request) {
 	// Response is accepted, so that a refused Response leaves it in place.
 	login, err := t.Find(w, r)
 	if err == nil {
-		opts = append(opts, samlsp.WithRequestID(login.ID))
-		if login.Data != "" {
-			opts = append(opts, samlsp.WithAuthnContext(saml.AuthnContextComparisonExact, saml.AuthnContextClass(login.Data)))
-		}
+		// The cookie keeps the authentication context the request asked
+		// for, which this option enforces.
+		opts = append(opts, login.ResponseOption())
 	} else {
 		res.Unsolicited = true
 	}
