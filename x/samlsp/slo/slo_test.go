@@ -304,7 +304,7 @@ func TestFormMessages(t *testing.T) {
 	_, s := newService(t, ti, nil)
 	req := &slo.Request{ID: "id-req", RelayState: "r"}
 	for _, binding := range []string{saml.HTTPPostBinding, saml.HTTPPostSimpleSignBinding} {
-		msgs := []*samlsp.Message{}
+		msgs := make([]*samlsp.Message, 0, 2)
 		m, err := s.Request(t.Context(), saml.NameID{Value: "alice"}, "r", samlsp.WithBinding(binding))
 		if err != nil {
 			t.Fatal(err)
