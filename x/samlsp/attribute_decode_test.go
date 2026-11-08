@@ -414,6 +414,46 @@ func TestDecodeAttributesStructure(t *testing.T) {
 	}
 }
 
+// A pointer to a slice, an array or any is allocated only if its
+// attribute is present.
+func TestDecodeAttributesPointerToSlice(t *testing.T) {
+	var pointers struct {
+		Groups *[]string  `saml:"groups"`
+		Array  *[2]string `saml:"groups"`
+		Any    *any       `saml:"groups"`
+		Levels *[]*level  `saml:"levels"`
+		Absent *[]string  `saml:"absent"`
+	}
+	c := &samlsp.Assertion{Attributes: samlsp.Attributes{
+		{Name: "groups", Values: []string{"a", "b"}},
+		{Name: "levels", Values: []string{"low", "high"}},
+	}}
+	if err := c.DecodeAttributes(&pointers); err != nil {
+		t.Fatal(err)
+	}
+	if pointers.Groups == nil || len(*pointers.Groups) != 2 || (*pointers.Groups)[1] != "b" {
+		t.Errorf("*[]string = %v", pointers.Groups)
+	}
+	if pointers.Array == nil || *pointers.Array != [2]string{"a", "b"} {
+		t.Errorf("*[2]string = %v", pointers.Array)
+	}
+	if pointers.Any == nil || len((*pointers.Any).([]string)) != 2 {
+		t.Errorf("*any = %v", pointers.Any)
+	}
+	if pointers.Levels == nil || len(*pointers.Levels) != 2 || *(*pointers.Levels)[1] != 2 {
+		t.Errorf("*[]*level = %v", pointers.Levels)
+	}
+	if pointers.Absent != nil {
+		t.Errorf("allocated for an absent attribute: %v", pointers.Absent)
+	}
+	var invalid struct {
+		Groups *[]int `saml:"groups"`
+	}
+	if err := c.DecodeAttributes(&invalid); err == nil || invalid.Groups != nil {
+		t.Errorf("*[]int from names: %v, %v", err, invalid.Groups)
+	}
+}
+
 // address decodes a value of a complex type.
 type address struct {
 	Street string `xml:"Street"`

@@ -1314,11 +1314,50 @@ func (ivr *InvalidResponseError) Error() string {
 // ErrBadStatus is returned when the assertion provided is valid but the
 // status code is not "urn:oasis:names:tc:SAML:2.0:status:Success".
 type ErrBadStatus struct {
+	// Status is the top-level status code, such as StatusResponder.
 	Status string
+
+	// SubStatus is the second-level status code, if any, which says more
+	// (saml-core §3.2.2.2): for example StatusNoPassive under
+	// StatusResponder.
+	SubStatus string
+
+	// Message is the StatusMessage, if any.
+	Message string
+}
+
+// newErrBadStatus returns the ErrBadStatus that reports status.
+func newErrBadStatus(status Status) ErrBadStatus {
+	e := ErrBadStatus{Status: status.StatusCode.Value}
+	if second := status.StatusCode.StatusCode; second != nil {
+		e.SubStatus = second.Value
+	}
+	if status.StatusMessage != nil {
+		e.Message = status.StatusMessage.Value
+	}
+	return e
 }
 
 func (e ErrBadStatus) Error() string {
-	return e.Status
+	s := e.Status
+	if e.SubStatus != "" {
+		s += " (" + e.SubStatus + ")"
+	}
+	if e.Message != "" {
+		s += ": " + e.Message
+	}
+	return s
+}
+
+// Is reports whether target is an ErrBadStatus with the same Status, and
+// with the same SubStatus and Message unless target leaves them empty, so
+// that errors.Is(err, ErrBadStatus{Status: StatusResponder}) matches any
+// Responder status.
+func (e ErrBadStatus) Is(target error) bool {
+	t, ok := target.(ErrBadStatus)
+	return ok && t.Status == e.Status &&
+		(t.SubStatus == "" || t.SubStatus == e.SubStatus) &&
+		(t.Message == "" || t.Message == e.Message)
 }
 
 // ParseResponse extracts the SAML IDP response received in req, resolves
@@ -1528,7 +1567,7 @@ func (sp *ServiceProvider) parseArtifactResponse(artifactResponseEl *etree.Eleme
 			return nil, retErr
 		}
 		if artifactResponse.Status.StatusCode.Value != StatusSuccess {
-			retErr.PrivateErr = ErrBadStatus{Status: artifactResponse.Status.StatusCode.Value}
+			retErr.PrivateErr = newErrBadStatus(artifactResponse.Status)
 			return nil, retErr
 		}
 	}
@@ -1758,7 +1797,7 @@ func (sp *ServiceProvider) parseReceivedResponse(responseEl, receivedEl *etree.E
 			return nil, classify(fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
 		}
 		if response.Status.StatusCode.Value != StatusSuccess {
-			return nil, ErrBadStatus{Status: response.Status.StatusCode.Value}
+			return nil, newErrBadStatus(response.Status)
 		}
 	}
 
@@ -3543,7 +3582,7 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 		return classify(fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
 	}
 	if resp.Status.StatusCode.Value != StatusSuccess {
-		return classify(fmt.Errorf("status code was not %s", StatusSuccess), ErrBadStatus{Status: resp.Status.StatusCode.Value})
+		return classify(fmt.Errorf("status code was not %s", StatusSuccess), newErrBadStatus(resp.Status))
 	}
 
 	return nil

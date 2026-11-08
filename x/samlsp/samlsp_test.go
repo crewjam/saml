@@ -58,6 +58,8 @@ type testIDP struct {
 	cert      *x509.Certificate
 	spMeta    *saml.EntityDescriptor
 	loggedOut bool
+	noSession bool          // answer an IsPassive request with NoPassive
+	authnAge  time.Duration // how long ago the session authenticated the user
 }
 
 func (ti *testIDP) GetServiceProvider(_ *http.Request, id string) (*saml.EntityDescriptor, error) {
@@ -67,11 +69,17 @@ func (ti *testIDP) GetServiceProvider(_ *http.Request, id string) (*saml.EntityD
 	return nil, errors.New("unknown service provider")
 }
 
-func (ti *testIDP) GetSession(_ http.ResponseWriter, _ *http.Request, _ *saml.IdpAuthnRequest) *saml.Session {
+func (ti *testIDP) GetSession(w http.ResponseWriter, _ *http.Request, req *saml.IdpAuthnRequest) *saml.Session {
+	if ti.noSession && req.Request.IsPassive != nil && *req.Request.IsPassive {
+		if err := ti.idp.SendErrorResponse(w, req, &saml.StatusError{TopLevel: saml.StatusResponder, SecondLevel: saml.StatusNoPassive}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		return nil
+	}
 	return &saml.Session{
 		ID:           "session-1",
 		Index:        "index-1",
-		CreateTime:   time.Now(),
+		CreateTime:   time.Now().Add(-ti.authnAge),
 		ExpireTime:   time.Now().Add(time.Hour),
 		NameID:       "alice@example.com",
 		NameIDFormat: string(saml.EmailAddressNameIDFormat),
@@ -254,6 +262,84 @@ func TestParseResponseRefusesOtherRequestID(t *testing.T) {
 	// A solicited response does not pass as an unsolicited one.
 	if _, err := cfg.ParseResponse(context.Background(), acs, samlsp.AllowUnsolicited); !errors.Is(err, saml.ErrRequestIDMismatch) {
 		t.Fatalf("ParseResponse with AllowUnsolicited = %v, want ErrRequestIDMismatch", err)
+	}
+}
+
+// An IdP that cannot authenticate the user passively answers with
+// Responder and NoPassive, which ParseResponse reports in saml.ErrBadStatus.
+func TestIsPassiveNoPassive(t *testing.T) {
+	ti := newTestIDP(t)
+	ti.noSession = true
+	cfg := newTestConfig(t, ti)
+	msg, err := cfg.AuthnRequest(t.Context(), "s", samlsp.IsPassive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID(msg.ID))
+	if !errors.Is(err, saml.ErrBadStatus{Status: saml.StatusResponder, SubStatus: saml.StatusNoPassive}) {
+		t.Fatalf("err = %v (%v), want NoPassive", err, errors.Unwrap(err))
+	}
+}
+
+// InResponseTo is the request ID the assertion was accepted for, and
+// empty for a response accepted as unsolicited, even one that names a
+// request a ValidateRequestID hook let through.
+func TestAssertionInResponseTo(t *testing.T) {
+	ti := newTestIDP(t)
+	cfg := newTestConfig(t, ti)
+	msg, err := cfg.AuthnRequest(t.Context(), "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	acs := login(t, ti, msg)
+	acceptAny := samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
+		sp.ValidateRequestID = func(saml.Response, []string) error { return nil }
+	})
+	a, err := cfg.ParseResponse(t.Context(), acs, samlsp.AllowUnsolicited, acceptAny)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.InResponseTo != "" {
+		t.Errorf("unsolicited: InResponseTo = %q, want \"\"", a.InResponseTo)
+	}
+
+	msg, err = cfg.AuthnRequest(t.Context(), "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err = cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID("id-other"), samlsp.WithRequestID(msg.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.InResponseTo != msg.ID {
+		t.Errorf("solicited: InResponseTo = %q, want %q", a.InResponseTo, msg.ID)
+	}
+}
+
+// WithMaxAuthnAge refuses an assertion whose AuthnInstant is older than
+// it allows, beyond saml.MaxClockSkew.
+func TestWithMaxAuthnAge(t *testing.T) {
+	for _, tc := range []struct {
+		authnAge, maxAge time.Duration
+		wantErr          bool
+	}{
+		{0, 10 * time.Minute, false},
+		{10*time.Minute + saml.MaxClockSkew - time.Minute, 10 * time.Minute, false},
+		{time.Hour, 10 * time.Minute, true},
+		{time.Hour, 2 * time.Hour, false},
+	} {
+		ti := newTestIDP(t)
+		ti.authnAge = tc.authnAge
+		cfg := newTestConfig(t, ti)
+		msg, err := cfg.AuthnRequest(t.Context(), "s", samlsp.ForceAuthn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID(msg.ID), samlsp.WithMaxAuthnAge(tc.maxAge))
+		var invalid *saml.InvalidResponseError
+		if tc.wantErr && (!errors.Is(err, samlsp.ErrAuthnTooOld) || !errors.As(err, &invalid)) || !tc.wantErr && err != nil {
+			t.Errorf("authenticated %s ago, max %s: err = %v (%v)", tc.authnAge, tc.maxAge, err, errors.Unwrap(err))
+		}
 	}
 }
 

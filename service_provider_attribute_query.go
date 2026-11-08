@@ -395,20 +395,13 @@ func (sp *ServiceProvider) validateAttributeQueryResponse(response *Response, qu
 	return statusError(response.Status)
 }
 
-// statusError returns nil for a Success status, and otherwise an error that
-// wraps an ErrBadStatus holding the top-level status code.
+// statusError returns nil for a Success status, and otherwise the
+// ErrBadStatus that reports it.
 func statusError(status Status) error {
 	if status.StatusCode.Value == StatusSuccess {
 		return nil
 	}
-	var err error = ErrBadStatus{Status: status.StatusCode.Value}
-	if second := status.StatusCode.StatusCode; second != nil {
-		err = fmt.Errorf("%w (%s)", err, second.Value)
-	}
-	if status.StatusMessage != nil && status.StatusMessage.Value != "" {
-		err = fmt.Errorf("%w: %s", err, status.StatusMessage.Value)
-	}
-	return err
+	return newErrBadStatus(status)
 }
 
 // attributeQueryAssertions returns the assertions of responseEl, decrypting

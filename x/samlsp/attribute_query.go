@@ -55,7 +55,9 @@ func WithQueriedAttributes(names ...string) QueryOption {
 func (c *Config) QueryAttributes(ctx context.Context, nameID saml.NameID, opts ...QueryOption) (Attributes, error) {
 	var o queryOptions
 	for _, opt := range opts {
-		opt.applyQuery(&o)
+		if opt != nil {
+			opt.applyQuery(&o)
+		}
 	}
 	ctx = IdentityProviderContext(ctx, o.idp)
 	sp, err := c.serviceProvider(ctx, o.sp)

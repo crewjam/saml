@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 
 	"github.com/beevik/etree"
@@ -115,6 +116,12 @@ func New(entityID string, identityProvider MetadataFunc, opts ...Option) (*Confi
 		}
 		if pub, ok := c.encryptionCert.PublicKey.(*rsa.PublicKey); !ok || !pub.Equal(&c.encryptionKey.PublicKey) {
 			return nil, errors.New("samlsp: the certificate of WithEncryptionKey is not for its key")
+		}
+	}
+	if !signerutil.IsNil(c.key) && c.certificate != nil {
+		pub, ok := c.key.Public().(interface{ Equal(crypto.PublicKey) bool })
+		if !ok || !pub.Equal(c.certificate.PublicKey) {
+			return nil, errors.New("samlsp: the certificate of WithSigningKey is not for its key")
 		}
 	}
 	if err := c.spMetadata.check(); err != nil {
@@ -244,6 +251,7 @@ func urlPath(u *url.URL) string {
 // resolution requests and artifact responses, AuthnRequests with SignAuthnRequests, and the metadata with
 // SignMetadata. It is used only for signing: to accept encrypted
 // assertions, use WithEncryptionKey, which may be given the same RSA key.
+// New returns an error if cert is not for key.
 func WithSigningKey(key crypto.Signer, cert *x509.Certificate, intermediates ...*x509.Certificate) Option {
 	return optionFunc(func(c *Config, _ *configOptions) {
 		c.key, c.certificate = key, cert
@@ -495,14 +503,15 @@ func (c *Config) serviceProvider(ctx context.Context, opts []ServiceProviderOpti
 
 // localServiceProvider returns a new saml.ServiceProvider configured from
 // c, without the identity provider's metadata and without applying any
-// ServiceProviderOption.
+// ServiceProviderOption. It shares no slice with c, so that changing it
+// cannot change c.
 func (c *Config) localServiceProvider() *saml.ServiceProvider {
 	sp := &saml.ServiceProvider{
 		EntityID:              c.entityID,
 		Key:                   c.key,
 		Certificate:           c.certificate,
-		Intermediates:         c.intermediates,
-		DecryptionKeys:        c.decryptionKeys,
+		Intermediates:         slices.Clone(c.intermediates),
+		DecryptionKeys:        slices.Clone(c.decryptionKeys),
 		EncryptionKey:         c.encryptionKey,
 		EncryptionCertificate: c.encryptionCert,
 		HTTPClient:            c.httpClient,

@@ -209,7 +209,7 @@ func ExampleConfig_ParseResponse_unsolicited() {
 
 // IsPassive checks whether the user is already logged in at the IdP
 // without showing them anything. If not, the IdP answers with the status
-// NoPassive.
+// Responder and the second-level status NoPassive.
 func Example_passiveLogin() {
 	entityID := "https://sp.example.com/saml/metadata"
 	config, err := samlsp.New(entityID, exampleIDP())
@@ -229,10 +229,8 @@ func Example_passiveLogin() {
 
 	http.HandleFunc(config.ACSPath(), func(w http.ResponseWriter, r *http.Request) {
 		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(takePendingRequest(r)))
-		var status saml.ErrBadStatus
-		if errors.As(err, &status) {
-			// Not logged in at the IdP (NoPassive), or the IdP cannot tell
-			// without asking: show the anonymous page.
+		if errors.Is(err, saml.ErrBadStatus{Status: saml.StatusResponder, SubStatus: saml.StatusNoPassive}) {
+			// Not logged in at the IdP: show the anonymous page.
 			http.Redirect(w, r, "/welcome", http.StatusFound)
 			return
 		}

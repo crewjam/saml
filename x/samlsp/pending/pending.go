@@ -42,6 +42,34 @@
 // and is not Secure, and whether browsers send it with a cross-site POST
 // depends on the browser.
 //
+// Each login in progress has its own cookie, until Take finds it or it
+// expires. A browser sends them all to the ACS, so logins that are started
+// and abandoned add to the size of its requests. Take therefore clears all
+// but the MaxPending most recent of the others. The browser does not send
+// them to the handler that calls Remember, which is usually at another
+// path, so Remember cannot; a browser that starts and abandons many logins
+// within MaxAge without finishing one may make requests to the ACS larger
+// than a proxy in front of it allows (often 8 KB of headers), until the
+// cookies expire. Use WithMaxAge to keep logins in progress for less time.
+//
+// # Security
+//
+// The cookie binds the Response to the browser that started the login, but
+// only as strongly as cookies are bound to the site. A host that can set
+// cookies for the domain of the ACS, such as a sibling subdomain under the
+// same registrable domain, can plant in the browser a cookie that Remember
+// set in the attacker's own browser (cookie tossing), and so log the user
+// in to the attacker's account (login CSRF). Where other hosts of the
+// domain are not trusted, begin the cookie prefix with __Host-
+// (WithCookiePrefix): browsers accept such a cookie only from the host
+// itself, over https, with Path "/" (WithPath) and no Domain.
+//
+// An SP that trusts several IdPs should record in the data passed to
+// Remember which IdP it sent the AuthnRequest to, and check after
+// ParseResponse that the assertion's Issuer is that IdP: the pending
+// login says which request a Response answers, not which IdP must answer
+// it.
+//
 // This package is built only on the public API of x/samlsp, which itself
 // leaves sessions and cookies to the application. Applications that keep
 // pending logins elsewhere, such as in a server-side session, need not use
@@ -49,6 +77,7 @@
 package pending
 
 import (
+	"cmp"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -57,6 +86,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -76,6 +106,10 @@ const DefaultCookiePrefix = "saml_pending_"
 
 // MinKeyLength is the shortest HMAC key that New accepts, in bytes.
 const MinKeyLength = 32
+
+// MaxPending is how many other logins in progress Take keeps the cookies
+// of, the most recent ones; it clears the others.
+const MaxPending = 10
 
 // maxCookieSize is the largest cookie value Remember writes. Browsers keep
 // cookies of at least 4096 bytes, name and attributes included.
@@ -254,8 +288,14 @@ func (t *Tracker) Remember(w http.ResponseWriter, msg *samlsp.Message, data stri
 }
 
 // Take returns the login in progress that the Response in r answers, found
-// by the Response's RelayState, and clears its cookie, so that it is found
-// once. Call it in the ACS handler, before Config.ParseResponse.
+// by the Response's RelayState, and clears its cookie. Call it in the ACS
+// handler, before Config.ParseResponse. It also clears the cookies of
+// expired or invalid logins, and of all but the MaxPending most recent
+// other logins in progress.
+//
+// A browser that ignores the clearing can present the cookie again until
+// it expires, so a login may be found more than once; ParseResponse still
+// accepts each assertion only once (see samlsp.WithReplayState).
 //
 // It returns ErrNotFound if there is no login in progress for the
 // RelayState in this browser, and ErrInvalid if its cookie is not valid. An
@@ -269,28 +309,74 @@ func (t *Tracker) Take(w http.ResponseWriter, r *http.Request) (*Login, error) {
 		return nil, ErrNotFound
 	}
 	http.SetCookie(w, t.cookie(name, "", -1))
+	now := t.clock.Now()
+	t.prune(w, r, name, now)
 
-	encBody, encMAC, ok := strings.Cut(c.Value, ".")
-	if !ok {
-		return nil, ErrInvalid
-	}
-	body, err := base64.RawURLEncoding.DecodeString(encBody)
-	if err != nil {
-		return nil, ErrInvalid
-	}
-	mac, err := base64.RawURLEncoding.DecodeString(encMAC)
-	if err != nil || !hmac.Equal(mac, t.mac(name, body)) {
-		return nil, ErrInvalid
-	}
-	var p payload
-	if err := json.Unmarshal(body, &p); err != nil || p.RelayState != relayState || p.ID == "" {
+	p, ok := t.open(name, c.Value)
+	if !ok || p.RelayState != relayState {
 		return nil, ErrInvalid
 	}
 	expires := time.Unix(p.Expires, 0)
-	if !t.clock.Now().Before(expires) {
+	if !now.Before(expires) {
 		return nil, ErrNotFound
 	}
 	return &Login{ID: p.ID, RelayState: p.RelayState, Data: p.Data, Expires: expires}, nil
+}
+
+// open returns the payload of the cookie named name whose value is value,
+// and false if the cookie was not made by Remember with t's key.
+func (t *Tracker) open(name, value string) (payload, bool) {
+	var p payload
+	encBody, encMAC, ok := strings.Cut(value, ".")
+	if !ok {
+		return p, false
+	}
+	body, err := base64.RawURLEncoding.DecodeString(encBody)
+	if err != nil {
+		return p, false
+	}
+	mac, err := base64.RawURLEncoding.DecodeString(encMAC)
+	if err != nil || !hmac.Equal(mac, t.mac(name, body)) {
+		return p, false
+	}
+	if err := json.Unmarshal(body, &p); err != nil || p.ID == "" || t.cookieName(p.RelayState) != name {
+		return p, false
+	}
+	return p, true
+}
+
+// prune clears the cookies of r for logins other than the one named
+// taken: those that have expired at now or are not valid, and all but the
+// MaxPending that expire last.
+func (t *Tracker) prune(w http.ResponseWriter, r *http.Request, taken string, now time.Time) {
+	type pendingCookie struct {
+		name    string
+		expires int64
+	}
+	cookies := r.Cookies()
+	live := make([]pendingCookie, 0, len(cookies))
+	seen := map[string]bool{taken: true}
+	for _, c := range cookies {
+		if !strings.HasPrefix(c.Name, t.prefix) || seen[c.Name] {
+			continue
+		}
+		seen[c.Name] = true
+		p, ok := t.open(c.Name, c.Value)
+		if !ok || now.Unix() >= p.Expires {
+			http.SetCookie(w, t.cookie(c.Name, "", -1))
+			continue
+		}
+		live = append(live, pendingCookie{c.Name, p.Expires})
+	}
+	if len(live) <= MaxPending {
+		return
+	}
+	slices.SortFunc(live, func(a, b pendingCookie) int {
+		return cmp.Or(cmp.Compare(b.expires, a.expires), strings.Compare(a.name, b.name))
+	})
+	for _, c := range live[MaxPending:] {
+		http.SetCookie(w, t.cookie(c.name, "", -1))
+	}
 }
 
 // cookieName returns the name of the cookie for relayState. The RelayState

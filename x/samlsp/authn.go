@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/beevik/etree"
 
@@ -20,6 +21,11 @@ var ErrNoEndpoint = errors.New("samlsp: the identity provider has no endpoint fo
 // ErrNoRequestID is returned by ParseResponse when it is called with
 // neither WithRequestID nor AllowUnsolicited.
 var ErrNoRequestID = errors.New("samlsp: no request ID to match InResponseTo against")
+
+// ErrAuthnTooOld is returned by ParseResponse, through a
+// *saml.InvalidResponseError, for an assertion whose AuthnInstant is older
+// than WithMaxAuthnAge allows.
+var ErrAuthnTooOld = errors.New("samlsp: the user was authenticated too long ago")
 
 // AuthnOption customizes an AuthnRequest.
 type AuthnOption interface {
@@ -42,12 +48,17 @@ func (f authnOptionFunc) applyAuthn(o *authnOptions) { f(o) }
 var (
 	// ForceAuthn asks the IdP to authenticate the user again, even if the
 	// IdP already has a session for them (ForceAuthn="true"). See
-	// WithForceAuthn to set it from a setting.
+	// WithForceAuthn to set it from a setting. An IdP may ignore it; pass
+	// ParseResponse WithMaxAuthnAge to refuse an authentication that is
+	// not fresh.
 	ForceAuthn AuthnOption = authnOptionFunc(func(o *authnOptions) { o.forceAuthn = true })
 
 	// IsPassive asks the IdP not to interact with the user. If it cannot
 	// authenticate the user silently, ParseResponse fails with an error
-	// that matches saml.ErrBadStatus with the status NoPassive.
+	// that matches saml.ErrBadStatus with the status Responder and the
+	// second-level status NoPassive (saml-core §3.2.2.2):
+	//
+	//	errors.Is(err, saml.ErrBadStatus{Status: saml.StatusResponder, SubStatus: saml.StatusNoPassive})
 	IsPassive AuthnOption = authnOptionFunc(func(o *authnOptions) { o.isPassive = true })
 )
 
@@ -60,9 +71,10 @@ func WithForceAuthn(force bool) AuthnOption {
 // WithAuthnContext asks the IdP to authenticate the user with one of
 // classes, compared as comparison says.
 //
-// Pass the same option to ParseResponse, which then refuses an assertion
-// whose AuthnContextClassRef does not satisfy it, with an error matching
-// saml.ErrAuthnContextMismatch. A comparison other than saml.AuthnContextComparisonExact
+// The IdP may answer with another class: the class is enforced only if the
+// same option is passed to ParseResponse too, which then refuses an
+// assertion whose AuthnContextClassRef does not satisfy it, with an error
+// matching saml.ErrAuthnContextMismatch. A comparison other than saml.AuthnContextComparisonExact
 // needs WithAuthnContextComparator, since the order of the classes is
 // up to each deployment; without it, ParseResponse refuses every
 // assertion.
@@ -182,7 +194,8 @@ func WithSPNameQualifier(qualifier string) AuthnOption {
 // WithACSIndex names the assertion consumer service by its index in the
 // SP metadata instead of by URL and binding, as some IdPs require. The
 // index chooses the response binding, so WithResponseBinding is ignored.
-// AuthnRequest returns an error if the SP metadata has no such index.
+// AuthnRequest returns an error if the SP metadata, as ServeMetadata
+// publishes it, has no such index.
 func WithACSIndex(index int) AuthnOption {
 	return authnOptionFunc(func(o *authnOptions) { o.acsIndex = &index })
 }
@@ -265,7 +278,9 @@ func chooseBinding(preferred string, locate func(string) string) (string, string
 func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...AuthnOption) (*Message, error) {
 	o := authnOptions{responseBinding: saml.HTTPPostBinding}
 	for _, opt := range opts {
-		opt.applyAuthn(&o)
+		if opt != nil {
+			opt.applyAuthn(&o)
+		}
 	}
 	switch o.responseBinding {
 	case saml.HTTPPostBinding, saml.HTTPArtifactBinding, saml.HTTPPostSimpleSignBinding:
@@ -287,7 +302,9 @@ func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...Au
 				sp.RequestedAuthnContext = o.authnContext
 			}
 			if o.acsIndex != nil {
-				if !hasACSIndex(sp.Metadata(), *o.acsIndex) {
+				// The index must be in the metadata the IdP has, which
+				// ServeMetadata publishes, with what WithMetadata adds.
+				if !hasACSIndex(c.Metadata(ctx), *o.acsIndex) {
 					return nil, fmt.Errorf("samlsp: the SP metadata has no AssertionConsumerService with index %d", *o.acsIndex)
 				}
 				sp.AcsIndex = o.acsIndex
@@ -315,6 +332,7 @@ type ResponseOption interface {
 }
 
 type responseOptions struct {
+	maxAuthnAge  time.Duration
 	requestIDs   []string
 	unsolicited  bool
 	authnContext *saml.RequestedAuthnContext
@@ -347,6 +365,32 @@ func WithRequestID(id string) ResponseOption {
 // attacker. Never redirect to it without checking it.
 var AllowUnsolicited ResponseOption = responseOptionFunc(func(o *responseOptions) { o.unsolicited = true })
 
+// WithMaxAuthnAge refuses an assertion whose AuthnStatement says the IdP
+// authenticated the user more than maxAge ago (its AuthnInstant), allowing
+// saml.MaxClockSkew, with an error matching ErrAuthnTooOld. Use it with
+// ForceAuthn, which an IdP may ignore, to require a fresh authentication:
+// for example, with maxAge as long as a login may take. Without it, an
+// assertion is accepted however long ago the user was authenticated.
+func WithMaxAuthnAge(maxAge time.Duration) ResponseOption {
+	return responseOptionFunc(func(o *responseOptions) { o.maxAuthnAge = maxAge })
+}
+
+// checkAuthnAge returns an error if an AuthnStatement of a is older than
+// maxAge at now, or if a has none.
+func checkAuthnAge(a *saml.Assertion, maxAge time.Duration, now time.Time) error {
+	if len(a.AuthnStatements) == 0 {
+		return fmt.Errorf("%w: the assertion has no AuthnStatement", ErrAuthnTooOld)
+	}
+	oldest := now.Add(-maxAge - saml.MaxClockSkew)
+	for _, s := range a.AuthnStatements {
+		if s.AuthnInstant.Before(oldest) {
+			return fmt.Errorf("%w: AuthnInstant %s is more than %s before %s", ErrAuthnTooOld,
+				s.AuthnInstant.Format(time.RFC3339), maxAge, now.Format(time.RFC3339))
+		}
+	}
+	return nil
+}
+
 // ParseResponse verifies the identity provider's Response in r, sent to
 // the ACS URL, and returns its assertion. Call it from the handler at
 // the ACS URL passed to New.
@@ -365,7 +409,9 @@ var AllowUnsolicited ResponseOption = responseOptionFunc(func(o *responseOptions
 func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...ResponseOption) (*Assertion, error) {
 	var o responseOptions
 	for _, opt := range opts {
-		opt.applyResponse(&o)
+		if opt != nil {
+			opt.applyResponse(&o)
+		}
 	}
 	ctx = IdentityProviderContext(ctx, o.idp)
 	sp, err := c.serviceProvider(ctx, o.sp)
@@ -393,7 +439,13 @@ func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...Res
 	if err != nil {
 		return nil, err
 	}
-	return newAssertion(a), nil
+	if o.maxAuthnAge > 0 {
+		now := sp.Clock.Now() // the real time if Clock is nil
+		if err := checkAuthnAge(a, o.maxAuthnAge, now); err != nil {
+			return nil, &saml.InvalidResponseError{PrivateErr: err, Now: now}
+		}
+	}
+	return newAssertion(a, o.requestIDs), nil
 }
 
 // hasACSIndex reports whether md has an AssertionConsumerService with index.

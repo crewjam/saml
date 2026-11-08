@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -149,5 +150,26 @@ func TestPeekUnverifiedIssuerRefused(t *testing.T) {
 				t.Errorf("err = %v; matches ErrNoIssuer: %v, want %v", err, !tt.noIssuerIs, tt.noIssuerIs)
 			}
 		})
+	}
+}
+
+// A multipart POST is not parsed, so that no file part is spooled to disk
+// before the message is verified; ParseResponse does not read one either.
+func TestPeekUnverifiedIssuerIgnoresMultipart(t *testing.T) {
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	if err := mw.WriteField("SAMLRequest", base64.StdEncoding.EncodeToString([]byte(logoutRequestXML))); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "https://sp.example.com/saml/slo", &body)
+	r.Header.Set("Content-Type", mw.FormDataContentType())
+	if _, err := samlsp.PeekUnverifiedIssuer(r); !errors.Is(err, samlsp.ErrNoIssuer) {
+		t.Errorf("err = %v, want ErrNoIssuer", err)
+	}
+	if r.MultipartForm != nil {
+		t.Error("the multipart form was parsed")
 	}
 }

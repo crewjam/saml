@@ -268,7 +268,7 @@ func TestSpecProtocol_3_2_2_2_StatusCodeNesting(t *testing.T) {
 // saml-core-2.0-os §3.2.2.2 and §3.4.1.4: an error Response carries a
 // top-level code (here Responder) and optionally a second-level one (here
 // NoPassive). The SP rejects any Response whose top-level code is not
-// Success and reports the top-level code in ErrBadStatus.
+// Success and reports the top-level and second-level codes in ErrBadStatus.
 func TestSpecProtocol_3_2_2_2_SPRejectsNonSuccessTopLevelStatus(t *testing.T) {
 	e := spcovSetup(t)
 	for _, topLevel := range []string{StatusRequester, StatusResponder, StatusVersionMismatch} {
@@ -280,6 +280,7 @@ func TestSpecProtocol_3_2_2_2_SPRejectsNonSuccessTopLevelStatus(t *testing.T) {
 			var badStatus ErrBadStatus
 			assert.Assert(t, errors.As(err, &badStatus), "%v", err)
 			assert.Check(t, is.Equal(topLevel, badStatus.Status))
+			assert.Check(t, is.Equal(StatusNoPassive, badStatus.SubStatus))
 		})
 	}
 }

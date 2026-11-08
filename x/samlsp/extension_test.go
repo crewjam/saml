@@ -188,3 +188,40 @@ func TestSignElementAndServiceProvider(t *testing.T) {
 		t.Error("SignElement without a key")
 	}
 }
+
+// Changing the slices of a ServiceProvider does not change the Config, or
+// the ServiceProvider of the next call.
+func TestServiceProviderSharesNoSlices(t *testing.T) {
+	ti := newTestIDP(t)
+	key, cert := newKeyPair(t, "sp")
+	decryptionKey, _ := newKeyPair(t, "old")
+	_, intermediateCert := newKeyPair(t, "intermediate")
+	cfg, err := samlsp.New(spEntityID, staticIDP(ti),
+		samlsp.WithSigningKey(key, cert, intermediateCert), samlsp.WithDecryptionKeys(decryptionKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp, err := cfg.ServiceProvider(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp.Intermediates[0] = nil
+	sp.DecryptionKeys[0] = nil
+	again, err := cfg.ServiceProvider(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Intermediates[0] != intermediateCert || again.DecryptionKeys[0] != decryptionKey {
+		t.Error("changing a ServiceProvider's slices changed the Config")
+	}
+}
+
+// New refuses a WithSigningKey whose certificate is for another key.
+func TestSigningKeyCertificateMismatch(t *testing.T) {
+	ti := newTestIDP(t)
+	key, _ := newKeyPair(t, "sp")
+	_, other := newKeyPair(t, "other")
+	if _, err := samlsp.New(spEntityID, staticIDP(ti), samlsp.WithSigningKey(key, other)); err == nil {
+		t.Error("New accepted a signing certificate for another key")
+	}
+}
