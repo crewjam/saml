@@ -826,13 +826,13 @@ func TestSpcovValidateLogoutResponseMalformed(t *testing.T) {
 			t.Run(tc.name+"/"+variant, func(t *testing.T) {
 				err := validate(t, tc.buf(t))
 				if tc.wantErr != "" {
-					// the POST variant adds context, the Redirect variant does not
-					want := tc.wantErr
+					// both variants return an InvalidResponseError; only the
+					// private error's context differs
 					if variant == "form" {
-						want = "response contains invalid XML: " + want
-						err = spcovPrivateErr(t, err)
+						assert.Error(t, spcovPrivateErr(t, err), "response contains invalid XML: "+tc.wantErr)
+					} else {
+						assert.Error(t, spcovPrivateErr(t, err), "invalid xml: "+tc.wantErr)
 					}
-					assert.Error(t, err, want)
 					return
 				}
 				assert.Error(t, spcovPrivateErr(t, err), tc.wantPrivateErr)
