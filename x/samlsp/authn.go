@@ -185,7 +185,8 @@ func WithSPNameQualifier(qualifier string) AuthnOption {
 // WithACSIndex names the assertion consumer service by its index in the
 // SP metadata instead of by URL and binding, as some IdPs require. The
 // index chooses the response binding, so WithResponseBinding is ignored.
-// AuthnRequest returns an error if the SP metadata has no such index.
+// AuthnRequest returns an error if the SP metadata, as ServeMetadata
+// publishes it, has no such index.
 func WithACSIndex(index int) AuthnOption {
 	return authnOptionFunc(func(o *authnOptions) { o.acsIndex = &index })
 }
@@ -292,7 +293,9 @@ func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...Au
 				sp.RequestedAuthnContext = o.authnContext
 			}
 			if o.acsIndex != nil {
-				if !hasACSIndex(sp.Metadata(), *o.acsIndex) {
+				// The index must be in the metadata the IdP has, which
+				// ServeMetadata publishes, with what WithMetadata adds.
+				if !hasACSIndex(c.Metadata(ctx), *o.acsIndex) {
 					return nil, fmt.Errorf("samlsp: the SP metadata has no AssertionConsumerService with index %d", *o.acsIndex)
 				}
 				sp.AcsIndex = o.acsIndex

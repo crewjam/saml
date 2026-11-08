@@ -96,6 +96,25 @@ func TestWithACSIndex(t *testing.T) {
 	}
 }
 
+// WithACSIndex accepts an index that WithMetadata adds to the published
+// metadata.
+func TestWithACSIndexFromMetadataHook(t *testing.T) {
+	ti := newTestIDP(t)
+	cfg := newTestConfig(t, ti, samlsp.WithMetadata(func(md *saml.EntityDescriptor) {
+		d := &md.SPSSODescriptors[0]
+		d.AssertionConsumerServices = append(d.AssertionConsumerServices, saml.IndexedEndpoint{
+			Binding: saml.HTTPPostBinding, Location: "https://sp.example.com/saml/acs2", Index: 7,
+		})
+	}))
+	msg, err := cfg.AuthnRequest(t.Context(), "s", samlsp.WithACSIndex(7))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req := decodeRedirectRequest(t, msg.RedirectURL()); req.AssertionConsumerServiceIndex != "7" {
+		t.Errorf("AssertionConsumerServiceIndex = %q", req.AssertionConsumerServiceIndex)
+	}
+}
+
 // Nil options are skipped, as New skips them, rather than panicking.
 func TestNilOptionsSkipped(t *testing.T) {
 	ti := newTestIDP(t)
