@@ -76,8 +76,9 @@ type soapLogout struct {
 }
 
 // prepareSOAPLogout makes and signs the LogoutRequest logoutParticipantSOAP
-// sends. It uses RandReader, so it is not run concurrently.
-func (idp *IdentityProvider) prepareSOAPLogout(metadata *EntityDescriptor, participant SessionParticipant) (*soapLogout, error) {
+// sends, changed by opts before it is signed. It uses RandReader, so it is
+// not run concurrently.
+func (idp *IdentityProvider) prepareSOAPLogout(metadata *EntityDescriptor, participant SessionParticipant, opts ...LogoutRequestOption) (*soapLogout, error) {
 	endpoint := idp.soapLogoutEndpoint(metadata)
 	if endpoint == nil {
 		return nil, ErrNoSOAPLogoutEndpoint
@@ -85,6 +86,9 @@ func (idp *IdentityProvider) prepareSOAPLogout(metadata *EntityDescriptor, parti
 	logoutRequest, err := idp.participantLogoutRequest(participant, endpoint.Location, metadata)
 	if err != nil {
 		return nil, err
+	}
+	for _, opt := range opts {
+		opt(logoutRequest)
 	}
 	signingContext, err := idp.signingContext()
 	if err != nil {
@@ -139,11 +143,14 @@ func (l *soapLogout) exchange(ctx context.Context) (*LogoutResponse, error) {
 // no SOAP endpoint (or only ones that are not https; see
 // AllowInsecureSOAPEndpoints), and one matching ErrBadStatus, with the
 // response, if the service provider did not answer with a Success status.
-func (idp *IdentityProvider) SendSOAPLogoutRequest(ctx context.Context, metadata *EntityDescriptor, participant SessionParticipant) (*LogoutResponse, error) {
+//
+// opts change the LogoutRequest before it is signed, such as to set its
+// Reason or NotOnOrAfter.
+func (idp *IdentityProvider) SendSOAPLogoutRequest(ctx context.Context, metadata *EntityDescriptor, participant SessionParticipant, opts ...LogoutRequestOption) (*LogoutResponse, error) {
 	if metadata == nil {
 		return nil, errors.New("no service provider metadata")
 	}
-	logout, err := idp.prepareSOAPLogout(metadata, participant)
+	logout, err := idp.prepareSOAPLogout(metadata, participant, opts...)
 	if err != nil {
 		return nil, err
 	}

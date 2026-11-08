@@ -335,8 +335,8 @@ func TestPartialLogout(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp, err := w.sps[0].slo.ParseResponse(ctx, deliver(t, msg), out.ID)
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, slo.ErrPartialLogout) || resp == nil {
+		t.Fatalf("got %v, %v", resp, err)
 	}
 	if s := resp.Status.StatusCode.StatusCode; s == nil || s.Value != saml.StatusPartialLogout {
 		t.Fatalf("status %+v", resp.Status)
@@ -402,15 +402,19 @@ func TestBadResponses(t *testing.T) {
 
 func TestUnsignedRequestRefused(t *testing.T) {
 	ctx := context.Background()
-	w := newWorld(t, worldOptions{spConfig: [2][]samlsp.Option{{samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
-		sp.LogoutSignatureMethod = ""
-	})}}})
+	w := newWorld(t, worldOptions{})
 	_, a1 := w.login(t, 0, "s1")
 	out, err := w.sps[0].slo.Request(ctx, a1.NameID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.logout.ParseRequest(ctx, toIDP(t, out)); err == nil {
+	// The same request without its signature.
+	u := out.RedirectURL()
+	q := u.Query()
+	q.Del("Signature")
+	q.Del("SigAlg")
+	u.RawQuery = q.Encode()
+	if _, err := w.logout.ParseRequest(ctx, httptest.NewRequest(http.MethodGet, u.String(), http.NoBody)); err == nil {
 		t.Fatal("an unsigned LogoutRequest was accepted")
 	}
 }
@@ -476,6 +480,7 @@ func TestEncryptedNameID(t *testing.T) {
 func TestBackChannel(t *testing.T) {
 	ctx := context.Background()
 	var w *world
+	sp2Got := make(chan *saml.LogoutRequest, 1)
 	idpServer := httptest.NewTLSServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		req, err := w.logout.ParseRequest(r.Context(), r)
 		if err != nil {
@@ -497,6 +502,7 @@ func TestBackChannel(t *testing.T) {
 			slo.WriteRequestError(rw, r)
 			return
 		}
+		sp2Got <- req.Raw
 		msg, err := s.Response(r.Context(), req)
 		if err != nil {
 			http.Error(rw, err.Error(), http.StatusInternalServerError)
@@ -532,12 +538,16 @@ func TestBackChannel(t *testing.T) {
 	}
 
 	// The IdP logs the user out of SP 2 directly.
-	resp, err = w.logout.SendRequest(ctx, p2)
+	deadline := time.Now().Add(time.Minute).UTC().Truncate(time.Millisecond)
+	resp, err = w.logout.SendRequest(ctx, p2, idpslo.WithReason(saml.LogoutReasonAdmin), idpslo.WithNotOnOrAfter(deadline))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resp.Status.StatusCode.Value != saml.StatusSuccess {
 		t.Fatalf("status %+v", resp.Status)
+	}
+	if got := <-sp2Got; got.Reason != saml.LogoutReasonAdmin || got.NotOnOrAfter == nil || !got.NotOnOrAfter.Equal(deadline) {
+		t.Fatalf("SP 2 got %+v", got)
 	}
 }
 
@@ -620,5 +630,44 @@ func TestConfig(t *testing.T) {
 		if k.Use == "encryption" {
 			t.Error("an encryption key is published without WithDecryptionKey")
 		}
+	}
+}
+
+func TestRequestRelayStateTooLong(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, worldOptions{})
+	p2, _ := w.login(t, 1, "s1")
+	if _, err := w.logout.Request(ctx, p2, strings.Repeat("r", saml.MaxRelayStateLength)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.logout.Request(ctx, p2, strings.Repeat("r", saml.MaxRelayStateLength+1)); !errors.Is(err, saml.ErrRelayStateTooLong) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// TestResponseReplay checks that a LogoutResponse is accepted only once,
+// even while the request it answers is still pending.
+func TestResponseReplay(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, worldOptions{})
+	p2, _ := w.login(t, 1, "s1")
+	toSP2, err := w.logout.Request(ctx, p2, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp2 := w.sps[1]
+	sp2req, err := sp2.slo.ParseRequest(ctx, deliver(t, toSP2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer, err := sp2.slo.Response(ctx, sp2req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.logout.ParseResponse(ctx, toIDP(t, answer), sp2.config.EntityID(), toSP2.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.logout.ParseResponse(ctx, toIDP(t, answer), sp2.config.EntityID(), toSP2.ID); !errors.Is(err, saml.ErrAssertionReplayed) {
+		t.Fatalf("replayed: got %v", err)
 	}
 }

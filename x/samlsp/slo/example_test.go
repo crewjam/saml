@@ -60,9 +60,13 @@ var spKey, spCert = func() (*rsa.PrivateKey, *x509.Certificate) {
 
 // The application's own session storage, which these packages leave to it.
 
-func takePendingRequest(*http.Request) string              { return "" }
-func endSession(http.ResponseWriter, *http.Request)        {}
-func endSessionsOf(context.Context, saml.NameID, []string) {}
+func takePendingRequest(*http.Request) string       { return "" }
+func endSession(http.ResponseWriter, *http.Request) {}
+
+// endSessionsOf(ctx, issuer, nameID, sessionIndexes) ends the sessions of
+// the user nameID of the IdP issuer: a NameID is unique only within the
+// IdP that issued it.
+func endSessionsOf(context.Context, string, saml.NameID, []string) {}
 
 // currentSession returns what the application kept from the user's login.
 func currentSession(*http.Request) (nameID saml.NameID, sessionIndexes []string, ok bool) {
@@ -151,7 +155,7 @@ func ExampleService_ParseRequest() {
 			}
 			// End the sessions it names, in this browser and elsewhere.
 			endSession(w, r)
-			endSessionsOf(r.Context(), req.NameID, req.SessionIndexes)
+			endSessionsOf(r.Context(), req.Issuer, req.NameID, req.SessionIndexes)
 
 			msg, err := logout.Response(r.Context(), req)
 			if err != nil {
@@ -163,9 +167,12 @@ func ExampleService_ParseRequest() {
 		case slo.IsResponse(r):
 			_, err := logout.ParseResponse(r.Context(), r, takePendingRequest(r))
 			var status saml.ErrBadStatus
-			if errors.As(err, &status) {
-				log.Printf("the IdP could not log the user out everywhere: %s", status.Status)
-			} else if err != nil {
+			switch {
+			case errors.Is(err, slo.ErrPartialLogout):
+				log.Print("the IdP could not log the user out of every SP")
+			case errors.As(err, &status):
+				log.Printf("the IdP could not log the user out: %s", status.Status)
+			case err != nil:
 				log.Printf("bad logout response: %v", errors.Unwrap(err))
 			}
 			// The local session already ended when logout started.
@@ -227,7 +234,7 @@ func ExampleService_SendRequest() {
 
 	http.HandleFunc("POST /admin/users/{id}/disable", func(w http.ResponseWriter, r *http.Request) {
 		nameID, sessionIndexes, _ := currentSession(r) // the disabled user's, from the application's store
-		endSessionsOf(r.Context(), nameID, sessionIndexes)
+		endSessionsOf(r.Context(), "https://idp.example.com/metadata", nameID, sessionIndexes)
 
 		_, err := logout.SendRequest(r.Context(), nameID,
 			slo.WithSessionIndex(sessionIndexes...), slo.WithReason(saml.LogoutReasonAdmin))
