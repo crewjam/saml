@@ -29,38 +29,64 @@ func TestSOAPHTTPClientRefusesDowngradeRedirect(t *testing.T) {
 
 	sp := &ServiceProvider{HTTPClient: secure.Client()}
 	_, err := sp.postSOAP(context.Background(), secure.URL, etree.NewElement("x"), 1024)
-	assert.Check(t, errors.Is(err, ErrInsecureSOAPEndpoint), "%v", err)
+	assert.Check(t, errors.Is(err, errSOAPRedirect), "%v", err)
 	assert.Check(t, is.Equal(int32(0), plainHits.Load()))
 }
 
-// A redirect between https locations is still followed with a caller's
-// client, and the caller's own redirect policy still applies.
-func TestSOAPHTTPClientKeepsCallerRedirectPolicy(t *testing.T) {
+// The SOAP binding has no redirects (saml-bindings §3.2): even between
+// https locations, and even with a caller's client whose own policy would
+// follow it, a redirect is not followed, so that neither the message nor
+// the client's TLS certificate goes to a location the metadata never named.
+func TestSOAPHTTPClientNeverFollowsRedirects(t *testing.T) {
+	var endHits atomic.Int32
 	var target *httptest.Server
 	target = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/start" {
 			http.Redirect(w, r, target.URL+"/end", http.StatusTemporaryRedirect)
 			return
 		}
+		endHits.Add(1)
 		_, _ = w.Write([]byte("<ok/>"))
 	}))
 	defer target.Close()
 
 	client := target.Client()
+	var callerPolicyCalled bool
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		callerPolicyCalled = true
+		return nil // would follow
+	}
 	sp := &ServiceProvider{HTTPClient: client}
-	body, err := sp.postSOAP(context.Background(), target.URL+"/start", etree.NewElement("x"), 1024)
-	assert.NilError(t, err)
-	assert.Check(t, is.Equal("<ok/>", string(body)))
+	_, err := sp.postSOAP(context.Background(), target.URL+"/start", etree.NewElement("x"), 1024)
+	assert.Check(t, errors.Is(err, errSOAPRedirect), "%v", err)
+	assert.Check(t, is.Equal(int32(0), endHits.Load()))
+	assert.Check(t, !callerPolicyCalled)
+	// The caller's client is not changed.
+	assert.Check(t, client.CheckRedirect != nil)
+	assert.NilError(t, client.CheckRedirect(nil, nil))
 
-	stop := errors.New("caller says stop")
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return stop }
-	_, err = sp.postSOAP(context.Background(), target.URL+"/start", etree.NewElement("x"), 1024)
-	assert.Check(t, errors.Is(err, stop), "%v", err)
+	// Artifact resolution, which builds its own request, refuses it too.
+	e := spcovSetup(t)
+	e.sp.IDPMetadata.IDPSSODescriptors[0].ArtifactResolutionServices[0].Location = target.URL + "/start"
+	e.sp.HTTPClient = client
+	_, err = e.sp.ParseResponse(spcovArtifactRequest("the-artifact"), []string{spcovRequestID})
+	assert.Check(t, errors.Is(err, ErrArtifactResolution), "%v", err)
+	assert.Check(t, errors.Is(spcovPrivateErr(t, err), errSOAPRedirect), "%v", err)
+	assert.Check(t, is.Equal(int32(0), endHits.Load()))
+
+	// And so does the IdP's client for SOAP logout.
+	idp := &IdentityProvider{HTTPClient: client}
+	_, err = postSOAPMessage(context.Background(), idp.httpClient(), target.URL+"/start", etree.NewElement("x"), 1024)
+	assert.Check(t, errors.Is(err, errSOAPRedirect), "%v", err)
+	assert.Check(t, is.Equal(int32(0), endHits.Load()))
 }
 
 func TestSOAPHTTPClientDefault(t *testing.T) {
-	c := soapHTTPClient(nil, false)
+	c := soapHTTPClient(nil)
 	assert.Check(t, c == defaultSOAPHTTPClient)
 	assert.Check(t, c.Timeout > 0)
 	assert.Check(t, c.CheckRedirect != nil)
+	req, err := http.NewRequest(http.MethodPost, "https://elsewhere.example.com/", nil)
+	assert.NilError(t, err)
+	assert.Check(t, errors.Is(c.CheckRedirect(req, nil), errSOAPRedirect))
 }

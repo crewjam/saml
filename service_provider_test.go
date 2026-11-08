@@ -1918,11 +1918,10 @@ func TestGetArtifactBindingLocation(t *testing.T) {
 }
 
 func TestMakeArtifactResolveRequest(t *testing.T) {
-	test := NewServiceProviderTest(t)
+	_ = NewServiceProviderTest(t)
 
+	// Without Key the request is unsigned.
 	sp := ServiceProvider{
-		Key:         test.Key,
-		Certificate: test.Certificate,
 		MetadataURL: mustParseURL("https://example.com/saml2/metadata"),
 		AcsURL:      mustParseURL("https://example.com/saml2/acs"),
 		IDPMetadata: &EntityDescriptor{},
