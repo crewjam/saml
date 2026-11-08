@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	dsig "github.com/russellhaering/goxmldsig"
 
@@ -118,7 +119,14 @@ type Server struct {
 	servicesMu sync.Mutex
 	// services holds the metadata of each stored service by its store ID
 	// (the :id of /services/:id). Protected by idpConfigMu.
-	services          map[string]*saml.EntityDescriptor
+	services map[string]*saml.EntityDescriptor
+
+	// expiry schedules the deletion of expired sessions (see
+	// scheduleSessionDeletion). afterFunc, if set, replaces time.AfterFunc
+	// for its timer, in tests.
+	expiry    sessionExpiry
+	afterFunc func(time.Duration, func()) stopper
+
 	IDP               saml.IdentityProvider // the underlying IDP
 	Store             Store                 // the data store
 	LoginFormTemplate *template.Template

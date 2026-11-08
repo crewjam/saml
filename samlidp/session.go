@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -141,6 +142,7 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, req *saml.
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return nil
 	}
+	s.scheduleSessionDeletion(session)
 
 	http.SetCookie(w, s.sessionCookie(r, session.ID, int(sessionMaxAge.Seconds())))
 
@@ -183,15 +185,58 @@ func (s *Server) lookupSession(r *http.Request) (*saml.Session, error) {
 	}
 	session := &saml.Session{}
 	if err := s.Store.Get(fmt.Sprintf("/sessions/%s", sessionCookie.Value), session); err != nil {
-		if err == ErrNotFound {
+		if errors.Is(err, ErrNotFound) {
 			return nil, nil
 		}
 		return nil, err
 	}
 	if s.now().After(session.ExpireTime) {
+		if s.isPastRetention(session) {
+			if err := s.deleteSession(session.ID); err != nil {
+				s.logger.Printf("ERROR: cannot delete expired session: %s", err)
+			}
+		}
 		return nil, nil
 	}
 	return session, nil
+}
+
+// isPastRetention reports whether session expired more than
+// expiredSessionRetention ago, and can be deleted.
+func (s *Server) isPastRetention(session *saml.Session) bool {
+	return s.now().After(session.ExpireTime.Add(expiredSessionRetention))
+}
+
+// DeleteExpiredSessions deletes the stored sessions, and their recorded
+// participants, that expired more than a day ago. Sessions stop logging
+// anyone in when they expire, but are kept that long so that single logout
+// can still reach the service providers they were used for.
+//
+// The server already deletes each session it stores when it is due, with a
+// timer, and the sessions it finds in the Store when first used; call
+// DeleteExpiredSessions to also catch sessions written by other servers
+// sharing the Store since then, or after Store errors.
+func (s *Server) DeleteExpiredSessions() error {
+	ids, err := s.Store.List("/sessions/")
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		session := &saml.Session{}
+		if err := s.Store.Get(sessionKey(id), session); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			return err
+		}
+		if !s.isPastRetention(session) {
+			continue
+		}
+		if err := s.deleteSession(id); err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+	}
+	return nil
 }
 
 // promptLogin asks the user to log in with the login form, showing toast.
