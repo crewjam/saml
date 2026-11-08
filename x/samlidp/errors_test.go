@@ -359,3 +359,34 @@ func TestParseAuthnRequestKeepsForm(t *testing.T) {
 		t.Fatalf("remember = %q", got)
 	}
 }
+
+// AllowCreate is false only when the SP's NameIDPolicy forbids creating an
+// identifier: a request without a NameIDPolicy leaves the identifier to
+// the IdP (saml-core §3.4.1), and transient identifiers are always new.
+func TestAllowCreate(t *testing.T) {
+	no, yes := false, true
+	persistent, transient := string(saml.PersistentNameIDFormat), string(saml.TransientNameIDFormat)
+	for _, tc := range []struct {
+		name   string
+		policy *saml.NameIDPolicy
+		want   bool
+	}{
+		{"no NameIDPolicy", nil, true},
+		{"AllowCreate true", &saml.NameIDPolicy{Format: &persistent, AllowCreate: &yes}, true},
+		{"AllowCreate false", &saml.NameIDPolicy{Format: &persistent, AllowCreate: &no}, false},
+		{"AllowCreate omitted", &saml.NameIDPolicy{Format: &persistent}, false},
+		{"transient, AllowCreate false", &saml.NameIDPolicy{Format: &transient, AllowCreate: &no}, true},
+	} {
+		p := newPair(t, nil, nil)
+		_, req, err := p.parse(t, samlsp.WithModify(func(r *saml.AuthnRequest) error {
+			r.NameIDPolicy = tc.policy
+			return nil
+		}))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if req.AllowCreate != tc.want {
+			t.Errorf("%s: AllowCreate = %v", tc.name, req.AllowCreate)
+		}
+	}
+}

@@ -102,11 +102,15 @@ type AuthnRequest struct {
 	// identifier in the affiliation.
 	SPNameQualifier string
 
-	// AllowCreate is the AllowCreate of the NameIDPolicy: whether the IdP
-	// may create a new identifier for the user for this SP (saml-core
-	// §3.4.1.1). If it is false and the user has no identifier for the SP
-	// (or its affiliation) yet, such as no persistent NameID, do not make
-	// one: answer with ErrorResponse and StatusInvalidNameIDPolicy.
+	// AllowCreate says whether the IdP may create a new identifier for the
+	// user for this SP (saml-core §3.4.1.1). It is the AllowCreate of the
+	// NameIDPolicy, false if the policy leaves it out; but it is true if
+	// the request has no NameIDPolicy, which leaves the identifier to the
+	// IdP (saml-core §3.4.1), and for the transient format, whose
+	// identifiers are always new, and for which the approved errata say
+	// AllowCreate is ignored. If it is false and the user has no identifier for the
+	// SP (or its affiliation) yet, such as no persistent NameID, do not
+	// make one: answer with ErrorResponse and StatusInvalidNameIDPolicy.
 	AllowCreate bool
 
 	// AuthnContextClasses are the authentication context classes the SP
@@ -349,7 +353,10 @@ func newAuthnRequest(ireq *saml.IdpAuthnRequest) *AuthnRequest {
 		if p.SPNameQualifier != nil {
 			req.SPNameQualifier = *p.SPNameQualifier
 		}
-		req.AllowCreate = p.AllowCreate != nil && *p.AllowCreate
+		req.AllowCreate = p.AllowCreate != nil && *p.AllowCreate ||
+			req.NameIDFormat == saml.TransientNameIDFormat
+	} else {
+		req.AllowCreate = true
 	}
 	if rac := q.RequestedAuthnContext; rac != nil {
 		req.AuthnContextComparison = saml.AuthnContextComparison(rac.Comparison)
