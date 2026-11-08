@@ -111,7 +111,7 @@ func TestProfiles(t *testing.T) {
 
 			// Switching back to generic restores the library's shape.
 			_, body = h.do(http.MethodPost, "/manage/"+idpSecret+"/profile", url.Values{"profile": {"generic"}})
-			mustContain(t, body, "Profile Generic applied", h.base+"/idp/"+idpID+"/metadata")
+			mustContain(t, body, "Profile Default applied", h.base+"/idp/"+idpID+"/metadata", `aria-checked="true">Default<`)
 		})
 	}
 }

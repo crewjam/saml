@@ -52,7 +52,7 @@ type idpProfile struct {
 
 var idpProfiles = []idpProfile{
 	{
-		Key: "generic", Name: "Generic", Label: "gosaml default",
+		Key: "generic", Name: "Default", Label: "Default",
 		Description: "This library's own defaults: the entity ID is the metadata URL, attributes have both URN and simple names, and both the Response and the assertion are signed.",
 		Encryption:  "auto",
 		Signing:     "both",
