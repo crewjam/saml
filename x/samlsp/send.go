@@ -46,7 +46,9 @@ type OutgoingMessage struct {
 	// one that can sign: with an enveloped XML signature, or with the
 	// binding's own signature for HTTP-Redirect. Without such a key, the
 	// message is sent unsigned. HTTP-POST-SimpleSign always signs, and
-	// fails without a key.
+	// fails without a key. A request to the SingleSignOnService is also
+	// signed when the call's ServiceProvider has a SignatureMethod, as its
+	// metadata then says AuthnRequestsSigned="true".
 	Sign bool
 
 	// Build returns the message, unsigned, addressed to destination. sp is
@@ -143,6 +145,13 @@ func (c *Config) send(ctx context.Context, msg OutgoingMessage, o messageOptions
 		return nil, fmt.Errorf("samlsp: the RelayState is longer than %d bytes", saml.MaxRelayStateLength)
 	}
 
+	// The SP metadata says AuthnRequestsSigned="true" whenever
+	// SignatureMethod is set (saml-metadata §2.4.4), so keep that promise
+	// even when a ServiceProviderOption, rather than SignAuthnRequests,
+	// set it.
+	if msg.Service == SingleSignOnService && msg.Param == "SAMLRequest" && sp.SignatureMethod != "" {
+		msg.Sign = true
+	}
 	signMethod := ""
 	if msg.Sign {
 		signMethod = method
