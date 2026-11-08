@@ -124,7 +124,6 @@
 // binding: it then resolves the artifact with the IdP, using the HTTP
 // client of WithHTTPClient. It accepts an unsolicited (IdP-initiated)
 // Response only with AllowUnsolicited.
-
 //
 // # Single Logout and other extensions
 //

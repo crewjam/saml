@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
 
 	"github.com/crewjam/saml/x/samlsp"
 	"github.com/crewjam/saml/x/samlsp/pending"
@@ -60,11 +59,8 @@ func Example() {
 
 		// The data came from the login request, so check it as such: a
 		// path on this site, not one that browsers read as another host.
-		next := login.Data
-		if !isLocalPath(next) {
-			next = "/"
-		}
-		http.Redirect(w, r, next, http.StatusFound) //nolint:gosec // G710: next is checked by isLocalPath
+		next, _ := samlsp.SafeRedirectPath(login.Data)
+		http.Redirect(w, r, next, http.StatusFound) //nolint:gosec // G710: next is checked by SafeRedirectPath
 	})
 }
 
@@ -99,10 +95,3 @@ func ExampleTracker_Find_unsolicited() {
 }
 
 func startSession(http.ResponseWriter, *samlsp.Assertion) {}
-
-// isLocalPath reports whether p is a path on this site, safe to redirect
-// to: it starts with "/", but not with "//" or "/\", which browsers read as
-// another host.
-func isLocalPath(p string) bool {
-	return strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "//") && !strings.HasPrefix(p, "/\\")
-}

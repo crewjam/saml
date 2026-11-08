@@ -13,8 +13,8 @@
 //	tracker, err := pending.New(config, cookieKey)
 //
 //	func login(w http.ResponseWriter, r *http.Request) {
-//		next := r.URL.Query().Get("next")
-//		if len(next) > 100 || safeLocalPath(next) != next {
+//		next, _ := samlsp.SafeRedirectPath(r.URL.Query().Get("next"))
+//		if len(next) > 100 {
 //			next = "/"
 //		}
 //		msg, err := config.AuthnRequest(r.Context(), rand.Text())
@@ -30,7 +30,8 @@
 //		if err != nil { ... }
 //		tracker.Forget(w, login)
 //		startSession(w, assertion)
-//		http.Redirect(w, r, safeLocalPath(login.Data), http.StatusFound)
+//		next, _ := samlsp.SafeRedirectPath(login.Data)
+//		http.Redirect(w, r, next, http.StatusFound)
 //	}
 //
 // The cookie is authenticated with an HMAC key, so the browser cannot
@@ -188,9 +189,10 @@ type Login struct {
 
 	// Data is the data passed to Remember, such as where to send the
 	// user after login. The browser cannot change it, but it is only as
-	// trustworthy as what Remember was given. Check a return path before
-	// redirecting to it: it must start with "/", but not with "//" or
-	// "/\", which browsers read as another host.
+	// trustworthy as what Remember was given. Check a return path with
+	// samlsp.SafeRedirectPath before redirecting to it: browsers read
+	// many paths that merely start with "/" as naming another host, such
+	// as "//evil.example", "/\evil.example" and "/<tab>/evil.example".
 	Data string
 
 	// Expires is when the login would have stopped being accepted.

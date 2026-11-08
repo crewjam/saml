@@ -95,11 +95,8 @@ func acs(w http.ResponseWriter, r *http.Request) {
 	}
 	startSession(w, assertion)
 
-	returnTo := pending.Get("to")
-	if !isLocalURL(returnTo) {
-		returnTo = "/"
-	}
-	http.Redirect(w, r, returnTo, http.StatusFound) //nolint:gosec // G710: returnTo passed isLocalURL
+	returnTo, _ := samlsp.SafeRedirectPath(pending.Get("to"))
+	http.Redirect(w, r, returnTo, http.StatusFound) //nolint:gosec // G710: returnTo passed SafeRedirectPath
 }
 
 func startSession(w http.ResponseWriter, a *samlsp.Assertion) {
@@ -150,17 +147,4 @@ func setTempCookie(w http.ResponseWriter, name, path, value string) {
 
 func deleteCookie(w http.ResponseWriter, name, path string) {
 	http.SetCookie(w, &http.Cookie{Name: name, Path: path, MaxAge: -1, HttpOnly: true, Secure: secure()}) //nolint:gosec // G124: deletes the cookie
-}
-
-// isLocalURL reports whether p is a URL path on this site, safe to redirect
-// to: it starts with "/", but not with "//" or "/\", which browsers read as
-// another host, and is a plain path.
-func isLocalURL(p string) bool {
-	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.HasPrefix(p, "/\\") {
-		return false
-	}
-	// url.Parse refuses control characters, such as the tab in "/\t/host",
-	// which browsers drop, leaving "//host".
-	u, err := url.Parse(p)
-	return err == nil && u.Scheme == "" && u.Host == ""
 }

@@ -157,10 +157,8 @@ func (a *App) acs(w http.ResponseWriter, r *http.Request) {
 	a.db.AddSession(s)
 	a.setCookie(w, sessionCookie, s.ID, "/", int(time.Until(expires)/time.Second), false)
 
-	if !isLocalURL(redirectTo) {
-		redirectTo = "/"
-	}
-	http.Redirect(w, r, redirectTo, http.StatusFound) //nolint:gosec // G710: redirectTo passed isLocalURL
+	redirectTo, _ = samlsp.SafeRedirectPath(redirectTo)
+	http.Redirect(w, r, redirectTo, http.StatusFound) //nolint:gosec // G710: redirectTo passed SafeRedirectPath
 }
 
 // loginInProgress returns the options that ParseResponse needs for the
@@ -318,19 +316,6 @@ func (a *App) setCookie(w http.ResponseWriter, name, value, path string, maxAge 
 		c.SameSite = http.SameSiteLaxMode
 	}
 	http.SetCookie(w, c)
-}
-
-// isLocalURL reports whether p is a URL path on this site, safe to redirect
-// to: it starts with "/", but not with "//" or "/\", which browsers read as
-// another host, and is a plain path.
-func isLocalURL(p string) bool {
-	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.HasPrefix(p, "/\\") {
-		return false
-	}
-	// url.Parse refuses control characters, such as the tab in "/\t/host",
-	// which browsers drop, leaving "//host".
-	u, err := url.Parse(p)
-	return err == nil && u.Scheme == "" && u.Host == ""
 }
 
 // mustParseURL parses a URL known to be valid.

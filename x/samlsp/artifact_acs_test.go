@@ -87,7 +87,7 @@ func TestArtifactACSOptIn(t *testing.T) {
 
 	// With the option, the ACS is listed and the artifact resolved.
 	cfg = f.config(t, samlsp.AcceptArtifactResponses)
-	var bindings []string
+	bindings := make([]string, 0, 2)
 	for _, acs := range cfg.Metadata(t.Context()).SPSSODescriptors[0].AssertionConsumerServices {
 		bindings = append(bindings, acs.Binding)
 	}
