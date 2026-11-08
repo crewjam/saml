@@ -1,8 +1,12 @@
 // Package replay keeps the record that makes each SAML message accepted
-// only once: the keys (see samlsp.ReplayKey) of the assertions, logout
-// requests and artifacts a service provider has accepted, each until the
-// message could no longer be accepted anyway. It is the replay state of
-// github.com/crewjam/saml/x/samlsp; see samlsp.WithReplayState.
+// only once: the keys of the messages a service provider or identity
+// provider has accepted, each until the message could no longer be
+// accepted anyway. It is the default replay state of
+// github.com/crewjam/saml/x/samlsp, which records assertions, resolved
+// artifacts, LogoutRequests and LogoutResponses (see samlsp.ReplayKey and
+// samlsp.WithReplayState), and of github.com/crewjam/saml/x/samlidp, which
+// records signed AuthnRequests, LogoutRequests and LogoutResponses (see
+// samlidp.ReplayKey and samlidp.WithReplayState).
 package replay
 
 import (
@@ -20,20 +24,20 @@ import (
 // Applications served by several processes need a record that they share,
 // such as a database table with a unique key on the ID.
 //
-// It has no size limit, because it does not need one. Package saml records
-// an ID only after the message is fully verified: signed by the IdP,
-// addressed to this SP, answering a request of this SP (unless unsolicited
-// responses are allowed), and fresh. The expiry it records is at most
-// the issue delay (saml.MaxIssueDelay, unless the provider sets its own)
-// after the message's IssueInstant. So the record holds
-// only messages the IdP really issued in the last few minutes, and grows
-// with the rate of logins, not with anything an attacker can send.
+// It has no size limit, because it does not need one. An ID is recorded
+// only after the message is fully verified: signed by the peer, addressed
+// to this provider, answering one of its requests where it should, and
+// fresh. The expiry recorded is at most the issue delay
+// (saml.MaxIssueDelay, unless the provider sets its own) after the
+// message's IssueInstant. So the record holds only messages the peers
+// really issued in the last few minutes, and grows with the rate of logins
+// and logouts, not with anything an attacker can send.
 //
 // Each ID is removed when it expires, by a timer set for the earliest
 // expiry. There is no timer while the record is empty.
 //
 // A Memory is safe for concurrent use, and may be shared by several
-// samlsp.Configs. The zero value is ready to use.
+// samlsp.Configs and samlidp.Configs. The zero value is ready to use.
 type Memory struct {
 	// Clock is the time source by which IDs expire; nil means the system
 	// clock. Use the clock passed to samlsp.WithClock. Set it before the

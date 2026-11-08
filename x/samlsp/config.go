@@ -310,8 +310,8 @@ func WithNameIDFormat(format saml.NameIDFormat) Option {
 // ParseResponse, so a record kept in a database can use the request's
 // deadline and values.
 //
-// The messages are assertions, LogoutRequests and resolved artifacts.
-// See replay.Memory for the default.
+// The messages are assertions, resolved artifacts, and the LogoutRequests
+// and LogoutResponses of x/samlsp/slo. See replay.Memory for the default.
 type ReplayState interface {
 	Consume(ctx context.Context, key []byte, expiresAt time.Time) error
 }
@@ -328,9 +328,11 @@ const replayKeyLabel = "github.com/crewjam/saml/x/samlsp replay key v1\x00"
 // a value taken from the message, and it stays the same when the IdP
 // rotates its keys. So an SP that lets tenants register IdPs must not let
 // two of them use the same entity ID. id is the message's ID as package
-// saml records it: that of an assertion, or, with a prefix that keeps them
-// apart, of a LogoutRequest ("LogoutRequest:") or a resolved artifact
-// ("Artifact:").
+// saml and x/samlsp/slo record it: that of an assertion, or, with a prefix
+// that keeps them apart, that of a LogoutRequest ("LogoutRequest:") or a
+// LogoutResponse ("LogoutResponse:"), or a resolved artifact ("Artifact:",
+// then the SourceID and MessageHandle of a type 0x0004 artifact in hex,
+// separated by a colon, or "raw:" and the artifact of any other type).
 func ReplayKey(idp, id string) []byte {
 	h := sha256.New()
 	h.Write([]byte(replayKeyLabel))
@@ -352,8 +354,8 @@ func (r replayCache) Consume(id string, expiresAt time.Time) error {
 	return r.state.Consume(r.ctx, ReplayKey(r.idp, id), expiresAt)
 }
 
-// WithReplayState sets where ParseResponse (and the LogoutRequests of
-// x/samlsp/slo) record the IDs of the messages they accept, so that each is
+// WithReplayState sets where ParseResponse (and x/samlsp/slo) record the
+// IDs of the messages they accept (see ReplayState), so that each is
 // accepted only once.
 //
 // By default, each Config records them in its own replay.Memory, which

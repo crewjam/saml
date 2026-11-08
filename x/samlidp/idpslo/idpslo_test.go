@@ -360,6 +360,90 @@ func TestReplay(t *testing.T) {
 	}
 }
 
+// recordingState is a ReplayState that keeps every key it is given.
+type recordingState struct {
+	mu   sync.Mutex
+	keys map[string]bool
+}
+
+func (s *recordingState) Consume(_ context.Context, key []byte, _ time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.keys[string(key)] {
+		return saml.ErrAssertionReplayed
+	}
+	s.keys[string(key)] = true
+	return nil
+}
+
+func (s *recordingState) has(key []byte) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.keys[string(key)]
+}
+
+// TestReplayKeys checks the keys under which logout messages are recorded,
+// as samlsp.ReplayKey and samlidp.ReplayKey document them.
+func TestReplayKeys(t *testing.T) {
+	ctx := context.Background()
+	state := &recordingState{keys: map[string]bool{}}
+	w := newWorld(t, worldOptions{
+		idpConfig: []samlidp.Option{samlidp.WithReplayState(state)},
+		spConfig:  [2][]samlsp.Option{{samlsp.WithReplayState(state)}, {samlsp.WithReplayState(state)}},
+	})
+	sp1, sp2 := w.sps[0], w.sps[1]
+
+	// Logout started by SP 1.
+	_, a1 := w.login(t, 0, "s1")
+	out, err := sp1.slo.Request(ctx, a1.NameID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := w.logout.ParseRequest(ctx, toIDP(t, out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.has(samlidp.ReplayKey(sp1.config.EntityID(), "LogoutRequest:"+out.ID)) {
+		t.Error("the IdP did not record the LogoutRequest")
+	}
+	back, err := w.logout.Response(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := sp1.slo.ParseResponse(ctx, deliver(t, back), out.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.has(samlsp.ReplayKey(idpEntityID, "LogoutResponse:"+resp.ID)) {
+		t.Error("the SP did not record the LogoutResponse")
+	}
+
+	// Logout of SP 2 started by the IdP.
+	p2, _ := w.login(t, 1, "s1")
+	toSP2, err := w.logout.Request(ctx, p2, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp2req, err := sp2.slo.ParseRequest(ctx, deliver(t, toSP2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.has(samlsp.ReplayKey(idpEntityID, "LogoutRequest:"+toSP2.ID)) {
+		t.Error("the SP did not record the LogoutRequest")
+	}
+	answer, err := sp2.slo.Response(ctx, sp2req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err = w.logout.ParseResponse(ctx, toIDP(t, answer), sp2.config.EntityID(), toSP2.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.has(samlidp.ReplayKey(sp2.config.EntityID(), "LogoutResponse:"+resp.ID)) {
+		t.Error("the IdP did not record the LogoutResponse")
+	}
+}
+
 func TestBadResponses(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t, worldOptions{})

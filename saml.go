@@ -225,7 +225,7 @@
 //
 // The saml.ServiceProvider that x/samlsp builds turns on checks that the core package leaves off for compatibility. It validates the authentication context, and refuses unknown conditions, AES-CBC encrypted assertions in unsigned Responses, SHA-1 signatures, expired IDP metadata, non-standard artifacts, and requests whose RelayState is longer than the 80 bytes the bindings allow.
 //
-// Each accepted assertion (and logout request) is recorded until it expires, and refused if it comes again. By default the record is kept in memory, in a replay.Memory (github.com/crewjam/saml/x/samlsp/replay), which protects a single process; pass samlsp.WithReplayState a record that all processes share when there are several.
+// Each accepted assertion and resolved artifact (and, with x/samlsp/slo, each logout request and logout response) is recorded until it expires, and refused if it comes again. By default the record is kept in memory, in a replay.Memory (github.com/crewjam/saml/x/samlsp/replay), which protects a single process; pass samlsp.WithReplayState a record that all processes share when there are several.
 //
 // Some IDPs need a check relaxed. Microsoft Entra ID with token encryption, and Okta with an encrypted assertion, sign the assertion but not the Response, and encrypt with AES-CBC; older IDPs sign with SHA-1. Relax only the check the IDP needs:
 //

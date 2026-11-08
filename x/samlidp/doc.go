@@ -127,8 +127,9 @@
 //		...
 //	}
 //
-// A signed AuthnRequest is accepted only once. By default the record is
-// kept in memory, which protects a single process; see WithReplayState.
+// A signed AuthnRequest is accepted only once (and each LogoutRequest and
+// LogoutResponse of x/samlidp/idpslo). By default the record is kept in
+// memory, which protects a single process; see WithReplayState.
 //
 // # Errors
 //
