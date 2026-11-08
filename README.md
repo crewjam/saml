@@ -327,13 +327,21 @@ With `idpslo.BackChannel`, the IdP sends LogoutRequests to the SOAP endpoints in
 The SAML standard is huge and complex with many dark corners and strange, unused features. This package implements the most commonly used subset of these features required to provide a single sign on experience. The package supports at least the subset of SAML known as [interoperable SAML](https://kantarainitiative.github.io/SAMLprofiles/saml2int.html).
 
 This package supports the **Web SSO** profile. Message flows from the service provider to the IDP are supported using the **HTTP Redirect** binding and the **HTTP POST** binding, and with `x/samlsp/artifact` the **HTTP Artifact** binding. Message flows from the IDP to the service provider are supported via the **HTTP POST** binding and, on the service provider side, the **HTTP Artifact** binding (`ParseResponse` resolves the artifact with the IDP's ArtifactResolutionService over SOAP; in `x/samlsp`, only with `samlsp.AcceptArtifactResponses`, which lists the HTTP-Artifact ACS in the SP metadata).
- The identity provider in this package answers with HTTP POST, or HTTP POST SimpleSign (below); it does not issue artifacts.
+ The identity provider in this package answers with HTTP POST, or HTTP POST SimpleSign (below), and with `x/samlidp/idpartifact` the HTTP Artifact binding.
 
 The **Single Logout** profile is supported with the HTTP Redirect and HTTP POST bindings: SP initiated and IDP initiated logout on the service provider side (see [Logging out](#logging-out)), and SP initiated logout on the identity provider side (see [Single logout](#single-logout)).
 
 Both directions also support the **HTTP POST SimpleSign** binding ([sstc-saml-binding-simplesign-cs-01](https://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-binding-simplesign-cs-01.pdf)), which posts the message like HTTP POST but signs it with a detached signature over the message XML, the RelayState and the signature algorithm, carried in the `SigAlg` and `Signature` form fields. The service provider accepts it at the ACS and for logout, and can send authentication requests and logout messages with it (`samlsp.WithBinding(saml.HTTPPostSimpleSignBinding)`; `samlsp.WithResponseBinding` asks for SimpleSign responses). The identity provider accepts SimpleSign authentication requests and answers with SimpleSign when the service provider's ACS endpoint uses that binding.
 
 The package can produce signed SAML assertions, and can validate both signed and encrypted SAML assertions. As an identity provider it also encrypts the assertions it produces, both for SP-initiated and IdP-initiated (`ServeIDPInitiated`) logins, whenever the service provider's metadata publishes an encryption certificate (a `KeyDescriptor` with `use="encryption"`, or one with no `use`). The algorithms default to RSA-OAEP-MGF1P with SHA-1 and AES-128-CBC for compatibility; set `IdentityProvider.AssertionEncrypter` to choose others, for example `xmlenc.OAEP_SHA256()` with `AES256GCM`.
+
+### Not supported, on purpose
+
+Some parts of SAML are left out deliberately, not because no one has got to them yet:
+
+- **Enhanced Client or Proxy (ECP)**, with the reverse SOAP (PAOS) binding (saml-profiles §4.2). It serves clients other than browsers, which log in by relaying SOAP messages between the service provider and the IDP, and it needs the IDP to authenticate such clients by some means outside SAML. Few clients and deployments use it. Applications that need non-browser logins are better served by OAuth 2.0 or OpenID Connect.
+- **Name Identifier Management** (`ManageNameIDRequest`, saml-core §3.6, saml-profiles §4.5), which changes or ends a persistent NameID that an IDP and a service provider share. It needs both sides to keep a durable mapping of identifiers. This package leaves that mapping, like users and sessions, to the application. Few deployments use the profile. The `ManageNameIDService` endpoints of metadata are parsed but nothing serves them.
+- **Responding to attribute queries**, that is, acting as an attribute authority (saml-core §3.3.2.3, saml-profiles §6). The service provider can send an `AttributeQuery` (see [Querying attributes from the IDP](#querying-attributes-from-the-idp)), but the identity provider does not answer one. Answering needs an attribute store and a release policy for each requester, which belong to the application. Most deployments send the attributes in the assertion instead, which the identity provider does.
 
 ## RelayState
 
