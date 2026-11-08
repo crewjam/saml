@@ -151,7 +151,7 @@ func TestEndToEnd(t *testing.T) {
 	if resp.Request.URL.Path != "/idp/"+idpID+"/sso" {
 		t.Fatalf("login went to %s:\n%s", resp.Request.URL, body)
 	}
-	mustContain(t, body, "Log in as", "alice", "ForceAuthn")
+	mustContain(t, body, "Log in as", "alice", "ForceAuthn", `Log in to <span class="sp-text">Test SP</span>`, "✓ Signature valid")
 	_, body = h.loginAt(idpID, body, url.Values{"user": {"alice"}, "action": {"login"}})
 	acsPage := body
 	_, body = h.submitAutoForm(acsPage)
@@ -296,5 +296,19 @@ func TestBoostedPost(t *testing.T) {
 	resp, _ = h.do(http.MethodPost, "/manage/"+secret+"/clear-events", url.Values{})
 	if resp.Request.URL.Path != "/manage/"+secret {
 		t.Fatalf("not redirected: %s", resp.Request.URL)
+	}
+}
+
+// The login picker says whether the AuthnRequest was signed.
+func TestLoginPickerUnsigned(t *testing.T) {
+	h := newHarness(t)
+	_, idpID := h.create("idp")
+	spSecret, spID := h.create("sp")
+	h.do(http.MethodPost, "/manage/"+spSecret+"/idp-set", url.Values{"metadata_url": {h.base + "/idp/" + idpID + "/metadata"}})
+	h.do(http.MethodPost, "/manage/"+spSecret+"/settings", url.Values{"name": {"Plain SP"}})
+	_, body := h.do(http.MethodPost, "/sp/"+spID+"/login", nil)
+	mustContain(t, body, `Log in to <span class="sp-text">Plain SP</span>`, "Not signed")
+	if strings.Contains(body, "Signature valid") {
+		t.Error("an unsigned request is shown as signed")
 	}
 }

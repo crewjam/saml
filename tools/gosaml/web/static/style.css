@@ -368,3 +368,16 @@ fieldset.relax .help { clear: both; max-width: 40em; margin-top: 0; padding-top:
 .relay { margin: 0 0 40px; }
 .attrs-sec + .relay { margin-top: -32px; }
 .result-links { gap: 8px 24px; font-size: 14px; }
+
+/* Login picker */
+.login-h1 { font-size: 40px; letter-spacing: -0.03em; line-height: 1.05; margin-bottom: 32px; }
+.sp-text { color: var(--sp); }
+.login-sec { margin-bottom: 40px; }
+.sig-state { font-size: 13.5px; font-weight: 500; }
+.pick-set { border: 0; margin: 0 0 24px; padding: 0; min-width: 0; }
+.pick-name { display: block; font-weight: 600; }
+.pick-sub { display: block; font-size: 13.5px; color: var(--ink-muted); }
+.login-actions { margin: 24px 0 8px; }
+@media (max-width: 600px) { .login-h1 { font-size: 32px; } }
+.sec-head .sec-h2 { padding-bottom: 0; border-bottom: 0; }
+.dl dd { overflow-wrap: anywhere; }

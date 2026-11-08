@@ -11,6 +11,8 @@ import (
 
 	dsig "github.com/russellhaering/goxmldsig"
 
+	"github.com/beevik/etree"
+
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/tools/gosaml/inspect"
 	"github.com/crewjam/saml/tools/gosaml/store"
@@ -372,6 +374,14 @@ type loginPage struct {
 	Errors       []string
 	SelectedCtx  string
 	ManageSecret string
+
+	// SPName is what the heading calls the SP: its name, if it is one of
+	// this site's, else its ProviderName, else its entity ID.
+	SPName string
+	// Signature is "valid" (the request was signed, and the IdP accepted
+	// it, which it does only once the signature verifies), "none", or ""
+	// for an IdP-initiated login, which has no request.
+	Signature string
 }
 
 // showLogin keeps req and shows the page where the visitor chooses who to
@@ -392,7 +402,38 @@ func (s *Server) showLogin(w http.ResponseWriter, r *http.Request, in *store.Ins
 	if len(req.AuthnContextClasses) > 0 {
 		p.SelectedCtx = string(req.AuthnContextClasses[0])
 	}
+	p.SPName = req.ServiceProvider
+	if name := s.names(r.Context()).title(req.ServiceProvider); name != req.ServiceProvider {
+		p.SPName = name
+	} else if req.ProviderName != "" {
+		p.SPName = req.ProviderName
+	}
+	if req.ID != "" {
+		p.Signature = "none"
+		if requestSigned(r) {
+			p.Signature = "valid"
+		}
+	}
 	s.renderStatus(w, r, http.StatusOK, "idp_login", cfg.Name, p)
+}
+
+// requestSigned reports whether the AuthnRequest in r came signed: with
+// a Signature parameter (HTTP-Redirect, HTTP-POST-SimpleSign) or an
+// enveloped XML signature (HTTP-POST). The IdP verifies any signature a
+// request has and refuses it if that fails, so for a request it accepted
+// this means the signature is valid.
+func requestSigned(r *http.Request) bool {
+	if r.Form == nil {
+		_ = r.ParseForm()
+	}
+	if r.Form.Get("Signature") != "" {
+		return true
+	}
+	doc := etree.NewDocument()
+	if err := doc.ReadFromString(formMessageXML(r, "SAMLRequest")); err != nil || doc.Root() == nil {
+		return false
+	}
+	return doc.Root().SelectElement("Signature") != nil
 }
 
 func describeAuthnRequest(req *samlidp.AuthnRequest) string {
