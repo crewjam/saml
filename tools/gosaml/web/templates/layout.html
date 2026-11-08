@@ -26,6 +26,7 @@
       <a hx-boost="false" href="/inspect" {{if eq .Nav "inspect"}}aria-current="page"{{end}}>Inspector</a>
       <a href="{{.NavIDP}}" {{if eq .Nav "idp"}}aria-current="page"{{end}}><span class="nav-sq idp" aria-hidden="true"></span>IdP</a>
       <a href="{{.NavSP}}" {{if eq .Nav "sp"}}aria-current="page"{{end}}><span class="nav-sq sp" aria-hidden="true"></span>SP</a>
+      <a href="/api" {{if eq .Nav "api"}}aria-current="page"{{end}}>API</a>
       <a href="/about" {{if eq .Nav "about"}}aria-current="page"{{end}}>About</a>
       <a href="https://github.com/crewjam/saml">GitHub</a>
     </nav>

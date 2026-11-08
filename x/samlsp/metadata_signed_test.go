@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/beevik/etree"
 	dsig "github.com/russellhaering/goxmldsig"
@@ -114,7 +115,8 @@ func TestSignedMetadata(t *testing.T) {
 
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(tt.data) }))
 			defer srv.Close()
-			check(samlsp.RemoteMetadata(srv.URL, samlsp.WithHTTPClient(srv.Client()), samlsp.WithMetadataSigners(tt.certs...)))
+			check(samlsp.RemoteMetadata(srv.URL, samlsp.WithHTTPClient(srv.Client()), samlsp.WithMetadataSigners(tt.certs...),
+				samlsp.WithIdentityProviderEntityID("https://idp.example.com/metadata")))
 			check(samlsp.MDQMetadata(srv.URL, "https://idp.example.com/metadata",
 				samlsp.WithHTTPClient(srv.Client()), samlsp.WithMetadataSigners(tt.certs...)))
 		})
@@ -177,5 +179,48 @@ func TestSignedMetadataRefusesSHA1(t *testing.T) {
 	sha256 := signedAggregateWith(t, dsig.RSASHA256SignatureMethod, key, cert, ti.idp.Metadata())
 	if _, err := samlsp.ParseMetadata(sha256, samlsp.WithMetadataSigners(cert)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// With signers, the signature alone vouches for fetched metadata, so
+// RemoteMetadata pins the entity and refuses metadata without a validUntil,
+// which an attacker on the network path could otherwise replace with
+// another signed entity or an old signed copy.
+func TestRemoteSignedMetadataPinned(t *testing.T) {
+	ti := newTestIDP(t)
+	other := newTestIDP(t)
+	other.idp.MetadataURL = mustURL("https://idp2.example.com/metadata")
+	fedKey, fedCert := newKeyPair(t, "federation")
+	serve := func(data []byte) *httptest.Server {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(data) }))
+		t.Cleanup(srv.Close)
+		return srv
+	}
+
+	// Another entity the federation signed, served in place of the IdP.
+	srv := serve(signedAggregate(t, fedKey, fedCert, other.idp.Metadata()))
+	if _, err := samlsp.RemoteMetadata(srv.URL, samlsp.WithHTTPClient(srv.Client()), samlsp.WithMetadataSigners(fedCert))(t.Context()); err == nil || !strings.Contains(err.Error(), "WithIdentityProviderEntityID") {
+		t.Errorf("without an entity ID: %v", err)
+	}
+	if _, err := samlsp.RemoteMetadata(srv.URL, samlsp.WithHTTPClient(srv.Client()), samlsp.WithMetadataSigners(fedCert),
+		samlsp.WithIdentityProviderEntityID("https://idp.example.com/metadata"))(t.Context()); err == nil || !strings.Contains(err.Error(), "idp.example.com") {
+		t.Errorf("another signed entity in place of the IdP: %v", err)
+	}
+
+	// Signed metadata without a validUntil.
+	md := ti.idp.Metadata()
+	md.ValidUntil = time.Time{}
+	for i := range md.IDPSSODescriptors {
+		md.IDPSSODescriptors[i].ValidUntil = nil
+	}
+	srv = serve(signedAggregate(t, fedKey, fedCert, md))
+	opts := []samlsp.MetadataOption{samlsp.WithMetadataSigners(fedCert), samlsp.WithIdentityProviderEntityID("https://idp.example.com/metadata")}
+	if _, err := samlsp.RemoteMetadata(srv.URL, append(opts, samlsp.WithHTTPClient(srv.Client()))...)(t.Context()); err == nil || !strings.Contains(err.Error(), "validUntil") {
+		t.Errorf("without a validUntil: %v", err)
+	}
+	// It is still accepted from a file, which no one on the network can
+	// replay.
+	if _, err := samlsp.StaticMetadataBytes(signedAggregate(t, fedKey, fedCert, md), opts...)(t.Context()); err != nil {
+		t.Errorf("StaticMetadataBytes: %v", err)
 	}
 }

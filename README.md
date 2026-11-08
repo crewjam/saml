@@ -209,10 +209,11 @@ The service provider trusts whatever signing certificates the IDP metadata names
 
   ```golang
   idp := samlsp.RemoteMetadata("https://idp.example.com/metadata",
-  	samlsp.WithMetadataSigners(idpMetadataSigningCert))
+  	samlsp.WithMetadataSigners(idpMetadataSigningCert),
+  	samlsp.WithIdentityProviderEntityID("https://idp.example.com/metadata"))
   ```
 
-  Only what the signature covers is parsed. An IDP served by this package signs its metadata when `IdentityProvider.SignMetadata` is set.
+  The entity ID must be given, so that another entity signed by the same certificate is not accepted in place of the IDP, and the metadata must have a `validUntil`, so that an old signed copy is not accepted after it. Only what the signature covers is parsed. An IDP served by this package signs its metadata when `IdentityProvider.SignMetadata` is set.
 
 - **An `https` URL you trust**, with `samlsp.RemoteMetadata` alone. The metadata is then only as trustworthy as that server and its TLS certificate, and a plain `http` URL can be changed by anyone on the network path.
 

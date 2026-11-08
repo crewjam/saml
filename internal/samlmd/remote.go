@@ -48,7 +48,11 @@ type Remote struct {
 	Roles Roles
 	// Signed reports that Parse checks a signature on the metadata, which
 	// then may be fetched from a plain http URL. Otherwise URL, and any
-	// redirect followed, must be https.
+	// redirect followed, must be https. Signed metadata must have a
+	// validUntil (of the entity, an EntitiesDescriptor around it, or one
+	// of its Roles): the signature, unlike TLS, does not show that the
+	// metadata is current, so without one an old signed copy, with keys
+	// since rotated out, would be accepted forever.
 	Signed bool
 	// Client fetches the metadata; a copy of it is used. If nil, one that
 	// times out after FetchTimeout and connects only to public addresses.
@@ -215,7 +219,16 @@ func (r *Remote) fetch(ctx context.Context) (*saml.EntityDescriptor, error) {
 	if err != nil {
 		return nil, err
 	}
-	return r.Parse(data, r.now())
+	md, err := r.Parse(data, r.now())
+	if err != nil {
+		return nil, err
+	}
+	if r.Signed {
+		if validUntil, _ := Validity(md, r.Roles); validUntil.IsZero() {
+			return nil, fmt.Errorf("%s: signed metadata for %q has no validUntil, so an old copy could be replayed", r.Prefix, md.EntityID)
+		}
+	}
+	return md, nil
 }
 
 // httpClient returns the client to fetch metadata with: a copy of Client,

@@ -13,9 +13,13 @@
 //	tracker, err := pending.New(config, cookieKey)
 //
 //	func login(w http.ResponseWriter, r *http.Request) {
+//		next := r.URL.Query().Get("next")
+//		if len(next) > 100 || safeLocalPath(next) != next {
+//			next = "/"
+//		}
 //		msg, err := config.AuthnRequest(r.Context(), rand.Text())
 //		if err != nil { ... }
-//		if err := tracker.Remember(w, msg, r.URL.Query().Get("next")); err != nil { ... }
+//		if err := tracker.Remember(w, msg, next); err != nil { ... }
 //		msg.Write(w)
 //	}
 //
@@ -56,7 +60,14 @@
 // rand.Text, and a 20-byte return path as data, a slot cookie takes about
 // 210 bytes of the Cookie header, so all 16 default slots take about
 // 3.3 KB, well within the 8 KB of headers that proxies often allow.
-// Larger data makes each slot larger.
+// Larger data makes each slot larger, so Remember refuses a cookie larger
+// than its share of DefaultMaxCookiesSize (WithMaxCookiesSize): 384 bytes
+// with 16 slots, which leaves room for about 150 bytes of data. Without
+// that bound, a site that can send the user's browser to the login URL,
+// with data such as a long return path taken from the URL, could fill
+// every slot with a large cookie, and the proxy would refuse the requests
+// to the ACS, and so every login, until they expire. Keep larger data on
+// the server, and only its key in the cookie.
 //
 // Logins started in several tabs of one browser do not disturb each other
 // unless their RelayStates fall in the same slot. The later login then
@@ -82,6 +93,14 @@
 // domain are not trusted, begin the cookie prefix with __Host-
 // (WithCookiePrefix): browsers accept such a cookie only from the host
 // itself, over https, with Path "/" (WithPath) and no Domain.
+//
+// The RelayState must be unpredictable, such as rand.Text. Take clears the
+// slot of the RelayState it is given before the Response is verified, so
+// a site that knows a user's RelayState can make the browser post a junk
+// Response with it to the ACS, and so cancel the user's login in
+// progress. The RelayState travels in the URL of the AuthnRequest, which
+// the IdP sees, and may log; a RelayState that says where to return, or
+// counts logins, gives it away to anyone.
 //
 // An SP that trusts several IdPs should record in the data passed to
 // Remember which IdP it sent the AuthnRequest to, and check after
@@ -134,9 +153,14 @@ const DefaultSlots = 16
 // MaxSlots is the most slot cookies WithSlots accepts.
 const MaxSlots = 64
 
-// maxCookieSize is the largest cookie value Remember writes. Browsers keep
+// browserCookieLimit is the largest cookie Remember writes. Browsers keep
 // cookies of at least 4096 bytes, name and attributes included.
-const maxCookieSize = 3800
+const browserCookieLimit = 3800
+
+// DefaultMaxCookiesSize is how many bytes of the Cookie header all the
+// slot cookies together may take, unless WithMaxCookiesSize says
+// otherwise: each takes at most this divided by the number of slots.
+const DefaultMaxCookiesSize = 6 << 10
 
 // ErrNotFound is returned by Take when the request carries no cookie for
 // its RelayState, or when the cookie has expired: no login is in progress
@@ -182,6 +206,8 @@ type Tracker struct {
 	slots  int
 	maxAge time.Duration
 	clock  *dsig.Clock
+
+	maxCookiesSize int
 }
 
 // Option configures New.
@@ -195,6 +221,13 @@ func WithMaxAge(d time.Duration) Option { return func(t *Tracker) { t.maxAge = d
 // MaxSlots. The default is DefaultSlots. Changing it moves RelayStates to
 // other slots, but Take still finds the logins in progress.
 func WithSlots(n int) Option { return func(t *Tracker) { t.slots = n } }
+
+// WithMaxCookiesSize sets how many bytes of the Cookie header all the slot
+// cookies together may take: Remember refuses a cookie larger than this
+// divided by the number of slots. The default is DefaultMaxCookiesSize.
+// Keep it well below the header size the servers and proxies in front of
+// the ACS allow.
+func WithMaxCookiesSize(n int) Option { return func(t *Tracker) { t.maxCookiesSize = n } }
 
 // WithCookiePrefix sets what the name of each slot cookie begins with,
 // before the slot's number. The default is DefaultCookiePrefix.
@@ -263,6 +296,8 @@ func New(config *samlsp.Config, key []byte, opts ...Option) (*Tracker, error) {
 		secure: acs.Scheme == "https",
 		slots:  DefaultSlots,
 		maxAge: DefaultMaxAge,
+
+		maxCookiesSize: DefaultMaxCookiesSize,
 	}
 	if t.path == "" {
 		t.path = "/"
@@ -278,10 +313,23 @@ func New(config *samlsp.Config, key []byte, opts ...Option) (*Tracker, error) {
 	if t.slots < 1 || t.slots > MaxSlots {
 		return nil, fmt.Errorf("pending: the number of slots must be from 1 to %d, not %d", MaxSlots, t.slots)
 	}
+	if t.maxCookieSize() < minCookieSize {
+		return nil, fmt.Errorf("pending: %d bytes for %d slot cookies leaves too little for each (see WithMaxCookiesSize)", t.maxCookiesSize, t.slots)
+	}
 	if t.prefix == "" || strings.ContainsAny(t.prefix, "()<>@,;:\\\"/[]?={} \t") {
 		return nil, fmt.Errorf("pending: invalid cookie prefix %q", t.prefix)
 	}
 	return t, nil
+}
+
+// minCookieSize is the least room for a slot cookie that New accepts:
+// enough for a 26-character RelayState and a short return path.
+const minCookieSize = 256
+
+// maxCookieSize returns how many bytes of the Cookie header one slot
+// cookie may take.
+func (t *Tracker) maxCookieSize() int {
+	return min(browserCookieLimit, t.maxCookiesSize/t.slots)
 }
 
 // payload is what a cookie holds.
@@ -298,8 +346,10 @@ type payload struct {
 // msg.Write. It replaces the login in progress in the same slot, if any,
 // and leaves the other slots alone.
 //
-// It returns an error if msg has no ID, or if data is too large for a
-// cookie.
+// It returns an error if msg has no ID, or if the cookie would take more
+// than its share of the Cookie header (see WithMaxCookiesSize): keep data
+// short, such as a local return path, and check its length when it comes
+// from the request.
 func (t *Tracker) Remember(w http.ResponseWriter, msg *samlsp.Message, data string) error {
 	if msg == nil || msg.ID == "" {
 		return errors.New("pending: the message has no ID")
@@ -316,8 +366,9 @@ func (t *Tracker) Remember(w http.ResponseWriter, msg *samlsp.Message, data stri
 	}
 	name := t.cookieName(t.slot(msg.RelayState))
 	value := base64.RawURLEncoding.EncodeToString(body) + "." + base64.RawURLEncoding.EncodeToString(t.mac(name, body))
-	if len(name)+len(value) > maxCookieSize {
-		return fmt.Errorf("pending: the login cookie would be %d bytes, more than %d", len(name)+len(value), maxCookieSize)
+	// The cookie takes "name=value; " of the Cookie header.
+	if size := len(name) + 1 + len(value) + 2; size > t.maxCookieSize() {
+		return fmt.Errorf("pending: the login cookie would take %d bytes of the Cookie header, more than %d (see WithMaxCookiesSize)", size, t.maxCookieSize())
 	}
 	http.SetCookie(w, t.cookie(name, value, int(t.maxAge/time.Second)))
 	return nil

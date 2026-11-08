@@ -232,9 +232,12 @@ func main() {
 	// Metadata is accepted only if the IdP's certificate signed it. The
 	// URL is the operator's own, and often on localhost, which the
 	// library's default client refuses to reach (it connects only to
-	// public addresses), so give a client of our own.
+	// public addresses), so give a client of our own. The IdP's entity ID
+	// is, by convention, the URL of its metadata; with signers it must be
+	// given, so that only that entity's metadata is accepted.
 	idpClient := &http.Client{Timeout: time.Minute}
-	idp := samlsp.RemoteMetadata(*idpMetadataURL, samlsp.WithMetadataSigners(idpCert), samlsp.WithHTTPClient(idpClient))
+	idp := samlsp.RemoteMetadata(*idpMetadataURL, samlsp.WithMetadataSigners(idpCert), samlsp.WithHTTPClient(idpClient),
+		samlsp.WithIdentityProviderEntityID(*idpMetadataURL))
 	config, err = samlsp.New(entityID, idp,
 		samlsp.WithSigningKey(key, cert),
 		samlsp.WithEncryptionKey(key, cert))
