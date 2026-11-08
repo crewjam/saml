@@ -15,6 +15,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 
 	"github.com/beevik/etree"
@@ -43,6 +44,7 @@ type Config struct {
 	replayState     ReplayState
 	clock           *dsig.Clock
 	metadataValid   time.Duration
+	affiliated      func(ctx context.Context, serviceProvider, affiliation string) (bool, error)
 
 	idpOptions    []IdentityProviderOption
 	metadataHooks []func(*saml.EntityDescriptor)
@@ -252,9 +254,51 @@ func WithMetadata(modify func(md *saml.EntityDescriptor)) Option {
 }
 
 // WithClock sets the time source used for timestamps and to check validity
-// periods. It is mainly useful in tests.
+// periods: that of the saml.IdentityProvider each method builds, of Now,
+// and of the default ReplayState. It is mainly useful in tests. Without
+// it, times come from saml.TimeNow, as in package saml, and the default
+// ReplayState reads the system clock.
 func WithClock(clock *dsig.Clock) Option {
 	return optionFunc(func(c *Config, _ *configOptions) { c.clock = clock })
+}
+
+// WithAffiliation sets how the IdP decides whether the service provider
+// serviceProvider is a member of the affiliation affiliation, an
+// SPNameQualifier other than its own entity ID that its NameIDPolicy asks
+// for (saml-core §3.4.1.1): for example, by the AffiliateMembers of the
+// AffiliationDescriptor in the affiliation's metadata (saml-metadata
+// §2.5). Without it, or if it reports false, ParseAuthnRequest and
+// Response refuse such a request with StatusInvalidNameIDPolicy; an error
+// it returns is returned by them. Whatever it says, the NameID under that
+// qualifier is the application's to choose: the same for every member of
+// the affiliation.
+func WithAffiliation(member func(ctx context.Context, serviceProvider, affiliation string) (bool, error)) Option {
+	return optionFunc(func(c *Config, _ *configOptions) { c.affiliated = member })
+}
+
+// spNameQualifierError returns the error for req if it asks for an
+// SPNameQualifier other than the SP's own entity ID that WithAffiliation
+// does not allow, or nil. An IdentityProvider that does not enforce the
+// NameIDPolicy ignores the SPNameQualifier.
+func (c *Config) spNameQualifierError(ctx context.Context, idp *saml.IdentityProvider, req *AuthnRequest) error {
+	q := req.SPNameQualifier
+	if q == "" || q == req.ServiceProvider || !idp.EnforceNameIDPolicy {
+		return nil
+	}
+	if c.affiliated != nil {
+		ok, err := c.affiliated(ctx, req.ServiceProvider, q)
+		if err != nil {
+			return fmt.Errorf("samlidp: affiliation %q of service provider %q: %w", q, req.ServiceProvider, err)
+		}
+		if ok {
+			return nil
+		}
+	}
+	return &saml.StatusError{
+		TopLevel:    saml.StatusRequester,
+		SecondLevel: saml.StatusInvalidNameIDPolicy,
+		Message:     "the service provider is not a member of the requested SPNameQualifier",
+	}
 }
 
 // ReplayState records the signed AuthnRequests a Config accepts, so that
@@ -412,7 +456,9 @@ func checkSignatureMethod(method string, key crypto.Signer) error {
 }
 
 // identityProvider returns a new saml.IdentityProvider configured from c,
-// with the IdentityProviderOptions passed to New and then opts applied.
+// with the IdentityProviderOptions passed to New and then opts applied. It
+// shares no slice with c, so that the options and the caller may change
+// it while other calls use c.
 func (c *Config) identityProvider(opts []IdentityProviderOption) *saml.IdentityProvider {
 	method := c.signatureMethod
 	if method == "" {
@@ -421,12 +467,12 @@ func (c *Config) identityProvider(opts []IdentityProviderOption) *saml.IdentityP
 	idp := &saml.IdentityProvider{
 		Signer:                  c.key,
 		Certificate:             c.certificate,
-		Intermediates:           c.intermediates,
-		ExtraCertificates:       c.extraCerts,
+		Intermediates:           slices.Clone(c.intermediates),
+		ExtraCertificates:       slices.Clone(c.extraCerts),
 		MetadataURL:             c.entityURL,
 		SSOURL:                  c.ssoURL,
 		SignatureMethod:         method,
-		NameIDFormats:           c.nameIDFormats,
+		NameIDFormats:           slices.Clone(c.nameIDFormats),
 		Clock:                   c.clock,
 		ServiceProviderProvider: serviceProviderProvider(c.serviceProviders),
 		// Package saml logs what it refuses and ignores; this package

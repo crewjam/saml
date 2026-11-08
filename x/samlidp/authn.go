@@ -23,7 +23,9 @@ const bearerMethod = "urn:oasis:names:tc:SAML:2.0:cm:bearer" //nolint:gosec // a
 // It is plain data, so that the application can keep it while the user
 // logs in, such as in a server-side session or with encoding/json. Keep it
 // where the user cannot change it: its fields are trusted when the
-// Response is made. Response checks again that the SP is known and that
+// Response is made. It holds what bears on the answer, not the whole
+// request: the request's Conditions and Extensions, for example, are not
+// kept. Response checks again that the SP is known and that
 // ACSURL is one of its assertion consumer services, so a changed
 // AuthnRequest cannot send an assertion anywhere else.
 type AuthnRequest struct {
@@ -52,9 +54,28 @@ type AuthnRequest struct {
 	// the request, if any.
 	ProviderName string
 
+	// Consent, if not empty, is the SP's claim of the user's consent to
+	// the request: a URI such as "urn:oasis:names:tc:SAML:2.0:consent:obtained"
+	// (saml-core §3.2.1, §8.4).
+	Consent string
+
+	// AttributeConsumingServiceIndex, if not empty, is the index of the
+	// AttributeConsumingService of the SP's metadata that lists the
+	// attributes it asks for (saml-core §3.4.1). Which attributes to send
+	// is the application's to decide.
+	AttributeConsumingServiceIndex string
+
+	// Scoping, if not nil, is the Scoping of the request (saml-core
+	// §3.4.1.2): the IdPs the SP trusts (IDPList), the SPs on whose
+	// behalf it asks (RequesterIDs), and how many times the request may
+	// be proxied to another IdP (ProxyCount). An IdP that proxies requests
+	// must honour it; one that does not may ignore it.
+	Scoping *saml.Scoping
+
 	// ForceAuthn asks the IdP to authenticate the user again, even if it
 	// has a session for them (saml-core §3.4.1). The Subject's
-	// AuthnInstant must then be that of the new authentication.
+	// AuthnInstant must then be that of the new authentication: Response
+	// refuses one before IssueInstant.
 	ForceAuthn bool
 
 	// IsPassive asks the IdP not to interact with the user. If it cannot
@@ -65,18 +86,25 @@ type AuthnRequest struct {
 	// NameIDFormat is the format of the NameID the SP asked for, if any
 	// (the Format of its NameIDPolicy). Response refuses a Subject whose
 	// NameIDFormat differs, unless this is unspecified or
-	// "urn:oasis:names:tc:SAML:2.0:nameid-format:encrypted".
+	// "urn:oasis:names:tc:SAML:2.0:nameid-format:encrypted". For the
+	// latter, the assertion must be encrypted: Response refuses it, with
+	// StatusInvalidNameIDPolicy, if the SP publishes no encryption key.
 	NameIDFormat saml.NameIDFormat
 
 	// SPNameQualifier is the SPNameQualifier of the NameIDPolicy, if any:
-	// the namespace, other than the SP's own, that the SP asked the NameID
-	// to be in, as when several SPs share an affiliation. Response puts it
-	// in the NameID; whether the SP may ask for it is the application's
-	// to decide.
+	// the namespace that the SP asked the NameID to be in, which, if not
+	// the SP's own entity ID, must name an affiliation the SP is a member
+	// of (saml-core §3.4.1.1). ParseAuthnRequest and Response refuse one
+	// that WithAffiliation does not allow, with StatusInvalidNameIDPolicy.
+	// Response puts it in the NameID, whose value must then be the user's
+	// identifier in the affiliation.
 	SPNameQualifier string
 
 	// AllowCreate is the AllowCreate of the NameIDPolicy: whether the IdP
-	// may create a new identifier for the user for this SP.
+	// may create a new identifier for the user for this SP (saml-core
+	// §3.4.1.1). If it is false and the user has no identifier for the SP
+	// (or its affiliation) yet, such as no persistent NameID, do not make
+	// one: answer with ErrorResponse and StatusInvalidNameIDPolicy.
 	AllowCreate bool
 
 	// AuthnContextClasses are the authentication context classes the SP
@@ -142,7 +170,9 @@ type parseOptions struct {
 func (c *Config) ParseAuthnRequest(ctx context.Context, r *http.Request, opts ...ParseOption) (*AuthnRequest, error) {
 	var o parseOptions
 	for _, opt := range opts {
-		opt.applyParse(&o)
+		if opt != nil {
+			opt.applyParse(&o)
+		}
 	}
 	idp := c.identityProvider(o.idp)
 
@@ -214,6 +244,13 @@ func (c *Config) ParseAuthnRequest(ctx context.Context, r *http.Request, opts ..
 	if statusErr := requestSubjectError(ireq.Request.Subject); statusErr != nil {
 		return req, statusErr
 	}
+	if err := c.spNameQualifierError(ctx, idp, req); err != nil {
+		var status *saml.StatusError
+		if errors.As(err, &status) {
+			return req, err
+		}
+		return nil, err
+	}
 
 	if isSigned(ireq) {
 		key := ReplayKey(req.ServiceProvider, req.ID)
@@ -238,7 +275,9 @@ func (c *Config) ParseAuthnRequest(ctx context.Context, r *http.Request, opts ..
 func (c *Config) IDPInitiated(ctx context.Context, serviceProvider, relayState string, opts ...ParseOption) (*AuthnRequest, error) {
 	var o parseOptions
 	for _, opt := range opts {
-		opt.applyParse(&o)
+		if opt != nil {
+			opt.applyParse(&o)
+		}
 	}
 	idp := c.identityProvider(o.idp)
 	r, err := http.NewRequestWithContext(ctx, http.MethodGet, c.ssoURL.String(), http.NoBody)
@@ -277,8 +316,12 @@ func newAuthnRequest(ireq *saml.IdpAuthnRequest) *AuthnRequest {
 		ACSURL:       ireq.ACSEndpoint.Location,
 		ACSBinding:   ireq.ACSEndpoint.Binding,
 		ProviderName: q.ProviderName,
+		Consent:      q.Consent,
 		ForceAuthn:   q.ForceAuthn != nil && *q.ForceAuthn,
 		IsPassive:    q.IsPassive != nil && *q.IsPassive,
+
+		AttributeConsumingServiceIndex: q.AttributeConsumingServiceIndex,
+		Scoping:                        q.Scoping,
 	}
 	if ireq.ServiceProviderMetadata != nil {
 		req.ServiceProvider = ireq.ServiceProviderMetadata.EntityID
@@ -316,6 +359,16 @@ func (req *AuthnRequest) samlRequest() saml.AuthnRequest {
 		AssertionConsumerServiceURL: req.ACSURL,
 		ProtocolBinding:             req.ACSBinding,
 		ProviderName:                req.ProviderName,
+		Consent:                     req.Consent,
+		Scoping:                     req.Scoping,
+
+		AttributeConsumingServiceIndex: req.AttributeConsumingServiceIndex,
+	}
+	if req.ForceAuthn {
+		q.ForceAuthn = &req.ForceAuthn
+	}
+	if req.IsPassive {
+		q.IsPassive = &req.IsPassive
 	}
 	if req.NameIDFormat != "" || req.SPNameQualifier != "" || req.AllowCreate {
 		p := &saml.NameIDPolicy{}

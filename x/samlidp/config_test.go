@@ -256,3 +256,49 @@ func TestMessage(t *testing.T) {
 }
 
 var errNotExist = errors.Join(errors.New("no such row"), fs.ErrNotExist)
+
+// TestIdentityProviderIsNew changes the slices of one IdentityProvider and
+// checks that the next does not see it: each call may change its own.
+func TestIdentityProviderIsNew(t *testing.T) {
+	keys(t)
+	c, err := samlidp.New(idpEntityID, samlidp.StaticServiceProviders(),
+		samlidp.WithSigningKey(idpKey, idpCert, spCert),
+		samlidp.WithNextSigningCertificates(spCert),
+		samlidp.WithNameIDFormats(saml.PersistentNameIDFormat, saml.TransientNameIDFormat))
+	if err != nil {
+		t.Fatal(err)
+	}
+	idp := c.IdentityProvider()
+	idp.NameIDFormats[0] = saml.EmailAddressNameIDFormat
+	idp.NameIDFormats = append(idp.NameIDFormats[:1], saml.UnspecifiedNameIDFormat)
+	idp.Intermediates[0] = idpCert
+	idp.ExtraCertificates[0] = idpCert
+
+	idp = c.IdentityProvider()
+	if len(idp.NameIDFormats) != 2 || idp.NameIDFormats[0] != saml.PersistentNameIDFormat || idp.NameIDFormats[1] != saml.TransientNameIDFormat {
+		t.Errorf("NameIDFormats = %v", idp.NameIDFormats)
+	}
+	if idp.Intermediates[0] != spCert || idp.ExtraCertificates[0] != spCert {
+		t.Error("the certificates were changed")
+	}
+}
+
+// TestNilOptions passes nil options, which are skipped.
+func TestNilOptions(t *testing.T) {
+	p := newPair(t, []samlidp.Option{nil}, nil)
+	ctx := context.Background()
+	msg, err := p.sp.AuthnRequest(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := p.idp.ParseAuthnRequest(ctx, browserRequest(t, msg), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.idp.Response(ctx, req, testSubject, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.idp.IDPInitiated(ctx, spEntityID, "", nil); err != nil {
+		t.Fatal(err)
+	}
+}

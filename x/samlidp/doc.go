@@ -57,9 +57,11 @@
 //		continueLogin(w, r, req)
 //	}
 //
-// The AuthnRequest is plain data. If the user must log in, or consent,
-// first, keep it, such as in a server-side session, until they have:
-// unlike the request it came in, it does not expire during a slow login.
+// The AuthnRequest is plain data: what of the request bears on the
+// answer. If the user must log in, or consent, first, keep it, such as in
+// a server-side session, until they have: unlike the request it came in,
+// it does not expire during a slow login. Delete it once it is answered:
+// Response does not stop it from being answered again.
 // Second, once the user is authenticated, answer it:
 //
 //	func continueLogin(w http.ResponseWriter, r *http.Request, req *samlidp.AuthnRequest) {
@@ -110,6 +112,21 @@
 //		idp.EnforceNameIDPolicy = false // this SP asks for a format it does not need
 //	})
 //
+// A NameIDPolicy SPNameQualifier other than the SP's own entity ID is
+// refused, with StatusInvalidNameIDPolicy, unless WithAffiliation says
+// the SP is a member of that affiliation (saml-core §3.4.1.1). Whether a
+// NameID may be created is the application's to decide: if the user has
+// none for the SP yet, such as a persistent one, and the request's
+// AllowCreate is false, answer with ErrorResponse and
+// StatusInvalidNameIDPolicy:
+//
+//	nameID, ok := persistentID(user, req.ServiceProvider)
+//	if !ok && !req.AllowCreate {
+//		msg, err := config.ErrorResponse(r.Context(), req, &saml.StatusError{
+//			TopLevel: saml.StatusRequester, SecondLevel: saml.StatusInvalidNameIDPolicy})
+//		...
+//	}
+//
 // A signed AuthnRequest is accepted only once. By default the record is
 // kept in memory, which protects a single process; see WithReplayState.
 //
@@ -129,7 +146,9 @@
 // the IdP's key, Consume records messages for replay protection, and
 // IdentityProvider reaches the configuration. Keep the Participant of
 // each Response with the user's IdP session: it names the session that
-// single logout must end at the SP.
+// single logout must end at the SP. Give each SP its own opaque
+// SessionIndex, such as an HMAC of the session's ID and the SP's entity
+// ID, never the session token itself: SPs see it (saml-core §2.7.2).
 //
 // # Stability
 //

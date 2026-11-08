@@ -37,7 +37,11 @@ type Subject struct {
 	AuthnContextClassRef saml.AuthnContextClass
 
 	// SessionIndex, if not empty, names the user's session at the IdP, for
-	// single logout.
+	// single logout. The SP sees it, so it must be opaque, not the IdP's
+	// session token or anything that would let the session be taken over,
+	// and should differ from one SP to another, so that SPs cannot
+	// correlate the user by it (saml-core §2.7.2): for example, an HMAC,
+	// under a key of the IdP, of the session's ID and the SP's entity ID.
 	SessionIndex string
 
 	// SessionNotOnOrAfter, if not zero, is when the SP must end the
@@ -65,6 +69,10 @@ type Attribute struct {
 	// Values are the attribute's values.
 	Values []string
 }
+
+// encryptedNameIDFormat is the NameIDPolicy Format that asks for the
+// NameID to be encrypted (saml-core §3.4.1.1, §8.3.9).
+const encryptedNameIDFormat saml.NameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:encrypted"
 
 // ResponseOption customizes Response and ErrorResponse.
 type ResponseOption interface {
@@ -117,10 +125,20 @@ func WithScriptNonce(nonce string) ResponseOption {
 // one of its assertion consumer services.
 //
 // The request may ask for what the IdP will not assert: a NameID format
-// other than subject.NameIDFormat, an authentication context that
+// other than subject.NameIDFormat, an SPNameQualifier that WithAffiliation
+// does not allow, an authentication context that
 // subject.AuthnContextClassRef does not satisfy, or a user other than
-// subject. The error then matches *saml.StatusError; send it to the SP
-// with ErrorResponse.
+// subject. It may ask for an encrypted NameID: Response issues the NameID
+// in the assertion, which is then encrypted, and refuses the request if
+// the SP's metadata publishes no encryption certificate. The error then
+// matches *saml.StatusError; send it to the SP with ErrorResponse.
+//
+// If req.ForceAuthn is set, subject.AuthnInstant must not be before
+// req.IssueInstant, give or take saml.MaxClockSkew: Response returns an
+// error otherwise.
+//
+// Response does not prevent req from being answered twice: once it is
+// answered, delete the AuthnRequest where it was kept.
 func (c *Config) Response(ctx context.Context, req *AuthnRequest, subject Subject, opts ...ResponseOption) (*Message, error) {
 	o := newResponseOptions(opts)
 	if subject.NameID == "" {
@@ -129,8 +147,15 @@ func (c *Config) Response(ctx context.Context, req *AuthnRequest, subject Subjec
 	if subject.AuthnInstant.IsZero() {
 		return nil, errors.New("samlidp: the subject has no AuthnInstant")
 	}
+	if req != nil && req.ForceAuthn && subject.AuthnInstant.Before(req.IssueInstant.Add(-saml.MaxClockSkew)) {
+		return nil, fmt.Errorf("samlidp: the request asks for a new authentication (ForceAuthn), but the subject's AuthnInstant %s is before the request was issued, at %s",
+			subject.AuthnInstant.UTC().Format(time.RFC3339), req.IssueInstant.UTC().Format(time.RFC3339))
+	}
 	ireq, err := c.answer(ctx, req, o)
 	if err != nil {
+		return nil, err
+	}
+	if err := c.spNameQualifierError(ctx, ireq.IDP, req); err != nil {
 		return nil, err
 	}
 
@@ -164,6 +189,19 @@ func (c *Config) Response(ctx context.Context, req *AuthnRequest, subject Subjec
 	}
 	if err := ireq.CheckRequestSubject(); err != nil {
 		return nil, err
+	}
+	if err := ireq.MakeAssertionEl(); err != nil {
+		return nil, err
+	}
+	// Package saml issues a plaintext NameID whatever the policy asks;
+	// within an encrypted assertion it is as confidential as an
+	// EncryptedID would make it.
+	if ireq.IDP.EnforceNameIDPolicy && req.NameIDFormat == encryptedNameIDFormat && ireq.AssertionEl.Tag != "EncryptedAssertion" {
+		return nil, &saml.StatusError{
+			TopLevel:    saml.StatusRequester,
+			SecondLevel: saml.StatusInvalidNameIDPolicy,
+			Message:     "an encrypted name identifier needs an encryption key in the service provider's metadata",
+		}
 	}
 	participant := &saml.SessionParticipant{
 		ServiceProviderID: ireq.ServiceProviderMetadata.EntityID,
@@ -258,7 +296,7 @@ func (c *Config) answer(ctx context.Context, req *AuthnRequest, o responseOption
 		RelayState:              req.RelayState,
 		Request:                 req.samlRequest(),
 		ServiceProviderMetadata: md,
-		Now:                     idp.Clock.Now(),
+		Now:                     clockNow(idp.Clock),
 	}
 	ireq.SPSSODescriptor, ireq.ACSEndpoint = findACS(md, req.ACSURL, req.ACSBinding)
 	if ireq.ACSEndpoint == nil {
