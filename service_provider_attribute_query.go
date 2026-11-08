@@ -487,6 +487,9 @@ func (sp *ServiceProvider) attributeQueryAssertion(assertionEl, receivedEl *etre
 	if err := unmarshalElement(assertionEl, &assertion); err != nil {
 		return nil, err
 	}
+	if err := fillAttributeValuesXML(assertionEl, &assertion); err != nil {
+		return nil, err
+	}
 	if err := sp.decryptEncryptedIDs(assertion.Subject); err != nil {
 		return nil, fmt.Errorf("assertion %q: %w", assertion.ID, err)
 	}

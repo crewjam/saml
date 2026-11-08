@@ -1,0 +1,1192 @@
+diff --git a/server/anonymous.go b/server/anonymous.go
+deleted file mode 100644
+index 3333deb..0000000
+--- a/server/anonymous.go
++++ /dev/null
+@@ -1,60 +0,0 @@
+-package server
+-
+-import (
+-	"errors"
+-	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
+-	"go.uber.org/zap"
+-	"net/http"
+-)
+-
+-type AnonymousSession struct {
+-}
+-
+-func IsAnonymousSession(session samlsp.Session) bool {
+-	_, isAnonymous := session.(AnonymousSession)
+-	return isAnonymous
+-}
+-
+-// InitAnonymousSessionProvider will initially provide AnonymousSession instances when requested; however,
+-// once the given initiateSessionPath is intercepted, then remaining session access is delegated to the
+-// given delegateSessionProvider.
+-type InitAnonymousSessionProvider struct {
+-	delegateSessionProvider samlsp.SessionProvider
+-	initiateSessionPath     string
+-	logger                  *zap.Logger
+-}
+-
+-func NewInitAnonymousSessionProvider(logger *zap.Logger, initiateSessionPath string, delegateSessionProvider samlsp.SessionProvider) *InitAnonymousSessionProvider {
+-	return &InitAnonymousSessionProvider{
+-		delegateSessionProvider: delegateSessionProvider,
+-		initiateSessionPath:     initiateSessionPath,
+-		logger:                  logger.With(zap.String("scope", "InitAnonymousSessionProvider")),
+-	}
+-}
+-
+-func (p *InitAnonymousSessionProvider) CreateSession(w http.ResponseWriter, r *http.Request, assertion *saml.Assertion) error {
+-	return p.delegateSessionProvider.CreateSession(w, r, assertion)
+-}
+-
+-func (p *InitAnonymousSessionProvider) DeleteSession(w http.ResponseWriter, r *http.Request) error {
+-	return p.delegateSessionProvider.DeleteSession(w, r)
+-}
+-
+-func (p *InitAnonymousSessionProvider) GetSession(r *http.Request) (samlsp.Session, error) {
+-	session, err := p.delegateSessionProvider.GetSession(r)
+-	if err != nil {
+-		if errors.Is(err, samlsp.ErrNoSession) {
+-			if r.URL.Path == p.initiateSessionPath {
+-				p.logger.Debug("Intercepted initiate session path", zap.String("path", r.URL.Path))
+-				return nil, samlsp.ErrNoSession
+-			}
+-			p.logger.Debug("Auth has not been initiated, returning anonymous session", zap.String("path", r.URL.Path))
+-			return AnonymousSession{}, nil
+-		} else {
+-			return nil, err
+-		}
+-	} else {
+-		return session, nil
+-	}
+-}
+diff --git a/server/auth.go b/server/auth.go
+new file mode 100644
+index 0000000..fe0966e
+--- /dev/null
++++ b/server/auth.go
+@@ -0,0 +1,135 @@
++package server
++
++import (
++	"crypto/rand"
++	"errors"
++	"net/http"
++
++	"github.com/crewjam/saml/x/samlsp"
++	"github.com/crewjam/saml/x/samlsp/pending"
++	"go.uber.org/zap"
++)
++
++// authenticator does what samlsp.Middleware and its CookieSessionProvider
++// did: x/samlsp handles only the SAML messages, and the session cookie is
++// ours. The pending tracker replaces CookieRequestTracker.
++type authenticator struct {
++	sp           *samlsp.Config
++	pending      *pending.Tracker
++	cfg          *Config
++	logger       *zap.Logger
++	codec        SessionCodec
++	cookieDomain string
++	secure       bool
++}
++
++// session returns the session of the request's cookie.
++func (a *authenticator) session(r *http.Request) (*Session, error) {
++	c, err := r.Cookie(a.cfg.CookieName)
++	if err != nil {
++		return nil, err
++	}
++	s := &Session{}
++	if err := a.codec.Decode(c.Value, s); err != nil {
++		return nil, err
++	}
++	return s, nil
++}
++
++// require replaces RequireAccount, preHandleNonInteractive and
++// InitAnonymousSessionProvider: it puts the session in the request context,
++// or starts a login.
++func (a *authenticator) require(next http.Handler) http.Handler {
++	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		s, err := a.session(r)
++		switch {
++		case err == nil:
++		case a.cfg.InitiateSessionPath != "" && r.URL.Path != a.cfg.InitiateSessionPath:
++			a.logger.Debug("Auth has not been initiated, using anonymous session", zap.String("path", r.URL.Path))
++			s = anonymousSession
++		case isNonInteractiveRequest(r):
++			a.logger.Debug("Fail-fast non-interactive request without auth session", zap.String("path", r.URL.Path))
++			w.WriteHeader(http.StatusUnauthorized)
++			return
++		default:
++			a.startLogin(w, r)
++			return
++		}
++		next.ServeHTTP(w, r.WithContext(withSession(r.Context(), s)))
++	})
++}
++
++// startLogin sends the browser to the IdP. It replaces HandleStartAuthFlow.
++func (a *authenticator) startLogin(w http.ResponseWriter, r *http.Request) {
++	relayState := rand.Text()
++	if a.cfg.StaticRelayState != "" {
++		relayState = a.cfg.StaticRelayState[:min(80, len(a.cfg.StaticRelayState))]
++	}
++	msg, err := a.sp.AuthnRequest(r.Context(), relayState)
++	if err != nil {
++		a.logger.Error("Failed to make AuthnRequest", zap.Error(err))
++		w.WriteHeader(http.StatusInternalServerError)
++		return
++	}
++	// Remember the request, and where to return to, until the IdP answers.
++	if err := a.pending.Remember(w, msg, a.returnURI(r)); err != nil {
++		a.logger.Error("Failed to remember the login", zap.Error(err))
++		w.WriteHeader(http.StatusInternalServerError)
++		return
++	}
++	msg.Write(w)
++}
++
++// returnURI is where the browser goes after login: the URL it asked for.
++func (a *authenticator) returnURI(r *http.Request) string {
++	if a.cfg.AuthVerify && r.Header.Get(HeaderForwardedProto) != "" && r.Header.Get(HeaderForwardedHost) != "" && r.Header.Get(HeaderForwardedURI) != "" {
++		return r.Header.Get(HeaderForwardedProto) + "://" + r.Header.Get(HeaderForwardedHost) + r.Header.Get(HeaderForwardedURI)
++	}
++	u := *r.URL
++	u.Host = r.Host
++	return u.String()
++}
++
++// acs verifies the IdP's Response and sets the session cookie.
++func (a *authenticator) acs(w http.ResponseWriter, r *http.Request) {
++	var opts []samlsp.ResponseOption
++	returnTo := "/"
++	if login, err := a.pending.Take(w, r); err == nil {
++		opts = append(opts, samlsp.WithRequestID(login.ID))
++		returnTo = login.Data
++	} else if !errors.Is(err, pending.ErrNotFound) {
++		a.logger.Warn("Invalid pending login cookie", zap.Error(err))
++	}
++	if a.cfg.AllowIdpInitiated {
++		opts = append(opts, samlsp.AllowUnsolicited)
++	}
++
++	assertion, err := a.sp.ParseResponse(r.Context(), r, opts...)
++	if err != nil {
++		a.logger.Warn("SAML Response refused", zap.Error(err))
++		if errors.Is(err, samlsp.ErrNoRequestID) {
++			http.Error(w, "No login in progress", http.StatusBadRequest)
++			return
++		}
++		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
++		return
++	}
++
++	token, err := a.codec.Encode(newSession(assertion, a.sp.EntityID(), a.cfg.CookieMaxAge))
++	if err != nil {
++		a.logger.Error("Failed to encode session", zap.Error(err))
++		w.WriteHeader(http.StatusInternalServerError)
++		return
++	}
++	http.SetCookie(w, &http.Cookie{
++		Name:     a.cfg.CookieName,
++		Value:    token,
++		Domain:   a.cookieDomain,
++		Path:     "/",
++		MaxAge:   int(a.cfg.CookieMaxAge.Seconds()),
++		HttpOnly: true,
++		Secure:   a.secure,
++		SameSite: http.SameSiteLaxMode,
++	})
++	http.Redirect(w, r, returnTo, http.StatusFound)
++}
+diff --git a/server/proxy.go b/server/proxy.go
+index 4e28179..3322aad 100644
+--- a/server/proxy.go
++++ b/server/proxy.go
+@@ -15,7 +15,6 @@ import (
+ 	"github.com/gorilla/websocket"
+ 	"go.uber.org/zap"
+ 
+-	"github.com/crewjam/saml/samlsp"
+ 	"github.com/patrickmn/go-cache"
+ )
+ 
+@@ -92,7 +91,7 @@ func (p *Proxy) handler(respOutWriter http.ResponseWriter, reqIn *http.Request)
+ 		return
+ 	}
+ 
+-	session := samlsp.SessionFromContext(reqIn.Context())
++	session := SessionFromContext(reqIn.Context())
+ 
+ 	reqInPath := reqIn.URL.Path
+ 	var reqOut *http.Request
+@@ -104,15 +103,14 @@ func (p *Proxy) handler(respOutWriter http.ResponseWriter, reqIn *http.Request)
+ 		}
+ 
+ 	} else {
+-		sessionClaims, ok := session.(samlsp.JWTSessionClaims)
+-		if !ok {
+-			p.logger.Error("session is not expected type",
+-				zap.String("path", reqInPath))
++		sessionClaims := session
++		if sessionClaims == nil {
++			p.logger.Error("no session", zap.String("path", reqInPath))
+ 			respOutWriter.WriteHeader(http.StatusInternalServerError)
+ 			return
+ 		}
+ 
+-		authUsing, authorized := p.authorized(&sessionClaims)
++		authUsing, authorized := p.authorized(sessionClaims)
+ 		if !authorized {
+ 			p.logger.Debug("Responding Unauthorized",
+ 				zap.String("path", reqInPath),
+@@ -131,7 +129,7 @@ func (p *Proxy) handler(respOutWriter http.ResponseWriter, reqIn *http.Request)
+ 			zap.String("to", reqOut.URL.Path),
+ 		)
+ 
+-		p.checkForNewAuth(&sessionClaims)
++		p.checkForNewAuth(sessionClaims)
+ 
+ 		p.addHeaders(sessionClaims, reqOut.Header)
+ 
+@@ -213,7 +211,7 @@ func (p *Proxy) setupRequest(respOutWriter http.ResponseWriter, reqIn *http.Requ
+ 	return reqOut
+ }
+ 
+-func (p *Proxy) addHeaders(sessionClaims samlsp.JWTSessionClaims, headers http.Header) {
++func (p *Proxy) addHeaders(sessionClaims *Session, headers http.Header) {
+ 	if p.config.AttributeHeaderMappings != nil {
+ 		for attr, hdr := range p.config.AttributeHeaderMappings {
+ 			if values, ok := sessionClaims.GetAttributes()[attr]; ok {
+@@ -236,7 +234,7 @@ func (p *Proxy) addHeaders(sessionClaims samlsp.JWTSessionClaims, headers http.H
+ 	}
+ }
+ 
+-func (p *Proxy) checkForNewAuth(sessionClaims *samlsp.JWTSessionClaims) {
++func (p *Proxy) checkForNewAuth(sessionClaims *Session) {
+ 	// the offset by one second allows for a small tolerance such as slight clock skew
+ 	if p.config.NewAuthWebhookUrl != "" && sessionClaims.IssuedAt.Time.After(time.Now().Add(-1*time.Second)) {
+ 		err := p.newTokenCache.Add(sessionClaims.ID, sessionClaims, cache.DefaultExpiration)
+@@ -273,7 +271,7 @@ func (p *Proxy) checkForNewAuth(sessionClaims *samlsp.JWTSessionClaims) {
+ // authorized returns a boolean indication if the request is authorized.
+ // The initial string return value is an attribute=value pair that was used to authorize the request.
+ // If authorization was not configured the returned string is empty.
+-func (p *Proxy) authorized(sessionClaims *samlsp.JWTSessionClaims) (string, bool) {
++func (p *Proxy) authorized(sessionClaims *Session) (string, bool) {
+ 	if p.config.AuthorizeAttribute != "" {
+ 		values, exists := sessionClaims.GetAttributes()[p.config.AuthorizeAttribute]
+ 		if !exists {
+diff --git a/server/request_tracker_cookie.go b/server/request_tracker_cookie.go
+deleted file mode 100644
+index dac8bde..0000000
+--- a/server/request_tracker_cookie.go
++++ /dev/null
+@@ -1,120 +0,0 @@
+-package server
+-
+-import (
+-	"encoding/base64"
+-	"fmt"
+-	"io"
+-	"net/http"
+-	"net/url"
+-	"strings"
+-	"time"
+-
+-	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
+-	"go.uber.org/zap"
+-)
+-
+-// Extends samlsp.CookieRequestTracker to add CookieDomain configuration.
+-type CookieRequestTracker struct {
+-	samlsp.CookieRequestTracker
+-
+-	CookieDomain          string
+-	StaticRelayState      string
+-	TrustForwardedHeaders bool
+-}
+-
+-func minOfInts(x, y int) int {
+-	if x < y {
+-		return x
+-	} else {
+-		return y
+-	}
+-}
+-
+-// TrackRequest is a patched version
+-// Source: https://github.com/crewjam/saml/blob/ff03323de99bf95b338de6d92fda8a822d2418de/samlsp/request_tracker_cookie.go#L28-L58
+-// Changes:
+-// - Adds host in request URI
+-// - Adds CookieDomain config in http.SetCookie
+-// - Handles X-Forwarded headers
+-func (t CookieRequestTracker) TrackRequest(w http.ResponseWriter, r *http.Request, samlRequestID string) (string, error) {
+-	// Expire any existing tracked request cookies on the incoming request
+-	count := 0
+-	for _, cookie := range r.Cookies() {
+-		if strings.HasPrefix(cookie.Name, t.NamePrefix) {
+-			http.SetCookie(w, &http.Cookie{
+-				Name:     cookie.Name,
+-				Value:    "",
+-				MaxAge:   -1,
+-				Expires:  time.Unix(0, 0),
+-				Domain:   t.CookieDomain,
+-				HttpOnly: true,
+-				SameSite: t.SameSite,
+-				Secure:   t.ServiceProvider.AcsURL.Scheme == "https",
+-				Path:     t.ServiceProvider.AcsURL.Path,
+-			})
+-			count++
+-		}
+-	}
+-	if count > 0 {
+-		zap.L().Debug("Expired extra request cookies", zap.Int("count", count))
+-	}
+-
+-	var redirectURI *url.URL
+-	if t.TrustForwardedHeaders && r.Header.Get(HeaderForwardedProto) != "" && r.Header.Get(HeaderForwardedHost) != "" && r.Header.Get(HeaderForwardedURI) != "" {
+-		// When X-Forwarded headers exist, use it
+-		redirectURI, _ = url.Parse(fmt.Sprintf("%s://%s%s", r.Header.Get(HeaderForwardedProto), r.Header.Get(HeaderForwardedHost), r.Header.Get(HeaderForwardedURI)))
+-	} else {
+-		redirectURI, _ = url.Parse(r.URL.String()) // Clone
+-		redirectURI.Host = r.Host
+-	}
+-
+-	trackedRequest := samlsp.TrackedRequest{
+-		Index:         base64.RawURLEncoding.EncodeToString(randomBytes(42)),
+-		SAMLRequestID: samlRequestID,
+-		URI:           redirectURI.String(),
+-	}
+-
+-	if t.StaticRelayState != "" {
+-		trackedRequest.Index = t.StaticRelayState[0:minOfInts(80, len(t.StaticRelayState))]
+-	} else if t.RelayStateFunc != nil {
+-		relayState := t.RelayStateFunc(w, r)
+-		if relayState != "" {
+-			trackedRequest.Index = relayState
+-		}
+-	}
+-
+-	signedTrackedRequest, err := t.Codec.Encode(trackedRequest)
+-	if err != nil {
+-		return "", err
+-	}
+-
+-	name := t.NamePrefix + trackedRequest.Index
+-	http.SetCookie(w, &http.Cookie{
+-		Name:     name,
+-		Value:    signedTrackedRequest,
+-		MaxAge:   int(t.MaxAge.Seconds()),
+-		Domain:   t.CookieDomain,
+-		HttpOnly: true,
+-		SameSite: t.SameSite,
+-		Secure:   t.ServiceProvider.AcsURL.Scheme == "https",
+-		Path:     t.ServiceProvider.AcsURL.Path,
+-	})
+-	zap.L().Debug("Set request tracking cookie", zap.String("name", name),
+-		zap.String("name", name),
+-		zap.String("domain", t.CookieDomain),
+-		zap.String("path", t.ServiceProvider.AcsURL.Path),
+-		zap.Duration("maxAge", t.MaxAge))
+-
+-	return trackedRequest.Index, nil
+-}
+-
+-// Source: https://github.com/crewjam/saml/blob/5e0ffd290abf0be7dfd4f8279e03a963071544eb/samlsp/util.go#L9-L16
+-func randomBytes(n int) []byte {
+-	rv := make([]byte, n)
+-
+-	if _, err := io.ReadFull(saml.RandReader, rv); err != nil {
+-		panic(err)
+-	}
+-	return rv
+-}
+diff --git a/server/server.go b/server/server.go
+index 9747373..bcbe6eb 100644
+--- a/server/server.go
++++ b/server/server.go
+@@ -3,10 +3,11 @@ package server
+ import (
+ 	"context"
+ 	"crypto"
++	"crypto/hmac"
++	"crypto/rsa"
++	"crypto/sha256"
+ 	"crypto/tls"
+ 	"crypto/x509"
+-	"encoding/xml"
+-	"errors"
+ 	"fmt"
+ 	"log"
+ 	"net"
+@@ -14,16 +15,14 @@ import (
+ 	"net/url"
+ 	"os"
+ 	"strings"
+-	"time"
+ 
+ 	"go.uber.org/zap"
+ 
+ 	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlsp"
++	"github.com/crewjam/saml/x/samlsp/pending"
+ )
+ 
+-const fetchMetadataTimeout = 30 * time.Second
+-
+ func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *Config) error {
+ 	keyPair, err := tls.LoadX509KeyPair(cfg.SpCertPath, cfg.SpKeyPath)
+ 	if err != nil {
+@@ -39,12 +38,7 @@ func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *
+ 		return fmt.Errorf("unsupported SP private key type %T: key must implement crypto.Signer", keyPair.PrivateKey)
+ 	}
+ 
+-	idpMetadataUrl, err := url.Parse(cfg.IdpMetadataUrl)
+-	if err != nil {
+-		return fmt.Errorf("failed to parse IdP metdata URL: %w", err)
+-	}
+-
+-	rootUrl, err := url.Parse(cfg.BaseUrl)
++	rootUrl, err := url.Parse(strings.TrimSuffix(cfg.BaseUrl, "/"))
+ 	if err != nil {
+ 		return fmt.Errorf("failed to parse base URL: %w", err)
+ 	}
+@@ -54,74 +48,71 @@ func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *
+ 		return fmt.Errorf("failed to setup HTTP client: %w", err)
+ 	}
+ 
+-	samlOpts := samlsp.Options{
+-		URL:               *rootUrl,
+-		Key:               privateKey,
+-		Certificate:       keyPair.Leaf,
+-		AllowIDPInitiated: cfg.AllowIdpInitiated,
+-		SignRequest:       cfg.SignRequests,
+-	}
+-	if cfg.EntityID != "" {
+-		samlOpts.EntityID = cfg.EntityID
+-	}
+-
+-	samlOpts.IDPMetadata, err = fetchMetadata(ctx, httpClient, idpMetadataUrl)
++	idpMetadata, err := identityProvider(cfg.IdpMetadataUrl, httpClient)
+ 	if err != nil {
+ 		return fmt.Errorf("failed to fetch/load IdP metadata: %w", err)
+ 	}
++	// Fail at startup if the IdP metadata cannot be had, as before.
++	if _, err := idpMetadata(ctx); err != nil {
++		return fmt.Errorf("failed to fetch/load IdP metadata: %w", err)
++	}
+ 
+-	middleware, err := samlsp.New(samlOpts)
++	// The entity ID, metadata and ACS URLs that samlsp.Options derived
++	// from the base URL.
++	entityID := rootUrl.String() + "/saml/metadata"
++	if cfg.EntityID != "" {
++		entityID = cfg.EntityID
++	}
++	acsURL := rootUrl.String() + "/saml/acs"
++	samlOpts := []samlsp.Option{
++		samlsp.WithSigningKey(privateKey, keyPair.Leaf),
++		samlsp.WithACSURL(acsURL),
++		samlsp.WithNameIDFormat(nameIDFormat(cfg.NameIdFormat)),
++		samlsp.WithHTTPClient(httpClient),
++	}
++	if rsaKey, ok := privateKey.(*rsa.PrivateKey); ok {
++		// IdPs may encrypt assertions to the SP key, as with samlsp.Middleware.
++		samlOpts = append(samlOpts, samlsp.WithEncryptionKey(rsaKey, keyPair.Leaf))
++	}
++	if cfg.SignRequests {
++		samlOpts = append(samlOpts, samlsp.SignAuthnRequests)
++	}
++	sp, err := samlsp.New(entityID, idpMetadata, samlOpts...)
+ 	if err != nil {
+ 		return fmt.Errorf("failed to initialize SP: %w", err)
+ 	}
+ 
+-	switch cfg.NameIdFormat {
+-	case "unspecified":
+-		middleware.ServiceProvider.AuthnNameIDFormat = saml.UnspecifiedNameIDFormat
+-	case "transient":
+-		middleware.ServiceProvider.AuthnNameIDFormat = saml.TransientNameIDFormat
+-	case "email":
+-		middleware.ServiceProvider.AuthnNameIDFormat = saml.EmailAddressNameIDFormat
+-	case "persistent":
+-		middleware.ServiceProvider.AuthnNameIDFormat = saml.PersistentNameIDFormat
+-	default:
+-		middleware.ServiceProvider.AuthnNameIDFormat = saml.NameIDFormat(cfg.NameIdFormat)
+-	}
+-
+ 	var cookieDomain = cfg.CookieDomain
+ 	if cookieDomain == "" {
+ 		cookieDomain = rootUrl.Hostname()
+ 	}
+-	middleware.RequestTracker = CookieRequestTracker{
+-		CookieRequestTracker: samlsp.DefaultRequestTracker(samlsp.Options{
+-			URL: *rootUrl,
+-			Key: privateKey,
+-		}, &middleware.ServiceProvider),
+-		CookieDomain:          cookieDomain,
+-		StaticRelayState:      cfg.StaticRelayState,
+-		TrustForwardedHeaders: cfg.AuthVerify,
+-	}
+-	cookieSessionProvider := samlsp.DefaultSessionProvider(samlOpts)
+-	cookieSessionProvider.Name = cfg.CookieName
+-	cookieSessionProvider.Domain = cookieDomain
+-	cookieSessionProvider.MaxAge = cfg.CookieMaxAge
+-	cookieSessionProvider.HTTPOnly = true
+-	codec := samlsp.DefaultSessionCodec(samlOpts)
+-	codec.MaxAge = cfg.CookieMaxAge
+-	cookieSessionProvider.Codec = codec
+-
++	jwtCodec, err := NewJWTSessionCodec(privateKey, entityID)
++	if err != nil {
++		return err
++	}
++	var codec SessionCodec = jwtCodec
+ 	if cfg.EncryptJWT {
+-		jweSessionCodec, err := NewJWESessionCodec(codec, codec.Key.Public(), privateKey)
++		codec, err = NewJWESessionCodec(jwtCodec, privateKey.Public(), privateKey)
+ 		if err != nil {
+ 			return fmt.Errorf("failed to create jwe session codec: %w", err)
+ 		}
+-		cookieSessionProvider.Codec = jweSessionCodec
+ 	}
+-
+-	if cfg.InitiateSessionPath != "" {
+-		middleware.Session = NewInitAnonymousSessionProvider(logger, cfg.InitiateSessionPath, cookieSessionProvider)
+-	} else {
+-		middleware.Session = cookieSessionProvider
++	pendingKey, err := pendingCookieKey(keyPair.PrivateKey)
++	if err != nil {
++		return err
++	}
++	tracker, err := pending.New(sp, pendingKey, pending.WithDomain(cookieDomain))
++	if err != nil {
++		return fmt.Errorf("failed to create pending login tracker: %w", err)
++	}
++	auth := &authenticator{
++		sp:           sp,
++		pending:      tracker,
++		cfg:          cfg,
++		logger:       logger,
++		codec:        codec,
++		cookieDomain: cookieDomain,
++		secure:       rootUrl.Scheme == "https",
+ 	}
+ 
+ 	proxy, err := NewProxy(logger, cfg)
+@@ -132,46 +123,17 @@ func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *
+ 	app := http.HandlerFunc(proxy.handler)
+ 	if cfg.AuthVerify {
+ 		if cfg.AuthVerifyRequireLogin {
+-			http.Handle(cfg.AuthVerifyPath, authVerifyWithLogin(logger, proxy, middleware))
++			http.Handle(cfg.AuthVerifyPath, authVerifyWithLogin(proxy, auth))
+ 		} else {
+-			http.Handle(cfg.AuthVerifyPath, authVerify(middleware))
++			http.Handle(cfg.AuthVerifyPath, authVerify(auth))
+ 		}
+ 	}
+ 
+-	preHandleNonInteractive := func(next http.Handler) http.Handler {
+-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+-			if isNonInteractiveRequest(r) {
+-				session, err := middleware.Session.GetSession(r)
+-				if errors.Is(err, samlsp.ErrNoSession) {
+-					logger.Debug("Fail-fast non-interactive request without auth session", zap.String("path", r.URL.Path))
+-					w.WriteHeader(http.StatusUnauthorized)
+-					return
+-				}
+-
+-				if err != nil {
+-					logger.Warn("Unexpected error while evaluating non-interactive request session",
+-						zap.String("path", r.URL.Path),
+-						zap.Error(err))
+-					w.WriteHeader(http.StatusInternalServerError)
+-					return
+-				}
+-				if session == nil {
+-					w.WriteHeader(http.StatusUnauthorized)
+-					return
+-				}
+-			}
+-			next.ServeHTTP(w, r)
+-		})
+-	}
+-
+-	http.Handle("/saml/sign_in", http.HandlerFunc(middleware.HandleStartAuthFlow))
+-	http.Handle("/saml/", middleware)
++	http.HandleFunc("/saml/sign_in", auth.startLogin)
++	http.HandleFunc("/saml/metadata", sp.ServeMetadata)
++	http.HandleFunc("/saml/acs", auth.acs)
+ 	http.Handle("/_health", http.HandlerFunc(proxy.health))
+-	http.Handle("/",
+-		preHandleNonInteractive(
+-			middleware.RequireAccount(
+-				app,
+-			)))
++	http.Handle("/", auth.require(app))
+ 
+ 	logger.
+ 		With(zap.String("baseUrl", cfg.BaseUrl)).
+@@ -181,6 +143,52 @@ func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *
+ 	return http.Serve(listener, nil)
+ }
+ 
++// pendingCookieKey derives the key of the pending-login cookies from the SP
++// private key, which signed them before as well.
++func pendingCookieKey(key crypto.PrivateKey) ([]byte, error) {
++	der, err := x509.MarshalPKCS8PrivateKey(key)
++	if err != nil {
++		return nil, fmt.Errorf("failed to derive the pending login cookie key: %w", err)
++	}
++	mac := hmac.New(sha256.New, der)
++	mac.Write([]byte("saml-auth-proxy pending login cookie"))
++	return mac.Sum(nil), nil
++}
++
++func nameIDFormat(format string) saml.NameIDFormat {
++	switch format {
++	case "unspecified":
++		return saml.UnspecifiedNameIDFormat
++	case "transient":
++		return saml.TransientNameIDFormat
++	case "email":
++		return saml.EmailAddressNameIDFormat
++	case "persistent":
++		return saml.PersistentNameIDFormat
++	default:
++		return saml.NameIDFormat(format)
++	}
++}
++
++// identityProvider returns the IdP metadata: read once from a file: URL,
++// otherwise fetched, cached and refreshed as its cacheDuration and
++// validUntil say, so that a rotated IdP certificate is picked up without a
++// restart.
++func identityProvider(metadataURL string, client *http.Client) (samlsp.MetadataFunc, error) {
++	u, err := url.Parse(metadataURL)
++	if err != nil {
++		return nil, fmt.Errorf("failed to parse IdP metdata URL: %w", err)
++	}
++	if u.Scheme == "file" {
++		data, err := os.ReadFile(u.Path)
++		if err != nil {
++			return nil, fmt.Errorf("failed to read IdP metadata file.: %w", err)
++		}
++		return samlsp.StaticMetadataBytes(data), nil
++	}
++	return samlsp.RemoteMetadata(metadataURL, samlsp.WithHTTPClient(client)), nil
++}
++
+ func isNonInteractiveRequest(r *http.Request) bool {
+ 	// Legacy AJAX signal
+ 	if strings.EqualFold(r.Header.Get("X-Requested-With"), "XMLHttpRequest") {
+@@ -213,25 +221,6 @@ func isNonInteractiveRequest(r *http.Request) bool {
+ 	return false
+ }
+ 
+-func fetchMetadata(ctx context.Context, client *http.Client, idpMetadataUrl *url.URL) (*saml.EntityDescriptor, error) {
+-	if idpMetadataUrl.Scheme == "file" {
+-		data, err := os.ReadFile(idpMetadataUrl.Path)
+-		if err != nil {
+-			return nil, fmt.Errorf("failed to read IdP metadata file.: %w", err)
+-		}
+-		idpMetadata := &saml.EntityDescriptor{}
+-		err = xml.Unmarshal(data, idpMetadata)
+-		if err != nil {
+-			return nil, fmt.Errorf("failed to unmarshal IdP metadata XML.: %w", err)
+-		}
+-		return idpMetadata, nil
+-	} else {
+-		reqCtx, cancel := context.WithTimeout(ctx, fetchMetadataTimeout)
+-		defer cancel()
+-		return samlsp.FetchMetadata(reqCtx, client, *idpMetadataUrl)
+-	}
+-}
+-
+ func setupHttpClient(idpCaFile string) (*http.Client, error) {
+ 	if idpCaFile == "" {
+ 		return http.DefaultClient, nil
+@@ -261,38 +250,24 @@ func setupHttpClient(idpCaFile string) (*http.Client, error) {
+ 	return client, nil
+ }
+ 
+-func authVerifyWithLogin(logger *zap.Logger, proxy *Proxy, middleware *samlsp.Middleware) http.Handler {
+-	return middleware.RequireAccount(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+-		session := samlsp.SessionFromContext(r.Context())
+-
+-		sessionClaims, ok := session.(samlsp.JWTSessionClaims)
+-		if !ok {
+-			logger.Error("session is not expected type")
+-			w.WriteHeader(http.StatusInternalServerError)
++func authVerifyWithLogin(proxy *Proxy, auth *authenticator) http.Handler {
++	return auth.require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		session := SessionFromContext(r.Context())
++		if IsAnonymousSession(session) {
++			w.WriteHeader(http.StatusUnauthorized)
+ 			return
+ 		}
+-
+-		proxy.addHeaders(sessionClaims, w.Header()) // pass over SAML attrs as headers
+-
++		proxy.addHeaders(session, w.Header()) // pass over SAML attrs as headers
+ 		w.WriteHeader(http.StatusNoContent)
+ 	}))
+ }
+ 
+-func authVerify(middleware *samlsp.Middleware) http.Handler {
+-
++func authVerify(auth *authenticator) http.Handler {
+ 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+-
+-		session, err := middleware.Session.GetSession(r)
+-
+-		if session != nil {
+-			w.WriteHeader(http.StatusNoContent)
+-			return
+-		}
+-
+-		if err == samlsp.ErrNoSession {
++		if _, err := auth.session(r); err != nil {
+ 			w.WriteHeader(http.StatusUnauthorized)
+ 			return
+ 		}
+-
++		w.WriteHeader(http.StatusNoContent)
+ 	})
+ }
+diff --git a/server/session.go b/server/session.go
+new file mode 100644
+index 0000000..394edbf
+--- /dev/null
++++ b/server/session.go
+@@ -0,0 +1,127 @@
++package server
++
++import (
++	"context"
++	"crypto"
++	"crypto/ecdsa"
++	"crypto/rand"
++	"crypto/rsa"
++	"fmt"
++	"time"
++
++	"github.com/crewjam/saml/x/samlsp"
++	"github.com/golang-jwt/jwt/v5"
++)
++
++// Attributes are the SAML attributes of a session, keyed by FriendlyName,
++// or by Name when there is none, as samlsp.JWTSessionClaims keyed them, so
++// that AttributeHeaderMappings and AuthorizeAttribute keep matching.
++type Attributes map[string][]string
++
++// Get returns the first value of the attribute key, or "".
++func (a Attributes) Get(key string) string {
++	if v := a[key]; len(v) > 0 {
++		return v[0]
++	}
++	return ""
++}
++
++// Session is the session cookie's content. It replaces
++// samlsp.JWTSessionClaims.
++type Session struct {
++	jwt.RegisteredClaims
++	Attributes Attributes `json:"attr"`
++}
++
++// GetAttributes returns the session's attributes.
++func (s *Session) GetAttributes() Attributes { return s.Attributes }
++
++// newSession returns a session for the verified assertion, valid for maxAge.
++func newSession(assertion *samlsp.Assertion, audience string, maxAge time.Duration) *Session {
++	now := time.Now()
++	s := &Session{
++		RegisteredClaims: jwt.RegisteredClaims{
++			ID:        rand.Text(),
++			Subject:   assertion.Subject,
++			Audience:  jwt.ClaimStrings{audience},
++			IssuedAt:  jwt.NewNumericDate(now),
++			NotBefore: jwt.NewNumericDate(now),
++			ExpiresAt: jwt.NewNumericDate(now.Add(maxAge)),
++		},
++		// Keyed as samlsp.JWTSessionClaims keyed them.
++		Attributes: assertion.Attributes.LegacyMap(),
++	}
++	s.Attributes["SessionIndex"] = append(s.Attributes["SessionIndex"], assertion.SessionIndexes...)
++	return s
++}
++
++// SessionCodec turns claims into a cookie value and back. It replaces
++// samlsp.SessionCodec.
++type SessionCodec interface {
++	Encode(claims jwt.Claims) (string, error)
++	Decode(token string, claims jwt.Claims) error
++}
++
++// JWTSessionCodec signs claims as a JWT with the SP key, as
++// samlsp.JWTSessionCodec did.
++type JWTSessionCodec struct {
++	key      crypto.Signer
++	method   jwt.SigningMethod
++	audience string
++}
++
++// NewJWTSessionCodec returns a codec that signs with key, an RSA or ECDSA
++// key, and accepts only tokens for audience.
++func NewJWTSessionCodec(key crypto.Signer, audience string) (*JWTSessionCodec, error) {
++	var method jwt.SigningMethod
++	switch pub := key.Public().(type) {
++	case *rsa.PublicKey:
++		method = jwt.SigningMethodRS256
++	case *ecdsa.PublicKey:
++		switch pub.Curve.Params().BitSize {
++		case 256:
++			method = jwt.SigningMethodES256
++		case 384:
++			method = jwt.SigningMethodES384
++		case 521:
++			method = jwt.SigningMethodES512
++		}
++	}
++	if method == nil {
++		return nil, fmt.Errorf("unsupported SP key type %T for session tokens", key)
++	}
++	return &JWTSessionCodec{key: key, method: method, audience: audience}, nil
++}
++
++func (c *JWTSessionCodec) Encode(claims jwt.Claims) (string, error) {
++	return jwt.NewWithClaims(c.method, claims).SignedString(c.key)
++}
++
++func (c *JWTSessionCodec) Decode(token string, claims jwt.Claims) error {
++	_, err := jwt.ParseWithClaims(token, claims,
++		func(*jwt.Token) (any, error) { return c.key.Public(), nil },
++		jwt.WithValidMethods([]string{c.method.Alg()}),
++		jwt.WithAudience(c.audience),
++		jwt.WithExpirationRequired())
++	return err
++}
++
++type sessionKey struct{}
++
++// anonymousSession is the session of a request let through before the
++// InitiateSessionPath has been visited.
++var anonymousSession = &Session{}
++
++// IsAnonymousSession reports whether s is the anonymous session.
++func IsAnonymousSession(s *Session) bool { return s == anonymousSession }
++
++func withSession(ctx context.Context, s *Session) context.Context {
++	return context.WithValue(ctx, sessionKey{}, s)
++}
++
++// SessionFromContext returns the session that the authenticator put in
++// ctx, or nil.
++func SessionFromContext(ctx context.Context) *Session {
++	s, _ := ctx.Value(sessionKey{}).(*Session)
++	return s
++}
+diff --git a/server/session_jwe.go b/server/session_jwe.go
+index 5667c57..7f30825 100644
+--- a/server/session_jwe.go
++++ b/server/session_jwe.go
+@@ -6,25 +6,19 @@ import (
+ 	"crypto/rsa"
+ 	"fmt"
+ 
+-	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
+ 	"github.com/go-jose/go-jose/v4"
++	"github.com/golang-jwt/jwt/v5"
+ )
+ 
+ // JWESessionCodec wraps a JWTSessionCodec and applies JWE encryption to protect sensitive attributes
+ type JWESessionCodec struct {
+-	jwtSessionCodec *samlsp.JWTSessionCodec
++	jwtSessionCodec *JWTSessionCodec
+ 	encrypter       jose.Encrypter
+ 	privateKey      crypto.PrivateKey
+ 	keyAlgorithm    jose.KeyAlgorithm
+ }
+ 
+-func NewJWESessionCodec(sessionCodec samlsp.SessionCodec, publicKey crypto.PublicKey, privateKey crypto.PrivateKey) (samlsp.SessionCodec, error) {
+-	codec, ok := sessionCodec.(samlsp.JWTSessionCodec)
+-	if !ok {
+-		return nil, fmt.Errorf("session codec isn't JWT session codec")
+-	}
+-
++func NewJWESessionCodec(codec *JWTSessionCodec, publicKey crypto.PublicKey, privateKey crypto.PrivateKey) (*JWESessionCodec, error) {
+ 	keyAlgorithm, err := jweKeyAlgorithmForPublicKey(publicKey)
+ 	if err != nil {
+ 		return nil, err
+@@ -36,15 +30,11 @@ func NewJWESessionCodec(sessionCodec samlsp.SessionCodec, publicKey crypto.Publi
+ 		return nil, fmt.Errorf("failed to create jwe encrypter: %w", err)
+ 	}
+ 
+-	return &JWESessionCodec{jwtSessionCodec: &codec, encrypter: encrypter, privateKey: privateKey, keyAlgorithm: keyAlgorithm}, nil
+-}
+-
+-func (c *JWESessionCodec) New(assertion *saml.Assertion) (samlsp.Session, error) {
+-	return c.jwtSessionCodec.New(assertion)
++	return &JWESessionCodec{jwtSessionCodec: codec, encrypter: encrypter, privateKey: privateKey, keyAlgorithm: keyAlgorithm}, nil
+ }
+ 
+ // Encode first creates a signed JWT (JWS) using the wrapped codec, and then encrypts the entire JWS payload using JWE.
+-func (c *JWESessionCodec) Encode(s samlsp.Session) (string, error) {
++func (c *JWESessionCodec) Encode(s jwt.Claims) (string, error) {
+ 	// get the signed JWT (JWS) from the underlying codec
+ 	signed, err := c.jwtSessionCodec.Encode(s)
+ 	if err != nil {
+@@ -62,21 +52,21 @@ func (c *JWESessionCodec) Encode(s samlsp.Session) (string, error) {
+ 
+ // Decode first decrypts the JWE payload to get the signed JWT (JWS), and then uses the wrapped codec to decode and
+ // validate the JWS
+-func (c *JWESessionCodec) Decode(encrypted string) (samlsp.Session, error) {
++func (c *JWESessionCodec) Decode(encrypted string, claims jwt.Claims) error {
+ 	// parse the JWE token (possible to parameterize jose.ContentEncryption and jose.KeyAlgorithm)
+ 	jwe, err := jose.ParseEncrypted(encrypted, []jose.KeyAlgorithm{c.keyAlgorithm}, []jose.ContentEncryption{jose.A128GCM})
+ 	if err != nil {
+-		return nil, fmt.Errorf("failed to parse jwe token: %w", err)
++		return fmt.Errorf("failed to parse jwe token: %w", err)
+ 	}
+ 
+ 	// decrypt the JWE to get the JWS
+ 	decrypted, err := jwe.Decrypt(c.privateKey)
+ 	if err != nil {
+-		return nil, fmt.Errorf("failed to decrypt jwe token: %w", err)
++		return fmt.Errorf("failed to decrypt jwe token: %w", err)
+ 	}
+ 
+ 	// decode the inner JWS using the wrapped codec
+-	return c.jwtSessionCodec.Decode(string(decrypted))
++	return c.jwtSessionCodec.Decode(string(decrypted), claims)
+ }
+ 
+ func jweKeyAlgorithmForPublicKey(publicKey crypto.PublicKey) (jose.KeyAlgorithm, error) {
+diff --git a/server/session_jwe_test.go b/server/session_jwe_test.go
+index 36182c4..faaf59d 100644
+--- a/server/session_jwe_test.go
++++ b/server/session_jwe_test.go
+@@ -1,73 +1,52 @@
+ package server
+ 
+ import (
++	"crypto"
+ 	"crypto/ecdsa"
+ 	"crypto/elliptic"
+ 	"crypto/rand"
+ 	"crypto/rsa"
+-	"net/url"
+ 	"slices"
+ 	"testing"
+ 	"time"
+ 
+ 	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlsp"
+ )
+ 
+-func TestJWESessionCodec(t *testing.T) {
+-	// Generate a new RSA key pair for testing
+-	key, err := rsa.GenerateKey(rand.Reader, 2048)
++const testAudience = "http://localhost/saml/metadata"
++
++func newTestJWECodec(t *testing.T, key crypto.Signer) *JWESessionCodec {
++	t.Helper()
++	jwtCodec, err := NewJWTSessionCodec(key, testAudience)
+ 	if err != nil {
+-		t.Fatalf("failed to generate RSA key pair: %v", err)
++		t.Fatalf("failed to create JWTSessionCodec: %v", err)
+ 	}
+-
+-	// Create a base JWTSessionCodec
+-	baseURL, _ := url.Parse("http://localhost") // baseURL is required
+-	jwtCodec := samlsp.DefaultSessionCodec(samlsp.Options{Key: key, URL: *baseURL})
+-
+-	// Create the JWESessionCodec
+ 	jweCodec, err := NewJWESessionCodec(jwtCodec, key.Public(), key)
+ 	if err != nil {
+ 		t.Fatalf("failed to create JWESessionCodec: %v", err)
+ 	}
++	return jweCodec
++}
+ 
+-	// Create a sample assertion
+-	assertion := &saml.Assertion{
+-		Subject: &saml.Subject{
+-			NameID: &saml.NameID{
+-				Value: "testuser",
+-			},
+-		},
+-		AttributeStatements: []saml.AttributeStatement{
+-			{
+-				Attributes: []saml.Attribute{
+-					{
+-						Name:   "email",
+-						Values: []saml.AttributeValue{{Value: "test@example.com"}},
+-					},
+-					{
+-						Name:   "groups",
+-						Values: []saml.AttributeValue{{Value: "admin"}, {Value: "users"}},
+-					},
+-				},
+-			},
+-		},
+-		AuthnStatements: []saml.AuthnStatement{
+-			{
+-				SessionIndex: "some-session-index",
+-				AuthnInstant: time.Now(),
+-			},
+-		},
++func TestJWESessionCodec(t *testing.T) {
++	key, err := rsa.GenerateKey(rand.Reader, 2048)
++	if err != nil {
++		t.Fatalf("failed to generate RSA key pair: %v", err)
+ 	}
++	jweCodec := newTestJWECodec(t, key)
+ 
+-	// Create a new session from the assertion
+-	session, err := jweCodec.New(assertion)
+-	if err != nil {
+-		t.Fatalf("Failed to create session: %v", err)
++	assertion := &samlsp.Assertion{
++		NameID:         saml.NameID{Value: "testuser"},
++		Subject:        "testuser",
++		SessionIndexes: []string{"some-session-index"},
++		Attributes: samlsp.Attributes{
++			{Name: "email", Values: []string{"test@example.com"}},
++			{Name: "groups", Values: []string{"admin", "users"}},
++		},
+ 	}
+ 
+-	// Encode the session
+-	encoded, err := jweCodec.Encode(session)
++	encoded, err := jweCodec.Encode(newSession(assertion, testAudience, time.Hour))
+ 	if err != nil {
+ 		t.Fatalf("Failed to encode session: %v", err)
+ 	}
+@@ -75,34 +54,20 @@ func TestJWESessionCodec(t *testing.T) {
+ 		t.Error("Encoded session should not be empty")
+ 	}
+ 
+-	// Decode the session
+-	decodedSession, err := jweCodec.Decode(encoded)
+-	if err != nil {
++	claim := &Session{}
++	if err := jweCodec.Decode(encoded, claim); err != nil {
+ 		t.Fatalf("Failed to decode session: %v", err)
+ 	}
+-	if decodedSession == nil {
+-		t.Error("Decoded session should not be nil")
+-	}
+-
+-	// Verify the decoded session
+-	claim, ok := decodedSession.(samlsp.JWTSessionClaims)
+-	if !ok {
+-		t.Fatal("Decoded session is not a JWTSessionClaims")
+-	}
+ 
+ 	if claim.Subject != "testuser" {
+ 		t.Errorf("Expected subject 'testuser', got '%s'", claim.Subject)
+ 	}
+-
+ 	if claim.Attributes.Get("SessionIndex") != "some-session-index" {
+ 		t.Errorf("Expected SessionIndex 'some-session-index', got '%s'", claim.Attributes.Get("SessionIndex"))
+ 	}
+-
+ 	if claim.Attributes.Get("email") != "test@example.com" {
+ 		t.Errorf("Expected email 'test@example.com', got '%s'", claim.Attributes.Get("email"))
+ 	}
+-
+-	// groups
+ 	groups := claim.Attributes["groups"]
+ 	if len(groups) != 2 {
+ 		t.Errorf("Expected 2 groups, got %d", len(groups))
+@@ -117,56 +82,38 @@ func TestJWESessionCodec_ECDSA(t *testing.T) {
+ 	if err != nil {
+ 		t.Fatalf("failed to generate ECDSA key pair: %v", err)
+ 	}
++	jweCodec := newTestJWECodec(t, key)
+ 
+-	baseURL, _ := url.Parse("http://localhost") // baseURL is required
+-	jwtCodec := samlsp.DefaultSessionCodec(samlsp.Options{Key: key, URL: *baseURL})
+-
+-	jweCodec, err := NewJWESessionCodec(jwtCodec, key.Public(), key)
+-	if err != nil {
+-		t.Fatalf("failed to create JWESessionCodec: %v", err)
+-	}
+-
+-	assertion := &saml.Assertion{
+-		Subject: &saml.Subject{
+-			NameID: &saml.NameID{
+-				Value: "ecdsa-user",
+-			},
+-		},
+-		AuthnStatements: []saml.AuthnStatement{
+-			{
+-				SessionIndex: "ecdsa-session-index",
+-				AuthnInstant: time.Now(),
+-			},
+-		},
++	assertion := &samlsp.Assertion{
++		Subject:        "ecdsa-user",
++		SessionIndexes: []string{"ecdsa-session-index"},
+ 	}
+-
+-	session, err := jweCodec.New(assertion)
+-	if err != nil {
+-		t.Fatalf("Failed to create session: %v", err)
+-	}
+-
+-	encoded, err := jweCodec.Encode(session)
++	encoded, err := jweCodec.Encode(newSession(assertion, testAudience, time.Hour))
+ 	if err != nil {
+ 		t.Fatalf("Failed to encode session: %v", err)
+ 	}
+-	if encoded == "" {
+-		t.Error("Encoded session should not be empty")
+-	}
+ 
+-	decodedSession, err := jweCodec.Decode(encoded)
+-	if err != nil {
++	claim := &Session{}
++	if err := jweCodec.Decode(encoded, claim); err != nil {
+ 		t.Fatalf("Failed to decode session: %v", err)
+ 	}
+-	if decodedSession == nil {
+-		t.Error("Decoded session should not be nil")
++	if claim.Subject != "ecdsa-user" {
++		t.Errorf("Expected subject 'ecdsa-user', got '%s'", claim.Subject)
+ 	}
++}
+ 
+-	claim, ok := decodedSession.(samlsp.JWTSessionClaims)
+-	if !ok {
+-		t.Fatal("Decoded session is not a JWTSessionClaims")
++func TestJWTSessionCodec_rejectsOtherAudience(t *testing.T) {
++	key, err := rsa.GenerateKey(rand.Reader, 2048)
++	if err != nil {
++		t.Fatal(err)
+ 	}
+-
+-	if claim.Subject != "ecdsa-user" {
+-		t.Errorf("Expected subject 'ecdsa-user', got '%s'", claim.Subject)
++	codec, _ := NewJWTSessionCodec(key, testAudience)
++	other, _ := NewJWTSessionCodec(key, "https://other.example/saml/metadata")
++	token, err := other.Encode(newSession(&samlsp.Assertion{Subject: "u"}, "https://other.example/saml/metadata", time.Hour))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := codec.Decode(token, &Session{}); err == nil {
++		t.Error("a token for another audience was accepted")
+ 	}
+ }

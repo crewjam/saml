@@ -1,0 +1,215 @@
+package samlsp
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"html/template"
+	"maps"
+	"net/http"
+	"net/url"
+	"slices"
+
+	"github.com/beevik/etree"
+
+	"github.com/crewjam/saml"
+)
+
+// This file holds the extension points of the package: the means for
+// other packages to add bindings, extend the SP metadata, and handle SAML
+// messages this package does not.
+
+// Binding sends an OutboundMessage to the IdP. AuthnRequest and Send (and
+// so the packages built on it) use one passed with WithCustomBinding
+// instead of the bindings built in (HTTP-Redirect, HTTP-POST and
+// HTTP-POST-SimpleSign).
+type Binding interface {
+	// URI is the binding's URI, such as saml.HTTPArtifactBinding. The
+	// message is addressed to the IdP endpoint that has this binding in
+	// its metadata.
+	URI() string
+
+	// Encode returns the Message that sends m to the IdP, made with
+	// m.Redirect or m.Respond.
+	Encode(ctx context.Context, m *OutboundMessage) (*Message, error)
+}
+
+// WithCustomBinding sends the message with b instead of a built-in
+// binding. The IdP metadata must have an endpoint for b.URI() of the right
+// kind: a SingleSignOnService for an AuthnRequest, a SingleLogoutService
+// for logout messages; otherwise the error matches ErrNoEndpoint.
+func WithCustomBinding(b Binding) MessageOption {
+	return messageOptionFunc(func(o *messageOptions) { o.custom = b })
+}
+
+// OutboundMessage is a SAML protocol message that a Config has built, for
+// a Binding to send. It is addressed and, if the SP signs messages of its
+// kind, signed.
+type OutboundMessage struct {
+	// ID is the ID of the message.
+	ID string
+
+	// Binding is the URI of the binding, and Destination the IdP endpoint
+	// with that binding, to which the message is addressed.
+	Binding     string
+	Destination string
+
+	// Param is the name the bindings give the message: "SAMLRequest" or
+	// "SAMLResponse".
+	Param string
+
+	// RelayState and ScriptNonce are those of the call that built the
+	// message.
+	RelayState  string
+	ScriptNonce string
+
+	element func() (*etree.Element, error)
+}
+
+// Element returns the message as XML, carrying an enveloped signature if
+// the SP signs messages of its kind: AuthnRequests with SignAuthnRequests,
+// logout messages whenever it has a key that can sign.
+func (m *OutboundMessage) Element() (*etree.Element, error) { return m.element() }
+
+// Redirect returns a Message that sends the browser to u with a 302
+// redirect.
+func (m *OutboundMessage) Redirect(u *url.URL) *Message {
+	return &Message{ID: m.ID, Binding: m.Binding, Destination: m.Destination, RelayState: m.RelayState, redirectURL: u}
+}
+
+// PostForm returns a Message that posts fields to m.Destination from the
+// browser, with a page holding an HTML form that submits itself, as the
+// POST bindings do: the fields are escaped, the page's
+// Content-Security-Policy allows only the form's script (and that script
+// carries m.ScriptNonce, if set), and it is not cached. Browsers without
+// JavaScript show a button that submits it. Add RelayState to fields
+// yourself if the binding sends it.
+func (m *OutboundMessage) PostForm(fields url.Values) (*Message, error) {
+	var buf bytes.Buffer
+	err := postFormTemplate.Execute(&buf, struct {
+		Action string
+		Fields []formField
+		Nonce  string
+	}{m.Destination, sortedFields(fields), m.ScriptNonce})
+	if err != nil {
+		return nil, err
+	}
+	return &Message{
+		ID: m.ID, Binding: m.Binding, Destination: m.Destination, RelayState: m.RelayState,
+		form: buf.Bytes(), scriptHash: postFormScriptHash,
+	}, nil
+}
+
+type formField struct{ Name, Value string }
+
+func sortedFields(fields url.Values) []formField {
+	names := slices.Sorted(maps.Keys(fields))
+	var out []formField
+	for _, name := range names {
+		for _, value := range fields[name] {
+			out = append(out, formField{name, value})
+		}
+	}
+	return out
+}
+
+// postFormScript submits the form of PostForm, and hides its button.
+const postFormScript = `document.getElementById('SAMLSubmitButton').style.visibility='hidden';` +
+	`document.getElementById('SAMLForm').submit();`
+
+// postFormScriptHash is the CSP source of postFormScript.
+var postFormScriptHash = func() string {
+	sum := sha256.Sum256([]byte(postFormScript))
+	return "sha256-" + base64.StdEncoding.EncodeToString(sum[:])
+}()
+
+var postFormTemplate = template.Must(template.New("form").Parse(`` +
+	`<form method="post" action="{{.Action}}" id="SAMLForm">` +
+	`{{range .Fields}}<input type="hidden" name="{{.Name}}" value="{{.Value}}" />{{end}}` +
+	`<input id="SAMLSubmitButton" type="submit" value="Continue" />` +
+	`</form>` +
+	`<script{{with .Nonce}} nonce="{{.}}"{{end}}>` + postFormScript + `</script>`))
+
+// Respond returns a Message whose Write calls write.
+func (m *OutboundMessage) Respond(write func(w http.ResponseWriter)) *Message {
+	return &Message{ID: m.ID, Binding: m.Binding, Destination: m.Destination, RelayState: m.RelayState, write: write}
+}
+
+// pickBinding returns the binding to send a message with, and the IdP
+// endpoint for it found by locate: the custom binding of o if there is
+// one, the built-in one chooseBinding picks otherwise.
+func pickBinding(o messageOptions, locate func(string) string) (string, string, error) {
+	if o.custom == nil {
+		return chooseBinding(o.binding, locate)
+	}
+	uri := o.custom.URI()
+	location := locate(uri)
+	if location == "" {
+		return "", "", fmt.Errorf("%w %s", ErrNoEndpoint, uri)
+	}
+	return uri, location, nil
+}
+
+// WithMetadata calls modify with the SP metadata each time it is made, by
+// Metadata and ServeMetadata, after the other options have shaped it and
+// before it is signed. Use it to add what no option adds, such as an
+// ArtifactResolutionService or an extension element.
+func WithMetadata(modify func(md *saml.EntityDescriptor)) Option {
+	return optionFunc(func(c *Config, _ *configOptions) {
+		c.metadataHooks = append(c.metadataHooks, modify)
+	})
+}
+
+// ServiceProvider returns the saml.ServiceProvider that the methods of c
+// use, built for this call with the identity provider's metadata, and with
+// the ServiceProviderOptions passed to New and then opts applied. It is
+// for packages that handle SAML messages this package does not; the
+// result is a new value, which may be changed.
+//
+// To sign with the SP's key, use SignElement: the ServiceProvider signs
+// AuthnRequests with SignatureMethod only when SignAuthnRequests is set.
+func (c *Config) ServiceProvider(ctx context.Context, opts ...ServiceProviderOption) (*saml.ServiceProvider, error) {
+	return c.serviceProvider(ctx, opts)
+}
+
+// SignElement returns a copy of el with an enveloped XML signature made
+// with the key of WithSigningKey and the method of WithSignatureMethod (by
+// default SHA-256). The signature references el by its ID attribute, which
+// el must have. It is placed right after el's Issuer child, if el has one,
+// as the SAML schema requires of protocol messages and assertions, and
+// last otherwise. el is not modified.
+//
+// The key and method are those of the saml.ServiceProvider built with the
+// ServiceProviderOptions passed to New and then opts, as for the messages
+// that the methods of c sign.
+func (c *Config) SignElement(el *etree.Element, opts ...ServiceProviderOption) (*etree.Element, error) {
+	sp := c.localServiceProvider()
+	c.applyServiceProviderOptions(sp, opts)
+	signWithLogoutMethod(sp)
+	return signElement(sp, el)
+}
+
+// signElement returns a copy of el signed by sp with its SignatureMethod.
+func signElement(sp *saml.ServiceProvider, el *etree.Element) (*etree.Element, error) {
+	if signatureMethod(sp.Key) == "" || sp.SignatureMethod == "" {
+		return nil, errors.New("samlsp: SignElement needs an RSA or ECDSA key (see WithSigningKey)")
+	}
+	signingContext, err := saml.GetSigningContext(sp)
+	if err != nil {
+		return nil, err
+	}
+	signed := el.Copy()
+	sig, err := signingContext.ConstructSignature(signed, true)
+	if err != nil {
+		return nil, err
+	}
+	at := len(signed.Child)
+	if first := signed.ChildElements(); len(first) > 0 && first[0].Tag == "Issuer" {
+		at = first[0].Index() + 1
+	}
+	signed.InsertChildAt(at, sig)
+	return signed, nil
+}

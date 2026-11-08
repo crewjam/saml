@@ -8,9 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/golang-jwt/jwt/v5"
-
-	"github.com/crewjam/saml/samlsp"
+	"github.com/crewjam/saml/x/samlsp"
 )
 
 func requestAs(method, body, account string) *http.Request {
@@ -19,9 +17,7 @@ func requestAs(method, body, account string) *http.Request {
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 	if account != "" {
-		r = r.WithContext(samlsp.ContextWithSession(r.Context(), samlsp.JWTSessionClaims{
-			RegisteredClaims: jwt.RegisteredClaims{Subject: account},
-		}))
+		r = r.WithContext(contextWithSession(r.Context(), &session{assertion: &samlsp.Assertion{Subject: account}}))
 	}
 	return r
 }
@@ -118,4 +114,15 @@ func TestLinksConcurrentAccess(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestIsLocalURL(t *testing.T) {
+	for p, want := range map[string]bool{
+		"/": true, "/links?x=1": true,
+		"": false, "https://evil.example": false, "//evil.example": false, `/\evil.example`: false, "evil": false, "/\t/evil.example": false, "/\n/evil.example": false,
+	} {
+		if got := isLocalURL(p); got != want {
+			t.Errorf("isLocalURL(%q) = %v, want %v", p, got, want)
+		}
+	}
 }

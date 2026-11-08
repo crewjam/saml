@@ -119,6 +119,12 @@ type ServiceProvider struct {
 	// the metadata.
 	DecryptionKeys []*rsa.PrivateKey
 
+	// KeyOnlySigns, if true, keeps Key to signing: when EncryptionKey is
+	// unset, Key does not decrypt assertions, and Certificate is not
+	// advertised in the metadata for encryption. Encrypted assertions are
+	// then accepted only with EncryptionKey or DecryptionKeys set.
+	KeyOnlySigns bool
+
 	// HTTPClient to use for SOAP exchanges with the IdP: SAML artifact
 	// resolution, attribute queries (QueryAttributes) and SOAP single logout.
 	// If nil, a client with a 10 second timeout that follows no redirects is
@@ -594,7 +600,7 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 	var encryptionCertBytes []byte
 	if sp.EncryptionCertificate != nil {
 		encryptionCertBytes = sp.EncryptionCertificate.Raw
-	} else if sp.Certificate != nil {
+	} else if sp.Certificate != nil && !sp.KeyOnlySigns {
 		if _, ok := sp.Certificate.PublicKey.(*rsa.PublicKey); ok {
 			encryptionCertBytes = certBytes
 		}
@@ -1029,6 +1035,15 @@ func (sp *ServiceProvider) MakeAuthenticationRequest(idpURL string, binding stri
 // generated if the metadata does not have one. The returned element must be
 // serialized as-is: re-indenting it changes the signed content.
 func (sp *ServiceProvider) SignedMetadata() (*etree.Element, error) {
+	return sp.SignEntityDescriptor(sp.Metadata())
+}
+
+// SignEntityDescriptor returns ed as an XML element carrying an enveloped
+// signature made with Key and Certificate, as SignedMetadata does for
+// Metadata. Use it to sign SP metadata that has been changed after
+// Metadata built it, such as with an Organization or ContactPersons. ed is
+// not modified; the returned element must be serialized as-is.
+func (sp *ServiceProvider) SignEntityDescriptor(ed *EntityDescriptor) (*etree.Element, error) {
 	signatureMethod := sp.SignatureMethod
 	if signatureMethod == "" && !signerutil.IsNil(sp.Key) {
 		signatureMethod = defaultSignatureMethod(sp.Key.Public())
@@ -1037,7 +1052,7 @@ func (sp *ServiceProvider) SignedMetadata() (*etree.Element, error) {
 	if err != nil {
 		return nil, err
 	}
-	return signMetadata(sp.Metadata(), signingContext)
+	return signMetadata(ed, signingContext)
 }
 
 // GetSigningContext returns a dsig.SigningContext initialized based on the Service Provider's configuration
@@ -1896,7 +1911,7 @@ func (sp *ServiceProvider) decryptElement(encryptedEl *etree.Element) (*etree.El
 	keys := make([]namedDecryptionKey, 0, 1+len(sp.DecryptionKeys))
 	if sp.EncryptionKey != nil {
 		keys = append(keys, namedDecryptionKey{"EncryptionKey", sp.EncryptionKey})
-	} else {
+	} else if !sp.KeyOnlySigns {
 		keys = append(keys, namedDecryptionKey{"Key", sp.Key})
 	}
 	for i, k := range sp.DecryptionKeys {
@@ -1976,6 +1991,9 @@ func (sp *ServiceProvider) parseReceivedAssertion(assertionEl, receivedEl *etree
 	// parse the assertion we just validated
 	var assertion Assertion
 	if err := unmarshalElement(assertionEl, &assertion); err != nil {
+		return nil, err
+	}
+	if err := fillAttributeValuesXML(assertionEl, &assertion); err != nil {
 		return nil, err
 	}
 	if err := sp.decryptEncryptedIDs(assertion.Subject); err != nil {
@@ -2138,6 +2156,9 @@ func (sp *ServiceProvider) decryptEncryptedAttribute(encryptedEl *etree.Element)
 	}
 	var attribute Attribute
 	if err := unmarshalElement(plaintext, &attribute); err != nil {
+		return nil, err
+	}
+	if err := fillAttributeXML(plaintext, &attribute); err != nil {
 		return nil, err
 	}
 	return &attribute, nil
@@ -3143,11 +3164,27 @@ func (sp *ServiceProvider) MakeRedirectLogoutResponse(logoutRequestID, relayStat
 func (sp *ServiceProvider) MakeRedirectLogoutResponseWithStatus(logoutRequestID, relayState string, status Status) (*url.URL, error) {
 	resp := sp.makeUnsignedLogoutResponse(sp.GetSLOBindingLocation(HTTPRedirectBinding), logoutRequestID)
 	resp.Status = status
-	encoded, err := deflateAndEncode(resp.Element())
+	return sp.RedirectLogoutResponseURL(resp, relayState)
+}
+
+// RedirectLogoutResponseURL returns the URL that sends resp to its
+// Destination with the HTTP-Redirect binding, as RedirectLogoutRequestURL
+// does for a LogoutRequest. Use it for a response made with
+// MakeLogoutResponseWithStatus, whose ID the caller then knows.
+//
+// Any enveloped XML signature on resp is left out of the message. If
+// LogoutSignatureMethod or SignatureMethod is set, the URL carries a query
+// string signature instead (saml-bindings-2.0-os section 3.4.4.1). The
+// RelayState is the one of the request being answered, so its length is
+// not checked.
+func (sp *ServiceProvider) RedirectLogoutResponseURL(resp *LogoutResponse, relayState string) (*url.URL, error) {
+	unsigned := *resp
+	unsigned.Signature = nil
+	encoded, err := deflateAndEncode(unsigned.Element())
 	if err != nil {
 		return nil, err
 	}
-	return sp.redirectBindingURL(resp.Destination, redirectParamSAMLResponse, encoded, relayState, sp.logoutSignatureMethod())
+	return sp.redirectBindingURL(unsigned.Destination, redirectParamSAMLResponse, encoded, relayState, sp.logoutSignatureMethod())
 }
 
 // Redirect returns a URL suitable for using the redirect binding with the

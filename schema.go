@@ -149,7 +149,12 @@ type LogoutRequest struct {
 	Destination  string     `xml:",attr,omitempty"`
 	Issuer       *Issuer    `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
 	NameID       *NameID    `xml:"urn:oasis:names:tc:SAML:2.0:assertion NameID"`
-	Signature    *etree.Element
+
+	// Reason, if set, says why the principal is being logged out, as a
+	// URI: LogoutReasonUser or LogoutReasonAdmin, or one agreed between
+	// the parties (saml-core §3.7.1, §3.7.3).
+	Reason    string `xml:",attr,omitempty"`
+	Signature *etree.Element
 
 	// EncryptedID is the saml:EncryptedID element that identifies the
 	// principal instead of NameID (saml-core-2.0-os §2.2.4 and §3.7.1), or
@@ -212,6 +217,9 @@ func (r *LogoutRequest) Element() *etree.Element {
 	}
 	if r.Destination != "" {
 		el.CreateAttr("Destination", r.Destination)
+	}
+	if r.Reason != "" {
+		el.CreateAttr("Reason", r.Reason)
 	}
 	if r.Issuer != nil {
 		el.AddChild(r.Issuer.Element())
@@ -976,6 +984,15 @@ func (s *StatusCode) Element() *etree.Element {
 	}
 	return el
 }
+
+// The reasons for logout that saml-core §3.7.3 defines, for
+// LogoutRequest.Reason.
+const (
+	// LogoutReasonUser means the user decided to end the session.
+	LogoutReasonUser = "urn:oasis:names:tc:SAML:2.0:logout:user"
+	// LogoutReasonAdmin means an administrator ended the session.
+	LogoutReasonAdmin = "urn:oasis:names:tc:SAML:2.0:logout:admin"
+)
 
 // StatusSuccess means the request succeeded. Additional information MAY be returned in the <StatusMessage> and/or <StatusDetail> elements.
 //
@@ -1888,6 +1905,20 @@ type AttributeValue struct {
 
 	Value  string  `xml:",chardata"`
 	NameID *NameID `xml:"urn:oasis:names:tc:SAML:2.0:assertion NameID"`
+
+	// XML holds the element content of a value of a complex type, such as
+	// an attribute whose values are XML structures (saml-core §2.7.3.1.1):
+	// its child elements, other than a NameID, as XML in which each element
+	// declares the namespaces that were in scope for it, so that prefixes in
+	// its names and in QName values (such as xsi:type) still resolve.
+	// Value then holds only the text directly inside the AttributeValue.
+	// XML is empty for a value of a simple type, which is the usual case.
+	//
+	// The ServiceProvider sets XML on the assertions it returns; plain
+	// xml.Unmarshal does not. When the value is written by Element, XML
+	// is added after any NameID; if XML is not well-formed, Element leaves
+	// it out, since it cannot return an error.
+	XML string `xml:"-"`
 }
 
 // X500AttributeNamespace is the namespace of the x500:Encoding XML attribute
@@ -1918,10 +1949,20 @@ func (a *AttributeValue) Element() *etree.Element {
 		el.CreateAttr("xsi:nil", "true")
 		return el
 	}
+	el.SetText(a.Value)
 	if a.NameID != nil {
 		el.AddChild(a.NameID.Element())
 	}
-	el.SetText(a.Value)
+	if a.XML != "" {
+		doc := etree.NewDocument()
+		if err := doc.ReadFromString(a.XML); err == nil {
+			for _, child := range doc.Child {
+				if child, ok := child.(*etree.Element); ok {
+					el.AddChild(child)
+				}
+			}
+		}
+	}
 	return el
 }
 

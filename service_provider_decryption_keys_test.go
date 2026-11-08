@@ -170,3 +170,38 @@ func TestSPWithoutDecryptionKeysErrorUnchanged(t *testing.T) {
 		})
 	}
 }
+
+// With KeyOnlySigns, Key neither decrypts assertions nor is advertised for
+// encryption; EncryptionKey and DecryptionKeys still decrypt.
+func TestSPKeyOnlySigns(t *testing.T) {
+	for _, f := range decryptionKeysFixtures {
+		t.Run(f.name, func(t *testing.T) {
+			right := testRSAKey(t, "sp_key.pem")
+			_, err := f.parse(t, func(sp *ServiceProvider) {
+				sp.Key = right
+				sp.KeyOnlySigns = true
+			})
+			assert.Check(t, is.Contains(decryptionKeysPrivateErr(t, err), "no decryption key"))
+
+			for name, configure := range map[string]func(sp *ServiceProvider){
+				"EncryptionKey":  func(sp *ServiceProvider) { sp.EncryptionKey = right },
+				"DecryptionKeys": func(sp *ServiceProvider) { sp.DecryptionKeys = []*rsa.PrivateKey{right} },
+			} {
+				assertion, err := f.parse(t, func(sp *ServiceProvider) {
+					sp.Key = right
+					sp.KeyOnlySigns = true
+					configure(sp)
+				})
+				assert.NilError(t, err, name)
+				assert.Check(t, is.Equal(f.nameID, assertion.Subject.NameID.Value), name)
+			}
+		})
+	}
+
+	test := NewServiceProviderTest(t)
+	sp := &ServiceProvider{Key: test.Key, Certificate: test.Certificate, KeyOnlySigns: true,
+		MetadataURL: mustParseURL("https://sp.example.com/metadata"), AcsURL: mustParseURL("https://sp.example.com/acs")}
+	for _, kd := range sp.Metadata().SPSSODescriptors[0].KeyDescriptors {
+		assert.Check(t, kd.Use != "encryption", "the signing certificate is advertised for encryption")
+	}
+}

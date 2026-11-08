@@ -1,0 +1,855 @@
+diff --git a/cmd/api/src/api/v2/auth/saml.go b/cmd/api/src/api/v2/auth/saml.go
+index 7d87c7c..63b7e7f 100644
+--- a/cmd/api/src/api/v2/auth/saml.go
++++ b/cmd/api/src/api/v2/auth/saml.go
+@@ -18,7 +18,10 @@ package auth
+ 
+ import (
+ 	"context"
+-	"encoding/xml"
++	"crypto/hmac"
++	"crypto/rand"
++	"crypto/sha256"
++	"encoding/hex"
+ 	"errors"
+ 	"fmt"
+ 	"io"
+@@ -27,9 +30,11 @@ import (
+ 	"net/http"
+ 	"strconv"
+ 	"strings"
++	"time"
+ 
+ 	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlsp"
++	"github.com/crewjam/saml/x/samlsp/pending"
+ 	"github.com/gorilla/mux"
+ 	"github.com/specterops/bloodhound/cmd/api/src/api"
+ 	v2 "github.com/specterops/bloodhound/cmd/api/src/api/v2"
+@@ -39,24 +44,14 @@ import (
+ 	"github.com/specterops/bloodhound/cmd/api/src/database/types/null"
+ 	"github.com/specterops/bloodhound/cmd/api/src/model"
+ 	"github.com/specterops/bloodhound/cmd/api/src/services/dogtags"
+-	bhceSAML "github.com/specterops/bloodhound/cmd/api/src/services/saml"
+ 	"github.com/specterops/bloodhound/packages/go/bhlog/attr"
+ 	"github.com/specterops/bloodhound/packages/go/crypto"
+ 	"github.com/specterops/bloodhound/packages/go/headers"
+-	"github.com/specterops/bloodhound/packages/go/mediatypes"
+ )
+ 
+-const (
+-	// TODO: This might be better if generated at run-time. These values were taken from the crewjam SAML provider package
+-	defaultContentSecurityPolicy    = "default-src; script-src 'sha256-AjPdJSbZmeWHnEc5ykvJFay8FTWeTeRbs9dutfZ0HqE='; reflected-xss block; referrer no-referrer;"
+-	authInitiationContentBodyFormat = `<!DOCTYPE html>
+-<html>
+-<body>
+-%s
+-</body>
+-</html>
+-`
+-)
++// samlPendingLabel derives the key of the pending-login cookies from the
++// JWT signing key.
++const samlPendingLabel = "bloodhound saml pending login cookie"
+ 
+ var ErrSAMLProviderMissing = errors.New("saml provider missing")
+ 
+@@ -343,29 +338,39 @@ func (s ManagementResource) ServeMetadata(response http.ResponseWriter, request
+ 		api.HandleDatabaseError(request, response, err)
+ 	} else if ssoProvider.SAMLProvider == nil {
+ 		api.WriteErrorResponse(request.Context(), api.BuildErrorResponse(http.StatusNotFound, api.ErrorResponseDetailsResourceNotFound, request), response)
+-	} else if serviceProvider, err := auth.NewServiceProvider(*bhctx.Get(request.Context()).Host, s.config, *ssoProvider.SAMLProvider); err != nil {
++	} else if samlConfig, err := s.samlConfig(request, ssoProvider); err != nil {
+ 		api.WriteErrorResponse(request.Context(), api.BuildErrorResponse(http.StatusInternalServerError, err.Error(), request), response)
+ 	} else {
+-		// Note: This is the samlsp metadata tied to authenticate flow and will not be the same as the XML metadata used to import the SAML provider initially
+-		if content, err := xml.MarshalIndent(serviceProvider.Metadata(), "", "  "); err != nil {
+-			slog.ErrorContext(
+-				request.Context(),
+-				"[SAML] XML marshalling failure during service provider encoding for",
+-				slog.String("issuer_uri", ssoProvider.SAMLProvider.IssuerURI),
+-				attr.Error(err),
+-			)
+-			api.WriteErrorResponse(request.Context(), api.BuildErrorResponse(http.StatusInternalServerError, api.ErrorResponseDetailsInternalServerError, request), response)
+-		} else {
+-			response.Header().Set(headers.ContentType.String(), mediatypes.ApplicationSamlmetadataXml.String())
+-			if _, err := response.Write(content); err != nil {
+-				slog.ErrorContext(
+-					request.Context(),
+-					"[SAML] Failed to write response for serving metadata",
+-					attr.Error(err),
+-				)
+-			}
+-		}
++		// Note: This is the SP metadata tied to authenticate flow and will not be the same as the XML metadata used to import the SAML provider initially
++		samlConfig.ServeMetadata(response, request)
++	}
++}
++
++// samlConfig returns the SAML service provider for ssoProvider.
++func (s ManagementResource) samlConfig(request *http.Request, ssoProvider model.SSOProvider) (*samlsp.Config, error) {
++	var issuer string
++	if ssoProvider.SAMLProvider != nil {
++		issuer = ssoProvider.SAMLProvider.IssuerURI
++	}
++	replayState := consumedAssertions{db: s.db, ssoProviderID: ssoProvider.ID, issuer: issuer}
++	return auth.NewSAMLConfig(*bhctx.Get(request.Context()).Host, s.config, replayState, ssoProvider)
++}
++
++// consumedAssertions records verified assertions in the
++// saml_consumed_identifiers table, under their replay keys (a hash of the
++// IdP's entity ID and the assertion ID), so that each is accepted once.
++type consumedAssertions struct {
++	db            database.SAMLConsumedData
++	ssoProviderID int32
++	issuer        string
++}
++
++func (c consumedAssertions) Consume(ctx context.Context, key []byte, expiresAt time.Time) error {
++	err := c.db.ConsumeSAMLAssertionID(ctx, c.ssoProviderID, c.issuer, hex.EncodeToString(key), expiresAt)
++	if errors.Is(err, database.ErrSAMLIdentifierAlreadyConsumed) {
++		return saml.ErrAssertionReplayed
+ 	}
++	return err
+ }
+ 
+ // Provide the saml provider certificate
+@@ -391,12 +396,12 @@ func (s ManagementResource) ServeSigningCertificate(response http.ResponseWriter
+ 	}
+ }
+ 
+-// HandleStartAuthFlow is called to start the SAML authentication process.
++// SAMLLoginHandler is called to start the SAML authentication process.
+ func (s ManagementResource) SAMLLoginHandler(response http.ResponseWriter, request *http.Request, ssoProvider model.SSOProvider) {
+ 	if ssoProvider.SAMLProvider == nil {
+ 		// SAML misconfiguration scenario
+ 		api.RedirectToLoginURL(response, request, "Your SSO connection failed due to misconfiguration, please contact your Administrator")
+-	} else if serviceProvider, err := auth.NewServiceProvider(*bhctx.Get(request.Context()).Host, s.config, *ssoProvider.SAMLProvider); err != nil {
++	} else if samlConfig, err := s.samlConfig(request, ssoProvider); err != nil {
+ 		slog.WarnContext(
+ 			request.Context(),
+ 			"[SAML] Service provider creation failed",
+@@ -404,68 +409,35 @@ func (s ManagementResource) SAMLLoginHandler(response http.ResponseWriter, reque
+ 		)
+ 		// Technical issues scenario
+ 		api.RedirectToLoginURL(response, request, "Your SSO connection failed due to misconfiguration, please contact your Administrator")
+-	} else {
+-		var (
+-			binding         = saml.HTTPRedirectBinding
+-			bindingLocation = serviceProvider.GetSSOBindingLocation(binding)
++	} else if tracker, err := s.samlPending(samlConfig); err != nil {
++		slog.WarnContext(
++			request.Context(),
++			"[SAML] Pending login tracker creation failed",
++			attr.Error(err),
+ 		)
+-		if bindingLocation == "" {
+-			binding = saml.HTTPPostBinding
+-			bindingLocation = serviceProvider.GetSSOBindingLocation(binding)
+-		}
+-
+-		// TODO: add actual relay state support - BED-5071
+-		if authReq, err := s.SAML.MakeAuthenticationRequest(serviceProvider, bindingLocation, binding, saml.HTTPPostBinding); err != nil {
+-			slog.WarnContext(
+-				request.Context(),
+-				"[SAML] Failed creating SAML authentication request",
+-				attr.Error(err),
+-			)
+-			// SAML misconfiguration or technical issue
+-			// Since this likely indicates a configuration problem, we treat it as a misconfiguration scenario
+-			api.RedirectToLoginURL(response, request, "Your SSO connection failed due to misconfiguration, please contact your Administrator")
+-		} else {
+-			switch binding {
+-			case saml.HTTPRedirectBinding:
+-				if redirectURL, err := authReq.Redirect("", &serviceProvider); err != nil {
+-					slog.WarnContext(
+-						request.Context(),
+-						"[SAML] Failed to format a redirect for SAML provider",
+-						slog.String("entity_id", serviceProvider.EntityID),
+-						attr.Error(err),
+-					)
+-					// Likely a technical or configuration issue
+-					api.RedirectToLoginURL(response, request, "Your SSO connection failed due to misconfiguration, please contact your Administrator")
+-				} else {
+-					response.Header().Add(headers.Location.String(), redirectURL.String())
+-					response.WriteHeader(http.StatusFound)
+-				}
+-
+-			case saml.HTTPPostBinding:
+-				response.Header().Add(headers.ContentSecurityPolicy.String(), defaultContentSecurityPolicy)
+-				response.Header().Add(headers.ContentType.String(), mediatypes.TextHtml.String())
+-				response.WriteHeader(http.StatusOK)
+-
+-				if _, err := fmt.Fprintf(response, authInitiationContentBodyFormat, authReq.Post("")); err != nil {
+-					slog.WarnContext(
+-						request.Context(),
+-						"[SAML] Failed to write response with HTTP POST binding",
+-						attr.Error(err),
+-					)
+-					// Technical issues scenario
+-					api.RedirectToLoginURL(response, request, "Your SSO connection failed due to misconfiguration, please contact your Administrator")
+-				}
+-
+-			default:
+-				slog.WarnContext(
+-					request.Context(),
+-					"[SAML] Unhandled binding type",
+-					slog.String("binding", binding),
+-				)
+-				// Treating unknown binding as a misconfiguration
+-				api.RedirectToLoginURL(response, request, "Your SSO connection failed due to misconfiguration, please contact your Administrator")
+-			}
+-		}
++		api.RedirectToLoginURL(response, request, "Your SSO connection failed due to misconfiguration, please contact your Administrator")
++	} else if authReq, err := s.SAML.AuthnRequest(request.Context(), samlConfig, rand.Text()); err != nil {
++		slog.WarnContext(
++			request.Context(),
++			"[SAML] Failed creating SAML authentication request",
++			attr.Error(err),
++		)
++		// SAML misconfiguration or technical issue
++		// Since this likely indicates a configuration problem, we treat it as a misconfiguration scenario
++		api.RedirectToLoginURL(response, request, "Your SSO connection failed due to misconfiguration, please contact your Administrator")
++	} else if err := tracker.Remember(response, authReq, ""); err != nil {
++		// Remember the request, so that the callback accepts only the
++		// response to it (or an IdP-initiated one).
++		slog.WarnContext(
++			request.Context(),
++			"[SAML] Failed to remember the SAML authentication request",
++			attr.Error(err),
++		)
++		api.RedirectToLoginURL(response, request, "Your SSO connection failed, please try again")
++	} else {
++		// A redirect, or a page whose form posts itself, with its own
++		// Content-Security-Policy.
++		authReq.Write(response)
+ 	}
+ }
+ 
+@@ -474,72 +446,36 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
+ 	if ssoProvider.SAMLProvider == nil {
+ 		// SAML misconfiguration
+ 		api.RedirectToLoginURL(response, request, "Your SSO connection failed due to misconfiguration, please contact your Administrator")
+-	} else if serviceProvider, err := auth.NewServiceProvider(*bhctx.Get(request.Context()).Host, s.config, *ssoProvider.SAMLProvider); err != nil {
++	} else if samlConfig, err := s.samlConfig(request, ssoProvider); err != nil {
+ 		slog.WarnContext(
+ 			request.Context(),
+ 			"[SAML] Service provider creation failed",
+ 			attr.Error(err),
+ 		)
+ 		api.RedirectToLoginURL(response, request, "Your SSO connection failed due to misconfiguration, please contact your Administrator")
+-	} else if err := request.ParseForm(); err != nil {
+-		slog.WarnContext(
+-			request.Context(),
+-			"[SAML] Failed to parse form POST",
+-			attr.Error(err),
+-		)
+-		// Technical issues or invalid form data
+-		api.RedirectToLoginURL(response, request, fmt.Sprintf("Invalid SSO response %s", err.Error()))
+-	} else if validatedResponse, err := s.SAML.ParseResponse(serviceProvider, request, nil); err != nil {
+-		var typedErr *saml.InvalidResponseError
+-		switch {
+-		case errors.As(err, &typedErr):
+-			slog.WarnContext(
+-				request.Context(),
+-				"[SAML] Failed to parse ACS response for provider",
+-				slog.String("issuer_uri", ssoProvider.SAMLProvider.IssuerURI),
+-				attr.Error(typedErr.PrivateErr),
+-			)
+-		default:
+-			slog.WarnContext(
+-				request.Context(),
+-				"[SAML] Failed to parse ACS response for provider",
+-				slog.String("issuer_uri", ssoProvider.SAMLProvider.IssuerURI),
+-				attr.Error(err),
+-			)
+-		}
+-		// SAML credentials issue scenario (authentication failed)
+-		api.RedirectToLoginURL(response, request, fmt.Sprintf("Invalid SSO response: Failed to parse ACS response %s", err.Error()))
+-	} else if err := s.db.CreateSAMLConsumedIdentifiers(request.Context(),
+-		ssoProvider.ID,
+-		validatedResponse.Assertion.Issuer.Value,
+-		validatedResponse.ResponseID,
+-		validatedResponse.Assertion.ID,
+-		bhceSAML.CalculateSAMLTimeExpiry(validatedResponse.ResponseIssueInstant, validatedResponse.Assertion.IssueInstant)); err != nil {
++	} else if validatedResponse, err := s.SAML.ParseResponse(request.Context(), samlConfig, request, s.samlResponseOptions(response, request, samlConfig)...); err != nil {
+ 		switch {
+-		case errors.Is(err, database.ErrSAMLIdentifierAlreadyConsumed):
++		case errors.Is(err, saml.ErrAssertionReplayed):
+ 			slog.WarnContext(
+ 				request.Context(),
+ 				"[SAML] Replayed SAML response rejected",
+ 				slog.String("provider_name", ssoProvider.Name),
+ 				slog.String("issuer_uri", ssoProvider.SAMLProvider.IssuerURI),
+-				slog.String("response_id", validatedResponse.ResponseID),
+-				slog.String("assertion_id", validatedResponse.Assertion.ID),
+ 				attr.Error(err),
+ 			)
+ 			// Replay detected, cannot safely create a session
+ 			api.RedirectToLoginURL(response, request, "Invalid SSO response")
+ 		default:
+-			slog.ErrorContext(
++			slog.WarnContext(
+ 				request.Context(),
+-				"[SAML] Failed to add SAMLResponse and/or assertion IDs to DB",
+-				slog.String("provider_name", ssoProvider.Name),
++				"[SAML] Failed to parse ACS response for provider",
+ 				slog.String("issuer_uri", ssoProvider.SAMLProvider.IssuerURI),
+ 				attr.Error(err),
+ 			)
+-			// Technical issues scenario: DB write failed
+-			api.RedirectToLoginURL(response, request, "Your SSO connection failed, please try again")
++			// SAML credentials issue scenario (authentication failed)
++			api.RedirectToLoginURL(response, request, "Invalid SSO response: Failed to parse ACS response")
+ 		}
+-	} else if principalName, err := ssoProvider.SAMLProvider.GetSAMLUserPrincipalNameFromAssertion(validatedResponse.Assertion); err != nil {
++	} else if principalName, err := ssoProvider.SAMLProvider.GetSAMLUserPrincipalNameFromAssertion(validatedResponse.Raw); err != nil {
+ 		slog.WarnContext(
+ 			request.Context(),
+ 			"[SAML] Failed to lookup user for SAML provider",
+@@ -550,7 +486,7 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
+ 		api.RedirectToLoginURL(response, request, "Invalid assertion: no valid email address found")
+ 	} else {
+ 		if ssoProvider.Config.AutoProvision.Enabled {
+-			if err := jitSAMLUserUpsert(request.Context(), ssoProvider, principalName, validatedResponse.Assertion, s.db, s.DogTags); err != nil {
++			if err := jitSAMLUserUpsert(request.Context(), ssoProvider, principalName, validatedResponse.Raw, s.db, s.DogTags); err != nil {
+ 				// It is safe to let this request drop into the CreateSSOSession function below to ensure proper audit logging
+ 				slog.WarnContext(
+ 					request.Context(),
+@@ -564,6 +500,35 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
+ 	}
+ }
+ 
++// samlPending returns the tracker of the logins in progress with
++// samlConfig.
++func (s ManagementResource) samlPending(samlConfig *samlsp.Config) (*pending.Tracker, error) {
++	signingKey, err := s.config.Crypto.JWT.SigningKeyBytes()
++	if err != nil {
++		return nil, fmt.Errorf("invalid JWT signing key: %w", err)
++	}
++	mac := hmac.New(sha256.New, signingKey)
++	mac.Write([]byte(samlPendingLabel))
++	return pending.New(samlConfig, mac.Sum(nil))
++}
++
++// samlResponseOptions accepts the response to the request that this
++// browser started, if any, and an IdP-initiated response.
++func (s ManagementResource) samlResponseOptions(response http.ResponseWriter, request *http.Request, samlConfig *samlsp.Config) []samlsp.ResponseOption {
++	opts := []samlsp.ResponseOption{samlsp.AllowUnsolicited}
++	tracker, err := s.samlPending(samlConfig)
++	if err != nil {
++		slog.WarnContext(request.Context(), "[SAML] Pending login tracker creation failed", attr.Error(err))
++		return opts
++	}
++	if login, err := tracker.Take(response, request); err == nil {
++		opts = append(opts, samlsp.WithRequestID(login.ID))
++	} else if !errors.Is(err, pending.ErrNotFound) {
++		slog.WarnContext(request.Context(), "[SAML] Invalid pending login cookie", attr.Error(err))
++	}
++	return opts
++}
++
+ func jitSAMLUserUpsert(ctx context.Context, ssoProvider model.SSOProvider, principalName string, assertion *saml.Assertion, u jitUserUpserter, dogTagsService dogtags.Service) error {
+ 	if roles, err := SanitizeAndGetRoles(ctx, ssoProvider.Config.AutoProvision, ssoProvider.SAMLProvider.GetSAMLUserRolesFromAssertion(assertion), u); err != nil {
+ 		return fmt.Errorf("sanitize roles: %v", err)
+diff --git a/cmd/api/src/auth/saml.go b/cmd/api/src/auth/saml.go
+index 2a8c361..da41003 100644
+--- a/cmd/api/src/auth/saml.go
++++ b/cmd/api/src/auth/saml.go
+@@ -21,17 +21,13 @@ import (
+ 	"net/url"
+ 
+ 	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlsp"
+ 
+ 	"github.com/specterops/bloodhound/cmd/api/src/config"
+ 	"github.com/specterops/bloodhound/cmd/api/src/model"
+ 	"github.com/specterops/bloodhound/packages/go/crypto"
+ )
+ 
+-const (
+-	RSASHA256SignatureMethod = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"
+-)
+-
+ func getIDPSingleSignOnDescriptor(metadata *saml.EntityDescriptor, bindingType string) (saml.IDPSSODescriptor, error) {
+ 	for _, idpSSODescriptor := range metadata.IDPSSODescriptors {
+ 		for _, singleSignOnService := range idpSSODescriptor.SingleSignOnServices {
+@@ -70,24 +66,31 @@ func GetAssertionConsumerServiceURL(metadata *saml.EntityDescriptor, bindingType
+ 	return "", fmt.Errorf("no SAML ascertion consumer service url defined in metadata xml")
+ }
+ 
+-func NewServiceProvider(hostUrl url.URL, cfg config.Configuration, samlProvider model.SAMLProvider) (saml.ServiceProvider, error) {
+-	if spCert, spKey, err := crypto.X509ParsePair(cfg.SAML.ServiceProviderCertificate, cfg.SAML.ServiceProviderKey); err != nil {
+-		return saml.ServiceProvider{}, fmt.Errorf("failed to parse service provider %s's cert pair: %w", samlProvider.Name, err)
+-	} else if idpMetadata, err := samlsp.ParseMetadata(samlProvider.MetadataXML); err != nil {
+-		return saml.ServiceProvider{}, fmt.Errorf("failed to parse metadata XML for service provider %s: %w", samlProvider.Name, err)
+-	} else {
+-		samlProvider.FormatSAMLProviderURLs(hostUrl)
+-
+-		return saml.ServiceProvider{
+-			EntityID:          samlProvider.ServiceProviderIssuerURI.String(),
+-			Key:               spKey,
+-			Certificate:       spCert,
+-			MetadataURL:       samlProvider.ServiceProviderMetadataURI.URL,
+-			AcsURL:            samlProvider.ServiceProviderACSURI.URL,
+-			IDPMetadata:       idpMetadata,
+-			AuthnNameIDFormat: saml.EmailAddressNameIDFormat,
+-			SignatureMethod:   RSASHA256SignatureMethod,
+-			AllowIDPInitiated: true,
+-		}, nil
++// NewSAMLConfig returns the service provider that BloodHound presents to
++// the IdP of ssoProvider. It is cheap to build per request. replayState
++// records the IDs of the assertions it accepts, so that each is accepted
++// once; it must be shared by every BloodHound instance.
++//
++// It signs with RSA-SHA256 and refuses what the library's hardening
++// refuses, such as SHA-1 signatures and expired IdP metadata.
++func NewSAMLConfig(hostUrl url.URL, cfg config.Configuration, replayState samlsp.ReplayState, ssoProvider model.SSOProvider) (*samlsp.Config, error) {
++	if ssoProvider.SAMLProvider == nil {
++		return nil, fmt.Errorf("SSO provider %s is not a SAML provider", ssoProvider.Name)
++	}
++	samlProvider := *ssoProvider.SAMLProvider
++	spCert, spKey, err := crypto.X509ParsePair(cfg.SAML.ServiceProviderCertificate, cfg.SAML.ServiceProviderKey)
++	if err != nil {
++		return nil, fmt.Errorf("failed to parse service provider %s's cert pair: %w", samlProvider.Name, err)
+ 	}
++	samlProvider.FormatSAMLProviderURLs(hostUrl)
++
++	return samlsp.New(
++		samlProvider.ServiceProviderIssuerURI.String(),
++		samlsp.StaticMetadataBytes(samlProvider.MetadataXML),
++		samlsp.WithACSURL(samlProvider.ServiceProviderACSURI.String()),
++		samlsp.WithSigningKey(spKey, spCert),
++		samlsp.WithEncryptionKey(spKey, spCert), // as before, the IdP may encrypt to the SP key
++		samlsp.WithNameIDFormat(saml.EmailAddressNameIDFormat),
++		samlsp.WithReplayState(replayState),
++	)
+ }
+diff --git a/cmd/api/src/database/mocks/db.go b/cmd/api/src/database/mocks/db.go
+index 739bf5e..6b656aa 100644
+--- a/cmd/api/src/database/mocks/db.go
++++ b/cmd/api/src/database/mocks/db.go
+@@ -566,6 +566,20 @@ func (mr *MockDatabaseMockRecorder) CreateSAMLConsumedIdentifiers(ctx, ssoProvid
+ 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSAMLConsumedIdentifiers", reflect.TypeOf((*MockDatabase)(nil).CreateSAMLConsumedIdentifiers), ctx, ssoProviderID, idpIssuer, responseID, assertionID, expiresAt)
+ }
+ 
++// ConsumeSAMLAssertionID mocks base method.
++func (m *MockDatabase) ConsumeSAMLAssertionID(ctx context.Context, ssoProviderID int32, idpIssuer, assertionID string, expiresAt time.Time) error {
++	m.ctrl.T.Helper()
++	ret := m.ctrl.Call(m, "ConsumeSAMLAssertionID", ctx, ssoProviderID, idpIssuer, assertionID, expiresAt)
++	ret0, _ := ret[0].(error)
++	return ret0
++}
++
++// ConsumeSAMLAssertionID indicates an expected call of ConsumeSAMLAssertionID.
++func (mr *MockDatabaseMockRecorder) ConsumeSAMLAssertionID(ctx, ssoProviderID, idpIssuer, assertionID, expiresAt any) *gomock.Call {
++	mr.mock.ctrl.T.Helper()
++	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ConsumeSAMLAssertionID", reflect.TypeOf((*MockDatabase)(nil).ConsumeSAMLAssertionID), ctx, ssoProviderID, idpIssuer, assertionID, expiresAt)
++}
++
+ // CreateSAMLIdentityProvider mocks base method.
+ func (m *MockDatabase) CreateSAMLIdentityProvider(ctx context.Context, samlProvider model.SAMLProvider, config model.SSOProviderConfig) (model.SAMLProvider, error) {
+ 	m.ctrl.T.Helper()
+diff --git a/cmd/api/src/database/samlconsumedidentifiers.go b/cmd/api/src/database/samlconsumedidentifiers.go
+index cbd1c82..3ab6cfc 100644
+--- a/cmd/api/src/database/samlconsumedidentifiers.go
++++ b/cmd/api/src/database/samlconsumedidentifiers.go
+@@ -36,6 +36,7 @@ const (
+ // stored in the saml_consumed_identifiers table.
+ type SAMLConsumedData interface {
+ 	CreateSAMLConsumedIdentifiers(ctx context.Context, ssoProviderID int32, idpIssuer, responseID, assertionID string, expiresAt time.Time) error
++	ConsumeSAMLAssertionID(ctx context.Context, ssoProviderID int32, idpIssuer, assertionID string, expiresAt time.Time) error
+ 	SweepSAMLConsumedIdentifiers(ctx context.Context) error
+ }
+ 
+@@ -71,6 +72,34 @@ func (s *BloodhoundDB) CreateSAMLConsumedIdentifiers(ctx context.Context, ssoPro
+ 	})
+ }
+ 
++// ConsumeSAMLAssertionID records an assertion that the SAML library has
++// verified, under assertionID, so that it cannot be replayed: the library
++// passes the assertion's replay key, a hash of the IdP and the assertion's
++// ID. It returns ErrSAMLIdentifierAlreadyConsumed if it is already
++// recorded. A replayed SAMLResponse carries the same assertion, so the
++// assertion alone is enough.
++func (s *BloodhoundDB) ConsumeSAMLAssertionID(ctx context.Context, ssoProviderID int32, idpIssuer, assertionID string, expiresAt time.Time) error {
++	result := s.db.WithContext(ctx).Exec(fmt.Sprintf(`INSERT INTO %s
++		(sso_provider_id, idp_issuer, identifier_type, identifier, expires_at)
++		VALUES (?, ?, ?, ?, ?)
++		ON CONFLICT DO NOTHING`, samlConsumedIdentifiersTableName),
++		ssoProviderID, idpIssuer, samlIdentifierTypeAssertion, assertionID, expiresAt,
++	)
++	if result.Error != nil {
++		return result.Error
++	}
++	if result.RowsAffected != 1 {
++		slog.WarnContext(
++			ctx,
++			"SAML assertion already consumed (possible replay)",
++			slog.Int("sso_provider_id", int(ssoProviderID)),
++			slog.String("idp_issuer", idpIssuer),
++		)
++		return ErrSAMLIdentifierAlreadyConsumed
++	}
++	return nil
++}
++
+ // SweepSAMLConsumedIdentifiers deletes all SAMLResponse and assertion identifiers that have expired
+ func (s *BloodhoundDB) SweepSAMLConsumedIdentifiers(ctx context.Context) error {
+ 	result := s.db.WithContext(ctx).Exec(fmt.Sprintf(`DELETE FROM %s WHERE expires_at < NOW()`,
+diff --git a/cmd/api/src/services/saml/mocks/saml.go b/cmd/api/src/services/saml/mocks/saml.go
+index f11e9f7..9f830d4 100644
+--- a/cmd/api/src/services/saml/mocks/saml.go
++++ b/cmd/api/src/services/saml/mocks/saml.go
+@@ -26,11 +26,11 @@
+ package mocks
+ 
+ import (
++	context "context"
+ 	http "net/http"
+ 	reflect "reflect"
+ 
+-	saml "github.com/crewjam/saml"
+-	saml0 "github.com/specterops/bloodhound/cmd/api/src/services/saml"
++	samlsp "github.com/crewjam/saml/x/samlsp"
+ 	gomock "go.uber.org/mock/gomock"
+ )
+ 
+@@ -58,32 +58,37 @@ func (m *MockService) EXPECT() *MockServiceMockRecorder {
+ 	return m.recorder
+ }
+ 
+-// MakeAuthenticationRequest mocks base method.
+-func (m *MockService) MakeAuthenticationRequest(serviceProvider saml.ServiceProvider, idpURL, binding, resultBinding string) (*saml.AuthnRequest, error) {
++// AuthnRequest mocks base method.
++func (m *MockService) AuthnRequest(ctx context.Context, config *samlsp.Config, relayState string) (*samlsp.Message, error) {
+ 	m.ctrl.T.Helper()
+-	ret := m.ctrl.Call(m, "MakeAuthenticationRequest", serviceProvider, idpURL, binding, resultBinding)
+-	ret0, _ := ret[0].(*saml.AuthnRequest)
++	ret := m.ctrl.Call(m, "AuthnRequest", ctx, config, relayState)
++	ret0, _ := ret[0].(*samlsp.Message)
+ 	ret1, _ := ret[1].(error)
+ 	return ret0, ret1
+ }
+ 
+-// MakeAuthenticationRequest indicates an expected call of MakeAuthenticationRequest.
+-func (mr *MockServiceMockRecorder) MakeAuthenticationRequest(serviceProvider, idpURL, binding, resultBinding any) *gomock.Call {
++// AuthnRequest indicates an expected call of AuthnRequest.
++func (mr *MockServiceMockRecorder) AuthnRequest(ctx, config, relayState any) *gomock.Call {
+ 	mr.mock.ctrl.T.Helper()
+-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MakeAuthenticationRequest", reflect.TypeOf((*MockService)(nil).MakeAuthenticationRequest), serviceProvider, idpURL, binding, resultBinding)
++	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AuthnRequest", reflect.TypeOf((*MockService)(nil).AuthnRequest), ctx, config, relayState)
+ }
+ 
+ // ParseResponse mocks base method.
+-func (m *MockService) ParseResponse(serviceProvider saml.ServiceProvider, req *http.Request, possibleRequestIDs []string) (*saml0.ValidatedResponse, error) {
++func (m *MockService) ParseResponse(ctx context.Context, config *samlsp.Config, req *http.Request, opts ...samlsp.ResponseOption) (*samlsp.Assertion, error) {
+ 	m.ctrl.T.Helper()
+-	ret := m.ctrl.Call(m, "ParseResponse", serviceProvider, req, possibleRequestIDs)
+-	ret0, _ := ret[0].(*saml0.ValidatedResponse)
++	varargs := []any{ctx, config, req}
++	for _, a := range opts {
++		varargs = append(varargs, a)
++	}
++	ret := m.ctrl.Call(m, "ParseResponse", varargs...)
++	ret0, _ := ret[0].(*samlsp.Assertion)
+ 	ret1, _ := ret[1].(error)
+ 	return ret0, ret1
+ }
+ 
+ // ParseResponse indicates an expected call of ParseResponse.
+-func (mr *MockServiceMockRecorder) ParseResponse(serviceProvider, req, possibleRequestIDs any) *gomock.Call {
++func (mr *MockServiceMockRecorder) ParseResponse(ctx, config, req any, opts ...any) *gomock.Call {
+ 	mr.mock.ctrl.T.Helper()
+-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ParseResponse", reflect.TypeOf((*MockService)(nil).ParseResponse), serviceProvider, req, possibleRequestIDs)
++	varargs := append([]any{ctx, config, req}, opts...)
++	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ParseResponse", reflect.TypeOf((*MockService)(nil).ParseResponse), varargs...)
+ }
+diff --git a/cmd/api/src/services/saml/saml.go b/cmd/api/src/services/saml/saml.go
+index aaac075..852498e 100644
+--- a/cmd/api/src/services/saml/saml.go
++++ b/cmd/api/src/services/saml/saml.go
+@@ -17,126 +17,38 @@
+ package saml
+ 
+ import (
+-	"encoding/base64"
+-	"encoding/xml"
++	"context"
+ 	"errors"
+-	"fmt"
+ 	"net/http"
+-	"time"
+ 
+-	"github.com/crewjam/saml"
++	"github.com/crewjam/saml/x/samlsp"
+ )
+ 
+ //go:generate go run go.uber.org/mock/mockgen -copyright_file=../../../../../LICENSE.header -destination=./mocks/saml.go -package=mocks . Service
+ 
+ // Service serves as a lightweight wrapper around the SAML package.
+ type Service interface {
+-	MakeAuthenticationRequest(serviceProvider saml.ServiceProvider, idpURL string, binding string, resultBinding string) (*saml.AuthnRequest, error)
+-	ParseResponse(serviceProvider saml.ServiceProvider, req *http.Request, possibleRequestIDs []string) (*ValidatedResponse, error)
++	AuthnRequest(ctx context.Context, config *samlsp.Config, relayState string) (*samlsp.Message, error)
++	ParseResponse(ctx context.Context, config *samlsp.Config, req *http.Request, opts ...samlsp.ResponseOption) (*samlsp.Assertion, error)
+ }
+ 
+ type Client struct{}
+ 
+-// ValidatedResponse represents a successfully parsed and validated SAML login: the verified assertion
+-// and the SAMLResponse's own ID and IssueInstant
+-type ValidatedResponse struct {
+-	Assertion            *saml.Assertion
+-	ResponseID           string
+-	ResponseIssueInstant time.Time
++// AuthnRequest makes an authentication request to send the user's browser
++// to the IdP with. It uses the HTTP-Redirect binding, or HTTP-POST if the
++// IdP does not support it.
++func (s *Client) AuthnRequest(ctx context.Context, config *samlsp.Config, relayState string) (*samlsp.Message, error) {
++	return config.AuthnRequest(ctx, relayState)
+ }
+ 
+-type assertionCounter struct {
+-	XMLName             xml.Name
+-	Assertions          []struct{} `xml:"urn:oasis:names:tc:SAML:2.0:assertion Assertion"`
+-	EncryptedAssertions []struct{} `xml:"urn:oasis:names:tc:SAML:2.0:assertion EncryptedAssertion"`
+-}
+-
+-// MakeAuthenticationRequest abstracts creating an SAML authentication request using
+-// the HTTP-Redirect binding. It returns a URL that we will redirect the user to in order to start the auth process.
+-func (s *Client) MakeAuthenticationRequest(serviceProvider saml.ServiceProvider, idpURL string, binding string, resultBinding string) (*saml.AuthnRequest, error) {
+-	return serviceProvider.MakeAuthenticationRequest(idpURL, binding, resultBinding)
+-}
+-
+-// ParseResponse wraps the parsing and validation of the IdP's SAMLResponse in req and returns the verified assertion
+-// together with the SAMLResponse's own details in a ValidatedResponse.
+-func (s *Client) ParseResponse(serviceProvider saml.ServiceProvider, req *http.Request, possibleRequestIDs []string) (*ValidatedResponse, error) {
+-	var (
+-		fullResponse ValidatedResponse
+-		samlResponse saml.Response
+-		issuer       string
+-	)
+-
++// ParseResponse verifies the IdP's SAMLResponse in req and returns its
++// assertion. The library refuses an unsigned SAMLResponse with more than
++// one assertion, and records the assertion's ID in the config's replay
++// state, so a replayed response is refused with saml.ErrAssertionReplayed.
++func (s *Client) ParseResponse(ctx context.Context, config *samlsp.Config, req *http.Request, opts ...samlsp.ResponseOption) (*samlsp.Assertion, error) {
+ 	// Rejecting explicitly since BloodHound doesn't support HTTP-Artifact binding
+-	if req.Form.Get("SAMLart") != "" {
++	if req.FormValue("SAMLart") != "" {
+ 		return nil, errors.New("saml: HTTP-Artifact binding is not supported")
+ 	}
+-
+-	assertion, err := serviceProvider.ParseResponse(req, possibleRequestIDs)
+-	if err != nil {
+-		return nil, err
+-	}
+-	rawXMLSAMLResponse, err := base64.StdEncoding.DecodeString(req.PostForm.Get("SAMLResponse"))
+-	if err != nil {
+-		return nil, fmt.Errorf("saml: failed to decode SAMLResponse: %w", err)
+-	}
+-	if err := xml.Unmarshal(rawXMLSAMLResponse, &samlResponse); err != nil {
+-		return nil, fmt.Errorf("saml: failed to unmarshal SAMLResponse: %w", err)
+-	}
+-	if samlResponse.Issuer != nil {
+-		issuer = samlResponse.Issuer.Value
+-	}
+-
+-	// It is rare but possible for a SAMLResponse to have more than one signed assertion (with an unsigned SAMLResponse);
+-	// crewjam validates them all, but returns only the first. Since discarded assertions are replayable,
+-	// reject a SAMLResponse with multiple assertions
+-	if assertionCount, err := countAssertions(rawXMLSAMLResponse); err != nil {
+-		return nil, fmt.Errorf("saml: failed to count assertions: %w", err)
+-	} else if assertionCount > 1 {
+-		return nil, fmt.Errorf("saml: SAMLResponse contains multiple assertions (issuer: %q)", issuer)
+-	}
+-
+-	if samlResponse.ID == "" {
+-		return nil, fmt.Errorf("saml: SAMLResponse ID is empty (issuer: %q)", issuer)
+-	}
+-	if assertion == nil {
+-		return nil, fmt.Errorf("saml: assertion is nil (issuer: %q)", issuer)
+-	}
+-	if assertion.ID == "" {
+-		return nil, fmt.Errorf("saml: assertion ID is empty (issuer: %q)", issuer)
+-	}
+-
+-	fullResponse = ValidatedResponse{
+-		Assertion:            assertion,
+-		ResponseID:           samlResponse.ID,
+-		ResponseIssueInstant: samlResponse.IssueInstant,
+-	}
+-
+-	return &fullResponse, nil
+-}
+-
+-// countAssertions returns how many SAML assertions (plaintext plus encrypted, in the SAML assertion namespace)
+-// appear in the raw response XML.
+-func countAssertions(rawResponseXML []byte) (int, error) {
+-	var counter assertionCounter
+-	if err := xml.Unmarshal(rawResponseXML, &counter); err != nil {
+-		return 0, err
+-	}
+-
+-	return len(counter.Assertions) + len(counter.EncryptedAssertions), nil
+-}
+-
+-// CalculateSAMLTimeExpiry returns the time when a consumed SAML identifier (SAMLResponse or assertion) can be safely deleted,
+-// since by then any replay attempt would be rejected as expired. It uses whichever identifier's IssueInstant is most recent
+-// plus the allowed delay (crewjam's MaxIssueDelay).
+-func CalculateSAMLTimeExpiry(responseIssueInstant, assertionIssueInstant time.Time) time.Time {
+-	var (
+-		responseExpiration  = responseIssueInstant.Add(saml.MaxIssueDelay)
+-		assertionExpiration = assertionIssueInstant.Add(saml.MaxIssueDelay)
+-		latest              = responseExpiration
+-	)
+-
+-	if assertionExpiration.After(latest) {
+-		latest = assertionExpiration
+-	}
+-	return latest
++	return config.ParseResponse(ctx, req, opts...)
+ }
+diff --git a/cmd/api/src/services/saml/saml_test.go b/cmd/api/src/services/saml/saml_test.go
+index 0990048..e56de73 100644
+--- a/cmd/api/src/services/saml/saml_test.go
++++ b/cmd/api/src/services/saml/saml_test.go
+@@ -22,121 +22,12 @@ import (
+ 	"net/url"
+ 	"strings"
+ 	"testing"
+-	"time"
+ 
+-	"github.com/crewjam/saml"
++	"github.com/crewjam/saml/x/samlsp"
+ 	"github.com/stretchr/testify/assert"
+ 	"github.com/stretchr/testify/require"
+ )
+ 
+-// TestCountAssertions verifies that countAssertions counts every <Assertion> and <EncryptedAssertion>
+-// in the SAML assertion namespace, counting from the raw XML because crewjam's saml.Response only keeps one assertion.
+-func TestCountAssertions(t *testing.T) {
+-	const assertionNS = `xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"`
+-
+-	testCases := []struct {
+-		name      string
+-		xml       string
+-		wantCount int
+-	}{
+-		{
+-			name: "single plaintext assertion",
+-			xml: `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ` + assertionNS + `>
+-				<saml:Assertion ID="a1"/>
+-			</samlp:Response>`,
+-			wantCount: 1,
+-		},
+-		{
+-			name: "two plaintext assertions",
+-			xml: `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ` + assertionNS + `>
+-				<saml:Assertion ID="a1"/>
+-				<saml:Assertion ID="a2"/>
+-			</samlp:Response>`,
+-			wantCount: 2,
+-		},
+-		{
+-			name: "one plaintext and one encrypted assertion",
+-			xml: `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ` + assertionNS + `>
+-				<saml:Assertion ID="a1"/>
+-				<saml:EncryptedAssertion/>
+-			</samlp:Response>`,
+-			wantCount: 2,
+-		},
+-		{
+-			name: "two encrypted assertions",
+-			xml: `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ` + assertionNS + `>
+-				<saml:EncryptedAssertion/>
+-				<saml:EncryptedAssertion/>
+-			</samlp:Response>`,
+-			wantCount: 2,
+-		},
+-		{
+-			name: "no assertions",
+-			xml: `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ` + assertionNS + `>
+-			</samlp:Response>`,
+-			wantCount: 0,
+-		},
+-		{
+-			name: "assertion in wrong namespace is not counted",
+-			xml: `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ` + assertionNS + ` xmlns:evil="urn:example:evil">
+-				<saml:Assertion ID="a1"/>
+-				<evil:Assertion ID="spoofed"/>
+-			</samlp:Response>`,
+-			wantCount: 1,
+-		},
+-	}
+-
+-	for _, testCase := range testCases {
+-		t.Run(testCase.name, func(t *testing.T) {
+-			count, err := countAssertions([]byte(testCase.xml))
+-
+-			require.NoError(t, err)
+-			assert.Equal(t, testCase.wantCount, count, "total assertion count")
+-		})
+-	}
+-}
+-
+-// TestCalculateSAMLTimeExpiry verifies that CalculateSAMLTimeExpiry returns whichever IssueInstant + MaxIssueDelay is later.
+-func TestCalculateSAMLTimeExpiry(t *testing.T) {
+-	base := time.Date(2026, 8, 18, 23, 3, 0, 0, time.UTC)
+-
+-	testCases := []struct {
+-		name                  string
+-		responseIssueInstant  time.Time
+-		assertionIssueInstant time.Time
+-		want                  time.Time
+-	}{
+-		{
+-			name:                  "response later than assertion uses response deadline",
+-			responseIssueInstant:  base.Add(40 * time.Second),
+-			assertionIssueInstant: base,
+-			want:                  base.Add(40 * time.Second).Add(saml.MaxIssueDelay),
+-		},
+-		{
+-			name:                  "assertion later than response uses assertion deadline",
+-			responseIssueInstant:  base,
+-			assertionIssueInstant: base.Add(40 * time.Second),
+-			want:                  base.Add(40 * time.Second).Add(saml.MaxIssueDelay),
+-		},
+-		{
+-			name:                  "equal instants use that instant plus delay",
+-			responseIssueInstant:  base,
+-			assertionIssueInstant: base,
+-			want:                  base.Add(saml.MaxIssueDelay),
+-		},
+-	}
+-
+-	for _, testCase := range testCases {
+-		t.Run(testCase.name, func(t *testing.T) {
+-			got := CalculateSAMLTimeExpiry(testCase.responseIssueInstant, testCase.assertionIssueInstant)
+-
+-			assert.True(t, testCase.want.Equal(got), "expected %s, got %s", testCase.want, got)
+-		})
+-	}
+-}
+-
+-// TestParseResponse_RejectsArtifactBinding verifies that ParseResponse rejects HTTP-Artifact
+-// requests (SAMLart in either the POST form or as a query parameter), since we don't support HTTP-Artifact binding.
+ func TestParseResponse_RejectsArtifactBinding(t *testing.T) {
+ 	testCases := []struct {
+ 		name    string
+@@ -167,7 +58,10 @@ func TestParseResponse_RejectsArtifactBinding(t *testing.T) {
+ 			)
+ 			require.NoError(t, req.ParseForm())
+ 
+-			validatedResponse, err := client.ParseResponse(saml.ServiceProvider{}, req, nil)
++			config, err := samlsp.New("https://bloodhound.example/api/v2/sso/slug", samlsp.StaticMetadataBytes(nil))
++			require.NoError(t, err)
++
++			validatedResponse, err := client.ParseResponse(t.Context(), config, req, samlsp.AllowUnsolicited)
+ 
+ 			require.ErrorContains(t, err, "HTTP-Artifact binding is not supported")
+ 			assert.Nil(t, validatedResponse)

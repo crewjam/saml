@@ -202,3 +202,23 @@ func TestSPSignaturesIncludeIntermediates(t *testing.T) {
 		assert.Check(t, is.Len(req.Signature.FindElements("./KeyInfo/X509Data/X509Certificate"), 1))
 	})
 }
+
+func TestSPSignEntityDescriptor(t *testing.T) {
+	test := NewServiceProviderTest(t)
+	sp := &ServiceProvider{
+		Key:         test.Key,
+		Certificate: test.Certificate,
+		MetadataURL: mustParseURL("https://example.com/saml2/metadata"),
+		AcsURL:      mustParseURL("https://example.com/saml2/acs"),
+		IDPMetadata: &EntityDescriptor{},
+	}
+	md := sp.Metadata()
+	md.Organization = &Organization{
+		OrganizationNames: []LocalizedName{{Lang: "en", Value: "Example"}},
+	}
+	el, err := sp.SignEntityDescriptor(md)
+	assert.NilError(t, err)
+	root := validateSignedMetadata(t, el, test.Certificate)
+	assert.Check(t, is.Equal("Example", root.FindElement("./Organization/OrganizationName").Text()))
+	assert.Check(t, md.Signature == nil, "the descriptor was modified")
+}
