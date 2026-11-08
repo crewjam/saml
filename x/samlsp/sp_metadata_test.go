@@ -11,6 +11,7 @@ import (
 	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/attrname"
 	"github.com/crewjam/saml/x/samlsp"
 )
 
@@ -25,7 +26,7 @@ var testContact = saml.ContactPerson{ContactType: "technical", EmailAddresses: [
 func spMetadataOptions() []samlsp.Option {
 	return []samlsp.Option{
 		samlsp.WithRequestedAttributes("Example",
-			samlsp.RequestedAttribute{Name: "urn:oid:0.9.2342.19200300.100.1.3", FriendlyName: "mail", Required: true},
+			samlsp.RequestedAttribute{Name: attrname.Mail, FriendlyName: "mail", Required: true},
 			samlsp.RequestedAttribute{Name: "displayName"}),
 		samlsp.WithAttributeConsumingService(saml.AttributeConsumingService{
 			Index:               2,
@@ -60,7 +61,7 @@ func TestSPMetadataAdditions(t *testing.T) {
 		t.Errorf("first service = %+v", first)
 	}
 	mail, name := first.RequestedAttributes[0], first.RequestedAttributes[1]
-	if mail.NameFormat != "urn:oasis:names:tc:SAML:2.0:attrname-format:uri" || mail.IsRequired == nil || !*mail.IsRequired {
+	if mail.NameFormat != attrname.FormatURI || mail.IsRequired == nil || !*mail.IsRequired {
 		t.Errorf("mail = %+v", mail)
 	}
 	if name.NameFormat != "" || name.IsRequired == nil || *name.IsRequired {

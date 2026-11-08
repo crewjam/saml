@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/attrname"
 	"github.com/crewjam/saml/x/samlsp"
 )
 
@@ -249,8 +250,8 @@ func Example_passiveLogin() {
 func ExampleAssertion_DecodeAttributes() {
 	assertion := &samlsp.Assertion{ // as returned by ParseResponse
 		Attributes: samlsp.Attributes{
-			{Name: "urn:oid:0.9.2342.19200300.100.1.3", FriendlyName: "mail", Values: []string{"alice@example.com"}},
-			{Name: "urn:oid:2.16.840.1.113730.3.1.241", FriendlyName: "displayName", Values: []string{"Alice"}},
+			{Name: attrname.Mail, FriendlyName: "mail", Values: []string{"alice@example.com"}},
+			{Name: attrname.DisplayName, FriendlyName: "displayName", Values: []string{"Alice"}},
 			{Name: "memberOf", Values: []string{"admins", "users"}},
 		},
 	}
@@ -273,10 +274,10 @@ func ExampleAssertion_DecodeAttributes() {
 // label: looking an attribute up by it finds nothing.
 func ExampleAttributes_Get() {
 	attrs := samlsp.Attributes{
-		{Name: "urn:oid:0.9.2342.19200300.100.1.3", FriendlyName: "mail", Values: []string{"alice@example.com"}},
+		{Name: attrname.Mail, FriendlyName: "mail", Values: []string{"alice@example.com"}},
 		{Name: "memberOf", Values: []string{"admins", "users"}},
 	}
-	fmt.Println(attrs.Get("urn:oid:0.9.2342.19200300.100.1.3"))
+	fmt.Println(attrs.Get(attrname.Mail))
 	fmt.Println(attrs.Values("memberOf"))
 	fmt.Printf("%q\n", attrs.Get("mail"))
 	// Output:
