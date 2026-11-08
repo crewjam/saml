@@ -4,9 +4,9 @@
 // IdP fetches the message itself from the SP's ArtifactResolutionService.
 //
 // It is an extension of github.com/crewjam/saml/x/samlsp, built only on
-// that package's extension points: a Binding is passed to
-// AuthnRequest, LogoutRequest or LogoutResponse with
-// samlsp.WithCustomBinding, and serves the ArtifactResolutionService.
+// that package's extension points: a Binding is passed with
+// samlsp.WithCustomBinding to Config.AuthnRequest, or to the messages of
+// x/samlsp/slo, and serves the ArtifactResolutionService.
 //
 //	config, err := samlsp.New(idp, entityID, samlsp.WithKey(key, cert),
 //		artifact.ResolutionService("https://sp.example.com/saml/artifact", 1))

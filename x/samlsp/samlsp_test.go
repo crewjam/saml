@@ -24,9 +24,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beevik/etree"
-	dsig "github.com/russellhaering/goxmldsig"
-
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/x/samlsp"
 )
@@ -119,7 +116,6 @@ func mustURL(s string) url.URL {
 const (
 	spEntityID = "https://sp.example.com/saml/metadata"
 	spACSURL   = "https://sp.example.com/saml/acs"
-	spSLOURL   = "https://sp.example.com/saml/slo"
 )
 
 // staticIDP returns a MetadataFunc for ti's metadata.
@@ -138,7 +134,7 @@ func newTestConfig(t *testing.T, ti *testIDP, opts ...samlsp.Option) *samlsp.Con
 func newTestConfigWithIDP(t *testing.T, ti *testIDP, idp samlsp.MetadataFunc, opts ...samlsp.Option) *samlsp.Config {
 	t.Helper()
 	key, cert := newKeyPair(t, "sp")
-	opts = append([]samlsp.Option{samlsp.WithKey(key, cert), samlsp.WithSLOURL(spSLOURL)}, opts...)
+	opts = append([]samlsp.Option{samlsp.WithKey(key, cert)}, opts...)
 	cfg, err := samlsp.New(idp, spEntityID, opts...)
 	if err != nil {
 		t.Fatal(err)
@@ -352,19 +348,9 @@ func TestScriptHashes(t *testing.T) {
 	ti := newTestIDP(t)
 	cfg := newTestConfig(t, ti)
 
-	msgs := make([]*samlsp.Message, 0, 6)
+	msgs := make([]*samlsp.Message, 0, 2)
 	for _, b := range []string{saml.HTTPPostBinding, saml.HTTPPostSimpleSignBinding} {
-		m, err := cfg.AuthnRequest(t.Context(), "s", samlsp.WithBinding(b))
-		if err != nil {
-			t.Fatal(err)
-		}
-		msgs = append(msgs, m)
-		m, err = cfg.LogoutRequest(t.Context(), saml.NameID{Value: "alice"}, "s", samlsp.WithBinding(b))
-		if err != nil {
-			t.Fatal(err)
-		}
-		msgs = append(msgs, m)
-		m, err = cfg.LogoutResponse(t.Context(), &samlsp.LogoutRequest{ID: "id-1", RelayState: "s"}, samlsp.WithBinding(b))
+		m, err := cfg.AuthnRequest(t.Context(), "s", samlsp.WithBinding(b), samlsp.WithScriptNonce("n"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -402,8 +388,8 @@ func TestServeMetadata(t *testing.T) {
 	if md.EntityID != spEntityID || sp.AssertionConsumerServices[0].Location != spACSURL {
 		t.Errorf("unexpected metadata %s", w.Body.String())
 	}
-	if len(sp.SingleLogoutServices) == 0 || sp.SingleLogoutServices[0].Location != spSLOURL {
-		t.Errorf("SLO not advertised: %+v", sp.SingleLogoutServices)
+	if len(sp.SingleLogoutServices) != 0 {
+		t.Errorf("SLO advertised without x/samlsp/slo: %+v", sp.SingleLogoutServices)
 	}
 }
 
@@ -416,9 +402,6 @@ func TestNewErrors(t *testing.T) {
 		"URN, default ACS": func() (*samlsp.Config, error) { return samlsp.New(idp, "urn:example:sp") },
 		"relative ACS": func() (*samlsp.Config, error) {
 			return samlsp.New(idp, spEntityID, samlsp.WithACSURL("/saml/acs"))
-		},
-		"relative SLO": func() (*samlsp.Config, error) {
-			return samlsp.New(idp, spEntityID, samlsp.WithSLOURL("slo"))
 		},
 		"ACS without host": func() (*samlsp.Config, error) { return samlsp.New(idp, spEntityID, samlsp.WithACSURL("file:///acs")) },
 		"sign without key": func() (*samlsp.Config, error) { return samlsp.New(idp, spEntityID, samlsp.SignAuthnRequests) },
@@ -434,22 +417,21 @@ func TestNewURLs(t *testing.T) {
 	for _, tt := range []struct {
 		entityID string
 		opts     []samlsp.Option
-		acs, slo string
+		acs      string
 	}{
-		{"https://sp.example.com/saml/metadata", nil, "https://sp.example.com/saml/acs", ""},
-		{"https://sp.example.com/saml/", []samlsp.Option{samlsp.WithSLOURL("https://sp.example.com/saml/slo")}, "https://sp.example.com/saml/acs", "https://sp.example.com/saml/slo"},
-		{"https://sp.example.com", nil, "https://sp.example.com/acs", ""},
-		{"https://sp.example.com/saml/metadata", []samlsp.Option{samlsp.WithACSURL("https://sp.example.com/sso/consume"), samlsp.WithSLOURL("https://other.example.com/slo")},
-			"https://sp.example.com/sso/consume", "https://other.example.com/slo"},
-		{"urn:example:sp", []samlsp.Option{samlsp.WithACSURL("https://sp.example.com/acs")}, "https://sp.example.com/acs", ""},
+		{"https://sp.example.com/saml/metadata", nil, "https://sp.example.com/saml/acs"},
+		{"https://sp.example.com/saml/", nil, "https://sp.example.com/saml/acs"},
+		{"https://sp.example.com", nil, "https://sp.example.com/acs"},
+		{"https://sp.example.com/saml/metadata", []samlsp.Option{samlsp.WithACSURL("https://sp.example.com/sso/consume")}, "https://sp.example.com/sso/consume"},
+		{"urn:example:sp", []samlsp.Option{samlsp.WithACSURL("https://sp.example.com/acs")}, "https://sp.example.com/acs"},
 	} {
 		cfg, err := samlsp.New(idp, tt.entityID, tt.opts...)
 		if err != nil {
 			t.Errorf("%s: %v", tt.entityID, err)
 			continue
 		}
-		if cfg.ACSURL() != tt.acs || cfg.SLOURL() != tt.slo {
-			t.Errorf("%s: ACS %q, SLO %q; want %q, %q", tt.entityID, cfg.ACSURL(), cfg.SLOURL(), tt.acs, tt.slo)
+		if cfg.ACSURL() != tt.acs {
+			t.Errorf("%s: ACS %q, want %q", tt.entityID, cfg.ACSURL(), tt.acs)
 		}
 		if got := cfg.Metadata(t.Context()).SPSSODescriptors[0].AssertionConsumerServices[0].Location; got != tt.acs {
 			t.Errorf("%s: metadata ACS %q", tt.entityID, got)
@@ -468,144 +450,6 @@ func TestIdentityProviderErrors(t *testing.T) {
 		if _, err := cfg.AuthnRequest(t.Context(), "s"); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
-	}
-}
-
-func TestSPInitiatedLogout(t *testing.T) {
-	for _, binding := range []string{saml.HTTPRedirectBinding, saml.HTTPPostBinding} {
-		t.Run(binding, func(t *testing.T) {
-			ti := newTestIDP(t)
-			cfg := newTestConfig(t, ti)
-			msg, err := cfg.AuthnRequest(t.Context(), "s")
-			if err != nil {
-				t.Fatal(err)
-			}
-			a, err := cfg.ParseResponse(context.Background(), login(t, ti, msg), samlsp.WithRequestID(msg.ID))
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			logout, err := cfg.LogoutRequest(t.Context(), a.NameID, "bye", samlsp.WithBinding(binding),
-				samlsp.WithSessionIndex(a.SessionIndexes...))
-			if err != nil {
-				t.Fatal(err)
-			}
-			var r *http.Request
-			if u := logout.RedirectURL(); u != nil {
-				r = httptest.NewRequest(http.MethodGet, u.String(), nil)
-			} else {
-				w := httptest.NewRecorder()
-				logout.Write(w)
-				r = postForm(logout.Destination, formValues(w.Body.String()))
-			}
-			w := httptest.NewRecorder()
-			ti.idp.ServeSLO(w, r)
-			if !ti.loggedOut {
-				t.Fatalf("IdP did not end the session: %d %s", w.Code, w.Body.String())
-			}
-
-			var back *http.Request
-			if loc := w.Header().Get("Location"); loc != "" {
-				back = httptest.NewRequest(http.MethodGet, loc, nil)
-			} else {
-				back = postForm(spSLOURL, formValues(w.Body.String()))
-			}
-			resp, err := cfg.ParseLogoutResponse(t.Context(), back, samlsp.WithRequestID(logout.ID))
-			if err != nil {
-				t.Fatalf("ParseLogoutResponse: %v (%v)", err, errors.Unwrap(err))
-			}
-			if resp.InResponseTo != logout.ID {
-				t.Errorf("InResponseTo = %q", resp.InResponseTo)
-			}
-			if _, err := cfg.ParseLogoutResponse(t.Context(), back, samlsp.AllowUnsolicited); err == nil {
-				t.Error("ParseLogoutResponse accepted AllowUnsolicited")
-			}
-			if _, err := cfg.ParseLogoutResponse(t.Context(), back); !errors.Is(err, samlsp.ErrNoRequestID) {
-				t.Errorf("ParseLogoutResponse without IDs = %v", err)
-			}
-		})
-	}
-}
-
-// idpLogoutRequest returns a LogoutRequest from ti to the SP for alice, and
-// its XML, signed with ti's key.
-func idpLogoutRequest(t *testing.T, ti *testIDP) (*saml.LogoutRequest, []byte) {
-	t.Helper()
-	req := &saml.LogoutRequest{
-		ID:           "id-logout-1",
-		Version:      "2.0",
-		IssueInstant: time.Now().UTC(),
-		Destination:  spSLOURL,
-		Issuer:       &saml.Issuer{Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity", Value: ti.idp.Metadata().EntityID},
-		NameID:       &saml.NameID{Format: string(saml.EmailAddressNameIDFormat), Value: "alice@example.com"},
-		SessionIndex: &saml.SessionIndex{Value: "index-1"},
-	}
-	signer := dsig.NewDefaultSigningContext(dsig.TLSCertKeyStore{PrivateKey: ti.key, Certificate: [][]byte{ti.cert.Raw}})
-	if err := signer.SetSignatureMethod(dsig.RSASHA256SignatureMethod); err != nil {
-		t.Fatal(err)
-	}
-	// Exclusive canonicalization, as IdPs use, so that the signature
-	// still verifies inside a SOAP envelope.
-	signer.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList("")
-	signed, err := signer.SignEnveloped(req.Element())
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc := etree.NewDocument()
-	doc.SetRoot(signed)
-	buf, err := doc.WriteToBytes()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return req, buf
-}
-
-func TestIDPInitiatedLogout(t *testing.T) {
-	ti := newTestIDP(t)
-	cfg := newTestConfig(t, ti)
-
-	req, buf := idpLogoutRequest(t, ti)
-	r := postForm(spSLOURL, url.Values{
-		"SAMLRequest": {base64.StdEncoding.EncodeToString(buf)},
-		"RelayState":  {"idp-state"},
-	})
-
-	got, err := cfg.ParseLogoutRequest(t.Context(), r)
-	if err != nil {
-		t.Fatalf("ParseLogoutRequest: %v (%v)", err, errors.Unwrap(err))
-	}
-	if got.ID != req.ID || got.NameID.Value != "alice@example.com" || got.RelayState != "idp-state" ||
-		len(got.SessionIndexes) != 1 || got.SessionIndexes[0] != "index-1" {
-		t.Fatalf("unexpected request %+v", got)
-	}
-
-	resp, err := cfg.LogoutResponse(t.Context(), got)
-	if err != nil {
-		t.Fatal(err)
-	}
-	u := resp.RedirectURL()
-	if u == nil || u.Query().Get("SAMLResponse") == "" || u.Query().Get("RelayState") != "idp-state" ||
-		u.Query().Get("Signature") == "" {
-		t.Fatalf("unexpected response URL %v", u)
-	}
-	if !strings.HasPrefix(u.String(), "https://idp.example.com/slo?") {
-		t.Errorf("response sent to %v", u)
-	}
-
-	// An unsigned request is refused.
-	unsigned, _ := xml.Marshal(req)
-	r = postForm(spSLOURL, url.Values{"SAMLRequest": {base64.StdEncoding.EncodeToString(unsigned)}})
-	if _, err := cfg.ParseLogoutRequest(t.Context(), r); err == nil {
-		t.Error("expected an unsigned LogoutRequest to be refused")
-	}
-}
-
-func TestLogoutUnsupported(t *testing.T) {
-	ti := newTestIDP(t)
-	ti.idp.LogoutURL = url.URL{}
-	cfg := newTestConfig(t, ti)
-	if _, err := cfg.LogoutRequest(t.Context(), saml.NameID{Value: "alice"}, ""); !errors.Is(err, samlsp.ErrNoEndpoint) {
-		t.Fatalf("err = %v, want ErrNoEndpoint", err)
 	}
 }
 
@@ -720,7 +564,7 @@ func TestServiceProviderOptions(t *testing.T) {
 		t.Error("per-call option leaked into the next call")
 	}
 
-	// A ServiceProviderOption is also a ResponseOption and a LogoutOption.
+	// A ServiceProviderOption is also a ResponseOption and a MessageOption.
 	called := 0
 	count := samlsp.WithServiceProvider(func(*saml.ServiceProvider) { called++ })
 	msg, err = cfg.AuthnRequest(t.Context(), "s")
@@ -730,7 +574,7 @@ func TestServiceProviderOptions(t *testing.T) {
 	if _, err := cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID(msg.ID), count); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cfg.LogoutRequest(t.Context(), saml.NameID{Value: "alice"}, "", count); err != nil {
+	if _, err := cfg.Send(t.Context(), pingRequest(), count); err != nil {
 		t.Fatal(err)
 	}
 	if called != 2 {

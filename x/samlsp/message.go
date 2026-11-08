@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"net/http"
 	"net/url"
-
-	"github.com/crewjam/saml"
 )
 
 // Message is a SAML protocol message that is ready to send to the identity
@@ -13,14 +11,13 @@ import (
 // redirect or an HTML form that submits itself.
 type Message struct {
 	// ID is the ID of the message. For an AuthnRequest, pass it to
-	// ParseResponse with WithRequestID, and for a LogoutRequest to
-	// ParseLogoutResponse. For a LogoutResponse it is only for logging.
+	// ParseResponse with WithRequestID.
 	ID string
 
 	// Binding is the SAML binding that carries the message:
 	// saml.HTTPRedirectBinding, saml.HTTPPostBinding,
-	// saml.HTTPPostSimpleSignBinding, or saml.SOAPBinding for the answer to
-	// a back-channel LogoutRequest.
+	// saml.HTTPPostSimpleSignBinding, that of a custom Binding, or
+	// saml.SOAPBinding for an answer to the IdP made with NewMessage.
 	Binding string
 
 	// Destination is the IdP endpoint the message is sent to.
@@ -29,11 +26,10 @@ type Message struct {
 	// RelayState is the RelayState that goes with the message.
 	RelayState string
 
-	redirectURL  *url.URL
-	form         []byte
-	scriptHash   string
-	soapResponse *saml.LogoutResponse
-	write        func(http.ResponseWriter)
+	redirectURL *url.URL
+	form        []byte
+	scriptHash  string
+	write       func(http.ResponseWriter)
 }
 
 // RedirectURL returns the URL to redirect the browser to, for a message
@@ -49,16 +45,12 @@ func (m *Message) RedirectURL() *url.URL {
 // Write sends the message to the browser. With the HTTP-Redirect binding,
 // it writes a 302 redirect. With the POST bindings, it writes an HTML page
 // with a form that submits itself, and a Content-Security-Policy that allows
-// only the form's script. With the SOAP binding, which LogoutResponse uses
-// to answer a back-channel LogoutRequest, it writes the SOAP response to
-// the IdP. Write must be called before anything else is written to w.
+// only the form's script. A Message made with NewMessage writes what its
+// function writes. Write must be called before anything else is written
+// to w.
 func (m *Message) Write(w http.ResponseWriter) {
 	if m.write != nil {
 		m.write(w)
-		return
-	}
-	if m.soapResponse != nil {
-		_ = saml.WriteSOAPLogoutResponse(w, m.soapResponse)
 		return
 	}
 	h := w.Header()
@@ -85,12 +77,3 @@ func (m *Message) Write(w http.ResponseWriter) {
 // ServeHTTP calls Write, so that a Message can be returned as an
 // http.Handler.
 func (m *Message) ServeHTTP(w http.ResponseWriter, _ *http.Request) { m.Write(w) }
-
-// The SHA-256 hashes of the scripts that make the POST binding forms of
-// package saml submit themselves. Requests (AuthnRequest and LogoutRequest,
-// with HTTP-POST or HTTP-POST-SimpleSign) share one script, and
-// LogoutResponses use the other. TestScriptHashes checks them.
-const (
-	requestScriptHash  = "sha256-AjPdJSbZmeWHnEc5ykvJFay8FTWeTeRbs9dutfZ0HqE="
-	responseScriptHash = "sha256-ae3F9sw3MnGNUqmT+7gdyojm/I6ukOUOr9mHRkJJvCU="
-)

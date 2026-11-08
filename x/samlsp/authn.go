@@ -14,14 +14,11 @@ import (
 )
 
 // ErrNoEndpoint is returned when the identity provider's metadata lists no
-// endpoint for the binding a message would be sent with. LogoutRequest
-// returns it when the IdP does not support single logout. In that case,
-// end the local session only.
+// endpoint for the binding a message would be sent with.
 var ErrNoEndpoint = errors.New("samlsp: the identity provider has no endpoint for the binding")
 
 // ErrNoRequestID is returned by ParseResponse when it is called with
-// neither WithRequestID nor AllowUnsolicited, and by ParseLogoutResponse
-// when it is called with no request ID.
+// neither WithRequestID nor AllowUnsolicited.
 var ErrNoRequestID = errors.New("samlsp: no request ID to match InResponseTo against")
 
 // AuthnOption customizes an AuthnRequest.
@@ -190,11 +187,11 @@ func WithResponseBinding(binding string) AuthnOption {
 	return authnOptionFunc(func(o *authnOptions) { o.responseBinding = binding })
 }
 
-// MessageOption is an option for any message sent through the browser. It
-// can be passed to AuthnRequest, LogoutRequest and LogoutResponse.
+// MessageOption is an option for any message sent through the browser: it
+// can be passed to AuthnRequest and to Send, and so to the messages of
+// packages built on Send, such as x/samlsp/slo.
 type MessageOption interface {
 	AuthnOption
-	LogoutOption
 	applyMessage(*messageOptions)
 }
 
@@ -210,7 +207,6 @@ type messageOptionFunc func(*messageOptions)
 
 func (f messageOptionFunc) applyMessage(o *messageOptions) { f(o) }
 func (f messageOptionFunc) applyAuthn(o *authnOptions)     { f(&o.messageOptions) }
-func (f messageOptionFunc) applyLogout(o *logoutOptions)   { f(&o.messageOptions) }
 
 // WithBinding sends the message with binding: saml.HTTPRedirectBinding,
 // saml.HTTPPostBinding or saml.HTTPPostSimpleSignBinding. The

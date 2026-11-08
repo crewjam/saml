@@ -239,7 +239,7 @@ With the `samlsp` middleware, `samlSP.QueryAttributes(r, attributes...)` queries
 
 ## A protocol-only service provider: x/samlsp
 
-The experimental package `github.com/crewjam/saml/x/samlsp` is a thin layer over `saml.ServiceProvider` shaped after `golang.org/x/oauth2` and `go-oidc`. It deals with the SAML protocol only: it builds requests, verifies responses, handles single logout and serves the SP metadata, and leaves sessions, cookies and the storage of pending requests to the application. Its API may change.
+The experimental package `github.com/crewjam/saml/x/samlsp` is a thin layer over `saml.ServiceProvider` shaped after `golang.org/x/oauth2` and `go-oidc`. It deals with the SAML protocol only: it builds requests, verifies responses and serves the SP metadata, and leaves sessions, cookies and the storage of pending requests to the application. Its API may change.
 
 ```golang
 config, err := samlsp.New(
@@ -265,7 +265,20 @@ http.HandleFunc("/saml/acs", func(w http.ResponseWriter, r *http.Request) {
 })
 ```
 
-It turns on every check that the core package leaves off only for compatibility, and refuses replayed assertions by default. It also covers back-channel (SOAP) logout, attribute queries, MDQ metadata, requested attributes in the SP metadata, and decoding attributes into typed struct fields. See the [package documentation](https://pkg.go.dev/github.com/crewjam/saml/x/samlsp) and its examples.
+It turns on every check that the core package leaves off only for compatibility, and refuses replayed assertions by default. It also covers attribute queries, MDQ metadata, requested attributes in the SP metadata, and decoding attributes into typed struct fields. See the [package documentation](https://pkg.go.dev/github.com/crewjam/saml/x/samlsp) and its examples.
+
+Optional features are separate packages, built only on the public API of `x/samlsp`:
+
+- `x/samlsp/slo` adds single logout, through the browser and, optionally, server to server with the SOAP binding:
+
+  ```golang
+  config, err := samlsp.New(idp, entityID, samlsp.WithKey(key, cert),
+  	slo.Endpoint("https://sp.example.com/saml/slo"))
+  logout, err := slo.New(config)
+  msg, err := logout.Request(ctx, assertion.NameID, relayState, slo.WithSessionIndex(assertion.SessionIndexes...))
+  ```
+
+- `x/samlsp/artifact` sends requests to the IDP with the HTTP-Artifact binding.
 
 ## Getting Started as an Identity Provider
 

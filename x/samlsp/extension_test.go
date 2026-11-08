@@ -73,20 +73,6 @@ func TestCustomBinding(t *testing.T) {
 		t.Errorf("AuthnRequest not addressed or signed: %s", b.xml)
 	}
 
-	// Logout messages too.
-	if _, err := cfg.LogoutRequest(t.Context(), saml.NameID{Value: "alice"}, "r", samlsp.WithCustomBinding(b)); err != nil {
-		t.Fatal(err)
-	}
-	if b.got.Destination != "https://idp.example.com/slo-custom" || !strings.Contains(b.xml, "LogoutRequest") {
-		t.Errorf("LogoutRequest: %+v %s", b.got, b.xml)
-	}
-	if _, err := cfg.LogoutResponse(t.Context(), &samlsp.LogoutRequest{ID: "id-1"}, samlsp.WithCustomBinding(b)); err != nil {
-		t.Fatal(err)
-	}
-	if b.got.Param != "SAMLResponse" || !strings.Contains(b.xml, `InResponseTo="id-1"`) {
-		t.Errorf("LogoutResponse: %+v %s", b.got, b.xml)
-	}
-
 	// An IdP without an endpoint for the binding.
 	plain := newTestConfig(t, ti)
 	if _, err := plain.AuthnRequest(t.Context(), "r", samlsp.WithCustomBinding(b)); !errors.Is(err, samlsp.ErrNoEndpoint) {

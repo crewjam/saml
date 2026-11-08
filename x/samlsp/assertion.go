@@ -19,7 +19,7 @@ type Assertion struct {
 	Issuer string
 
 	// NameID identifies the user. Keep it, with its Format and
-	// qualifiers, to pass to Config.LogoutRequest. It is zero if the
+	// qualifiers, for single logout (x/samlsp/slo). It is zero if the
 	// assertion identifies the user with a BaseID (see Raw).
 	NameID saml.NameID
 
@@ -44,7 +44,7 @@ type Assertion struct {
 	AuthnContextClassRef AuthnContextClass
 
 	// SessionIndexes name the user's session at the IdP. Keep them to pass
-	// to Config.LogoutRequest with WithSessionIndex.
+	// to x/samlsp/slo with slo.WithSessionIndex.
 	SessionIndexes []string
 
 	// SessionNotOnOrAfter, if not zero, is when the IdP asks the SP to end
