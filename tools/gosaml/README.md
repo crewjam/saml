@@ -53,9 +53,9 @@ in-memory hub, since one process holds all the state, with catch-up from
 
 - Each IdP or SP is deleted `GOSAML_TTL` (24h) after it is created; a
   reaper runs every minute.
-- The SQLite database is deleted at startup, and on Fly.io it lives on the
-  machine's root filesystem with no volume, so every deploy or restart
-  starts from nothing.
+- The SQLite database is deleted at startup, so every deploy or restart
+  starts from nothing. On Fly.io it lives on a small volume (1 GB,
+  `gosaml_data` at `/data`) only so it has disk to grow into.
 - Instances are named with memorable words from
   [`golang-petname`](https://github.com/dustinkirkland/golang-petname): a
   two-word public ID in protocol URLs (`/idp/comic-krill/metadata`) and a
@@ -104,6 +104,7 @@ First deploy:
 
 ```sh
 fly apps create gosaml
+fly volumes create gosaml_data --region iad --size 1 --yes
 fly certs add gosaml.dev    # then set DNS as `fly certs show gosaml.dev` says
 ./deploy.sh
 ```

@@ -2,19 +2,19 @@
 # this image is made from.
 #
 # Everything the app stores is temporary by design:
-#   - There is no volume ([mounts]): the SQLite database is on the
-#     machine's root filesystem, which is discarded whenever the machine
-#     is replaced (every deploy) or restarted. The app also deletes the
-#     database at startup.
+#   - The SQLite database is on a small volume ([mounts]), so it has
+#     real disk to grow into instead of the root filesystem, but the app
+#     deletes it at startup: every deploy or restart starts from nothing.
 #   - Each test IdP or SP is deleted GOSAML_TTL after it is created.
 #
-# Since state is on one machine's disk, run exactly one machine
+# Since state is on one machine's volume, run exactly one machine
 # (deploy.sh passes --ha=false) and keep it running: if Fly stopped it
 # when idle, everyone's test IdPs and SPs would vanish within minutes,
 # which is sooner than GOSAML_TTL promises.
 #
 # One-time setup:
 #   fly apps create gosaml
+#   fly volumes create gosaml_data --region iad --size 1 --yes
 #   fly certs add gosaml.dev
 #   (then point gosaml.dev's DNS at the app, as `fly certs show gosaml.dev` says)
 
@@ -26,9 +26,14 @@ primary_region = "iad"
 
 [env]
   GOSAML_BASE_URL = "https://gosaml.dev"
-  GOSAML_DB = "/tmp/gosaml.db"
+  GOSAML_DB = "/data/gosaml.db"
   GOSAML_TTL = "24h"
   GOSAML_MAX_INSTANCES = "5000"
+
+[mounts]
+  source = "gosaml_data"
+  destination = "/data"
+  initial_size = "1gb"
 
 [http_service]
   internal_port = 8080

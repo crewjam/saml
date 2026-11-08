@@ -61,9 +61,9 @@ deploy)
 	build_wasm
 	build_server linux amd64
 	echo "==> deploying"
-	# One machine only: the SQLite database is on that machine's own disk,
-	# so a second machine would have different state. Deploying replaces
-	# the machine, which also deletes everything, as intended.
+	# One machine only: the SQLite database is on that machine's volume,
+	# so a second machine would have different state. The server deletes
+	# the database when it starts, so a deploy still starts from nothing.
 	"$fly" deploy --ha=false "$@"
 	;;
 *)
