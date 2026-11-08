@@ -7,17 +7,34 @@ of samltest.dev and samltool.io:
   NameID format. Register service providers by metadata (or let them in by
   fetching the metadata at their entity ID), then log in as any user, or
   answer with an error status to see how the SP copes. IdP-initiated
-  login too.
+  login too. A login starts an IdP session, so later logins from the same
+  browser are single sign-on (and IsPassive requests succeed).
 - **Test service providers.** Trust any IdP by its metadata, log in, and
   see what it asserted: NameID, attributes, authentication context, the
   decrypted assertion. When a Response is refused, see why: the full error
   chain from the library, and hints for common causes. Checks can be
   relaxed (SHA-1, unsigned AES-CBC) to find out which one an IdP fails.
+- **Single logout** (`x/samlidp/idpslo`, `x/samlsp/slo`). Both sides keep
+  sessions in the database. Logout started at an SP ends the IdP session
+  and logs the user out of the session's other SPs, through the browser,
+  or over SOAP with back-channel logout turned on; the IdP answers
+  PartialLogout when one fails. IdP-initiated logout runs from the IdP's
+  session page (`/idp/{id}/session`) or its management page. SPs can also
+  log out locally only.
+- **HTTP-Artifact** (`x/samlidp/idpartifact`, `x/samlsp/artifact`). An SP
+  can ask for the Response by artifact; the IdP keeps it in the database
+  and the SP resolves it at the IdP's ArtifactResolutionService, server to
+  server. SPs can also send AuthnRequests by artifact, for IdPs that
+  resolve them (the test IdPs do not).
 - **Inspector.** Decodes a redirect URL, POST body, raw HTTP request,
   base64 (deflated or not) or XML: AuthnRequests, Responses, logout
   messages, artifacts and metadata. It is this module's `inspect` package
   compiled to WebAssembly, so it runs in the browser and what people paste
-  is never sent to the server.
+  is never sent to the server. Paste a certificate (PEM, base64 or the
+  signer's metadata) to check XML signatures and HTTP-Redirect or
+  HTTP-POST-SimpleSign query signatures against it; every XML signature
+  is also checked with its own KeyInfo certificate, which shows whether
+  the message was changed but not who signed it.
 
 Every IdP and SP logs the messages it exchanges, decoded.
 
@@ -39,9 +56,12 @@ Every IdP and SP logs the messages it exchanges, decoded.
 | --- | --- |
 | `main.go` | Configuration (environment variables), startup, reaper |
 | `server/` | The web app: `idp.go` uses `x/samlidp`, `sp.go` uses `x/samlsp` and `x/samlsp/pending` |
-| `store/` | SQLite (`modernc.org/sqlite`, pure Go): instances, logs, pending logins, and the library's replay state |
+| `server/idp_flow.go`, `server/idp_slo.go` | IdP SSO, sessions, single logout, artifact resolution |
+| `server/sp_slo.go` | SP sessions, single logout, artifact resolution |
+| `server/backchannel.go` | The SOAP client (in-process for this server's own URLs) and the artifact store |
+| `store/` | SQLite (`modernc.org/sqlite`, pure Go): instances, logs, pending logins and logouts, sessions, artifacts, and the library's replay state |
 | `inspect/` | The message decoder, shared by the WebAssembly inspector and the server's logs |
-| `wasm/` | The `js/wasm` entry point, which exposes `samlInspect(input)` to the page |
+| `wasm/` | The `js/wasm` entry point, which exposes `samlInspect(input, keys)` to the page |
 | `web/` | `html/template` pages and static files, embedded in the binary |
 
 It is a separate Go module so that its dependencies (SQLite) never reach
@@ -80,6 +100,10 @@ the temporary directory), `GOSAML_TTL` (`24h`), `GOSAML_MAX_INSTANCES`
   network, after DNS resolution. Ports are limited to 80, 443, 8080 and
   8443, size to 2 MiB, time to 15s. URLs of this server's own instances
   are answered locally, without a request.
+- Server-to-server SAML (artifact resolution, SOAP logout) uses the same
+  public-only dialer, except for this server's own URLs, which are served
+  in-process. Plain-http SOAP endpoints are allowed only when the server's
+  own base URL is http (local development).
 - Pages allow only the server's own scripts plus nonce'd inline scripts
   (for the self-submitting SAML forms) and `'wasm-unsafe-eval'`.
   `Referrer-Policy: same-origin` keeps management URLs from leaking to the

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +16,8 @@ import (
 	"github.com/crewjam/saml/tools/gosaml/inspect"
 	"github.com/crewjam/saml/tools/gosaml/store"
 	"github.com/crewjam/saml/x/samlidp"
+	"github.com/crewjam/saml/x/samlidp/idpartifact"
+	"github.com/crewjam/saml/x/samlidp/idpslo"
 	"github.com/crewjam/saml/xmlenc"
 )
 
@@ -45,6 +46,20 @@ type IdPConfig struct {
 	// SP's metadata), "gcm" (RSA-OAEP-SHA256 and AES-256-GCM), "cbc"
 	// (RSA-OAEP and AES-128-CBC) or "off".
 	Encryption string
+
+	// RememberSessions keeps an IdP session after a login, so that the
+	// next AuthnRequest from this browser is answered without asking
+	// (single sign-on), and IsPassive requests can succeed.
+	RememberSessions bool
+
+	// BackChannelLogout advertises a SOAP SingleLogoutService, and logs
+	// out SPs that offer one server to server, instead of through the
+	// browser.
+	BackChannelLogout bool
+
+	// ArtifactForm sends artifacts to SPs with a form the browser posts,
+	// instead of a redirect.
+	ArtifactForm bool
 }
 
 // RegisteredSP is an SP registered with a test IdP.
@@ -148,6 +163,7 @@ func (s *Server) newIdP(w http.ResponseWriter, r *http.Request) {
 		Users:               defaultUsers(),
 		SignatureMethod:     "sha256",
 		Encryption:          "auto",
+		RememberSessions:    true,
 	})
 }
 
@@ -190,6 +206,19 @@ func (s *Server) samlIdP(in *store.Instance, cfg *IdPConfig) (*samlidp.Config, e
 		samlidp.WithReplayState(s.Store),
 		samlidp.WithNameIDFormats(nameIDFormats...),
 		samlidp.WithMetadataValidity(time.Until(in.ExpiresAt)),
+		idpartifact.ResolutionService(s.BaseURL+"/idp/"+in.ID+"/artifact", 1),
+	}
+	sloOpts := []idpslo.EndpointOption{idpslo.WithHTTPClient(s.soap)}
+	if cfg.BackChannelLogout {
+		sloOpts = append(sloOpts, idpslo.BackChannel)
+	}
+	opts = append(opts, idpslo.Endpoint(s.BaseURL+"/idp/"+in.ID+"/slo", sloOpts...))
+	if strings.HasPrefix(s.BaseURL, "http://") {
+		// Only for local development, where this server itself is served
+		// over http; in production it is https.
+		opts = append(opts, samlidp.WithIdentityProvider(func(idp *saml.IdentityProvider) {
+			idp.AllowInsecureSOAPEndpoints = true
+		}))
 	}
 	if cfg.RequireSignedRequests {
 		opts = append(opts, samlidp.RequireSignedAuthnRequests)
@@ -316,57 +345,6 @@ type loginPage struct {
 	ManageSecret string
 }
 
-func (s *Server) idpSSO(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	in, cfg, err := s.loadIdP(ctx, r.PathValue("id"))
-	if err != nil {
-		s.fail(w, r, http.StatusNotFound, "This IdP does not exist. Test IdPs expire "+roundDuration(s.TTL)+" after they are created.", nil)
-		return
-	}
-	c, err := s.samlIdP(in, cfg)
-	if err != nil {
-		s.fail(w, r, http.StatusInternalServerError, "The IdP is misconfigured.", err)
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		s.fail(w, r, http.StatusBadRequest, "Cannot read the request.", err)
-		return
-	}
-	reqXML := ""
-	if v := r.Form.Get("SAMLRequest"); v != "" {
-		if b, err := inspect.DecodeBase64Message(v); err == nil {
-			reqXML = inspect.Pretty(b)
-		}
-	}
-
-	req, err := c.ParseAuthnRequest(ctx, r)
-	var status *saml.StatusError
-	if errors.As(err, &status) && req != nil {
-		s.logEvent(ctx, &store.Event{InstanceID: in.ID, Direction: "in", Title: "AuthnRequest from " + req.ServiceProvider + " refused with a SAML error",
-			Detail: errorChain(err), XML: reqXML})
-		msg, err := c.ErrorResponse(ctx, req, status, samlidp.WithScriptNonce(nonce(r)))
-		s.sendIdPMessage(w, r, in, msg, err)
-		return
-	}
-	if err != nil {
-		s.logEvent(ctx, &store.Event{InstanceID: in.ID, Direction: "in", Title: "AuthnRequest refused", Detail: errorChain(err), XML: reqXML})
-		s.fail(w, r, http.StatusBadRequest, "The IdP refused the login request.", err)
-		return
-	}
-	s.logEvent(ctx, &store.Event{InstanceID: in.ID, Direction: "in", OK: true,
-		Title: "AuthnRequest from " + req.ServiceProvider, Detail: describeAuthnRequest(req), XML: reqXML})
-
-	if req.IsPassive {
-		// The IdP keeps no sessions, so it can never log a user in
-		// without asking them.
-		msg, err := c.ErrorResponse(ctx, req, &saml.StatusError{TopLevel: saml.StatusResponder, SecondLevel: saml.StatusNoPassive},
-			samlidp.WithScriptNonce(nonce(r)))
-		s.sendIdPMessage(w, r, in, msg, err)
-		return
-	}
-	s.showLogin(w, r, in, cfg, req)
-}
-
 // showLogin keeps req and shows the page where the visitor chooses who to
 // log in as.
 func (s *Server) showLogin(w http.ResponseWriter, r *http.Request, in *store.Instance, cfg *IdPConfig, req *samlidp.AuthnRequest) {
@@ -409,93 +387,6 @@ func describeAuthnRequest(req *samlidp.AuthnRequest) string {
 	return strings.TrimSpace(b.String())
 }
 
-// idpLogin answers a pending AuthnRequest as the visitor chose: logged
-// in as a user, or with a SAML error.
-func (s *Server) idpLogin(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	in, cfg, err := s.loadIdP(ctx, r.PathValue("id"))
-	if err != nil {
-		s.fail(w, r, http.StatusNotFound, "This IdP does not exist or has expired.", nil)
-		return
-	}
-	c, err := s.samlIdP(in, cfg)
-	if err != nil {
-		s.fail(w, r, http.StatusInternalServerError, "The IdP is misconfigured.", err)
-		return
-	}
-	pid := r.FormValue("pending")
-	var req samlidp.AuthnRequest
-	if err := s.Store.GetPending(ctx, pid, in.ID, &req); err != nil {
-		s.fail(w, r, http.StatusBadRequest, "This login is no longer in progress: it was answered already, or more than an hour ago. Start again from the service provider.", nil)
-		return
-	}
-	opts := []samlidp.ResponseOption{samlidp.WithScriptNonce(nonce(r))}
-
-	if r.FormValue("action") == "error" {
-		label := r.FormValue("error_status")
-		for _, e := range statusErrors {
-			if e.Label == label {
-				_ = s.Store.DeletePending(ctx, pid)
-				msg, err := c.ErrorResponse(ctx, &req, &saml.StatusError{TopLevel: e.Top, SecondLevel: e.Second,
-					Message: strings.TrimSpace(r.FormValue("status_message"))}, opts...)
-				s.sendIdPMessage(w, r, in, msg, err)
-				return
-			}
-		}
-		s.fail(w, r, http.StatusBadRequest, "Unknown error status.", nil)
-		return
-	}
-
-	var user *User
-	for i := range cfg.Users {
-		if cfg.Users[i].Username == r.FormValue("user") {
-			user = &cfg.Users[i]
-		}
-	}
-	if user == nil {
-		s.fail(w, r, http.StatusBadRequest, "Choose a user to log in as.", nil)
-		return
-	}
-	subject := samlidp.Subject{
-		NameID:               user.NameID,
-		NameIDFormat:         saml.NameIDFormat(user.NameIDFormat),
-		AuthnInstant:         time.Now(),
-		AuthnContextClassRef: saml.AuthnContextClass(r.FormValue("authn_context")),
-		SessionIndex:         rand.Text(),
-		Attributes:           user.Attributes,
-	}
-	switch f := r.FormValue("nameid_format"); f {
-	case "user":
-	case "":
-		// As the SP asks, if it asks for a particular format.
-		if req.NameIDFormat != "" && req.NameIDFormat != saml.UnspecifiedNameIDFormat &&
-			req.NameIDFormat != "urn:oasis:names:tc:SAML:2.0:nameid-format:encrypted" {
-			subject.NameIDFormat = req.NameIDFormat
-		}
-	default:
-		subject.NameIDFormat = saml.NameIDFormat(f)
-	}
-	if subject.NameIDFormat == saml.TransientNameIDFormat {
-		// A transient NameID is new at every login.
-		subject.NameID = "_" + strings.ToLower(rand.Text())
-	}
-	if h, err := strconv.Atoi(r.FormValue("session_hours")); err == nil && h > 0 {
-		subject.SessionNotOnOrAfter = time.Now().Add(time.Duration(h) * time.Hour)
-	}
-	msg, err := c.Response(ctx, &req, subject, opts...)
-	var status *saml.StatusError
-	if errors.As(err, &status) {
-		// The SP asked for what this user cannot be asserted with: tell
-		// it so, as a real IdP would.
-		s.logEvent(ctx, &store.Event{InstanceID: in.ID, Title: "Cannot assert " + user.Username + " as requested", Detail: errorChain(err)})
-		msg, err = c.ErrorResponse(ctx, &req, status, opts...)
-	}
-	if err == nil {
-		_ = s.Store.DeletePending(ctx, pid)
-	}
-	s.sendIdPMessage(w, r, in, msg, err)
-}
-
 // sendIdPMessage logs a Response and sends it to the SP.
 func (s *Server) sendIdPMessage(w http.ResponseWriter, r *http.Request, in *store.Instance, msg *samlidp.Message, err error) {
 	if err != nil {
@@ -506,6 +397,10 @@ func (s *Server) sendIdPMessage(w http.ResponseWriter, r *http.Request, in *stor
 	xml := ""
 	if b, err := inspect.DecodeBase64Message(msg.FormValues()["SAMLResponse"]); err == nil {
 		xml = inspect.Pretty(b)
+	}
+	art := msg.FormValues()["SAMLart"]
+	if u := msg.RedirectURL(); u != nil && art == "" {
+		art = u.Query().Get("SAMLart")
 	}
 	title := "Response to " + msg.Destination
 	ok := true
@@ -519,6 +414,9 @@ func (s *Server) sendIdPMessage(w http.ResponseWriter, r *http.Request, in *stor
 	}
 	if p := msg.Participant; p != nil {
 		detail += "\nNameID: " + p.NameID.Value + " (" + shortURN(p.NameID.Format) + ")"
+	}
+	if art != "" {
+		detail += "\nArtifact: " + art + "\n(the SP resolves it at this IdP's ArtifactResolutionService)"
 	}
 	s.logEvent(r.Context(), &store.Event{InstanceID: in.ID, Direction: "out", OK: ok, Title: title, Detail: detail, XML: xml})
 	msg.Write(w)
@@ -534,6 +432,9 @@ type idpManagePage struct {
 	SSOURL      string
 	MetadataURL string
 	CertURL     string
+	SLOURL      string
+	ArtifactURL string
+	Sessions    []idpSessionView
 	Events      []store.Event
 	Flash       string
 	Formats     []saml.NameIDFormat
@@ -557,7 +458,14 @@ func (s *Server) manageIdP(w http.ResponseWriter, r *http.Request, in *store.Ins
 		SSOURL:      s.BaseURL + "/idp/" + in.ID + "/sso",
 		MetadataURL: s.idpEntityID(in.ID),
 		CertURL:     s.BaseURL + "/idp/" + in.ID + "/certificate.pem",
+		SLOURL:      s.BaseURL + "/idp/" + in.ID + "/slo",
+		ArtifactURL: s.BaseURL + "/idp/" + in.ID + "/artifact",
 		Events:      events, Flash: flashMessage(r), Formats: nameIDFormats,
+	}
+	p.Sessions, err = s.idpSessionViews(r.Context(), in)
+	if err != nil {
+		s.fail(w, r, http.StatusInternalServerError, "Cannot read the sessions.", err)
+		return
 	}
 	for _, m := range s.myInstances(r) {
 		if m.Kind == store.KindSP {
@@ -596,6 +504,9 @@ func (s *Server) idpAction(w http.ResponseWriter, r *http.Request, in *store.Ins
 		cfg.RequireSignedRequests = r.FormValue("require_signed") != ""
 		cfg.SignatureMethod = oneOf(r.FormValue("signature_method"), "sha256", "sha384", "sha512")
 		cfg.Encryption = oneOf(r.FormValue("encryption"), "auto", "gcm", "cbc", "off")
+		cfg.RememberSessions = r.FormValue("remember_sessions") != ""
+		cfg.BackChannelLogout = r.FormValue("back_channel") != ""
+		cfg.ArtifactForm = r.FormValue("artifact_form") != ""
 		s.saveIdPConfig(w, r, in, cfg, "Settings saved.", "settings")
 
 	case "sp-add":
@@ -711,18 +622,33 @@ func (s *Server) idpAction(w http.ResponseWriter, r *http.Request, in *store.Ins
 		s.saveIdPConfig(w, r, in, cfg, "User removed.", "users")
 
 	case "initiate":
-		c, err := s.samlIdP(in, cfg)
+		run, err := s.idpRun(ctx, in.ID)
 		if err != nil {
 			s.fail(w, r, http.StatusInternalServerError, "The IdP is misconfigured.", err)
 			return
 		}
-		req, err := c.IDPInitiated(ctx, r.FormValue("entity_id"), r.FormValue("relay_state"))
+		req, err := run.c.IDPInitiated(ctx, r.FormValue("entity_id"), r.FormValue("relay_state"), run.binding())
 		if err != nil {
 			flash(w, r, in, "Cannot start an IdP-initiated login: "+errorChain(err), "initiate")
 			return
 		}
 		s.logEvent(ctx, &store.Event{InstanceID: in.ID, OK: true, Title: "IdP-initiated login to " + req.ServiceProvider, Detail: describeAuthnRequest(req)})
 		s.showLogin(w, r, in, cfg, req)
+
+	case "session-logout":
+		run, err := s.idpRun(ctx, in.ID)
+		if err != nil {
+			s.fail(w, r, http.StatusInternalServerError, "The IdP is misconfigured.", err)
+			return
+		}
+		s.startIdPLogout(w, r, run, r.FormValue("session_id"))
+
+	case "session-delete":
+		if err := s.Store.DeleteSession(ctx, r.FormValue("session_id"), in.ID); err != nil {
+			s.fail(w, r, http.StatusInternalServerError, "Cannot delete the session.", err)
+			return
+		}
+		flash(w, r, in, "Session deleted, without logging out of its service providers.", "sessions")
 
 	default:
 		http.NotFound(w, r)

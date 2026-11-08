@@ -4,9 +4,10 @@
 // the browser, so that the messages people paste into the inspector page
 // are decoded there and never reach the server.
 //
-// It defines one global function, samlInspect(input string) string, which
-// returns the JSON of an inspect.Result, and then dispatches a
-// "saml-inspect-ready" event on window.
+// It defines one global function, samlInspect(input, keys string) string,
+// which returns the JSON of an inspect.Result, and then dispatches a
+// "saml-inspect-ready" event on window. keys, which may be empty, are the
+// certificates (PEM, base64 DER or metadata) to check signatures with.
 package main
 
 import (
@@ -19,10 +20,14 @@ import (
 
 func main() {
 	js.Global().Set("samlInspect", js.FuncOf(func(_ js.Value, args []js.Value) any {
-		if len(args) != 1 || args[0].Type() != js.TypeString {
-			return `{"error":"samlInspect takes one string"}`
+		if len(args) < 1 || args[0].Type() != js.TypeString {
+			return `{"error":"samlInspect takes the message, and optionally certificates, as strings"}`
 		}
-		b, err := json.Marshal(inspect.Parse(args[0].String(), time.Now()))
+		keys := ""
+		if len(args) > 1 && args[1].Type() == js.TypeString {
+			keys = args[1].String()
+		}
+		b, err := json.Marshal(inspect.ParseWithKeys(args[0].String(), keys, time.Now()))
 		if err != nil {
 			return `{"error":"cannot encode the result"}`
 		}

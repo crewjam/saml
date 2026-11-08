@@ -11,10 +11,11 @@ import (
 	"github.com/beevik/etree"
 
 	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/tools/gosaml/inspect"
 	"github.com/crewjam/saml/tools/gosaml/store"
 	"github.com/crewjam/saml/x/samlsp"
+	"github.com/crewjam/saml/x/samlsp/artifact"
 	"github.com/crewjam/saml/x/samlsp/pending"
+	"github.com/crewjam/saml/x/samlsp/slo"
 )
 
 // SPConfig is what a visitor configures about a test SP.
@@ -45,6 +46,19 @@ type SPConfig struct {
 	// default, for IdPs that need it.
 	AllowSHA1        bool
 	AllowUnsignedCBC bool
+
+	// ResponseBinding is how the SP asks the IdP to send its Response:
+	// "" (HTTP-POST) or "artifact" (HTTP-Artifact, which the SP resolves
+	// at the IdP's ArtifactResolutionService).
+	ResponseBinding string
+
+	// BackChannelLogout advertises a SOAP SingleLogoutService, so that
+	// the IdP can log users out server to server.
+	BackChannelLogout bool
+
+	// ArtifactForm sends artifacts to the IdP with a form the browser
+	// posts, instead of a redirect.
+	ArtifactForm bool
 }
 
 func decodeSPConfig(raw json.RawMessage) (*SPConfig, error) {
@@ -93,6 +107,9 @@ func (s *Server) samlSP(in *store.Instance, cfg *SPConfig) (*samlsp.Config, erro
 			if cfg.AllowUnsignedCBC {
 				sp.RequireSignedResponseForCBC = false
 			}
+			// Only for local development, where this server itself is
+			// served over http; in production it is https.
+			sp.AllowInsecureSOAPEndpoints = strings.HasPrefix(s.BaseURL, "http://")
 		}),
 	}
 	if cfg.PublishEncryptionKey {
@@ -108,6 +125,14 @@ func (s *Server) samlSP(in *store.Instance, cfg *SPConfig) (*samlsp.Config, erro
 		format = saml.NameIDFormat(cfg.NameIDFormat)
 	}
 	opts = append(opts, samlsp.WithNameIDFormat(format))
+	opts = append(opts,
+		samlsp.WithHTTPClient(s.soap),
+		artifact.ResolutionService(s.BaseURL+"/sp/"+in.ID+"/artifact", 1))
+	var sloOpts []slo.EndpointOption
+	if cfg.BackChannelLogout {
+		sloOpts = append(sloOpts, slo.BackChannel)
+	}
+	opts = append(opts, slo.Endpoint(s.BaseURL+"/sp/"+in.ID+"/slo", sloOpts...))
 	return samlsp.New(s.spEntityID(in.ID), idp, opts...)
 }
 
@@ -165,6 +190,15 @@ func (s *Server) spLogin(w http.ResponseWriter, r *http.Request) {
 		opts = append(opts, samlsp.WithBinding(saml.HTTPPostBinding))
 	case "simplesign":
 		opts = append(opts, samlsp.WithBinding(saml.HTTPPostSimpleSignBinding))
+	case "artifact":
+		opts = append(opts, samlsp.WithCustomBinding(s.spArtifactBinding(in, cfg, c)))
+	}
+	responseBinding := cfg.ResponseBinding
+	if b := r.Form.Get("response_binding"); b != "" {
+		responseBinding = b
+	}
+	if responseBinding == "artifact" {
+		opts = append(opts, samlsp.WithResponseBinding(saml.HTTPArtifactBinding))
 	}
 	if r.Form.Get("force_authn") != "" {
 		opts = append(opts, samlsp.ForceAuthn)
@@ -194,17 +228,10 @@ func (s *Server) spLogin(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, http.StatusInternalServerError, "Cannot remember the login.", err)
 		return
 	}
-	value := msg.FormFields().Get("SAMLRequest")
-	if u := msg.RedirectURL(); u != nil && value == "" {
-		value = u.Query().Get("SAMLRequest")
-	}
-	xml := ""
-	if b, err := inspect.DecodeBase64Message(value); err == nil {
-		xml = inspect.Pretty(b)
-	}
 	s.logEvent(ctx, &store.Event{InstanceID: in.ID, Direction: "out", OK: true,
 		Title:  "AuthnRequest to " + msg.Destination,
-		Detail: "Binding: " + shortURN(msg.Binding) + "\nID: " + msg.ID + "\nRelayState: " + msg.RelayState, XML: xml})
+		Detail: "Binding: " + shortURN(msg.Binding) + "\nID: " + msg.ID + "\nRelayState: " + msg.RelayState,
+		XML:    spMessageXML(msg, "SAMLRequest")})
 	msg.Write(w)
 }
 
@@ -220,6 +247,8 @@ type spResult struct {
 	AssertionXML string
 	RelayState   string
 	Unsolicited  bool
+	Artifact     string
+	SignedIn     bool
 }
 
 func (s *Server) spACS(w http.ResponseWriter, r *http.Request) {
@@ -246,11 +275,8 @@ func (s *Server) spACS(w http.ResponseWriter, r *http.Request) {
 			res.ManageURL = "/manage/" + in.Secret
 		}
 	}
-	if v := r.Form.Get("SAMLResponse"); v != "" {
-		if b, err := inspect.DecodeBase64Message(v); err == nil {
-			res.ResponseXML = inspect.Pretty(b)
-		}
-	}
+	res.ResponseXML = formMessageXML(r, "SAMLResponse")
+	res.Artifact = r.Form.Get("SAMLart")
 
 	var opts []samlsp.ResponseOption
 	t, err := s.tracker(in, c)
@@ -274,7 +300,11 @@ func (s *Server) spACS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		res.Error = errorChain(err)
 		res.Hints = hints(err, cfg, res.Unsolicited)
-		s.logEvent(ctx, &store.Event{InstanceID: in.ID, Direction: "in", Title: "Response refused", Detail: res.Error, XML: res.ResponseXML})
+		detail := res.Error
+		if res.Artifact != "" {
+			detail = "Artifact: " + res.Artifact + "\n" + detail
+		}
+		s.logEvent(ctx, &store.Event{InstanceID: in.ID, Direction: "in", Title: "Response refused", Detail: detail, XML: res.ResponseXML})
 		s.renderStatus(w, r, http.StatusForbidden, "sp_result", cfg.Name, res)
 		return
 	}
@@ -288,6 +318,14 @@ func (s *Server) spACS(w http.ResponseWriter, r *http.Request) {
 	detail := "Subject: " + assertion.Subject + " (" + shortURN(assertion.NameID.Format) + ")\nIssuer: " + assertion.Issuer
 	if assertion.InResponseTo == "" {
 		detail += "\nUnsolicited (IdP-initiated)"
+	}
+	if res.Artifact != "" {
+		detail += "\nResolved artifact " + res.Artifact + " at the IdP"
+	}
+	if err := s.startSPSession(w, r, in, assertion); err != nil {
+		s.Logger.Error("cannot save the SP session", "err", err)
+	} else {
+		res.SignedIn = true
 	}
 	s.logEvent(ctx, &store.Event{InstanceID: in.ID, Direction: "in", OK: true, Title: "Logged in " + assertion.Subject, Detail: detail, XML: res.ResponseXML})
 	s.renderStatus(w, r, http.StatusOK, "sp_result", cfg.Name, res)
@@ -333,6 +371,10 @@ type spManagePage struct {
 	MetadataURL string
 	LoginURL    string
 	CertURL     string
+	SLOURL      string
+	ArtifactURL string
+	SessionURL  string
+	Sessions    []spSessionView
 	Events      []store.Event
 	Flash       string
 	Formats     []saml.NameIDFormat
@@ -358,7 +400,15 @@ func (s *Server) manageSP(w http.ResponseWriter, r *http.Request, in *store.Inst
 		MetadataURL: s.spEntityID(in.ID),
 		LoginURL:    s.BaseURL + "/sp/" + in.ID + "/login",
 		CertURL:     s.BaseURL + "/sp/" + in.ID + "/certificate.pem",
+		SLOURL:      s.BaseURL + "/sp/" + in.ID + "/slo",
+		ArtifactURL: s.BaseURL + "/sp/" + in.ID + "/artifact",
+		SessionURL:  s.BaseURL + "/sp/" + in.ID + "/",
 		Events:      events, Flash: flashMessage(r), Formats: nameIDFormats, Contexts: authnContexts,
+	}
+	p.Sessions, err = s.spSessionViews(r.Context(), in)
+	if err != nil {
+		s.fail(w, r, http.StatusInternalServerError, "Cannot read the sessions.", err)
+		return
 	}
 	for _, m := range s.myInstances(r) {
 		if m.Kind == store.KindIdP {
@@ -397,7 +447,10 @@ func (s *Server) spAction(w http.ResponseWriter, r *http.Request, in *store.Inst
 		cfg.AllowUnsolicited = r.FormValue("allow_unsolicited") != ""
 		cfg.AllowSHA1 = r.FormValue("allow_sha1") != ""
 		cfg.AllowUnsignedCBC = r.FormValue("allow_unsigned_cbc") != ""
-		cfg.Binding = oneOf(r.FormValue("binding"), "", "redirect", "post", "simplesign")
+		cfg.BackChannelLogout = r.FormValue("back_channel") != ""
+		cfg.ArtifactForm = r.FormValue("artifact_form") != ""
+		cfg.ResponseBinding = oneOf(r.FormValue("response_binding"), "", "artifact")
+		cfg.Binding = oneOf(r.FormValue("binding"), "", "redirect", "post", "simplesign", "artifact")
 		cfg.NameIDFormat = ""
 		for _, f := range nameIDFormats {
 			if string(f) == r.FormValue("nameid_format") {
@@ -430,6 +483,14 @@ func (s *Server) spAction(w http.ResponseWriter, r *http.Request, in *store.Inst
 		}
 		cfg.IdPMetadata, cfg.IdPMetadataSource, cfg.IdPEntityID = string(data), source, md.EntityID
 		save("Identity provider "+md.EntityID+" saved.", "idp")
+
+	case "session-logout", "session-local-logout":
+		sess, err := s.loadSPSession(ctx, in, r.FormValue("session_id"))
+		if err != nil {
+			flash(w, r, in, "That session has ended.", "sessions")
+			return
+		}
+		s.startSPLogout(w, r, in, cfg, sess, action == "session-local-logout")
 
 	default:
 		http.NotFound(w, r)

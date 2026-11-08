@@ -1,0 +1,30 @@
+{{define "content"}}{{with .Data}}
+<section class="card narrow">
+  <p class="eyebrow"><span class="badge sp">SP</span> {{.Name}}</p>
+  {{with .Session}}
+  <h1 class="result ok">Logged in as <code>{{.Subject}}</code></h1>
+  <table class="kv">
+    <tr><th>NameID</th><td><code class="wrap">{{.NameID.Value}}</code> <span class="meta">{{short .NameID.Format}}</span></td></tr>
+    <tr><th>Identity provider</th><td><code class="wrap">{{.Issuer}}</code></td></tr>
+    <tr><th>Authenticated</th><td>{{since .AuthnInstant}}</td></tr>
+    {{if .SessionIndexes}}<tr><th>Session index</th><td><code class="wrap">{{join .SessionIndexes ", "}}</code></td></tr>{{end}}
+    <tr><th>Session ends</th><td>in {{until .ExpiresAt}}</td></tr>
+  </table>
+  {{if .Attributes}}
+  <details><summary>{{len .Attributes}} attributes</summary>
+    <table class="kv">{{range .Attributes}}<tr><th>{{if .FriendlyName}}{{.FriendlyName}}{{else}}{{.Name}}{{end}}</th><td>{{range .Values}}<code class="wrap">{{.}}</code> {{end}}</td></tr>{{end}}</table>
+  </details>
+  {{end}}
+  <div class="row">
+    <form method="post" action="/sp/{{$.Data.InstanceID}}/logout"><button>Log out everywhere</button></form>
+    <form method="post" action="/sp/{{$.Data.InstanceID}}/logout"><input type="hidden" name="mode" value="local"><button class="secondary">Log out of this SP only</button></form>
+  </div>
+  <p class="hint">"Everywhere" is single logout: the SP sends a LogoutRequest to the IdP, which ends its session and logs you out of the other service providers you used it for.</p>
+  {{else}}
+  <h1>Not logged in</h1>
+  <p>This browser has no session at this service provider.</p>
+  <div class="row"><a class="button" href="/sp/{{.InstanceID}}/login">Log in with the IdP</a></div>
+  {{end}}
+  {{if .ManageURL}}<p><a href="{{.ManageURL}}">Manage this SP</a></p>{{end}}
+</section>
+{{end}}{{end}}

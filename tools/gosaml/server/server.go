@@ -49,6 +49,7 @@ type Server struct {
 	mux       *http.ServeMux
 	pages     map[string]*template.Template
 	fetch     *http.Client
+	soap      *http.Client
 	cookieKey []byte
 	static    *staticFiles
 }
@@ -76,6 +77,7 @@ func New(cfg Config) (*Server, error) {
 	}
 	s.pages = pages
 	s.static = newStaticFiles(web.Static)
+	s.soap = s.newBackChannelClient()
 	s.routes()
 	return s, nil
 }
@@ -99,6 +101,11 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /idp/{id}/sso", s.idpSSO)
 	m.HandleFunc("POST /idp/{id}/login", s.idpLogin)
 	m.HandleFunc("GET /idp/{id}/certificate.pem", s.certificate(store.KindIdP))
+	m.HandleFunc("GET /idp/{id}/slo", s.idpSLO)
+	m.HandleFunc("POST /idp/{id}/slo", s.idpSLO)
+	m.HandleFunc("POST /idp/{id}/artifact", s.idpArtifact)
+	m.HandleFunc("GET /idp/{id}/session", s.idpSessionPage)
+	m.HandleFunc("POST /idp/{id}/logout", s.idpLogoutButton)
 
 	m.HandleFunc("GET /sp/{id}/metadata", s.spMetadata)
 	m.HandleFunc("GET /sp/{id}/login", s.spLogin)
@@ -106,6 +113,11 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /sp/{id}/acs", s.spACS)
 	m.HandleFunc("POST /sp/{id}/acs", s.spACS)
 	m.HandleFunc("GET /sp/{id}/certificate.pem", s.certificate(store.KindSP))
+	m.HandleFunc("GET /sp/{id}/{$}", s.spSessionPage)
+	m.HandleFunc("POST /sp/{id}/logout", s.spLogoutButton)
+	m.HandleFunc("GET /sp/{id}/slo", s.spSLO)
+	m.HandleFunc("POST /sp/{id}/slo", s.spSLO)
+	m.HandleFunc("POST /sp/{id}/artifact", s.spArtifact)
 }
 
 type ctxKey int
@@ -157,6 +169,15 @@ var funcs = template.FuncMap{
 	"short": shortURN,
 	"dur":   roundDuration,
 	"kv":    func(k, v string) KV { return KV{k, v} },
+	"oks": func(results []logoutResult) int {
+		n := 0
+		for _, r := range results {
+			if r.OK {
+				n++
+			}
+		}
+		return n
+	},
 }
 
 // KV is a label and a value, for the "copy" template.

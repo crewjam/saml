@@ -1,0 +1,19 @@
+{{define "content"}}{{with .Data}}
+<section class="card narrow">
+  <p class="eyebrow"><span class="badge idp">IdP</span> {{.Name}}</p>
+  {{with .Session}}
+  <h1>Logged in as {{.Username}}</h1>
+  <table class="kv">
+    <tr><th>Authenticated</th><td>{{since .AuthnInstant}}, <code>{{short (print .AuthnContext)}}</code></td></tr>
+    <tr><th>Session index</th><td><code>{{.SessionIndex}}</code></td></tr>
+  </table>
+  <h2>Service providers in this session</h2>
+  {{template "participants" .Participants}}
+  <form method="post" action="/idp/{{$.Data.InstanceID}}/logout"><button>Log out of all of them</button></form>
+  <p class="hint">IdP-initiated single logout: the IdP ends this session and sends each service provider a LogoutRequest.</p>
+  {{else}}
+  <h1>No session</h1>
+  <p>This browser is not logged in to this IdP.{{if not .Remember}} This IdP is set not to remember logins.{{end}}</p>
+  {{end}}
+</section>
+{{end}}{{end}}

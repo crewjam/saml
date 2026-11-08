@@ -49,8 +49,19 @@ type Result struct {
 	// Messages are the SAML messages found: usually one.
 	Messages []*Message `json:"messages"`
 
+	// Detached is the binding's own signature (HTTP-Redirect or
+	// HTTP-POST-SimpleSign), if the input has one.
+	Detached *DetachedSignature `json:"detached,omitempty"`
+
+	// Keys are the certificates given to ParseWithKeys, and KeysError
+	// what was wrong with them.
+	Keys      []*Certificate `json:"keys,omitempty"`
+	KeysError string         `json:"keysError,omitempty"`
+
 	// Error, if not empty, says why nothing could be decoded.
 	Error string `json:"error,omitempty"`
+
+	detached *detached
 }
 
 // Message is one decoded SAML message, artifact or metadata document.
@@ -82,6 +93,9 @@ type Message struct {
 
 	// Error, if not empty, says why the message could not be read fully.
 	Error string `json:"error,omitempty"`
+
+	// raw is the message as received, for checking its signatures.
+	raw []byte
 }
 
 // Section is a titled group of facts about a message.
@@ -121,7 +135,7 @@ func Parse(input string, now time.Time) *Result {
 		u, err := url.Parse(input)
 		if err == nil && u.RawQuery != "" {
 			res.Input = "URL"
-			parseValues(res, u.Query(), true, now)
+			parseValues(res, u.Query(), u.RawQuery, true, now)
 			if len(res.Messages) > 0 {
 				return res
 			}
@@ -134,7 +148,7 @@ func Parse(input string, now time.Time) *Result {
 			// body is not. decode tries both, so the source matters only
 			// for the label.
 			res.Input = "query string or form body"
-			parseValues(res, v, strings.HasPrefix(input, "?"), now)
+			parseValues(res, v, strings.TrimPrefix(input, "?"), strings.HasPrefix(input, "?"), now)
 			if len(res.Messages) > 0 {
 				return res
 			}
@@ -184,7 +198,7 @@ func parseHTTPRequest(input string, now time.Time) *Result {
 		body = body[:MaxDecodedSize]
 	}
 	if req.URL.RawQuery != "" {
-		parseValues(res, req.URL.Query(), true, now)
+		parseValues(res, req.URL.Query(), req.URL.RawQuery, true, now)
 	}
 	if len(body) > 0 {
 		if bytes.HasPrefix(body, []byte("<")) {
@@ -192,7 +206,7 @@ func parseHTTPRequest(input string, now time.Time) *Result {
 			res.Binding = "SOAP"
 			res.Messages = append(res.Messages, parseXML(body, "", "xml", now))
 		} else if v, err := url.ParseQuery(string(body)); err == nil {
-			parseValues(res, v, false, now)
+			parseValues(res, v, string(body), false, now)
 		}
 	}
 	if len(res.Messages) == 0 && res.Error == "" {
@@ -204,7 +218,7 @@ func parseHTTPRequest(input string, now time.Time) *Result {
 // parseValues decodes the SAML parameters of a query string or form body.
 // redirect says whether they came from a URL, where the message is
 // deflated (HTTP-Redirect) and the signature, if any, is in the query.
-func parseValues(res *Result, v url.Values, redirect bool, now time.Time) {
+func parseValues(res *Result, v url.Values, rawQuery string, redirect bool, now time.Time) {
 	for _, p := range []string{"RelayState", "SigAlg", "Signature", "KeyInfo"} {
 		if val := v.Get(p); val != "" {
 			res.Params = append(res.Params, KV{p, val})
@@ -240,6 +254,14 @@ func parseValues(res *Result, v url.Values, redirect bool, now time.Time) {
 		}
 		if !redirect && msg.Encoding == "base64+deflate" {
 			msg.Warnings = append(msg.Warnings, "this message is deflated, which the HTTP-POST binding does not use (saml-bindings §3.5.4)")
+		}
+		if v.Get("SigAlg") != "" {
+			if redirect {
+				res.detached = detachedFromQuery(rawQuery)
+			} else if msg.raw != nil {
+				_, hasRelayState := v["RelayState"]
+				res.detached = detachedFromForm(p, msg.raw, v.Get("RelayState"), hasRelayState, v.Get("SigAlg"), v.Get("Signature"))
+			}
 		}
 		res.Messages = append(res.Messages, msg)
 	}
@@ -366,3 +388,5 @@ func parseArtifact(value string) *Message {
 	msg.Warnings = append(msg.Warnings, "an artifact is a reference: the message itself must be fetched from the issuer's ArtifactResolutionService with an ArtifactResolve request")
 	return msg
 }
+
+func urlUnescape(s string) (string, error) { return url.QueryUnescape(s) }

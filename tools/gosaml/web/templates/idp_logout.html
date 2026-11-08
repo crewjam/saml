@@ -1,0 +1,18 @@
+{{define "content"}}{{with .Data}}
+<section class="card narrow">
+  <p class="eyebrow"><span class="badge idp">IdP</span> {{.Name}}</p>
+  <h1 class="result {{if .Partial}}bad{{else}}ok{{end}}">{{if .Partial}}Partly logged out{{else}}Logged out{{end}}</h1>
+  <p class="lead">The IdP session{{if .Username}} of {{.Username}}{{end}} has ended. {{if .Results}}Logged out of {{oks .Results}} of {{len .Results}} service providers.{{else}}It had not been used to log in to any service provider.{{end}}</p>
+  {{if .Results}}
+  <table class="list">
+    <thead><tr><th>Service provider</th><th>How</th><th>Result</th></tr></thead>
+    <tbody>
+    {{range .Results}}
+      <tr><td><code class="wrap">{{.ServiceProvider}}</code></td><td>{{.How}}</td>
+        <td><span class="result-tag {{if .OK}}ok{{else}}bad{{end}}">{{if .OK}}logged out{{else}}failed{{end}}</span>{{if .Detail}}<br><span class="meta">{{.Detail}}</span>{{end}}</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{end}}
+</section>
+{{end}}{{end}}

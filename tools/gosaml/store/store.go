@@ -102,6 +102,23 @@ CREATE TABLE IF NOT EXISTS pending (
 	expires_at  INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS sessions (
+	id          TEXT PRIMARY KEY,
+	instance_id TEXT NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+	data        TEXT NOT NULL,
+	created_at  INTEGER NOT NULL,
+	expires_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sessions_instance ON sessions(instance_id, created_at);
+
+CREATE TABLE IF NOT EXISTS artifacts (
+	artifact    TEXT PRIMARY KEY,
+	instance_id TEXT NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+	recipient   TEXT NOT NULL,
+	xml         BLOB NOT NULL,
+	expires_at  INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS replay (
 	key        BLOB PRIMARY KEY,
 	expires_at INTEGER NOT NULL
@@ -255,14 +272,16 @@ func (s *Store) ClearEvents(ctx context.Context, instanceID string) error {
 	return err
 }
 
-// PutPending keeps data, such as an AuthnRequest waiting for the user to
+// PutPending keeps (or replaces) data, such as an AuthnRequest waiting for the user to
 // log in, under id until ttl has passed.
 func (s *Store) PutPending(ctx context.Context, id, instanceID string, data any, ttl time.Duration) error {
 	b, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO pending (id, instance_id, data, expires_at) VALUES (?, ?, ?, ?)`,
+	_, err = s.db.ExecContext(ctx, `INSERT INTO pending (id, instance_id, data, expires_at) VALUES (?, ?, ?, ?)
+		ON CONFLICT (id) DO UPDATE SET data = excluded.data, expires_at = excluded.expires_at
+		WHERE pending.instance_id = excluded.instance_id`,
 		id, instanceID, string(b), s.now().Add(ttl).Unix())
 	return err
 }
@@ -317,8 +336,121 @@ func (s *Store) Reap(ctx context.Context) (int64, error) {
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM pending WHERE expires_at <= ?`, now); err != nil {
 		return n, err
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM replay WHERE expires_at <= ?`, now); err != nil {
-		return n, err
+	for _, table := range []string{"replay", "sessions", "artifacts"} {
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM `+table+` WHERE expires_at <= ?`, now); err != nil {
+			return n, err
+		}
 	}
 	return n, nil
+}
+
+// Session is a user's login session at a test IdP or SP. Data is the
+// instance's own record of it, as JSON.
+type Session struct {
+	ID         string
+	InstanceID string
+	Data       json.RawMessage
+	CreatedAt  time.Time
+	ExpiresAt  time.Time
+}
+
+// MaxSessionsPerInstance is how many sessions are kept for each instance;
+// the oldest are dropped.
+const MaxSessionsPerInstance = 100
+
+// PutSession stores a session, replacing one with the same ID.
+func (s *Store) PutSession(ctx context.Context, sess *Session) error {
+	if sess.CreatedAt.IsZero() {
+		sess.CreatedAt = s.now()
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // a no-op after Commit
+	if _, err := tx.ExecContext(ctx, `INSERT INTO sessions (id, instance_id, data, created_at, expires_at) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (id) DO UPDATE SET data = excluded.data, expires_at = excluded.expires_at
+		WHERE sessions.instance_id = excluded.instance_id`,
+		sess.ID, sess.InstanceID, string(sess.Data), sess.CreatedAt.UnixMilli(), sess.ExpiresAt.Unix()); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE instance_id = ? AND id NOT IN
+		(SELECT id FROM sessions WHERE instance_id = ? ORDER BY created_at DESC LIMIT ?)`,
+		sess.InstanceID, sess.InstanceID, MaxSessionsPerInstance); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// GetSession returns the session with id at instanceID.
+func (s *Store) GetSession(ctx context.Context, id, instanceID string) (*Session, error) {
+	sess := Session{ID: id, InstanceID: instanceID}
+	var data string
+	var created, expires int64
+	err := s.db.QueryRowContext(ctx, `SELECT data, created_at, expires_at FROM sessions
+		WHERE id = ? AND instance_id = ? AND expires_at > ?`, id, instanceID, s.now().Unix()).Scan(&data, &created, &expires)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	sess.Data = json.RawMessage(data)
+	sess.CreatedAt = time.UnixMilli(created)
+	sess.ExpiresAt = time.Unix(expires, 0)
+	return &sess, nil
+}
+
+// Sessions returns an instance's sessions, newest first.
+func (s *Store) Sessions(ctx context.Context, instanceID string) ([]Session, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, data, created_at, expires_at FROM sessions
+		WHERE instance_id = ? AND expires_at > ? ORDER BY created_at DESC`, instanceID, s.now().Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck // read-only
+	var out []Session
+	for rows.Next() {
+		sess := Session{InstanceID: instanceID}
+		var data string
+		var created, expires int64
+		if err := rows.Scan(&sess.ID, &data, &created, &expires); err != nil {
+			return nil, err
+		}
+		sess.Data = json.RawMessage(data)
+		sess.CreatedAt = time.UnixMilli(created)
+		sess.ExpiresAt = time.Unix(expires, 0)
+		out = append(out, sess)
+	}
+	return out, rows.Err()
+}
+
+// DeleteSession deletes a session of an instance.
+func (s *Store) DeleteSession(ctx context.Context, id, instanceID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id = ? AND instance_id = ?`, id, instanceID)
+	return err
+}
+
+// SaveArtifact keeps a message until its artifact is resolved by
+// recipient, for the HTTP-Artifact binding.
+func (s *Store) SaveArtifact(ctx context.Context, instanceID, artifact, recipient string, xml []byte, expiresAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO artifacts (artifact, instance_id, recipient, xml, expires_at) VALUES (?, ?, ?, ?, ?)`,
+		artifact, instanceID, recipient, xml, expiresAt.Unix())
+	return err
+}
+
+// TakeArtifact returns the message kept under artifact for recipient, and
+// deletes it, so that it is given out once. It returns found false if
+// there is none, or if it is for another recipient, which is then kept.
+func (s *Store) TakeArtifact(ctx context.Context, instanceID, artifact, recipient string) (xml []byte, expiresAt time.Time, found bool, err error) {
+	var expires int64
+	err = s.db.QueryRowContext(ctx, `DELETE FROM artifacts WHERE artifact = ? AND instance_id = ? AND recipient = ?
+		RETURNING xml, expires_at`, artifact, instanceID, recipient).Scan(&xml, &expires)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, time.Time{}, false, nil
+	}
+	if err != nil {
+		return nil, time.Time{}, false, err
+	}
+	return xml, time.Unix(expires, 0), true, nil
 }

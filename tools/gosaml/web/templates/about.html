@@ -11,10 +11,11 @@
     <li>The management page of an instance is reachable by anyone who has its URL, and by no one else. Keep it to yourself.</li>
     <li>Metadata and protocol endpoints are public, as SAML needs them to be.</li>
     <li>The log of an instance holds the messages it exchanged, including the attributes of users who logged in through it. Do not log in with real accounts or personal data.</li>
+    <li>Sessions at the test IdPs and SPs are kept in the same temporary database, with a cookie in your browser, for single sign-on and single logout.</li>
     <li>The inspector decodes messages in your browser with WebAssembly. What you paste is not sent anywhere. If an IdP posts a Response to the inspector page itself, that request reaches the server, which puts it in the page and keeps nothing.</li>
   </ul>
 
   <h2>Limits</h2>
-  <p>An IdP can have 50 users and 50 service providers. Metadata is fetched only from public addresses, with a size limit. Single logout and the artifact binding are not offered yet.</p>
+  <p>An IdP can have 50 users and 50 service providers. Metadata is fetched only from public addresses, with a size limit. The test IdPs do not resolve AuthnRequests sent by artifact (their metadata does not offer it); Responses by artifact, and single logout through the browser or over SOAP, are supported.</p>
 </section>
 {{end}}

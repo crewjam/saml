@@ -29,3 +29,11 @@
   </ol>
 </section>
 {{end}}
+
+{{define "participants"}}
+{{if .}}
+<ul class="participants">
+{{range .}}<li><code class="wrap">{{.ServiceProviderID}}</code><br><span class="meta">NameID {{.NameID.Value}}{{if .SessionIndex}} · SessionIndex {{.SessionIndex}}{{end}}</span></li>{{end}}
+</ul>
+{{else}}<p class="empty">None yet.</p>{{end}}
+{{end}}

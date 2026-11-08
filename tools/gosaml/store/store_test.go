@@ -75,3 +75,55 @@ func TestStore(t *testing.T) {
 		t.Errorf("events of a reaped instance: %d", len(events))
 	}
 }
+
+func TestSessionsAndArtifacts(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close() //nolint:errcheck // test
+	now := time.Unix(1_800_000_000, 0)
+	s.now = func() time.Time { return now }
+	for _, id := range []string{"a", "b"} {
+		if err := s.CreateInstance(ctx, &Instance{ID: id, Secret: id, Kind: KindIdP, Config: []byte(`{}`), CreatedAt: now, ExpiresAt: now.Add(time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.PutSession(ctx, &Session{ID: "s1", InstanceID: "a", Data: []byte(`{"v":1}`), ExpiresAt: now.Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutSession(ctx, &Session{ID: "s1", InstanceID: "a", Data: []byte(`{"v":2}`), ExpiresAt: now.Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	// Another instance cannot overwrite or read it.
+	_ = s.PutSession(ctx, &Session{ID: "s1", InstanceID: "b", Data: []byte(`{"v":3}`), ExpiresAt: now.Add(time.Minute)})
+	if _, err := s.GetSession(ctx, "s1", "b"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("other instance: %v", err)
+	}
+	got, err := s.GetSession(ctx, "s1", "a")
+	if err != nil || string(got.Data) != `{"v":2}` {
+		t.Fatalf("%v %v", got, err)
+	}
+	if list, _ := s.Sessions(ctx, "a"); len(list) != 1 {
+		t.Errorf("sessions: %d", len(list))
+	}
+
+	if err := s.SaveArtifact(ctx, "a", "art", "sp", []byte("<x/>"), now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, found, _ := s.TakeArtifact(ctx, "a", "art", "other"); found {
+		t.Error("taken by another recipient")
+	}
+	if xml, _, found, err := s.TakeArtifact(ctx, "a", "art", "sp"); !found || err != nil || string(xml) != "<x/>" {
+		t.Errorf("take: %q %v %v", xml, found, err)
+	}
+	if _, _, found, _ := s.TakeArtifact(ctx, "a", "art", "sp"); found {
+		t.Error("taken twice")
+	}
+
+	now = now.Add(2 * time.Minute)
+	if _, err := s.GetSession(ctx, "s1", "a"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("expired session: %v", err)
+	}
+}

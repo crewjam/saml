@@ -62,6 +62,13 @@ type Signature struct {
 	Canonicalization string `json:"canonicalization"`
 	Transforms       string `json:"transforms,omitempty"`
 	HasCertificate   bool   `json:"hasCertificate"`
+
+	// Integrity is the check with the certificate in the signature's own
+	// KeyInfo: it shows whether the element is intact, not who signed
+	// it. Trust is the check with the certificates given to
+	// ParseWithKeys. Each is nil if it was not made.
+	Integrity *Check `json:"integrity,omitempty"`
+	Trust     *Check `json:"trust,omitempty"`
 }
 
 // parseXML describes an XML document.
@@ -80,6 +87,7 @@ func parseXML(doc []byte, param, encoding string, now time.Time) *Message {
 		return msg
 	}
 	msg.XML = Pretty(doc)
+	msg.raw = doc
 
 	if root.Tag == "Envelope" && root.NamespaceURI() == nsSOAP11 {
 		msg.Sections = append(msg.Sections, Section{Title: "SOAP envelope", Rows: []KV{{"Namespace", nsSOAP11}}})
@@ -813,17 +821,9 @@ func (d *describer) entitiesDescriptor(v *saml.EntitiesDescriptor, prefix string
 
 // signatures describes every ds:Signature in the document.
 func (d *describer) signatures(root *etree.Element) {
-	var walk func(el *etree.Element)
-	walk = func(el *etree.Element) {
-		for _, c := range el.ChildElements() {
-			if c.Tag == "Signature" && c.NamespaceURI() == nsDSig {
-				d.signature(el, c)
-				continue
-			}
-			walk(c)
-		}
+	for _, pair := range signedElements(root) {
+		d.signature(pair[0], pair[1])
 	}
-	walk(root)
 }
 
 func (d *describer) signature(parent, sig *etree.Element) {

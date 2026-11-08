@@ -45,6 +45,12 @@ func newHarness(t *testing.T) *harness {
 	return &harness{t: t, base: ts.URL, client: &http.Client{Jar: jar}}
 }
 
+// newBrowser returns a harness for the same server with its own cookies.
+func (h *harness) newBrowser() *harness {
+	jar, _ := cookiejar.New(nil)
+	return &harness{t: h.t, base: h.base, client: &http.Client{Jar: jar}}
+}
+
 func (h *harness) do(method, path string, form url.Values) (*http.Response, string) {
 	h.t.Helper()
 	target := path
@@ -158,19 +164,27 @@ func TestEndToEnd(t *testing.T) {
 	}
 	mustContain(t, body, "Login failed", "already completed")
 
-	// An error Response.
-	_, body = h.do(http.MethodPost, "/sp/"+spID+"/login", nil)
+	// The IdP session answers the next login without asking (single
+	// sign-on), and so an IsPassive one.
+	_, body = h.do(http.MethodPost, "/sp/"+spID+"/login", url.Values{"is_passive": {"on"}})
+	_, body = h.submitAutoForm(body)
+	mustContain(t, body, "Logged in as", "alice@example.com")
+
+	// A browser without an IdP session gets NoPassive.
+	other := h.newBrowser()
+	_, body = other.do(http.MethodPost, "/sp/"+spID+"/login", url.Values{"is_passive": {"on"}})
+	_, body = other.submitAutoForm(body)
+	mustContain(t, body, "Login failed", "NoPassive")
+
+	// An error Response. ForceAuthn shows the login page despite the
+	// session.
+	_, body = h.do(http.MethodPost, "/sp/"+spID+"/login", url.Values{"force_authn": {"on"}})
 	_, body = h.loginAt(idpID, body, url.Values{"action": {"error"}, "error_status": {"AuthnFailed"}})
 	_, body = h.submitAutoForm(body)
 	mustContain(t, body, "Login failed", "AuthnFailed")
 
-	// IsPassive: the IdP keeps no sessions, so it answers NoPassive.
-	_, body = h.do(http.MethodPost, "/sp/"+spID+"/login", url.Values{"is_passive": {"on"}})
-	_, body = h.submitAutoForm(body)
-	mustContain(t, body, "Login failed", "NoPassive")
-
 	// A transient NameID, over HTTP-POST.
-	_, body = h.do(http.MethodPost, "/sp/"+spID+"/login", url.Values{"binding": {"post"}})
+	_, body = h.do(http.MethodPost, "/sp/"+spID+"/login", url.Values{"binding": {"post"}, "force_authn": {"on"}})
 	_, body = h.submitAutoForm(body) // the AuthnRequest form
 	_, body = h.loginAt(idpID, body, url.Values{"user": {"bob"}, "action": {"login"}, "nameid_format": {"urn:oasis:names:tc:SAML:2.0:nameid-format:transient"}})
 	_, body = h.submitAutoForm(body)
@@ -194,13 +208,13 @@ func TestEndToEnd(t *testing.T) {
 		"attributes": {"role (Role) = a\nrole = b\n"},
 	})
 	mustContain(t, body, "User dave saved")
-	_, body = h.do(http.MethodPost, "/sp/"+spID+"/login", nil)
+	_, body = h.do(http.MethodPost, "/sp/"+spID+"/login", url.Values{"force_authn": {"on"}})
 	_, body = h.loginAt(idpID, body, url.Values{"user": {"dave"}, "action": {"login"}})
 	_, body = h.submitAutoForm(body)
 	mustContain(t, body, "dave-1", "Role")
 
 	// Another browser sees neither the instances nor the manage link.
-	other := &harness{t: t, base: h.base, client: &http.Client{}}
+	other = h.newBrowser()
 	_, body = other.do(http.MethodGet, "/", nil)
 	if strings.Contains(body, idpSecret) {
 		t.Error("another browser sees the IdP")

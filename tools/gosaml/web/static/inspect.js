@@ -5,6 +5,7 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const input = $("input");
+  const keys = $("keys");
   const output = $("output");
   const status = $("status");
   let ready = false;
@@ -57,10 +58,12 @@
       card.append(el("div", { class: "sections" }, ...m.sections.map((s) => section(s.title, s.rows))));
     }
     if (m.signatures && m.signatures.length) {
-      card.append(el("h3", null, "Signatures (not verified)"));
+      card.append(el("h3", null, "Signatures"));
       const grid = el("div", { class: "sections" });
       for (const s of m.signatures) {
         grid.append(section("Signature of " + s.signs, [
+          checkRow("Trusted certificate", s.trust),
+          checkRow("Own KeyInfo certificate", s.integrity),
           { k: "Reference", v: s.referenceURI + (s.referenceMatches ? " ✓ matches" : " ✕ does not match the element") },
           { k: "Signature method", v: s.signatureMethod },
           { k: "Digest method", v: s.digestMethod },
@@ -98,6 +101,12 @@
     return card;
   }
 
+  // checkRow describes a signature check, or nothing if it was not made.
+  function checkRow(label, c) {
+    if (!c) return { k: label, v: "" };
+    return { k: label, v: c.ok ? "✓ valid, signed by " + c.by : "✕ " + c.error };
+  }
+
   function render(res) {
     output.replaceChildren();
     if (res.error) {
@@ -107,7 +116,20 @@
     const rows = [{ k: "Input", v: res.input }];
     if (res.binding) rows.push({ k: "Binding", v: res.binding });
     for (const p of res.params || []) rows.push(p);
-    output.append(el("section", { class: "card" }, el("div", { class: "sections" }, section("Decoded from", rows))));
+    const top = el("div", { class: "sections" }, section("Decoded from", rows));
+    if (res.detached) {
+      top.append(section("Binding signature (" + res.detached.binding + ")", [
+        { k: "SigAlg", v: res.detached.sigAlg },
+        res.detached.trust ? checkRow("Trusted certificate", res.detached.trust)
+          : { k: "Checked", v: "not yet: paste the signer's certificate to check it" },
+      ]));
+    }
+    if (res.keys || res.keysError) {
+      const krows = (res.keys || []).map((c) => ({ k: "Certificate", v: c.subject + (c.expired ? " (expired)" : "") }));
+      if (res.keysError) krows.push({ k: "Problem", v: res.keysError });
+      top.append(section("Checking with", krows));
+    }
+    output.append(el("section", { class: "card" }, top));
     for (const m of res.messages) output.append(renderMessage(m));
   }
 
@@ -122,7 +144,7 @@
     const t0 = performance.now();
     let res;
     try {
-      res = JSON.parse(window.samlInspect(text));
+      res = JSON.parse(window.samlInspect(text, keys.value));
     } catch (err) {
       res = { error: "The decoder failed: " + err };
     }
@@ -139,29 +161,35 @@
       const posted = JSON.parse($("posted").textContent || '""');
       if (posted) return posted;
     } catch (_) { /* nothing posted */ }
-    const hash = location.hash.slice(1);
-    if (hash.startsWith("m=")) {
-      try { return decodeURIComponent(hash.slice(2)); } catch (_) { /* bad fragment */ }
+    const hash = new URLSearchParams(location.hash.slice(1));
+    if (hash.get("k")) {
+      keys.value = hash.get("k");
+      $("keys-box").open = true;
     }
+    if (hash.get("m")) return hash.get("m");
     if (/[?&](SAMLRequest|SAMLResponse|SAMLart)=/.test(location.search)) return location.href;
     return "";
   }
 
   let timer;
-  input.addEventListener("input", () => {
-    clearTimeout(timer);
-    timer = setTimeout(decode, 250);
-  });
+  for (const box of [input, keys]) {
+    box.addEventListener("input", () => {
+      clearTimeout(timer);
+      timer = setTimeout(decode, 250);
+    });
+  }
   $("decode").addEventListener("click", decode);
   $("clear").addEventListener("click", () => {
     input.value = "";
+    keys.value = "";
     history.replaceState(null, "", location.pathname);
     decode();
     input.focus();
   });
   $("share").addEventListener("click", (e) => {
     // The fragment is not sent to the server when the link is opened.
-    const url = location.origin + location.pathname + "#m=" + encodeURIComponent(input.value);
+    let url = location.origin + location.pathname + "#m=" + encodeURIComponent(input.value);
+    if (keys.value.trim()) url += "&k=" + encodeURIComponent(keys.value);
     history.replaceState(null, "", url);
     navigator.clipboard.writeText(url).then(() => {
       e.target.textContent = "Copied";

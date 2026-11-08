@@ -17,7 +17,9 @@
   <p class="hint">Most IdPs can read the metadata URL. Others ask for the entity ID (audience) and ACS URL separately.</p>
   {{template "copy" (kv "Metadata URL" .MetadataURL)}}
   {{template "copy" (kv "Entity ID (Audience)" .EntityID)}}
-  {{template "copy" (kv "ACS URL (HTTP-POST)" .ACSURL)}}
+  {{template "copy" (kv "ACS URL (HTTP-POST and HTTP-Artifact)" .ACSURL)}}
+  {{template "copy" (kv "Single logout URL (HTTP-Redirect and HTTP-POST)" .SLOURL)}}
+  {{template "copy" (kv "Artifact resolution URL (SOAP, index 1)" .ArtifactURL)}}
   <div class="field"><span class="label">Signing and encryption certificate</span><a href="{{.CertURL}}">Download PEM</a></div>
 </section>
 
@@ -66,6 +68,14 @@
             <option value="redirect">HTTP-Redirect</option>
             <option value="post">HTTP-POST</option>
             <option value="simplesign">HTTP-POST-SimpleSign</option>
+            <option value="artifact">HTTP-Artifact (the IdP must resolve it)</option>
+          </select>
+        </label>
+        <label>Ask for the Response by
+          <select name="response_binding">
+            <option value="">As in settings</option>
+            <option value="post">HTTP-POST</option>
+            <option value="artifact">HTTP-Artifact: the SP fetches it from the IdP, server to server</option>
           </select>
         </label>
         <label>Requested authentication context <span class="meta">exact; the assertion must match it</span>
@@ -79,9 +89,24 @@
     </details>
     <div><button>Log in with the IdP</button></div>
   </form>
-  <p class="hint">Anyone can start a login with this SP's settings from this link:</p>
+  <p class="hint">Anyone can start a login with this SP's settings from this link, and see their session at the second:</p>
   {{template "copy" (kv "Login URL" .LoginURL)}}
+  {{template "copy" (kv "Session page" .SessionURL)}}
   {{else}}<p class="empty">Set the identity provider first.</p>{{end}}
+</section>
+
+<section class="card" id="sessions">
+  <h2>Sessions</h2>
+  <p class="hint">Each successful login starts a session at this SP. Single logout ends it, whether started here or by the IdP.</p>
+  {{range .Sessions}}
+  <div class="session">
+    <strong>{{.Subject}}</strong> <span class="meta">from {{.Issuer}} · logged in {{since .CreatedAt}} · ends in {{until .ExpiresAt}}{{if .SessionIndexes}} · SessionIndex {{join .SessionIndexes ", "}}{{end}}</span>
+    <div class="row">
+      <form method="post" action="/manage/{{$.Data.Secret}}/session-logout"><input type="hidden" name="session_id" value="{{.ID}}"><button class="small">Single logout</button></form>
+      <form method="post" action="/manage/{{$.Data.Secret}}/session-local-logout"><input type="hidden" name="session_id" value="{{.ID}}"><button class="small secondary">End locally</button></form>
+    </div>
+  </div>
+  {{else}}<p class="empty">No sessions.</p>{{end}}
 </section>
 
 <section class="card" id="settings">
@@ -97,8 +122,17 @@
         <option value="redirect" {{if eq .Config.Binding "redirect"}}selected{{end}}>HTTP-Redirect</option>
         <option value="post" {{if eq .Config.Binding "post"}}selected{{end}}>HTTP-POST</option>
         <option value="simplesign" {{if eq .Config.Binding "simplesign"}}selected{{end}}>HTTP-POST-SimpleSign</option>
+        <option value="artifact" {{if eq .Config.Binding "artifact"}}selected{{end}}>HTTP-Artifact (the IdP must resolve it)</option>
       </select>
     </label>
+    <label>Ask for the Response by
+      <select name="response_binding">
+        <option value="" {{if eq .Config.ResponseBinding ""}}selected{{end}}>HTTP-POST</option>
+        <option value="artifact" {{if eq .Config.ResponseBinding "artifact"}}selected{{end}}>HTTP-Artifact</option>
+      </select>
+    </label>
+    <label class="check"><input type="checkbox" name="back_channel" {{if .Config.BackChannelLogout}}checked{{end}}> Back-channel logout: offer a SOAP single logout service</label>
+    <label class="check"><input type="checkbox" name="artifact_form" {{if .Config.ArtifactForm}}checked{{end}}> Send artifacts with a form the browser posts, instead of a redirect</label>
     <label>NameID format to ask for
       <select name="nameid_format">
         <option value="" {{if eq .Config.NameIDFormat ""}}selected{{end}}>Unspecified: let the IdP choose</option>

@@ -213,3 +213,13 @@ pre.detail { white-space: pre-wrap; word-break: break-word; }
   .list td.actions { text-align: left; }
   .sections { grid-template-columns: 1fr; }
 }
+
+.participants { list-style: none; padding: 0; margin: 0 0 12px; }
+.participants li { padding: 6px 0; border-bottom: 1px solid var(--border); }
+.result-tag { font-weight: 600; font-size: 13px; }
+.result-tag.ok { color: var(--ok); }
+.result-tag.bad { color: var(--bad); }
+.session { border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; }
+.session .row { margin-top: 8px; }
+.keys-box { margin-top: 10px; }
+.keys-box textarea { margin-top: 4px; }

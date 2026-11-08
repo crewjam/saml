@@ -18,6 +18,8 @@
   {{template "copy" (kv "Metadata URL" .MetadataURL)}}
   {{template "copy" (kv "Entity ID (Issuer)" .EntityID)}}
   {{template "copy" (kv "SSO URL (HTTP-Redirect and HTTP-POST)" .SSOURL)}}
+  {{template "copy" (kv "Single logout URL (HTTP-Redirect and HTTP-POST)" .SLOURL)}}
+  {{template "copy" (kv "Artifact resolution URL (SOAP, index 1)" .ArtifactURL)}}
   <div class="field"><span class="label">Signing certificate</span><a href="{{.CertURL}}">Download PEM</a></div>
 </section>
 
@@ -86,6 +88,22 @@
   </details>
 </section>
 
+<section class="card" id="sessions">
+  <h2>Sessions</h2>
+  <p class="hint">Each login starts an IdP session, which later logins from the same browser reuse (single sign-on){{if not .Config.RememberSessions}}; this IdP is set not to remember logins{{end}}. Logging out of one of its service providers, or here, logs the user out of all of them. Users see their own session at <a href="/idp/{{.Instance.ID}}/session">/idp/{{.Instance.ID}}/session</a>.</p>
+  {{range .Sessions}}
+  <div class="session">
+    <strong>{{.Username}}</strong> <span class="meta">logged in {{since .AuthnInstant}} · SessionIndex {{.SessionIndex}} · ends in {{until .ExpiresAt}}</span>
+    {{template "participants" .Participants}}
+    <div class="row">
+      <form method="post" action="/manage/{{$.Data.Secret}}/session-logout"><input type="hidden" name="session_id" value="{{.ID}}"><button class="small">IdP-initiated logout</button></form>
+      <form method="post" action="/manage/{{$.Data.Secret}}/session-delete"><input type="hidden" name="session_id" value="{{.ID}}"><button class="small secondary danger">Delete without logout</button></form>
+    </div>
+  </div>
+  {{else}}<p class="empty">No sessions.</p>{{end}}
+  <p class="hint">IdP-initiated logout goes through this browser, which visits each service provider in turn.</p>
+</section>
+
 <section class="card" id="initiate">
   <h2>IdP-initiated login</h2>
   <p class="hint">Send an unsolicited Response to a service provider, as an IdP's application portal does.</p>
@@ -105,6 +123,9 @@
     <label>Name <input name="name" value="{{.Config.Name}}" maxlength="100"></label>
     <label class="check"><input type="checkbox" name="auto_fetch" {{if .Config.AutoFetchSPMetadata}}checked{{end}}> Accept unregistered SPs whose entity ID is a metadata URL</label>
     <label class="check"><input type="checkbox" name="require_signed" {{if .Config.RequireSignedRequests}}checked{{end}}> Require signed AuthnRequests</label>
+    <label class="check"><input type="checkbox" name="remember_sessions" {{if .Config.RememberSessions}}checked{{end}}> Remember logins: answer later AuthnRequests from the same browser without asking (single sign-on)</label>
+    <label class="check"><input type="checkbox" name="back_channel" {{if .Config.BackChannelLogout}}checked{{end}}> Back-channel logout: offer a SOAP single logout service, and log out SPs that offer one server to server</label>
+    <label class="check"><input type="checkbox" name="artifact_form" {{if .Config.ArtifactForm}}checked{{end}}> Send artifacts with a form the browser posts, instead of a redirect</label>
     <label>Signature algorithm
       <select name="signature_method">
         <option value="sha256" {{if eq .Config.SignatureMethod "sha256"}}selected{{end}}>RSA-SHA-256</option>
