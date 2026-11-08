@@ -94,12 +94,17 @@ users of the library. `go.mod` replaces `github.com/crewjam/saml` with
 ```sh
 ./deploy.sh run      # build for this machine and serve http://localhost:8080
 ./deploy.sh build    # just build, into build/gosaml
+./deploy.sh dist     # vet, test, cross-compile for linux/amd64, no deploy
 ./deploy.sh          # vet, test, cross-compile for linux/amd64, fly deploy
 ```
 
 `deploy.sh` compiles the inspector to WebAssembly first, copying the
 matching `wasm_exec.js` from the Go toolchain, so that both are embedded in
 the server binary. The Docker image is only that binary on distroless.
+
+The footer shows the version (`git describe --tags --always --dirty`, set
+by `deploy.sh` with `-ldflags -X`) and the commit, which `go build` stamps
+into the binary itself. A binary built without `deploy.sh` says `dev`.
 
 First deploy:
 
@@ -109,6 +114,40 @@ fly volumes create gosaml_data --region iad --size 1 --yes
 fly certs add gosaml.dev    # then set DNS as `fly certs show gosaml.dev` says
 ./deploy.sh
 ```
+
+### Deploying from GitHub Actions
+
+Each push to `main` is deployed by
+`.github/workflows/gosamldev-production.yml`. It can also be run by hand
+from the Actions tab (main only). A build job with no secrets vets, tests
+and builds (`./deploy.sh dist`); a deploy job then runs `flyctl deploy` on
+that binary. The deploy job is the only place the Fly token is available.
+
+One-time setup, by a repository admin:
+
+1. Make a deploy token for this one app, not an organization token:
+
+   ```sh
+   fly tokens create deploy --app gosaml --name github-actions --expiry 8760h
+   ```
+
+   It prints `FlyV1 fm2_…`; copy the whole line, `FlyV1 ` included. Do not
+   save it anywhere else.
+2. In GitHub, *Settings → Environments → New environment*, name it
+   `gosamldev-production` (the workflow names it; it must match).
+3. Under *Deployment branches and tags*, choose *Selected branches and
+   tags* and add the rule `main`. Leave *Allow administrators to bypass*
+   unchecked if offered.
+4. Under *Environment secrets*, *Add environment secret*: name
+   `FLY_API_TOKEN`, value the token. Make it an environment secret, not a
+   repository or organization secret, or the branch rule does not protect
+   it.
+5. Optionally, under *Required reviewers*, add people who must approve
+   each deploy.
+
+To rotate the token, make a new one, replace the secret, then revoke the
+old one: `fly tokens list --app gosaml`, then `fly tokens revoke <id>`.
+Revoke it right away if it may have leaked.
 
 Environment variables: `GOSAML_BASE_URL` (default
 `http://localhost:8080`), `GOSAML_ADDR` (`:8080`), `GOSAML_DB` (a file in

@@ -186,6 +186,9 @@ type page struct {
 	Nav    string
 	NavIdP string
 	NavSP  string
+
+	// Build is the version and commit of this binary, for the footer.
+	Build Build
 }
 
 // navItems maps a template to the navigation item it is under.
@@ -286,6 +289,7 @@ func (s *Server) renderStatus(w http.ResponseWriter, r *http.Request, status int
 	p := page{
 		Nonce: nonce(r), BaseURL: s.BaseURL, TTL: s.TTL, Title: title, Data: data,
 		Nav: navItems[name], NavIdP: "/#create", NavSP: "/#create",
+		Build: buildInfo(),
 	}
 	if name == "logentry" {
 		if le, ok := data.(*logEntryPage); ok {
