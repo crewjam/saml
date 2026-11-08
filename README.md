@@ -353,6 +353,8 @@ Unfortunately, _RelayState_ is less useful than it could be. Firstly, it is **no
 
 RSA-SHA1 signatures, AES-128/256 (CBC and GCM) and RSA-OAEP are supported; set `ServiceProvider.RejectSHA1Signatures` or `IdentityProvider.RejectSHA1Signatures` to refuse SHA-1 signatures.
 
+Time values in protocol messages and assertions must be in UTC with the zone designator `Z`, as [SAMLCore](http://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf) §1.3.3 requires; a time with an offset or with no zone is refused. The `validUntil` of metadata is read leniently: a time with no zone is read as UTC, and one with an offset is converted to UTC.
+
 ## References
 
 The SAML specification is a collection of PDFs (sadly):

@@ -100,3 +100,22 @@ func TestValidateLogoutResponseWithoutIssuer(t *testing.T) {
 	resp := &LogoutResponse{Version: "2.0", Destination: "https://sp.example.com/slo", IssueInstant: TimeNow()}
 	assert.Check(t, is.ErrorContains(sp.validateLogoutResponse(resp), "issuer does not match"))
 }
+
+// Advice and AuthzDecisionStatement in a foreign namespace are not the
+// assertion's.
+func TestAssertionAdviceAndAuthzDecisionRequireAssertionNamespace(t *testing.T) {
+	const foreign = `<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">
+  <x:Advice xmlns:x="urn:example:foreign"><saml:AssertionIDRef>id-1</saml:AssertionIDRef></x:Advice>
+  <x:AuthzDecisionStatement xmlns:x="urn:example:foreign" Resource="urn:r" Decision="Permit"/>
+  <saml:AuthnStatement AuthnInstant="2030-01-01T00:00:00Z"><saml:AuthnContext>
+    <x:AuthnContextDecl xmlns:x="urn:example:foreign"/><x:AuthnContextDeclRef xmlns:x="urn:example:foreign">urn:d</x:AuthnContextDeclRef>
+  </saml:AuthnContext></saml:AuthnStatement>
+</saml:Assertion>`
+	var a Assertion
+	assert.Check(t, xml.Unmarshal([]byte(foreign), &a))
+	assert.Check(t, is.Nil(a.Advice))
+	assert.Check(t, is.Len(a.AuthzDecisionStatements, 0))
+	assert.Assert(t, is.Len(a.AuthnStatements, 1))
+	assert.Check(t, is.Nil(a.AuthnStatements[0].AuthnContext.AuthnContextDecl))
+	assert.Check(t, is.Nil(a.AuthnStatements[0].AuthnContext.AuthnContextDeclRef))
+}

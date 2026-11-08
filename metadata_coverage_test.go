@@ -128,7 +128,7 @@ func TestMetadataCovIndexedEndpointUnmarshal(t *testing.T) {
 		{
 			name:    "bad index",
 			xml:     `<E Binding="` + HTTPPostBinding + `" Location="https://a/" index="one"/>`,
-			wantErr: "invalid syntax",
+			wantErr: `index "one" is not an unsigned short`,
 		},
 	}
 	for _, tc := range testCases {

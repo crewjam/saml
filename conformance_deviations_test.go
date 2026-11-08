@@ -2,8 +2,10 @@ package saml
 
 import (
 	"encoding/base64"
+	"encoding/xml"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/beevik/etree"
 	dsig "github.com/russellhaering/goxmldsig"
@@ -86,4 +88,27 @@ func TestConformanceDeviation_EncryptedAssertionAlgorithms(t *testing.T) {
 	aes := xmlenc.OAEP()
 	aes.BlockCipher = xmlenc.AES256CBC
 	assert.Check(t, parse(encrypted(t, aes)), "AES-256-CBC with RSA-OAEP is accepted")
+}
+
+// saml-core §1.3.3 requires SAML time values in UTC with the zone
+// designator "Z". Protocol messages and assertions are held to it
+// (TestRelaxedTimeRequiresUTC), but the validUntil of metadata is read
+// leniently: a time with no zone is read as UTC, and one with an offset is
+// converted to UTC. Metadata in the wild is written without a zone
+// (testdata/TestCanParseMetadata_metadata.xml), and refusing it would
+// make the whole document unreadable. See metadataTime.
+func TestConformanceDeviation_MetadataTimeZone(t *testing.T) {
+	for in, want := range map[string]time.Time{
+		"2030-01-02T03:04:05.678":   time.Date(2030, 1, 2, 3, 4, 5, 678000000, time.UTC),
+		"2030-01-02T05:04:05+02:00": time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
+	} {
+		doc := `<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://idp.example.com/" validUntil="` + in + `"/>`
+		var ed EntityDescriptor
+		assert.Check(t, xml.Unmarshal([]byte(doc), &ed), in)
+		assert.Check(t, ed.ValidUntil.Equal(want), "%s: %s", in, ed.ValidUntil)
+
+		var a Assertion
+		err := xml.Unmarshal([]byte(`<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion" IssueInstant="`+in+`"/>`), &a)
+		assert.Check(t, is.ErrorContains(err, "is not in UTC"), in)
+	}
 }
