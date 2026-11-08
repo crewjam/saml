@@ -109,7 +109,7 @@ func TestLiveLog(t *testing.T) {
 
 	// Clearing the log tells the page.
 	h.do(http.MethodPost, "/manage/"+secret+"/clear-events", url.Values{})
-	if ev := next(t, events, "clear"); !strings.Contains(ev.data, `hx-swap-oob="true"`) || !strings.Contains(ev.data, `id="log-list"`) {
+	if ev := next(t, events, "clear"); !strings.Contains(ev.data, `hx-swap-oob="true"`) || !strings.Contains(ev.data, `id="log-list"`) || !strings.Contains(ev.data, `hx-disinherit="*"`) {
 		t.Errorf("clear: %s", ev.data)
 	}
 

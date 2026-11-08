@@ -175,6 +175,9 @@ func TestLogEntry(t *testing.T) {
 	if m == nil {
 		t.Fatalf("no log row for the login:\n%s", body)
 	}
+	// The rows' links are boosted by htmx: the list must not hand them its
+	// hx-swap="afterbegin", or the entry would be put in front of this page.
+	mustContain(t, body, `hx-swap="afterbegin" hx-disinherit="*"`)
 	_, page := h.do(http.MethodGet, m[1], nil)
 	mustContain(t, page,
 		"<h1>Logged in alice@example.com</h1>",

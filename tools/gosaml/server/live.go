@@ -210,5 +210,8 @@ func (s *Server) sendEvent(ctx context.Context, in *store.Instance, send func(ev
 }
 
 // clearedLogList replaces the Log's list when the log is cleared: an
-// out-of-band swap that keeps the list's own htmx attributes.
-const clearedLogList = `<ol id="log-list" class="log-list" sse-swap="log" hx-swap="afterbegin" hx-swap-oob="true"></ol>`
+// out-of-band swap that keeps the list's own htmx attributes. Those
+// include hx-disinherit, as in the "log" template: without it the rows'
+// links, which htmx boosts, would inherit hx-swap="afterbegin" and put
+// the page they open in front of this one instead of replacing it.
+const clearedLogList = `<ol id="log-list" class="log-list" sse-swap="log" hx-swap="afterbegin" hx-disinherit="*" hx-swap-oob="true"></ol>`

@@ -23,7 +23,7 @@
     <form method="post" action="/manage/{{.Secret}}/clear-events" class="inline" hx-post="/manage/{{.Secret}}/clear-events" hx-swap="none"><button class="btn secondary sm">Clear</button></form>
   </div>
   <p class="log-note">Newest first. The last {{.Max}} are kept.</p>
-  <ol id="log-list" class="log-list" sse-swap="log" hx-swap="afterbegin">
+  <ol id="log-list" class="log-list" sse-swap="log" hx-swap="afterbegin" hx-disinherit="*">
   {{range .Rows}}{{template "logrow" .}}{{end}}
   </ol>
   <p class="empty log-empty">Nothing yet.</p>
