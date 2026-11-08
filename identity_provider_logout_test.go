@@ -589,3 +589,19 @@ func withRawQueryParam(r *http.Request, name, value string) *http.Request {
 	u.RawQuery = strings.Join(parts, "&")
 	return httptest.NewRequest(r.Method, u.String(), nil)
 }
+
+// A LogoutRequest whose RelayState is longer than
+// MaxLogoutRequestRelayStateLength is refused: it would leave no room in the
+// logout state cookie to track the other service providers.
+func TestIdpLogoutRequestRelayStateLength(t *testing.T) {
+	test := newSLOTest(t)
+	request := func(relayState string) *http.Request {
+		u, err := test.SP.RedirectLogoutRequestURL(test.logoutRequest(), relayState)
+		assert.NilError(t, err)
+		return httptest.NewRequest(http.MethodGet, u.String(), nil)
+	}
+	_, err := NewIdpLogoutRequest(&test.IDP, request(strings.Repeat("r", MaxLogoutRequestRelayStateLength)))
+	assert.Check(t, err)
+	_, err = NewIdpLogoutRequest(&test.IDP, request(strings.Repeat("r", MaxLogoutRequestRelayStateLength+1)))
+	assert.Check(t, errors.Is(err, ErrRelayStateTooLong), "%v", err)
+}

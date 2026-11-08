@@ -155,8 +155,21 @@ func NewIdpLogoutRequest(idp *IdentityProvider, r *http.Request) (*IdpLogoutRequ
 	default:
 		return nil, errors.New("method not allowed")
 	}
+	if len(req.RelayState) > MaxLogoutRequestRelayStateLength {
+		return nil, fmt.Errorf("RelayState is %d bytes, longer than the %d accepted on a LogoutRequest: %w",
+			len(req.RelayState), MaxLogoutRequestRelayStateLength, ErrRelayStateTooLong)
+	}
 	return req, nil
 }
+
+// MaxLogoutRequestRelayStateLength is the longest RelayState, in bytes,
+// that the IdP accepts on a LogoutRequest. The RelayState must be returned
+// unchanged with the LogoutResponse, so while the IdP logs the session's
+// other service providers out it is kept in the logout state cookie, whose
+// size is limited: a longer one would leave no room to track the service
+// providers. It is far above the 80 bytes the SAML bindings allow
+// (MaxRelayStateLength, saml-bindings §3.4.3 and §3.5.3).
+const MaxLogoutRequestRelayStateLength = 1024
 
 // Validate checks that the logout request is well formed, was issued by a
 // known service provider, is signed by that service provider, and is
