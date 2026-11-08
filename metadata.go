@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -334,6 +335,8 @@ func defaultSignatureMethod(publicKey crypto.PublicKey) string {
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-metadata-2.0-os.pdf §2.3.2.1
 type Organization struct {
+	// Extensions is the md:Extensions element of the Organization, if any.
+	Extensions               *Extensions     `xml:"urn:oasis:names:tc:SAML:2.0:metadata Extensions,omitempty"`
 	OrganizationNames        []LocalizedName `xml:"OrganizationName"`
 	OrganizationDisplayNames []LocalizedName `xml:"OrganizationDisplayName"`
 	OrganizationURLs         []LocalizedURI  `xml:"OrganizationURL"`
@@ -359,12 +362,14 @@ type LocalizedURI struct {
 //
 // See http://docs.oasis-open.org/security/saml/v2.0/saml-metadata-2.0-os.pdf §2.3.2.2
 type ContactPerson struct {
-	ContactType      string   `xml:"contactType,attr"`
-	Company          string   `xml:",omitempty"`
-	GivenName        string   `xml:",omitempty"`
-	SurName          string   `xml:",omitempty"`
-	EmailAddresses   []string `xml:"EmailAddress"`
-	TelephoneNumbers []string `xml:"TelephoneNumber"`
+	ContactType string `xml:"contactType,attr"`
+	// Extensions is the md:Extensions element of the ContactPerson, if any.
+	Extensions       *Extensions `xml:"urn:oasis:names:tc:SAML:2.0:metadata Extensions,omitempty"`
+	Company          string      `xml:",omitempty"`
+	GivenName        string      `xml:",omitempty"`
+	SurName          string      `xml:",omitempty"`
+	EmailAddresses   []string    `xml:"EmailAddress"`
+	TelephoneNumbers []string    `xml:"TelephoneNumber"`
 }
 
 // RoleDescriptor represents the SAML element RoleDescriptor.
@@ -675,8 +680,15 @@ type IndexedEndpoint struct {
 	IsDefault        *bool   `xml:"isDefault,attr"`
 }
 
-// UnmarshalXML implements xml.Unmarshaler
+// UnmarshalXML implements xml.Unmarshaler. The index attribute is required
+// (saml-metadata §2.2.3), so an endpoint without one, or with one that is
+// not an xs:unsignedShort, is refused: encoding/xml would otherwise read a
+// missing index as 0, and the endpoint would be chosen for a request, or
+// an artifact, that names index 0.
 func (m *IndexedEndpoint) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	if err := checkIndexAttr(start); err != nil {
+		return err
+	}
 	type Alias IndexedEndpoint
 	aux := &struct {
 		*Alias
@@ -876,6 +888,34 @@ type AttributeConsumingService struct {
 	ServiceNames        []LocalizedName      `xml:"ServiceName"`
 	ServiceDescriptions []LocalizedName      `xml:"ServiceDescription"`
 	RequestedAttributes []RequestedAttribute `xml:"RequestedAttribute"`
+}
+
+// UnmarshalXML implements xml.Unmarshaler. As for IndexedEndpoint, the
+// required index attribute (saml-metadata §2.4.4.1) must be present and an
+// xs:unsignedShort, so that a missing one is not read as 0 and matched by
+// an AttributeConsumingServiceIndex of 0.
+func (m *AttributeConsumingService) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	if err := checkIndexAttr(start); err != nil {
+		return err
+	}
+	type Alias AttributeConsumingService
+	return d.DecodeElement((*Alias)(m), &start)
+}
+
+// checkIndexAttr checks that start, an element of an indexed type, has the
+// index attribute its type requires, holding an xs:unsignedShort.
+func checkIndexAttr(start xml.StartElement) error {
+	for _, attr := range start.Attr {
+		if attr.Name.Space != "" || attr.Name.Local != "index" {
+			continue
+		}
+		value := strings.TrimPrefix(trimXMLWhitespace(attr.Value), "+")
+		if _, err := strconv.ParseUint(value, 10, 16); err != nil {
+			return fmt.Errorf("%s: index %q is not an unsigned short", start.Name.Local, attr.Value)
+		}
+		return nil
+	}
+	return fmt.Errorf("%s: missing required index attribute", start.Name.Local)
 }
 
 // RequestedAttribute represents the SAML RequestedAttribute object.

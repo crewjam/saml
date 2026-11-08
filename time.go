@@ -4,6 +4,13 @@ import "time"
 
 // RelaxedTime is a version of time.Time that supports the time format
 // found in SAML documents.
+//
+// saml-core §1.3.3 says SAML time values "MUST be expressed in UTC form,
+// with no time zone component". Read literally, that is an xs:dateTime with
+// no zone designator at all; most implementations write a trailing "Z"
+// instead. UnmarshalText accepts both, reading a time with no zone as UTC,
+// and also accepts a numeric offset, converting the time to UTC; MarshalText
+// always writes UTC with "Z". TestConformanceDeviation_TimeZone pins this.
 type RelaxedTime time.Time
 
 const timeFormat = "2006-01-02T15:04:05.999Z07:00"

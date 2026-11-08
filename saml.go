@@ -332,6 +332,8 @@
 //
 // RSA-SHA1 signatures, AES-128/256 (CBC and GCM) and RSA-OAEP are supported; set ServiceProvider.RejectSHA1Signatures or IdentityProvider.RejectSHA1Signatures to refuse SHA-1 signatures.
 //
+// Time values are read leniently. [SAMLCore] §1.3.3 says they "MUST be expressed in UTC form, with no time zone component", which some implementations write with no zone designator and most with a trailing Z. Both are accepted, a time with no zone being read as UTC, and so is a time with a numeric offset, which is converted to UTC. Times are always written in UTC with Z.
+//
 // # References
 //
 // The SAML specification is a collection of PDFs (sadly):

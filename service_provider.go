@@ -361,6 +361,28 @@ type ServiceProvider struct {
 	// InResponseTo, passed as Response.InResponseTo.
 	ValidateRequestID func(response Response, possibleRequestIDs []string) error
 
+	// ClientAddress returns the network address (an IPv4 or IPv6
+	// address, optionally with a port, as in http.Request.RemoteAddr) of
+	// the user agent that presented the Response in req. ParseResponse
+	// then checks that a bearer SubjectConfirmationData with an Address
+	// (saml-core §2.4.1.2) names the same IP address; one without an
+	// Address is not affected. IPv4 and IPv6 spellings of an address are
+	// compared as addresses, not as text, and a port is ignored.
+	//
+	// If ClientAddress is nil, the address is req.RemoteAddr. Behind a
+	// proxy or load balancer, RemoteAddr is the proxy's, so set
+	// ClientAddress to return the client's address as the proxy reports
+	// it, from a header that only the trusted proxy can set. If it returns
+	// "", the Address is not checked: return "" to turn the check off.
+	//
+	// ParseXMLResponse, which has no request, does not check the Address.
+	ClientAddress func(req *http.Request) string
+
+	// clientAddress is the address ParseResponse found with ClientAddress
+	// for the request it is parsing, on the copy of the ServiceProvider it
+	// parses with, or "" for none.
+	clientAddress string
+
 	// Clock, if non-nil, is the time source for everything this
 	// ServiceProvider does that depends on the current time: timestamps on
 	// the requests and metadata it issues, assertion and logout message time
@@ -1466,10 +1488,22 @@ func (e ErrBadStatus) Is(target error) bool {
 // conditions, decryption, ReplayCache) applies as for HTTP-POST. A form
 // without SigAlg and Signature is handled as HTTP-POST, as before.
 func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs []string) (*Assertion, error) {
+	reqSP := *sp
+	reqSP.clientAddress = sp.clientAddressOf(req)
+	sp = &reqSP
 	if artifactID := req.Form.Get("SAMLart"); artifactID != "" {
 		return sp.handleArtifactRequest(req.Context(), artifactID, possibleRequestIDs)
 	}
 	return sp.parseResponseHTTP(req, possibleRequestIDs)
+}
+
+// clientAddressOf returns the address of the user agent that sent req, as
+// ClientAddress has it.
+func (sp *ServiceProvider) clientAddressOf(req *http.Request) string {
+	if sp.ClientAddress != nil {
+		return sp.ClientAddress(req)
+	}
+	return req.RemoteAddr
 }
 
 func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID string, possibleRequestIDs []string) (*Assertion, error) {
@@ -2400,6 +2434,12 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if len(assertion.AuthnStatements) == 0 {
 		return classify(fmt.Errorf("assertion has no AuthnStatement"), ErrMissingElement)
 	}
+	// SessionNotOnOrAfter is when the session the assertion establishes
+	// must end (saml-core §2.7.2), so a session that has already ended
+	// must not be started.
+	if sessionEnd, ok := earliestSessionNotOnOrAfter(assertion); ok && sp.limits().pastDeadline(sessionEnd, now) {
+		return classify(fmt.Errorf("assertion AuthnStatement SessionNotOnOrAfter %s has passed", sessionEnd), ErrExpired)
+	}
 	if assertion.Conditions.NotBefore.Add(-sp.maxClockSkew()).After(now) {
 		return classify(fmt.Errorf("assertion Conditions is not yet valid"), ErrNotYetValid)
 	}
@@ -2583,7 +2623,26 @@ func (l timeLimits) acceptableUntil(assertion *Assertion) time.Time {
 	if !confirmationDeadline.IsZero() {
 		deadline = earliest(deadline, confirmationDeadline)
 	}
+	if sessionEnd, ok := earliestSessionNotOnOrAfter(assertion); ok {
+		deadline = earliest(deadline, l.skewedDeadline(sessionEnd))
+	}
 	return deadline
+}
+
+// earliestSessionNotOnOrAfter returns the earliest SessionNotOnOrAfter of
+// the AuthnStatements of assertion, and whether any has one.
+func earliestSessionNotOnOrAfter(assertion *Assertion) (time.Time, bool) {
+	var rv time.Time
+	found := false
+	for _, statement := range assertion.AuthnStatements {
+		if statement.SessionNotOnOrAfter == nil {
+			continue
+		}
+		if !found || statement.SessionNotOnOrAfter.Before(rv) {
+			rv, found = *statement.SessionNotOnOrAfter, true
+		}
+	}
+	return rv, found
 }
 
 func earliest(a, b time.Time) time.Time {
@@ -2698,6 +2757,9 @@ func (sp *ServiceProvider) validateBearerSubjectConfirmationData(data *SubjectCo
 	// has always passed.
 	if sp.limits().pastDeadline(data.NotOnOrAfter, now) {
 		return classify(fmt.Errorf("assertion SubjectConfirmationData is expired"), ErrExpired)
+	}
+	if sp.clientAddress != "" && data.Address != "" && !subjectConfirmationAddressMatches(data.Address, sp.clientAddress) {
+		return classify(fmt.Errorf("assertion SubjectConfirmationData Address %q is not the client address %q", data.Address, sp.clientAddress), ErrDestinationMismatch)
 	}
 	return nil
 }

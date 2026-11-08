@@ -84,8 +84,10 @@ var (
 	// ErrDestinationMismatch is attached when a message was not addressed to
 	// its recipient. At the SP: a Destination that is neither the requested
 	// URL nor AcsURL (or SloURL, for logout messages), or a
-	// SubjectConfirmationData Recipient that is not AcsURL. At the IdP: an
-	// AuthnRequest Destination that is not IdentityProvider.SSOURL.
+	// SubjectConfirmationData Recipient that is not AcsURL, or an Address
+	// that is not the client address (see ServiceProvider.ClientAddress).
+	// At the IdP: an AuthnRequest Destination that is not
+	// IdentityProvider.SSOURL.
 	ErrDestinationMismatch = errors.New("saml: destination does not match the recipient")
 
 	// ErrRequestIDMismatch is attached when an InResponseTo does not name

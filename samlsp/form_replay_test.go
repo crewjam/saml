@@ -37,8 +37,14 @@ func (test *MiddlewareTest) acsRequest(t *testing.T, uri string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/saml2/acs", strings.NewReader(v.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Cookie", "saml_"+testTrackedIndex+"="+token)
+	req.RemoteAddr = testClientAddr
 	return req
 }
+
+// testClientAddr is the address of the user agent in the test Response:
+// its SubjectConfirmationData Address, which ServiceProvider.ParseResponse
+// checks against the request's RemoteAddr.
+const testClientAddr = "75.144.86.91:54321"
 
 // formPost returns a same-origin POST of form to uri.
 func formPost(uri string, form url.Values) *http.Request {

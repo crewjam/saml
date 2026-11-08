@@ -79,6 +79,7 @@ func covACSRequest(test *MiddlewareTest, trackedRequestID string) *http.Request 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Cookie", "saml_KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6="+
 		test.makeTrackedRequest(trackedRequestID))
+	req.RemoteAddr = testClientAddr
 	return req
 }
 
