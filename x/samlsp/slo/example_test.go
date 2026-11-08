@@ -63,9 +63,10 @@ var spKey, spCert = func() (*rsa.PrivateKey, *x509.Certificate) {
 func takePendingRequest(*http.Request) string       { return "" }
 func endSession(http.ResponseWriter, *http.Request) {}
 
-// endSessionsOf ends the sessions of the user nameID of the IdP issuer: a
-// NameID is unique only within the IdP that issued it.
-func endSessionsOf(_ context.Context, issuer string, nameID saml.NameID, sessionIndexes []string) {}
+// endSessionsOf(ctx, issuer, nameID, sessionIndexes) ends the sessions of
+// the user nameID of the IdP issuer: a NameID is unique only within the
+// IdP that issued it.
+func endSessionsOf(context.Context, string, saml.NameID, []string) {}
 
 // currentSession returns what the application kept from the user's login.
 func currentSession(*http.Request) (nameID saml.NameID, sessionIndexes []string, ok bool) {
@@ -166,11 +167,12 @@ func ExampleService_ParseRequest() {
 		case slo.IsResponse(r):
 			_, err := logout.ParseResponse(r.Context(), r, takePendingRequest(r))
 			var status saml.ErrBadStatus
-			if errors.Is(err, slo.ErrPartialLogout) {
+			switch {
+			case errors.Is(err, slo.ErrPartialLogout):
 				log.Print("the IdP could not log the user out of every SP")
-			} else if errors.As(err, &status) {
+			case errors.As(err, &status):
 				log.Printf("the IdP could not log the user out: %s", status.Status)
-			} else if err != nil {
+			case err != nil:
 				log.Printf("bad logout response: %v", errors.Unwrap(err))
 			}
 			// The local session already ended when logout started.
