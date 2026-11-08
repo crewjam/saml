@@ -170,11 +170,11 @@ func acs(w http.ResponseWriter, r *http.Request) {
 	tracker.Forget(w, login)
 	startSession(w, assertion)
 
-	returnTo, ok := samlsp.SafeRedirectPath(login.Data)
-	if !ok {
+	returnTo := login.Data
+	if !samlsp.IsSafeRedirectPath(returnTo) {
 		returnTo = "/hello"
 	}
-	http.Redirect(w, r, returnTo, http.StatusFound) //nolint:gosec // G710: returnTo passed SafeRedirectPath
+	http.Redirect(w, r, returnTo, http.StatusFound) //nolint:gosec // G710: returnTo passed IsSafeRedirectPath
 }
 
 // startLogout ends the local session, then sends the browser to the IdP to

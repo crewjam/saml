@@ -59,8 +59,11 @@ func Example() {
 
 		// The data came from the login request, so check it as such: a
 		// path on this site, not one that browsers read as another host.
-		next, _ := samlsp.SafeRedirectPath(login.Data)
-		http.Redirect(w, r, next, http.StatusFound) //nolint:gosec // G710: next is checked by SafeRedirectPath
+		next := login.Data
+		if !samlsp.IsSafeRedirectPath(next) {
+			next = "/"
+		}
+		http.Redirect(w, r, next, http.StatusFound) //nolint:gosec // G710: next is checked by IsSafeRedirectPath
 	})
 }
 

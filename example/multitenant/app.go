@@ -157,8 +157,10 @@ func (a *App) acs(w http.ResponseWriter, r *http.Request) {
 	a.db.AddSession(s)
 	a.setCookie(w, sessionCookie, s.ID, "/", int(time.Until(expires)/time.Second), false)
 
-	redirectTo, _ = samlsp.SafeRedirectPath(redirectTo)
-	http.Redirect(w, r, redirectTo, http.StatusFound) //nolint:gosec // G710: redirectTo passed SafeRedirectPath
+	if !samlsp.IsSafeRedirectPath(redirectTo) {
+		redirectTo = "/"
+	}
+	http.Redirect(w, r, redirectTo, http.StatusFound) //nolint:gosec // G710: redirectTo passed IsSafeRedirectPath
 }
 
 // loginInProgress returns the options that ParseResponse needs for the

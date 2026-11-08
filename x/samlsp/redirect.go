@@ -7,13 +7,16 @@ import (
 	"unicode/utf8"
 )
 
-// SafeRedirectPath returns p and true if p is a path on this site that is
-// safe to redirect the browser to, and "/" and false otherwise. Use it
-// before redirecting to a return path that came from the request, such as
-// the data of a pending login (see x/samlsp/pending) or the RelayState of
-// an unsolicited Response, which the IdP or an attacker chose:
+// IsSafeRedirectPath reports whether p is a path on this site that is safe
+// to redirect the browser to. Use it before redirecting to a return path
+// that came from the request, such as the data of a pending login (see
+// x/samlsp/pending) or the RelayState of an unsolicited Response, which
+// the IdP or an attacker chose:
 //
-//	next, _ := samlsp.SafeRedirectPath(login.Data)
+//	next := login.Data
+//	if !samlsp.IsSafeRedirectPath(next) {
+//		next = "/"
+//	}
 //	http.Redirect(w, r, next, http.StatusFound)
 //
 // p is safe if it is an absolute path, beginning with "/", optionally
@@ -33,15 +36,11 @@ import (
 //
 // It does not limit the length of p: a return path kept in a cookie should
 // be checked for length too.
-func SafeRedirectPath(p string) (string, bool) {
-	if isSafeRedirectPath(p) {
-		return p, true
+func IsSafeRedirectPath(p string) bool {
+	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.HasPrefix(p, "/\\") {
+		return false
 	}
-	return "/", false
-}
-
-func isSafeRedirectPath(p string) bool {
-	if !strings.HasPrefix(p, "/") || !utf8.ValidString(p) || strings.ContainsRune(p, '\\') {
+	if !utf8.ValidString(p) || strings.ContainsRune(p, '\\') {
 		return false
 	}
 	for _, r := range p {

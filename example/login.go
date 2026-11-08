@@ -95,8 +95,11 @@ func acs(w http.ResponseWriter, r *http.Request) {
 	}
 	startSession(w, assertion)
 
-	returnTo, _ := samlsp.SafeRedirectPath(pending.Get("to"))
-	http.Redirect(w, r, returnTo, http.StatusFound) //nolint:gosec // G710: returnTo passed SafeRedirectPath
+	returnTo := pending.Get("to")
+	if !samlsp.IsSafeRedirectPath(returnTo) {
+		returnTo = "/"
+	}
+	http.Redirect(w, r, returnTo, http.StatusFound) //nolint:gosec // G710: returnTo passed IsSafeRedirectPath
 }
 
 func startSession(w http.ResponseWriter, a *samlsp.Assertion) {

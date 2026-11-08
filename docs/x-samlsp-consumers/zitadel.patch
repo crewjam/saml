@@ -32,7 +32,7 @@ index 9dcfd13..0bdc2d2 100644
  )
  
  var keyPair = func() tls.Certificate {
-@@ -86,8 +87,83 @@ FHHEZ+dR4eMaJp6PhNm8hu2O
+@@ -86,8 +87,86 @@ FHHEZ+dR4eMaJp6PhNm8hu2O
  	return kp
  }()
  
@@ -113,12 +113,15 @@ index 9dcfd13..0bdc2d2 100644
 +		Secure:   r.TLS != nil,
 +		SameSite: http.SameSiteLaxMode,
 +	})
-+	redirect, _ := samlsp.SafeRedirectPath(login.Data)
++	redirect := login.Data
++	if !samlsp.IsSafeRedirectPath(redirect) {
++		redirect = "/"
++	}
 +	http.Redirect(w, r, redirect, http.StatusFound)
  }
  
  func main() {
-@@ -99,37 +175,37 @@ func main() {
+@@ -99,37 +178,37 @@ func main() {
  	host := os.Getenv("HOST")
  	port := os.Getenv("PORT")
  
@@ -173,7 +176,7 @@ index 9dcfd13..0bdc2d2 100644
  	go func() {
  		if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
  			log.Fatalf("HTTP server error: %v", err)
-@@ -137,7 +213,7 @@ func main() {
+@@ -137,7 +216,7 @@ func main() {
  		log.Println("Stopped serving new connections.")
  	}()
  

@@ -6,7 +6,7 @@ import (
 	"github.com/crewjam/saml/x/samlsp"
 )
 
-func TestSafeRedirectPath(t *testing.T) {
+func TestIsSafeRedirectPath(t *testing.T) {
 	for _, tt := range []struct {
 		p    string
 		safe bool
@@ -51,16 +51,8 @@ func TestSafeRedirectPath(t *testing.T) {
 		{"/\xff", false},
 		{"/%zz", false},
 	} {
-		got, ok := samlsp.SafeRedirectPath(tt.p)
-		if ok != tt.safe {
-			t.Errorf("SafeRedirectPath(%q) safe = %v, want %v", tt.p, ok, tt.safe)
-		}
-		want := "/"
-		if tt.safe {
-			want = tt.p
-		}
-		if got != want {
-			t.Errorf("SafeRedirectPath(%q) = %q, want %q", tt.p, got, want)
+		if got := samlsp.IsSafeRedirectPath(tt.p); got != tt.safe {
+			t.Errorf("IsSafeRedirectPath(%q) = %v, want %v", tt.p, got, tt.safe)
 		}
 	}
 }
