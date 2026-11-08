@@ -11,12 +11,14 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"html"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -764,35 +766,82 @@ func TestResolutionServiceChecks(t *testing.T) {
 	}
 }
 
-// TestMemoryStoreMaxEntries checks that a full store refuses new messages,
-// still replaces one it keeps, and takes new ones again once one is
-// resolved; and that Encode reports a full store.
+// TestMemoryStoreMaxEntries checks that a full store forgets its oldest
+// message to take a new one, rather than refusing it, and that Encode
+// keeps working with a full store.
 func TestMemoryStoreMaxEntries(t *testing.T) {
 	s := &artifact.MemoryStore{MaxEntries: 2}
 	ctx := context.Background()
 	m := artifact.StoredMessage{XML: []byte("<x/>"), Recipient: idpEntityID, ExpiresAt: time.Now().Add(time.Minute)}
-	for _, art := range []string{"a", "b", "b"} {
+	for _, art := range []string{"a", "b", "c"} {
 		if err := s.Save(ctx, art, m); err != nil {
 			t.Fatalf("Save(%s): %v", art, err)
 		}
 	}
-	if err := s.Save(ctx, "c", m); !errors.Is(err, artifact.ErrStoreFull) {
-		t.Fatalf("Save into a full store: %v", err)
+	if s.Len() != 2 {
+		t.Errorf("Len = %d, want 2", s.Len())
 	}
-	if got, _ := s.Take(ctx, "a", idpEntityID); got == nil {
-		t.Fatal("Take(a) = nil")
-	}
-	if err := s.Save(ctx, "c", m); err != nil {
-		t.Fatalf("Save after a Take: %v", err)
+	if got, _ := s.Take(ctx, "a", idpEntityID); got != nil {
+		t.Error("the oldest message was kept in a full store")
 	}
 
 	_, cfg, b, store, _ := setup(t)
 	store.MaxEntries = 1
-	if _, err := cfg.AuthnRequest(t.Context(), "r", samlsp.WithCustomBinding(b)); err != nil {
-		t.Fatal(err)
+	for range 2 {
+		if _, err := cfg.AuthnRequest(t.Context(), "r", samlsp.WithCustomBinding(b)); err != nil {
+			t.Fatalf("AuthnRequest with a full store: %v", err)
+		}
 	}
-	if _, err := cfg.AuthnRequest(t.Context(), "r", samlsp.WithCustomBinding(b)); !errors.Is(err, artifact.ErrStoreFull) {
-		t.Errorf("AuthnRequest with a full store: %v", err)
+}
+
+// TestMemoryStoreFlood checks that, while many goroutines flood the
+// store, a message saved can be resolved right after, and that the store
+// never keeps more than MaxEntries. Run with -race.
+func TestMemoryStoreFlood(t *testing.T) {
+	const maxEntries = 1000
+	s := &artifact.MemoryStore{MaxEntries: maxEntries}
+	ctx := context.Background()
+	m := artifact.StoredMessage{XML: []byte("<x/>"), Recipient: idpEntityID, ExpiresAt: time.Now().Add(time.Minute)}
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for g := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; ; i++ {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if err := s.Save(ctx, fmt.Sprintf("flood-%d-%d", g, i), m); err != nil {
+					t.Errorf("Save during a flood: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	lost := 0
+	for i := range 200 {
+		art := fmt.Sprintf("user-%d", i)
+		if err := s.Save(ctx, art, m); err != nil {
+			t.Fatalf("Save(%s) during a flood: %v", art, err)
+		}
+		// Only maxEntries other Saves between this Save and Take could
+		// push the message out.
+		if got, err := s.Take(ctx, art, idpEntityID); err != nil {
+			t.Fatal(err)
+		} else if got == nil {
+			lost++
+		}
+		if n := s.Len(); n > maxEntries {
+			t.Fatalf("Len = %d, more than MaxEntries", n)
+		}
+	}
+	close(stop)
+	wg.Wait()
+	if lost > 0 {
+		t.Errorf("%d of 200 messages were pushed out by the flood before they could be taken", lost)
 	}
 }
 
