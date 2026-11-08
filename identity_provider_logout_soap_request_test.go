@@ -247,6 +247,7 @@ func TestIDPServeSLOOverSOAPRequester(t *testing.T) {
 		{"expired", func(req *LogoutRequest) { req.IssueInstant = TimeNow().Add(-MaxIssueDelay - time.Second) }},
 		{"wrong destination", func(req *LogoutRequest) { req.Destination = "https://other-idp.example.com/slo" }},
 		{"no NameID", func(req *LogoutRequest) { req.NameID = nil }},
+		{"issuer Format not entity", func(req *LogoutRequest) { req.Issuer.Format = string(PersistentNameIDFormat) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := newSOAPLogoutTest(t)

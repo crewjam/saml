@@ -484,6 +484,11 @@ func TestIDPRejectsBadLogoutResponses(t *testing.T) {
 			resp.IssueInstant = TimeNow().Add(-MaxIssueDelay - time.Second)
 			return spSendLogoutResponse(t, sp, resp, HTTPRedirectBinding)
 		}},
+		{"issuer Format not entity", func(t *testing.T, _ *propagationTest, sp *ServiceProvider, req *LogoutRequest) *http.Request {
+			resp := sp.makeUnsignedLogoutResponse(sp.GetSLOBindingLocation(HTTPRedirectBinding), req.ID)
+			resp.Issuer.Format = string(PersistentNameIDFormat)
+			return spSendLogoutResponse(t, sp, resp, HTTPRedirectBinding)
+		}},
 		{"tampered", func(t *testing.T, _ *propagationTest, sp *ServiceProvider, req *LogoutRequest) *http.Request {
 			r := spLogoutResponse(t, sp, req.ID, StatusRequester, HTTPRedirectBinding)
 			ok := sp.makeUnsignedLogoutResponse(sp.GetSLOBindingLocation(HTTPRedirectBinding), req.ID)

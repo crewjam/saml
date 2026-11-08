@@ -321,6 +321,11 @@ func (req *IdpLogoutRequest) validateFields() error {
 	if err := req.validateDestination(); err != nil {
 		return err
 	}
+	if r.Issuer != nil {
+		if err := checkIssuerFormat("LogoutRequest", r.Issuer, "saml-profiles §4.4.4.1"); err != nil {
+			return err
+		}
+	}
 
 	if r.IssueInstant.Add(req.IDP.maxIssueDelay()).Before(req.Now) {
 		return fmt.Errorf("logout request expired at %s", r.IssueInstant.Add(req.IDP.maxIssueDelay()))
