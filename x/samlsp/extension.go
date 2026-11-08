@@ -181,12 +181,22 @@ func (c *Config) ServiceProvider(ctx context.Context, opts ...ServiceProviderOpt
 // el must have. It is placed right after el's Issuer child, if el has one,
 // as the SAML schema requires of protocol messages and assertions, and
 // last otherwise. el is not modified.
-func (c *Config) SignElement(el *etree.Element) (*etree.Element, error) {
-	if signatureMethod(c.key) == "" {
+//
+// The key and method are those of the saml.ServiceProvider built with the
+// ServiceProviderOptions passed to New and then opts, as for the messages
+// that the methods of c sign.
+func (c *Config) SignElement(el *etree.Element, opts ...ServiceProviderOption) (*etree.Element, error) {
+	sp := c.localServiceProvider()
+	c.applyServiceProviderOptions(sp, opts)
+	signWithLogoutMethod(sp)
+	return signElement(sp, el)
+}
+
+// signElement returns a copy of el signed by sp with its SignatureMethod.
+func signElement(sp *saml.ServiceProvider, el *etree.Element) (*etree.Element, error) {
+	if signatureMethod(sp.Key) == "" || sp.SignatureMethod == "" {
 		return nil, errors.New("samlsp: SignElement needs an RSA or ECDSA key (see WithKey)")
 	}
-	sp := c.localServiceProvider()
-	signWithLogoutMethod(sp)
 	signingContext, err := saml.GetSigningContext(sp)
 	if err != nil {
 		return nil, err

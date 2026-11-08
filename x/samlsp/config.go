@@ -347,8 +347,9 @@ func WithServiceProvider(fn func(sp *saml.ServiceProvider)) ServiceProviderOptio
 	return ServiceProviderOption(fn)
 }
 
-// SignMetadata makes ServeMetadata and Metadata sign the SP metadata with
-// the key of WithKey. Pass it to New.
+// SignMetadata makes ServeMetadata and MetadataXML sign the SP metadata
+// with the key of WithKey. Pass it to New. Metadata returns the metadata
+// as a struct, which carries no signature.
 var SignMetadata ServiceProviderOption = func(sp *saml.ServiceProvider) { sp.SignMetadata = true }
 
 // applyServiceProviderOptions applies the options of c, then extra, to sp.
@@ -436,7 +437,8 @@ func signatureMethod(key crypto.Signer) string {
 
 // Metadata returns the metadata of this service provider, to register it
 // with the identity provider. It does not call the identity provider's
-// MetadataFunc.
+// MetadataFunc. It is not signed, whatever SignMetadata says: for the
+// signed document, use MetadataXML.
 func (c *Config) Metadata(_ context.Context, opts ...ServiceProviderOption) *saml.EntityDescriptor {
 	md := c.spForMetadata(opts).Metadata()
 	c.decorateMetadata(md)
@@ -455,8 +457,8 @@ func (c *Config) spForMetadata(opts []ServiceProviderOption) *saml.ServiceProvid
 // ServeMetadata is an http.HandlerFunc that serves this service provider's
 // metadata, conventionally at the entity ID's URL. If New was passed
 // SignMetadata, the metadata is signed.
-func (c *Config) ServeMetadata(w http.ResponseWriter, _ *http.Request) {
-	buf, err := c.metadataBytes()
+func (c *Config) ServeMetadata(w http.ResponseWriter, r *http.Request) {
+	buf, err := c.MetadataXML(r.Context())
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
@@ -473,8 +475,13 @@ func (c *Config) decorateMetadata(md *saml.EntityDescriptor) {
 	}
 }
 
-func (c *Config) metadataBytes() ([]byte, error) {
-	sp := c.spForMetadata(nil)
+// MetadataXML returns the metadata of this service provider as the XML
+// document that ServeMetadata serves: signed if SignMetadata was passed to
+// New or is in opts. Like Metadata, it applies opts after the
+// ServiceProviderOptions passed to New, and does not call the identity
+// provider's MetadataFunc.
+func (c *Config) MetadataXML(_ context.Context, opts ...ServiceProviderOption) ([]byte, error) {
+	sp := c.spForMetadata(opts)
 	md := sp.Metadata()
 	c.decorateMetadata(md)
 	if !sp.SignMetadata {
