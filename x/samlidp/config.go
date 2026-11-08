@@ -45,7 +45,7 @@ type Config struct {
 	nameIDFormats   []saml.NameIDFormat
 	replayState     ReplayState
 	clock           *dsig.Clock
-	rand            io.Reader
+	randReader      io.Reader
 	clockSkew       time.Duration
 	issueDelay      time.Duration
 	metadataValid   time.Duration
@@ -285,8 +285,8 @@ func (o ClockOption) applyMetadata(m *metadataOptions) { m.clock = o.clock }
 // artifacts and messages of x/samlidp/idpartifact and x/samlidp/idpslo. It
 // sets saml.IdentityProvider.Rand, so it applies to this Config only. It is
 // mainly useful in tests. Without it, crypto/rand is used.
-func WithRand(r io.Reader) Option {
-	return optionFunc(func(c *Config, _ *configOptions) { c.rand = r })
+func WithRand(randReader io.Reader) Option {
+	return optionFunc(func(c *Config, _ *configOptions) { c.randReader = randReader })
 }
 
 // WithClockSkew sets how far a service provider's clock may be from the
@@ -717,14 +717,14 @@ func signMetadata(idp *saml.IdentityProvider, md *saml.EntityDescriptor) (*etree
 	return el, nil
 }
 
-// newID returns a new random XML ID, read from r or, if it is nil, from
-// crypto/rand.
-func newID(r io.Reader) string {
-	if r == nil {
-		r = rand.Reader
+// newID returns a new random XML ID, read from randReader or, if it is
+// nil, from crypto/rand.
+func newID(randReader io.Reader) string {
+	if randReader == nil {
+		randReader = rand.Reader
 	}
 	b := make([]byte, 20)
-	if _, err := io.ReadFull(r, b); err != nil {
+	if _, err := io.ReadFull(randReader, b); err != nil {
 		panic(err)
 	}
 	return fmt.Sprintf("id-%x", b)

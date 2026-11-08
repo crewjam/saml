@@ -301,14 +301,14 @@ func canSign(key crypto.Signer) bool {
 
 // newArtifact returns a new type 0x0004 artifact (saml-bindings §3.6.4):
 // the type code, the endpoint index, the SHA-1 hash of the issuer's
-// entity ID and a random message handle, read from r.
-func newArtifact(r io.Reader, entityID string, index uint16) (string, error) {
+// entity ID and a random message handle, read from randReader.
+func newArtifact(randReader io.Reader, entityID string, index uint16) (string, error) {
 	buf := make([]byte, 44)
 	binary.BigEndian.PutUint16(buf[0:2], 0x0004)
 	binary.BigEndian.PutUint16(buf[2:4], index)
 	source := sha1.Sum([]byte(entityID)) //nolint:gosec // see the import
 	copy(buf[4:24], source[:])
-	if _, err := io.ReadFull(r, buf[24:44]); err != nil {
+	if _, err := io.ReadFull(randReader, buf[24:44]); err != nil {
 		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(buf), nil

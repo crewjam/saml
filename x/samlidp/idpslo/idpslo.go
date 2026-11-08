@@ -718,10 +718,10 @@ func soapEnvelope(el *etree.Element) ([]byte, error) {
 	return doc.WriteToBytes()
 }
 
-// newID returns a new random XML ID, read from r.
-func newID(r io.Reader) string {
+// newID returns a new random XML ID, read from randReader.
+func newID(randReader io.Reader) string {
 	b := make([]byte, 20)
-	if _, err := io.ReadFull(r, b); err != nil {
+	if _, err := io.ReadFull(randReader, b); err != nil {
 		panic(err)
 	}
 	return fmt.Sprintf("id-%x", b)

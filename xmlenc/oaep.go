@@ -60,20 +60,20 @@ func mgfURIFor(dm DigestMethod) (string, error) {
 }
 
 // encryptOAEP wraps plaintext with RSA-OAEP using dm as the OAEP digest and
-// MGF1 with mgfHash, reading randomness from rand.
+// MGF1 with mgfHash, reading randomness from randReader.
 //
 // A digest method registered by the caller that this package does not know
 // cannot be given to MGF1 separately, so it is used for both, as earlier
 // releases did.
-func encryptOAEP(rand io.Reader, dm DigestMethod, mgfHash crypto.Hash, pubKey *rsa.PublicKey, plaintext []byte) ([]byte, error) {
+func encryptOAEP(randReader io.Reader, dm DigestMethod, mgfHash crypto.Hash, pubKey *rsa.PublicKey, plaintext []byte) ([]byte, error) {
 	h, err := cryptoHashOf(dm)
 	if err != nil {
 		if dm == nil {
 			return nil, err
 		}
-		return rsa.EncryptOAEP(dm.Hash(), rand, pubKey, plaintext, nil)
+		return rsa.EncryptOAEP(dm.Hash(), randReader, pubKey, plaintext, nil)
 	}
-	return rsaEncryptOAEP(rand, pubKey, plaintext, &rsa.OAEPOptions{
+	return rsaEncryptOAEP(randReader, pubKey, plaintext, &rsa.OAEPOptions{
 		Hash:    h,
 		MGFHash: mgfHash,
 	})

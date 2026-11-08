@@ -57,23 +57,23 @@ func TestRandomBytesWithoutRandUsesGlobal(t *testing.T) {
 }
 
 func TestEncrypterWithRand(t *testing.T) {
-	r := bytes.NewReader(nil)
+	randReader := bytes.NewReader(nil)
 	other := bytes.NewReader(nil)
 
-	got, ok := encrypterWithRand(xmlenc.OAEP(), r).(xmlenc.RSA)
+	got, ok := encrypterWithRand(xmlenc.OAEP(), randReader).(xmlenc.RSA)
 	assert.Assert(t, ok)
-	assert.Check(t, got.Rand == r, "the Rand of the RSA was not set")
+	assert.Check(t, got.Rand == randReader, "the Rand of the RSA was not set")
 
 	withOwn := xmlenc.OAEP()
 	withOwn.Rand = other
-	got, ok = encrypterWithRand(withOwn, r).(xmlenc.RSA)
+	got, ok = encrypterWithRand(withOwn, randReader).(xmlenc.RSA)
 	assert.Assert(t, ok)
 	assert.Check(t, got.Rand == other, "the RSA's own Rand was replaced")
 
 	ptr := xmlenc.OAEP()
-	got, ok = encrypterWithRand(&ptr, r).(xmlenc.RSA)
+	got, ok = encrypterWithRand(&ptr, randReader).(xmlenc.RSA)
 	assert.Assert(t, ok)
-	assert.Check(t, got.Rand == r, "the Rand of the *RSA was not set")
+	assert.Check(t, got.Rand == randReader, "the Rand of the *RSA was not set")
 	assert.Check(t, ptr.Rand == nil, "the caller's *RSA was modified")
 
 	got, ok = encrypterWithRand(xmlenc.OAEP(), nil).(xmlenc.RSA)

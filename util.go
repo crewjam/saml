@@ -69,20 +69,20 @@ func dsigClockOrDefault(clock *dsig.Clock) *dsig.Clock {
 // tests.
 var RandReader = rand.Reader
 
-// randOrDefault returns r or, if it is nil, the deprecated package-level
-// RandReader.
-func randOrDefault(r io.Reader) io.Reader {
-	if r != nil {
-		return r
+// randOrDefault returns randReader or, if it is nil, the deprecated
+// package-level RandReader.
+func randOrDefault(randReader io.Reader) io.Reader {
+	if randReader != nil {
+		return randReader
 	}
 	return RandReader
 }
 
 //nolint:unparam // This always receives 20, but we want the option to do more or less if needed.
-func randomBytes(r io.Reader, n int) []byte {
+func randomBytes(randReader io.Reader, n int) []byte {
 	rv := make([]byte, n)
 
-	if _, err := io.ReadFull(randOrDefault(r), rv); err != nil {
+	if _, err := io.ReadFull(randOrDefault(randReader), rv); err != nil {
 		panic(err)
 	}
 	return rv
@@ -115,23 +115,23 @@ func (idp *IdentityProvider) configuredRand() io.Reader {
 	return idp.Rand
 }
 
-// encrypterWithRand returns enc using r as its source of randomness, if r
-// is not nil and enc is an xmlenc.RSA that has none of its own; otherwise
+// encrypterWithRand returns enc using randReader as its source of
+// randomness, if randReader is not nil and enc is an xmlenc.RSA that has none of its own; otherwise
 // it returns enc, which then uses its own source or xmlenc's default.
-func encrypterWithRand(enc xmlenc.Encrypter, r io.Reader) xmlenc.Encrypter {
-	if r == nil {
+func encrypterWithRand(enc xmlenc.Encrypter, randReader io.Reader) xmlenc.Encrypter {
+	if randReader == nil {
 		return enc
 	}
 	switch e := enc.(type) {
 	case xmlenc.RSA:
 		if e.Rand == nil {
-			e.Rand = r
+			e.Rand = randReader
 		}
 		return e
 	case *xmlenc.RSA:
 		if e != nil && e.Rand == nil {
 			c := *e
-			c.Rand = r
+			c.Rand = randReader
 			return c
 		}
 	}

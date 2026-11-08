@@ -46,7 +46,7 @@ type Config struct {
 	replayState            ReplayState
 	authnContextComparator func(comparison string, requested []string, got string) bool
 	clock                  *dsig.Clock
-	rand                   io.Reader
+	randReader             io.Reader
 	clockSkew              time.Duration
 	issueDelay             time.Duration
 	httpClient             *http.Client
@@ -480,8 +480,8 @@ func (o ClockOption) applyMetadata(m *metadataOptions) { m.clock = o.clock }
 // artifacts and messages of x/samlsp/artifact. It sets
 // saml.ServiceProvider.Rand, so it applies to this Config only. It is
 // mainly useful in tests. Without it, crypto/rand is used.
-func WithRand(r io.Reader) Option {
-	return optionFunc(func(c *Config, _ *configOptions) { c.rand = r })
+func WithRand(randReader io.Reader) Option {
+	return optionFunc(func(c *Config, _ *configOptions) { c.randReader = randReader })
 }
 
 // WithClockSkew sets how far the IdP's clock may be from the SP's: the

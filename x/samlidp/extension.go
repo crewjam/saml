@@ -156,8 +156,8 @@ func (c *Config) Now() time.Time { return clockNow(c.clock) }
 // or crypto/rand's Reader without it. Packages that extend this one, such
 // as x/samlidp/idpartifact, read their random IDs and artifacts from it.
 func (c *Config) Rand() io.Reader {
-	if c.rand != nil {
-		return c.rand
+	if c.randReader != nil {
+		return c.randReader
 	}
 	return rand.Reader
 }

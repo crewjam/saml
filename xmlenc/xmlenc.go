@@ -20,11 +20,13 @@ import (
 // process, so it cannot be done safely by concurrent tests.
 var RandReader = rand.Reader
 
-// randOrDefault returns r or, if it is nil, the deprecated package-level
-// RandReader.
-func randOrDefault(r io.Reader) io.Reader {
-	if r != nil {
-		return r
+// randOrDefault returns the first of randReaders that is not nil or, if
+// there is none, the deprecated package-level RandReader.
+func randOrDefault(randReaders ...io.Reader) io.Reader {
+	for _, randReader := range randReaders {
+		if randReader != nil {
+			return randReader
+		}
 	}
 	return RandReader
 }
@@ -33,8 +35,8 @@ func randOrDefault(r io.Reader) io.Reader {
 // RSA.Encrypt can give them its own source of randomness.
 type randEncrypter interface {
 	// encryptWithRand is Encrypt, reading from the block cipher's own Rand
-	// if it is set, and otherwise from rand.
-	encryptWithRand(rand io.Reader, key interface{}, plaintext []byte, nonce []byte) (*etree.Element, error)
+	// if it is set, and otherwise from fallback.
+	encryptWithRand(fallback io.Reader, key interface{}, plaintext []byte, nonce []byte) (*etree.Element, error)
 }
 
 // Encrypter is an interface that encrypts things. Given a plaintext it returns an

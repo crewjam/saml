@@ -24,15 +24,15 @@ func TestWithRand(t *testing.T) {
 		t.Errorf("without WithRand, the IdentityProvider's Rand is %v, not crypto/rand", c.IdentityProvider().Rand)
 	}
 
-	r := bytes.NewReader(nil)
-	c, err = samlidp.New(idpEntityID, sps, key, samlidp.WithRand(r))
+	randReader := bytes.NewReader(nil)
+	c, err = samlidp.New(idpEntityID, sps, key, samlidp.WithRand(randReader))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Rand() != r {
+	if c.Rand() != randReader {
 		t.Errorf("Rand() is %v, not the reader of WithRand", c.Rand())
 	}
-	if c.IdentityProvider().Rand != r {
+	if c.IdentityProvider().Rand != randReader {
 		t.Errorf("the IdentityProvider's Rand is %v, not the reader of WithRand", c.IdentityProvider().Rand)
 	}
 }

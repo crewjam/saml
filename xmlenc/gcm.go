@@ -47,11 +47,8 @@ func (e GCM) Encrypt(key interface{}, plaintext []byte, nonce []byte) (*etree.El
 	return e.encryptWithRand(nil, key, plaintext, nonce)
 }
 
-func (e GCM) encryptWithRand(rand io.Reader, key interface{}, plaintext []byte, nonce []byte) (*etree.Element, error) {
-	if e.Rand != nil {
-		rand = e.Rand
-	}
-	rand = randOrDefault(rand)
+func (e GCM) encryptWithRand(fallback io.Reader, key interface{}, plaintext []byte, nonce []byte) (*etree.Element, error) {
+	randReader := randOrDefault(e.Rand, fallback)
 	keyBuf, ok := key.([]byte)
 	if !ok {
 		return nil, ErrIncorrectKeyType("[]byte")
@@ -69,7 +66,7 @@ func (e GCM) encryptWithRand(rand io.Reader, key interface{}, plaintext []byte, 
 	encryptedDataEl.CreateAttr("xmlns:xenc", "http://www.w3.org/2001/04/xmlenc#")
 	{
 		randBuf := make([]byte, 16)
-		if _, err := io.ReadFull(rand, randBuf); err != nil {
+		if _, err := io.ReadFull(randReader, randBuf); err != nil {
 			return nil, err
 		}
 		encryptedDataEl.CreateAttr("Id", fmt.Sprintf("_%x", randBuf))
@@ -87,7 +84,7 @@ func (e GCM) encryptWithRand(rand io.Reader, key interface{}, plaintext []byte, 
 	if nonce == nil {
 		// generate random nonce when it's nil
 		nonce = make([]byte, aesgcm.NonceSize())
-		if _, err := io.ReadFull(rand, nonce); err != nil {
+		if _, err := io.ReadFull(randReader, nonce); err != nil {
 			return nil, err
 		}
 	} else if len(nonce) != aesgcm.NonceSize() {

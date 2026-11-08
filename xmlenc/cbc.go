@@ -42,11 +42,8 @@ func (e CBC) Encrypt(key interface{}, plaintext []byte, nonce []byte) (*etree.El
 	return e.encryptWithRand(nil, key, plaintext, nonce)
 }
 
-func (e CBC) encryptWithRand(rand io.Reader, key interface{}, plaintext []byte, _ []byte) (*etree.Element, error) {
-	if e.Rand != nil {
-		rand = e.Rand
-	}
-	rand = randOrDefault(rand)
+func (e CBC) encryptWithRand(fallback io.Reader, key interface{}, plaintext []byte, _ []byte) (*etree.Element, error) {
+	randReader := randOrDefault(e.Rand, fallback)
 	keyBuf, ok := key.([]byte)
 	if !ok {
 		return nil, ErrIncorrectKeyType("[]byte")
@@ -64,7 +61,7 @@ func (e CBC) encryptWithRand(rand io.Reader, key interface{}, plaintext []byte, 
 	encryptedDataEl.CreateAttr("xmlns:xenc", "http://www.w3.org/2001/04/xmlenc#")
 	{
 		randBuf := make([]byte, 16)
-		if _, err := io.ReadFull(rand, randBuf); err != nil {
+		if _, err := io.ReadFull(randReader, randBuf); err != nil {
 			return nil, err
 		}
 		encryptedDataEl.CreateAttr("Id", fmt.Sprintf("_%x", randBuf))
@@ -77,7 +74,7 @@ func (e CBC) encryptWithRand(rand io.Reader, key interface{}, plaintext []byte, 
 	plaintext = appendPadding(plaintext, block.BlockSize())
 
 	iv := make([]byte, block.BlockSize(), block.BlockSize()+len(plaintext))
-	if _, err := io.ReadFull(rand, iv); err != nil {
+	if _, err := io.ReadFull(randReader, iv); err != nil {
 		return nil, err
 	}
 

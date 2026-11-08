@@ -18,17 +18,17 @@ func TestWithRand(t *testing.T) {
 		t.Errorf("without WithRand, Rand() is %v, not crypto/rand", cfg.Rand())
 	}
 
-	r := bytes.NewReader(nil)
-	cfg, err = samlsp.New(spEntityID, nil, samlsp.WithRand(r))
+	randReader := bytes.NewReader(nil)
+	cfg, err = samlsp.New(spEntityID, nil, samlsp.WithRand(randReader))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Rand() != r {
+	if cfg.Rand() != randReader {
 		t.Errorf("Rand() is %v, not the reader of WithRand", cfg.Rand())
 	}
 	var got any
 	cfg.Metadata(t.Context(), func(sp *saml.ServiceProvider) { got = sp.Rand })
-	if got != r {
+	if got != randReader {
 		t.Errorf("the ServiceProvider's Rand is %v, not the reader of WithRand", got)
 	}
 }
