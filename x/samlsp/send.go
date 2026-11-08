@@ -22,7 +22,9 @@ const (
 	SingleSignOnService Service = iota + 1
 
 	// SingleLogoutService is the IdP's SingleLogoutService, which receives
-	// LogoutRequests and LogoutResponses.
+	// LogoutRequests at its Location and LogoutResponses at its
+	// ResponseLocation, if it has one, and otherwise at its Location
+	// (saml-metadata §2.2.2).
 	SingleLogoutService
 )
 
@@ -116,6 +118,9 @@ func (c *Config) send(ctx context.Context, msg OutgoingMessage, o messageOptions
 		locate = sp.GetSSOBindingLocation
 	case SingleLogoutService:
 		locate = sp.GetSLOBindingLocation
+		if msg.Param == "SAMLResponse" {
+			locate = func(binding string) string { return sloResponseLocation(sp.IDPMetadata, binding) }
+		}
 	default:
 		return nil, fmt.Errorf("samlsp: invalid service %d", msg.Service)
 	}
@@ -188,6 +193,27 @@ func (c *Config) send(ctx context.Context, msg OutgoingMessage, o messageOptions
 		return out.PostForm(fields)
 	}
 	return nil, fmt.Errorf("samlsp: unsupported binding %q", binding)
+}
+
+// sloResponseLocation returns where the IdP of md receives LogoutResponses
+// with binding: the ResponseLocation of its first SingleLogoutService with
+// binding, if set, and otherwise its Location (saml-metadata §2.2.2).
+func sloResponseLocation(md *saml.EntityDescriptor, binding string) string {
+	if md == nil {
+		return ""
+	}
+	for _, d := range md.IDPSSODescriptors {
+		for _, ep := range d.SingleLogoutServices {
+			if ep.Binding != binding {
+				continue
+			}
+			if ep.ResponseLocation != "" {
+				return ep.ResponseLocation
+			}
+			return ep.Location
+		}
+	}
+	return ""
 }
 
 // Prepare returns, for a message that a package sends other than through

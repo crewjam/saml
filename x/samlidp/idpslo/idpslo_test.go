@@ -335,8 +335,8 @@ func TestPartialLogout(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp, err := w.sps[0].slo.ParseResponse(ctx, deliver(t, msg), out.ID)
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, slo.ErrPartialLogout) || resp == nil {
+		t.Fatalf("got %v, %v", resp, err)
 	}
 	if s := resp.Status.StatusCode.StatusCode; s == nil || s.Value != saml.StatusPartialLogout {
 		t.Fatalf("status %+v", resp.Status)
@@ -402,15 +402,19 @@ func TestBadResponses(t *testing.T) {
 
 func TestUnsignedRequestRefused(t *testing.T) {
 	ctx := context.Background()
-	w := newWorld(t, worldOptions{spConfig: [2][]samlsp.Option{{samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
-		sp.LogoutSignatureMethod = ""
-	})}}})
+	w := newWorld(t, worldOptions{})
 	_, a1 := w.login(t, 0, "s1")
 	out, err := w.sps[0].slo.Request(ctx, a1.NameID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.logout.ParseRequest(ctx, toIDP(t, out)); err == nil {
+	// The same request without its signature.
+	u := out.RedirectURL()
+	q := u.Query()
+	q.Del("Signature")
+	q.Del("SigAlg")
+	u.RawQuery = q.Encode()
+	if _, err := w.logout.ParseRequest(ctx, httptest.NewRequest(http.MethodGet, u.String(), http.NoBody)); err == nil {
 		t.Fatal("an unsigned LogoutRequest was accepted")
 	}
 }

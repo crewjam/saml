@@ -201,6 +201,9 @@ func TestSPInitiatedLogout(t *testing.T) {
 			if _, err := s.ParseResponse(t.Context(), back); !errors.Is(err, slo.ErrNoRequestID) {
 				t.Errorf("without IDs: %v", err)
 			}
+			if _, err := s.ParseResponse(t.Context(), back, msg.ID); !errors.Is(err, saml.ErrAssertionReplayed) {
+				t.Errorf("replayed: %v", err)
+			}
 		})
 	}
 }
@@ -243,7 +246,7 @@ func TestIDPInitiatedLogout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseRequest: %v (%v)", err, errors.Unwrap(err))
 	}
-	if got.ID != req.ID || got.NameID.Value != "alice@example.com" || got.RelayState != "idp-state" ||
+	if got.ID != req.ID || got.Issuer != ti.idp.Metadata().EntityID || got.NameID.Value != "alice@example.com" || got.RelayState != "idp-state" ||
 		got.Binding != saml.HTTPPostBinding || len(got.SessionIndexes) != 1 {
 		t.Fatalf("unexpected request %+v", got)
 	}
@@ -429,6 +432,7 @@ func TestConfiguration(t *testing.T) {
 	for name, opts := range map[string][]samlsp.Option{
 		"relative URL":         {samlsp.WithSigningKey(key, cert), slo.Endpoint("/slo")},
 		"back channel, no key": {slo.Endpoint(spSLOURL, slo.BackChannel)},
+		"no key":               {slo.Endpoint(spSLOURL)},
 	} {
 		if _, err := samlsp.New(spEntityID, idp, opts...); err == nil {
 			t.Errorf("%s: expected an error", name)
@@ -440,5 +444,72 @@ func TestConfiguration(t *testing.T) {
 	}
 	if _, err := slo.New(plain); err == nil {
 		t.Error("slo.New accepted a Config without an SLO endpoint")
+	}
+}
+
+// TestResponseLocation checks that LogoutResponses go to the
+// ResponseLocation of the IdP's SingleLogoutService (saml-metadata
+// §2.2.2), and LogoutRequests to its Location.
+func TestResponseLocation(t *testing.T) {
+	const responseURL = "https://idp.example.com/slo/response"
+	ti := newTestIDP(t)
+	md := ti.idp.Metadata()
+	for i := range md.IDPSSODescriptors[0].SingleLogoutServices {
+		md.IDPSSODescriptors[0].SingleLogoutServices[i].ResponseLocation = responseURL
+	}
+	key, cert := newKeyPair(t)
+	cfg, err := samlsp.New(spEntityID, samlsp.StaticMetadata(md), samlsp.WithSigningKey(key, cert), slo.Endpoint(spSLOURL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := slo.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, binding := range []string{saml.HTTPRedirectBinding, saml.HTTPPostBinding, saml.HTTPPostSimpleSignBinding} {
+		resp, err := s.Response(t.Context(), &slo.Request{ID: "id-req", RelayState: "r"}, samlsp.WithBinding(binding))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := browser(t, resp)
+		if got := r.URL.Scheme + "://" + r.URL.Host + r.URL.Path; got != responseURL {
+			t.Errorf("%s: response sent to %s", binding, got)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		var buf []byte
+		if binding == saml.HTTPRedirectBinding {
+			buf = inflateParam(t, r.URL, "SAMLResponse")
+		} else if buf, err = base64.StdEncoding.DecodeString(r.PostForm.Get("SAMLResponse")); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(buf), `Destination="`+responseURL+`"`) {
+			t.Errorf("%s: Destination is not the ResponseLocation: %s", binding, buf)
+		}
+
+		req, err := s.Request(t.Context(), saml.NameID{Value: "alice"}, "r", samlsp.WithBinding(binding))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r = browser(t, req)
+		if got := r.URL.Scheme + "://" + r.URL.Host + r.URL.Path; got != "https://idp.example.com/slo" {
+			t.Errorf("%s: request sent to %s", binding, got)
+		}
+	}
+}
+
+// TestUnsignedRefused checks that logout messages are not sent through the
+// browser unsigned when a ServiceProviderOption of the call leaves no key
+// to sign them with (saml-profiles §4.4.4.1).
+func TestUnsignedRefused(t *testing.T) {
+	ti := newTestIDP(t)
+	_, s := newService(t, ti, nil)
+	noKey := samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) { sp.LogoutSignatureMethod = "" })
+	if _, err := s.Request(t.Context(), saml.NameID{Value: "alice"}, "r", noKey); err == nil {
+		t.Error("Request sent an unsigned LogoutRequest")
+	}
+	if _, err := s.Response(t.Context(), &slo.Request{ID: "id-req"}, noKey); err == nil {
+		t.Error("Response sent an unsigned LogoutResponse")
 	}
 }

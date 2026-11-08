@@ -18,9 +18,9 @@
 // directly, server to server (SendRequest, and SOAP requests to
 // ParseRequest).
 //
-// Logout messages are signed with the key of samlsp.WithSigningKey. The
-// single logout profile requires signatures with the browser bindings
-// (saml-profiles §4.4.3), and many IdPs enforce it.
+// Logout messages are signed with the key of samlsp.WithSigningKey, which
+// Endpoint requires: the single logout profile requires signatures with
+// the browser bindings (saml-profiles §4.4.4.1), and many IdPs enforce it.
 package slo
 
 import (
@@ -42,6 +42,21 @@ import (
 // ID.
 var ErrNoRequestID = errors.New("slo: no request ID to match InResponseTo against")
 
+// ErrPartialLogout is matched by the error ParseResponse and SendRequest
+// return, with the response, when the IdP answers with the status
+// saml.StatusSuccess and the second-level status saml.StatusPartialLogout:
+// it ended the user's session, but could not log them out of every other
+// SP (saml-core §3.7.3.2). The user is logged out of this SP, and the
+// application may tell them that other sessions may remain.
+var ErrPartialLogout = errors.New("slo: the identity provider could not log the user out of every service provider")
+
+// errNoKey refuses to send a logout message unsigned.
+var errNoKey = errors.New("slo: logout messages need an RSA or ECDSA key (see samlsp.WithSigningKey) to sign them, as the single logout profile requires (saml-profiles §4.4.4.1)")
+
+// logoutResponseReplayPrefix keeps the replay keys of LogoutResponses
+// apart from those of other messages.
+const logoutResponseReplayPrefix = "LogoutResponse:"
+
 // EndpointOption configures Endpoint.
 type EndpointOption func(*endpointOptions)
 
@@ -60,7 +75,7 @@ type endpointOptions struct {
 // Enable it only if the application can end a user's sessions on the
 // server, by NameID and SessionIndex: a SOAP LogoutRequest comes without
 // the browser, so deleting a session cookie does not end anything. It
-// needs samlsp.WithSigningKey, which signs the SOAP messages.
+// signs the SOAP messages with the key of samlsp.WithSigningKey.
 var BackChannel EndpointOption = func(o *endpointOptions) { o.backChannel = true }
 
 // EncryptNameID makes Request and SendRequest identify the user with an
@@ -79,6 +94,11 @@ var AcceptBaseID EndpointOption = func(o *endpointOptions) { o.acceptBaseID = tr
 // absolute URL, for samlsp.New: the SP metadata advertises it with the
 // HTTP-Redirect and HTTP-POST bindings (and SOAP with BackChannel). Serve
 // the handler that calls ParseRequest and ParseResponse at Service.Path.
+//
+// It needs samlsp.WithSigningKey with an RSA or ECDSA key: the single logout
+// profile requires the LogoutRequests and LogoutResponses sent with the
+// browser bindings to be signed (saml-profiles §4.4.4.1), so samlsp.New
+// refuses a Config without one.
 func Endpoint(location string, opts ...EndpointOption) samlsp.Option {
 	var o endpointOptions
 	for _, opt := range opts {
@@ -102,8 +122,8 @@ func Endpoint(location string, opts ...EndpointOption) samlsp.Option {
 			sp.AcceptLogoutRequestBaseID = o.acceptBaseID
 		}),
 		samlsp.WithCheck(func(sp *saml.ServiceProvider) error {
-			if o.backChannel && sp.LogoutSignatureMethod == "" {
-				return errors.New("slo: BackChannel needs an RSA or ECDSA key (see samlsp.WithSigningKey) to sign SOAP messages")
+			if sp.LogoutSignatureMethod == "" {
+				return errNoKey
 			}
 			return nil
 		}),
@@ -194,10 +214,15 @@ func WithStatus(status saml.Status) samlsp.MessageOption {
 
 // unsigned clears the signature methods of sp, a ServiceProvider of a
 // single call, so that package saml makes messages unsigned: Send signs
-// them as their binding requires.
-func unsigned(sp *saml.ServiceProvider) {
+// them as their binding requires. It returns errNoKey if sp, as the
+// call's ServiceProviderOptions left it, cannot sign them.
+func unsigned(sp *saml.ServiceProvider) error {
+	if sp.LogoutSignatureMethod == "" {
+		return errNoKey
+	}
 	sp.SignatureMethod = ""
 	sp.LogoutSignatureMethod = ""
+	return nil
 }
 
 // Request returns a LogoutRequest that starts single logout at the IdP for
@@ -211,8 +236,7 @@ func unsigned(sp *saml.ServiceProvider) {
 // even if the IdP never replies. If the IdP does not support single
 // logout, Request returns an error matching samlsp.ErrNoEndpoint.
 //
-// The request is signed with the key of samlsp.WithSigningKey, if there is
-// one.
+// The request is signed with the key of samlsp.WithSigningKey.
 func (s *Service) Request(ctx context.Context, nameID saml.NameID, relayState string, opts ...samlsp.MessageOption) (*samlsp.Message, error) {
 	return s.config.Send(ctx, samlsp.OutgoingMessage{
 		Service:    samlsp.SingleLogoutService,
@@ -220,7 +244,9 @@ func (s *Service) Request(ctx context.Context, nameID saml.NameID, relayState st
 		RelayState: relayState,
 		Sign:       true,
 		Build: func(sp *saml.ServiceProvider, destination string, modify func(any) error) (*etree.Element, error) {
-			unsigned(sp)
+			if err := unsigned(sp); err != nil {
+				return nil, err
+			}
 			var modifyErr error
 			req, err := sp.MakeLogoutRequest(destination, nameID.Value,
 				// Name the user exactly as the IdP did (saml-core §3.7.1).
@@ -246,11 +272,22 @@ type Request struct {
 	// ID is the ID of the request. Response answers it.
 	ID string
 
-	// NameID identifies the user whose sessions to end.
+	// Issuer is the entity ID of the IdP that sent the request: the
+	// EntityID of the metadata it was verified with. An SP that trusts
+	// several IdPs must look up the sessions to end by Issuer and NameID
+	// together: a NameID is unique only within the IdP that issued it
+	// (saml-core §2.2.2), and one IdP must not end the sessions of
+	// another's users.
+	Issuer string
+
+	// NameID identifies the user whose sessions to end. It is the zero
+	// NameID when the request identifies the user with BaseID instead.
 	NameID saml.NameID
 
 	// BaseID identifies the user instead of NameID, with AcceptBaseID; its
-	// meaning depends on its xsi:type. It is nil otherwise.
+	// meaning depends on its xsi:type, and the sessions to end are those of
+	// the user it names for Issuer, as samlsp.Assertion.BaseID named them at
+	// login. It is nil otherwise.
 	BaseID *etree.Element
 
 	// SessionIndexes, if not empty, name the sessions to end. If it is
@@ -338,6 +375,7 @@ func (s *Service) ParseRequest(ctx context.Context, r *http.Request, opts ...sam
 		}
 	}
 	out.ID = req.ID
+	out.Issuer = sp.IDPMetadata.EntityID
 	out.Raw = req
 	if req.NameID != nil {
 		out.NameID = *req.NameID
@@ -356,7 +394,10 @@ func successStatus() saml.Status {
 
 // Response returns the response to req, to send the browser back to the
 // identity provider with by calling Message.Write. Its status is success
-// unless WithStatus says otherwise. It carries req.RelayState.
+// unless WithStatus says otherwise. It carries req.RelayState, unchanged.
+// It is sent to the ResponseLocation of the IdP's SingleLogoutService for
+// the binding, or to its Location if it has none (saml-metadata §2.2.2),
+// and is signed with the key of samlsp.WithSigningKey.
 //
 // A request that came with the SOAP binding is answered with SOAP: the
 // Message writes a signed LogoutResponse as the reply to the IdP's HTTP
@@ -395,7 +436,9 @@ func (s *Service) Response(ctx context.Context, req *Request, opts ...samlsp.Mes
 		RelayState: req.RelayState,
 		Sign:       true,
 		Build: func(sp *saml.ServiceProvider, destination string, modify func(any) error) (*etree.Element, error) {
-			unsigned(sp)
+			if err := unsigned(sp); err != nil {
+				return nil, err
+			}
 			resp, err := sp.MakeLogoutResponseWithStatus(destination, req.ID, successStatus())
 			if err != nil {
 				return nil, err
@@ -411,10 +454,13 @@ func (s *Service) Response(ctx context.Context, req *Request, opts ...samlsp.Mes
 // ParseResponse verifies the identity provider's response to a
 // LogoutRequest sent by Request. requestIDs are the Message.IDs of the
 // logout requests that are still pending; the response must answer one of
-// them.
+// them. Each response is accepted only once (see samlsp.WithReplayState),
+// but the application should still remove the request it answers, its
+// InResponseTo, from those pending.
 //
 // It returns an error matching saml.ErrBadStatus if the IdP could not log
-// the user out.
+// the user out, and the response with an error matching ErrPartialLogout
+// if the IdP logged the user out of only some of their SPs.
 func (s *Service) ParseResponse(ctx context.Context, r *http.Request, requestIDs ...string) (*saml.LogoutResponse, error) {
 	if len(requestIDs) == 0 {
 		return nil, ErrNoRequestID
@@ -426,7 +472,29 @@ func (s *Service) ParseResponse(ctx context.Context, r *http.Request, requestIDs
 	if err := r.ParseForm(); err != nil {
 		return nil, err
 	}
-	return sp.ParseLogoutResponse(r.WithContext(ctx), requestIDs)
+	resp, err := sp.ParseLogoutResponse(r.WithContext(ctx), requestIDs)
+	if err != nil {
+		return nil, err
+	}
+	if resp.ID == "" {
+		return nil, errors.New("slo: the logout response has no ID")
+	}
+	if sp.ReplayCache != nil {
+		if err := sp.ReplayCache.Consume(logoutResponseReplayPrefix+resp.ID, resp.IssueInstant.Add(saml.MaxIssueDelay)); err != nil {
+			return nil, fmt.Errorf("slo: logout response %q: %w", resp.ID, err)
+		}
+	}
+	return resp, partialLogout(resp)
+}
+
+// partialLogout returns an error matching ErrPartialLogout if resp, a
+// LogoutResponse whose status is success, has the second-level status
+// saml.StatusPartialLogout.
+func partialLogout(resp *saml.LogoutResponse) error {
+	if second := resp.Status.StatusCode.StatusCode; second != nil && second.Value == saml.StatusPartialLogout {
+		return fmt.Errorf("slo: logout response %q: %w", resp.ID, ErrPartialLogout)
+	}
+	return nil
 }
 
 // SendRequest asks the identity provider to end the sessions of the user
@@ -437,8 +505,9 @@ func (s *Service) ParseResponse(ctx context.Context, r *http.Request, requestIDs
 // WithNotOnOrAfter and samlsp.ServiceProviderOptions.
 //
 // It returns an error matching samlsp.ErrNoEndpoint if the IdP has no SOAP
-// SingleLogoutService, and one matching saml.ErrBadStatus if the IdP could
-// not end the sessions. The request is sent with the HTTP client of
+// SingleLogoutService, one matching saml.ErrBadStatus if the IdP could not
+// end the sessions, and the response with one matching ErrPartialLogout
+// if it ended them only in part. The request is sent with the HTTP client of
 // samlsp.WithHTTPClient, to an https endpoint only.
 func (s *Service) SendRequest(ctx context.Context, nameID saml.NameID, opts ...samlsp.MessageOption) (*saml.LogoutResponse, error) {
 	sp, modify, err := s.config.Prepare(ctx, opts...)
@@ -460,5 +529,9 @@ func (s *Service) SendRequest(ctx context.Context, nameID saml.NameID, opts ...s
 	if modifyErr != nil {
 		return nil, modifyErr
 	}
-	return sp.SendSOAPLogoutRequest(ctx, req)
+	resp, err := sp.SendSOAPLogoutRequest(ctx, req)
+	if err != nil {
+		return resp, err
+	}
+	return resp, partialLogout(resp)
 }
