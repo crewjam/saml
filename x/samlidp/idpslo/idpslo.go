@@ -64,6 +64,15 @@ var ErrNoEndpoint = errors.New("idpslo: the service provider has no single logou
 // ID.
 var ErrNoRequestID = errors.New("idpslo: no request ID to match InResponseTo against")
 
+// ErrPartialLogout is matched by the error ParseResponse and SendRequest
+// return, with the response, when the SP answers with the status
+// saml.StatusSuccess and the second-level status saml.StatusPartialLogout:
+// it ended the user's session, but not all of it (saml-core §3.7.3.2).
+// The user is logged out of that participant, and the application may
+// tell the SP that started the logout so (see PartialLogout, the
+// ResponseOption).
+var ErrPartialLogout = errors.New("idpslo: the service provider could not end every session of the user")
+
 // logoutRequestReplayPrefix and logoutResponseReplayPrefix keep the replay
 // keys of LogoutRequests and LogoutResponses apart from those of other
 // messages.
@@ -385,7 +394,9 @@ func WithStatus(status saml.Status) ResponseOption {
 
 // PartialLogout is WithStatus of saml.StatusSuccess with the second-level
 // status saml.StatusPartialLogout: the IdP session ended, but some of its
-// participants could not be logged out (saml-core §3.7.3.2).
+// participants could not be logged out (saml-core §3.7.3.2), such as when
+// ParseResponse or SendRequest returned an error matching saml.ErrBadStatus
+// or ErrPartialLogout.
 var PartialLogout = WithStatus(saml.Status{StatusCode: saml.StatusCode{
 	Value:      saml.StatusSuccess,
 	StatusCode: &saml.StatusCode{Value: saml.StatusPartialLogout},
@@ -613,8 +624,8 @@ func requestEndpoint(md *saml.EntityDescriptor, binding string) (*saml.Endpoint,
 // InResponseTo, from those pending.
 //
 // It returns the response, and an error matching saml.ErrBadStatus if the
-// SP could not log the user out. A response whose status is success with
-// the second-level status saml.StatusPartialLogout is not an error.
+// SP could not log the user out, or one matching ErrPartialLogout if it
+// logged the user out only in part.
 func (s *Service) ParseResponse(ctx context.Context, r *http.Request, serviceProvider string, requestIDs ...string) (*saml.LogoutResponse, error) {
 	if len(requestIDs) == 0 {
 		return nil, ErrNoRequestID
@@ -636,7 +647,17 @@ func (s *Service) ParseResponse(ctx context.Context, r *http.Request, servicePro
 	if code := resp.Status.StatusCode.Value; code != saml.StatusSuccess {
 		return resp, fmt.Errorf("idpslo: logout response from %s: %w", serviceProvider, saml.ErrBadStatus{Status: code})
 	}
-	return resp, nil
+	return resp, partialLogout(resp, serviceProvider)
+}
+
+// partialLogout returns an error matching ErrPartialLogout if resp, a
+// LogoutResponse from serviceProvider whose status is success, has the
+// second-level status saml.StatusPartialLogout.
+func partialLogout(resp *saml.LogoutResponse, serviceProvider string) error {
+	if second := resp.Status.StatusCode.StatusCode; second != nil && second.Value == saml.StatusPartialLogout {
+		return fmt.Errorf("idpslo: logout response %q from %s: %w", resp.ID, serviceProvider, ErrPartialLogout)
+	}
+	return nil
 }
 
 // SendRequest logs the user out of p, a participant of their IdP session,
@@ -646,9 +667,10 @@ func (s *Service) ParseResponse(ctx context.Context, r *http.Request, servicePro
 // WithIdentityProviderOptions.
 //
 // It returns an error matching ErrNoEndpoint if the SP's metadata lists no
-// SOAP SingleLogoutService (or only ones that are not https), and one
-// matching saml.ErrBadStatus if the SP could not log the user out. The
-// request is sent with the HTTP client of WithHTTPClient.
+// SOAP SingleLogoutService (or only ones that are not https), one
+// matching saml.ErrBadStatus if the SP could not log the user out, and the
+// response with one matching ErrPartialLogout if it logged the user out
+// only in part. The request is sent with the HTTP client of WithHTTPClient.
 func (s *Service) SendRequest(ctx context.Context, p saml.SessionParticipant, opts ...RequestOption) (*saml.LogoutResponse, error) {
 	var o requestOptions
 	for _, opt := range opts {
@@ -666,7 +688,10 @@ func (s *Service) SendRequest(ctx context.Context, p saml.SessionParticipant, op
 	if errors.Is(err, saml.ErrNoSOAPLogoutEndpoint) {
 		return nil, fmt.Errorf("%w %s", ErrNoEndpoint, saml.SOAPBinding)
 	}
-	return resp, err
+	if err != nil {
+		return resp, err
+	}
+	return resp, partialLogout(resp, p.ServiceProviderID)
 }
 
 func hasSOAP(bindings []string) bool {

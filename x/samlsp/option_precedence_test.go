@@ -121,7 +121,7 @@ func TestSendSignsWithCallServiceProvider(t *testing.T) {
 func TestSignElementOptions(t *testing.T) {
 	ti := newTestIDP(t)
 	method := func(m string) samlsp.ServiceProviderOption {
-		return samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) { sp.LogoutSignatureMethod = m })
+		return samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) { sp.SignatureMethod = m })
 	}
 	cfg := newTestConfig(t, ti, method(dsig.RSASHA384SignatureMethod))
 	el := etree.NewElement("Thing")

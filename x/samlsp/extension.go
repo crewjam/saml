@@ -200,7 +200,7 @@ func (c *Config) ServiceProvider(ctx context.Context, opts ...ServiceProviderOpt
 func (c *Config) SignElement(el *etree.Element, opts ...ServiceProviderOption) (*etree.Element, error) {
 	sp := c.localServiceProvider()
 	c.applyServiceProviderOptions(sp, opts)
-	signWithLogoutMethod(sp)
+	c.signWithGeneralMethod(sp)
 	return signElement(sp, el)
 }
 

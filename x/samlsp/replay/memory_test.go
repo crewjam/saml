@@ -6,8 +6,6 @@ import (
 	"testing"
 	"time"
 
-	dsig "github.com/russellhaering/goxmldsig"
-
 	"github.com/crewjam/saml"
 )
 
@@ -59,7 +57,7 @@ func (ft *fakeTimers) advance(d time.Duration) {
 
 func newTestReplayState() (*Memory, *fakeTimers) {
 	ft := newFakeTimers()
-	s := &Memory{now: func() time.Time { return ft.now }, afterFunc: ft.afterFunc}
+	s := &Memory{Now: func() time.Time { return ft.now }, afterFunc: ft.afterFunc}
 	return s, ft
 }
 
@@ -174,16 +172,59 @@ func TestMemoryReplayStateRealTimer(t *testing.T) {
 	}
 }
 
-// TestMemoryClock checks that IDs expire by the Memory's Clock: an ID
-// valid for a minute by a clock set in the past is recorded, and refused
-// the second time.
-func TestMemoryClock(t *testing.T) {
+// TestMemoryNow checks that IDs expire by the Memory's Now: an ID valid for
+// a minute by a clock set in the past is recorded, and refused the second
+// time.
+func TestMemoryNow(t *testing.T) {
 	past := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-	s := &Memory{Clock: dsig.NewFakeClockAt(past)}
+	s := &Memory{Now: func() time.Time { return past }}
 	if err := s.Consume(t.Context(), []byte("a"), past.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Consume(t.Context(), []byte("a"), past.Add(time.Minute)); !errors.Is(err, saml.ErrAssertionReplayed) {
 		t.Fatalf("replay: err = %v", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stopTimer()
+}
+
+// TestMemoryNowApart checks that IDs are removed when Now runs apart from
+// the system clock of the timers: the timer waits at most maxTimerDelay,
+// then checks again by Now, and Consume removes expired IDs too.
+func TestMemoryNowApart(t *testing.T) {
+	ft := newFakeTimers()
+	appNow := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	s := &Memory{Now: func() time.Time { return appNow }, afterFunc: ft.afterFunc}
+	if err := s.Consume(t.Context(), []byte("a"), appNow.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for _, timer := range ft.pending {
+		if d := timer.at.Sub(ft.now); d > maxTimerDelay {
+			t.Fatalf("timer set %v ahead", d)
+		}
+	}
+	// Now does not move: the timer finds nothing expired, and is set again.
+	ft.advance(maxTimerDelay)
+	if s.Len() != 1 || len(ft.pending) != 1 {
+		t.Fatalf("%d records, %d timers; want 1, 1", s.Len(), len(ft.pending))
+	}
+	// Now jumps past the expiry: the next timer removes the ID.
+	appNow = appNow.Add(2 * time.Hour)
+	ft.advance(maxTimerDelay)
+	if s.Len() != 0 || len(ft.pending) != 0 {
+		t.Fatalf("%d records, %d timers once expired; want 0, 0", s.Len(), len(ft.pending))
+	}
+
+	// Consume removes the expired IDs before the timer runs.
+	if err := s.Consume(t.Context(), []byte("b"), appNow.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	appNow = appNow.Add(time.Hour)
+	if err := s.Consume(t.Context(), []byte("c"), appNow.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if s.Len() != 1 {
+		t.Fatalf("%d records, want 1", s.Len())
 	}
 }

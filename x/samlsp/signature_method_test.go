@@ -6,8 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/beevik/etree"
 	dsig "github.com/russellhaering/goxmldsig"
 
+	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/x/samlsp"
 )
 
@@ -68,4 +70,59 @@ func TestWithSignatureMethodErrors(t *testing.T) {
 		samlsp.WithSignatureMethod(dsig.ECDSASHA384SignatureMethod)); err != nil {
 		t.Errorf("ECDSA-SHA384 with an EC key: %v", err)
 	}
+}
+
+// TestGeneralSignatureMethod checks that messages other than logout
+// messages are signed with the method of WithSignatureMethod, not with a
+// LogoutSignatureMethod set for logout messages only.
+func TestGeneralSignatureMethod(t *testing.T) {
+	ti := newTestIDP(t)
+	aa := newAttributeAuthority(t, ti)
+	logoutOnly := samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
+		sp.LogoutSignatureMethod = dsig.RSASHA256SignatureMethod
+	})
+	cfg := newTestConfigWithIDP(t, ti, withAttributeService(ti, aa.URL), samlsp.WithHTTPClient(aa.Client()),
+		samlsp.WithSignatureMethod(dsig.RSASHA512SignatureMethod), logoutOnly)
+
+	alice := saml.NameID{Format: string(saml.EmailAddressNameIDFormat), Value: "alice@example.com"}
+	if _, err := cfg.QueryAttributes(t.Context(), alice); err != nil {
+		t.Fatal(err)
+	}
+	if aa.sigAlg != dsig.RSASHA512SignatureMethod {
+		t.Errorf("AttributeQuery signed with %q", aa.sigAlg)
+	}
+	if got := signedWith(t, cfg); got != dsig.RSASHA512SignatureMethod {
+		t.Errorf("SignElement signed with %q", got)
+	}
+
+	// SignatureMethod, when set, is the general method.
+	if got := signedWith(t, cfg, samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
+		sp.SignatureMethod = dsig.RSASHA384SignatureMethod
+	})); got != dsig.RSASHA384SignatureMethod {
+		t.Errorf("SignElement with SignatureMethod signed with %q", got)
+	}
+
+	// A key that does not suit WithSignatureMethod is used with SHA-256.
+	ecKey, ecCert := newECKeyPair(t)
+	if got := signedWith(t, cfg, samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
+		sp.Key, sp.Certificate = ecKey, ecCert
+	})); got != dsig.ECDSASHA256SignatureMethod {
+		t.Errorf("SignElement with an ECDSA key signed with %q", got)
+	}
+}
+
+// signedWith returns the signature method of an element signed by cfg.
+func signedWith(t *testing.T, cfg *samlsp.Config, opts ...samlsp.ServiceProviderOption) string {
+	t.Helper()
+	el := etree.NewElement("Test")
+	el.CreateAttr("ID", "id-test")
+	signed, err := cfg.SignElement(el, opts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := signed.FindElement(".//SignatureMethod")
+	if m == nil {
+		t.Fatal("not signed")
+	}
+	return m.SelectAttrValue("Algorithm", "")
 }

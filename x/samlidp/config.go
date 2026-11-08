@@ -114,7 +114,7 @@ func New(entityID string, serviceProviders ServiceProviderFunc, opts ...Option) 
 		}
 	}
 	if c.replayState == nil {
-		c.replayState = &replay.Memory{Clock: c.clock}
+		c.replayState = &replay.Memory{Now: c.Now}
 	}
 	if len(c.checks) > 0 {
 		idp := c.identityProvider(nil)
@@ -260,7 +260,7 @@ func WithMetadata(modify func(md *saml.EntityDescriptor)) Option {
 // periods: that of the saml.IdentityProvider each method builds, of Now,
 // of the default ReplayState, and of ParseMetadata's validUntil check. It
 // is mainly useful in tests. Without it, times come from saml.TimeNow, as
-// in package saml, and the default ReplayState reads the system clock.
+// in package saml.
 func WithClock(clock *dsig.Clock) ClockOption { return ClockOption{clock} }
 
 // ClockOption is the option that WithClock returns. It is both an Option,
@@ -357,16 +357,19 @@ func (c *Config) spNameQualifierError(ctx context.Context, idp *saml.IdentityPro
 	}
 }
 
-// ReplayState records the signed AuthnRequests a Config accepts, so that
-// each is accepted only once. Consume records the request identified by
-// key as accepted until expiresAt, after which the request could no longer
-// be accepted anyway and the record may be dropped. It must fail with
-// saml.ErrAssertionReplayed if key is already recorded with an expiry that
-// has not passed; any other error refuses the request too. It must be safe
-// for concurrent use, and may keep key.
+// ReplayState records the messages a Config accepts, so that each is
+// accepted only once: the signed AuthnRequests of ParseAuthnRequest, and
+// the messages recorded with Config.Consume, such as the LogoutRequests and
+// LogoutResponses of x/samlidp/idpslo. Consume records the message
+// identified by key as accepted until expiresAt, after which the message
+// could no longer be accepted anyway and the record may be dropped. It
+// must fail with saml.ErrAssertionReplayed if key is already recorded with
+// an expiry that has not passed; any other error refuses the message too.
+// It must be safe for concurrent use, and may keep key.
 //
-// key is ReplayKey of the SP's entity ID and the request's ID: 32 bytes.
-// ctx is that of ParseAuthnRequest.
+// key is ReplayKey of the SP's entity ID and the message's ID: 32 bytes.
+// ctx is that of the method that accepts the message, such as
+// ParseAuthnRequest.
 //
 // It has the method set of samlsp.ReplayState, so one record, such as a
 // replay.Memory of package github.com/crewjam/saml/x/samlsp/replay, or a
@@ -379,10 +382,12 @@ type ReplayState interface {
 // from the keys of package samlsp.
 const replayKeyLabel = "github.com/crewjam/saml/x/samlidp replay key v1\x00"
 
-// ReplayKey returns the key under which a ReplayState records the
-// AuthnRequest whose ID is id, issued by the SP whose entity ID is sp: a
-// SHA-256 hash of both. The entity ID is length-prefixed, so no other pair
-// has the same key.
+// ReplayKey returns the key under which a ReplayState records the message
+// whose ID is id, issued by the SP whose entity ID is sp: a SHA-256 hash of
+// both. The entity ID is length-prefixed, so no other pair has the same
+// key. id is that of an AuthnRequest, or, with a prefix that keeps them
+// apart, that of a LogoutRequest ("LogoutRequest:") or a LogoutResponse
+// ("LogoutResponse:") of x/samlidp/idpslo.
 func ReplayKey(sp, id string) []byte {
 	h := sha256.New()
 	h.Write([]byte(replayKeyLabel))
@@ -393,8 +398,9 @@ func ReplayKey(sp, id string) []byte {
 }
 
 // WithReplayState sets where ParseAuthnRequest records the signed
-// AuthnRequests it accepts, so that each is accepted only once. Unsigned
-// requests are not recorded: anyone can make a new one, so refusing a
+// AuthnRequests it accepts, and Consume the messages of other packages
+// (see ReplayState), so that each is accepted only once. Unsigned
+// AuthnRequests are not recorded: anyone can make a new one, so refusing a
 // repeated one would protect nothing.
 //
 // By default, each Config records them in its own replay.Memory, which

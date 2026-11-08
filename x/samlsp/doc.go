@@ -74,8 +74,8 @@
 //
 // # Replay protection
 //
-// ParseResponse accepts each assertion only once (and x/samlsp/slo each
-// LogoutRequest), so that a message copied from a browser's history or a
+// ParseResponse accepts each assertion and each resolved artifact only
+// once (and x/samlsp/slo each LogoutRequest and LogoutResponse), so that a message copied from a browser's history or a
 // log cannot be used again. Each message is recorded under a hash of its
 // ID and of the IdP's entity ID (ReplayKey), so the messages of different
 // IdPs never collide, and one record can serve every tenant of an SP. By

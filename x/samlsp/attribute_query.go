@@ -64,7 +64,7 @@ func (c *Config) QueryAttributes(ctx context.Context, nameID saml.NameID, opts .
 	if err != nil {
 		return nil, err
 	}
-	signWithLogoutMethod(sp)
+	c.signWithGeneralMethod(sp)
 	result, err := sp.QueryAttributes(ctx, nameID, o.attributes...)
 	if errors.Is(err, saml.ErrNoAttributeService) {
 		return nil, fmt.Errorf("%w %s for attribute queries", ErrNoEndpoint, saml.SOAPBinding)

@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -359,6 +360,90 @@ func TestReplay(t *testing.T) {
 	}
 }
 
+// recordingState is a ReplayState that keeps every key it is given.
+type recordingState struct {
+	mu   sync.Mutex
+	keys map[string]bool
+}
+
+func (s *recordingState) Consume(_ context.Context, key []byte, _ time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.keys[string(key)] {
+		return saml.ErrAssertionReplayed
+	}
+	s.keys[string(key)] = true
+	return nil
+}
+
+func (s *recordingState) has(key []byte) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.keys[string(key)]
+}
+
+// TestReplayKeys checks the keys under which logout messages are recorded,
+// as samlsp.ReplayKey and samlidp.ReplayKey document them.
+func TestReplayKeys(t *testing.T) {
+	ctx := context.Background()
+	state := &recordingState{keys: map[string]bool{}}
+	w := newWorld(t, worldOptions{
+		idpConfig: []samlidp.Option{samlidp.WithReplayState(state)},
+		spConfig:  [2][]samlsp.Option{{samlsp.WithReplayState(state)}, {samlsp.WithReplayState(state)}},
+	})
+	sp1, sp2 := w.sps[0], w.sps[1]
+
+	// Logout started by SP 1.
+	_, a1 := w.login(t, 0, "s1")
+	out, err := sp1.slo.Request(ctx, a1.NameID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := w.logout.ParseRequest(ctx, toIDP(t, out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.has(samlidp.ReplayKey(sp1.config.EntityID(), "LogoutRequest:"+out.ID)) {
+		t.Error("the IdP did not record the LogoutRequest")
+	}
+	back, err := w.logout.Response(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := sp1.slo.ParseResponse(ctx, deliver(t, back), out.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.has(samlsp.ReplayKey(idpEntityID, "LogoutResponse:"+resp.ID)) {
+		t.Error("the SP did not record the LogoutResponse")
+	}
+
+	// Logout of SP 2 started by the IdP.
+	p2, _ := w.login(t, 1, "s1")
+	toSP2, err := w.logout.Request(ctx, p2, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp2req, err := sp2.slo.ParseRequest(ctx, deliver(t, toSP2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.has(samlsp.ReplayKey(idpEntityID, "LogoutRequest:"+toSP2.ID)) {
+		t.Error("the SP did not record the LogoutRequest")
+	}
+	answer, err := sp2.slo.Response(ctx, sp2req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err = w.logout.ParseResponse(ctx, toIDP(t, answer), sp2.config.EntityID(), toSP2.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.has(samlidp.ReplayKey(sp2.config.EntityID(), "LogoutResponse:"+resp.ID)) {
+		t.Error("the IdP did not record the LogoutResponse")
+	}
+}
+
 func TestBadResponses(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t, worldOptions{})
@@ -397,6 +482,43 @@ func TestBadResponses(t *testing.T) {
 	}
 	if _, err := w.logout.ParseResponse(ctx, toIDP(t, ok), sp2.config.EntityID(), toSP2.ID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// partialStatus is the status of an SP that logged the user out only in
+// part.
+var partialStatus = saml.Status{StatusCode: saml.StatusCode{
+	Value:      saml.StatusSuccess,
+	StatusCode: &saml.StatusCode{Value: saml.StatusPartialLogout},
+}}
+
+func TestParseResponsePartialLogout(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, worldOptions{})
+	p2, _ := w.login(t, 1, "s1")
+	toSP2, err := w.logout.Request(ctx, p2, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp2 := w.sps[1]
+	sp2req, err := sp2.slo.ParseRequest(ctx, deliver(t, toSP2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	partial, err := sp2.slo.Response(ctx, sp2req, slo.WithStatus(partialStatus))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := w.logout.ParseResponse(ctx, toIDP(t, partial), sp2.config.EntityID(), toSP2.ID)
+	if !errors.Is(err, idpslo.ErrPartialLogout) || resp == nil {
+		t.Fatalf("got %v, %v", resp, err)
+	}
+	var bad saml.ErrBadStatus
+	if errors.As(err, &bad) {
+		t.Errorf("partial logout matches saml.ErrBadStatus: %v", err)
+	}
+	if s := resp.Status.StatusCode.StatusCode; s == nil || s.Value != saml.StatusPartialLogout {
+		t.Fatalf("status %+v", resp.Status)
 	}
 }
 
@@ -481,6 +603,7 @@ func TestBackChannel(t *testing.T) {
 	ctx := context.Background()
 	var w *world
 	sp2Got := make(chan *saml.LogoutRequest, 1)
+	var sp2Partial atomic.Bool
 	idpServer := httptest.NewTLSServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		req, err := w.logout.ParseRequest(r.Context(), r)
 		if err != nil {
@@ -503,7 +626,11 @@ func TestBackChannel(t *testing.T) {
 			return
 		}
 		sp2Got <- req.Raw
-		msg, err := s.Response(r.Context(), req)
+		var opts []samlsp.MessageOption
+		if sp2Partial.Load() {
+			opts = append(opts, slo.WithStatus(partialStatus))
+		}
+		msg, err := s.Response(r.Context(), req, opts...)
 		if err != nil {
 			http.Error(rw, err.Error(), http.StatusInternalServerError)
 			return
@@ -549,6 +676,14 @@ func TestBackChannel(t *testing.T) {
 	if got := <-sp2Got; got.Reason != saml.LogoutReasonAdmin || got.NotOnOrAfter == nil || !got.NotOnOrAfter.Equal(deadline) {
 		t.Fatalf("SP 2 got %+v", got)
 	}
+
+	// SP 2 ends the user's sessions only in part.
+	sp2Partial.Store(true)
+	resp, err = w.logout.SendRequest(ctx, p2)
+	if !errors.Is(err, idpslo.ErrPartialLogout) || resp == nil {
+		t.Fatalf("partial: got %v, %v", resp, err)
+	}
+	<-sp2Got
 }
 
 func TestSendRequestNeedsBackChannel(t *testing.T) {

@@ -137,9 +137,10 @@ func signElement(idp *saml.IdentityProvider, el *etree.Element) (*etree.Element,
 // message id of the SP serviceProvider has been accepted, until
 // expiresAt, under ReplayKey(serviceProvider, id). It fails with
 // saml.ErrAssertionReplayed if it already was. Packages that accept other
-// messages from SPs, such as LogoutRequests, use it; prefix id with the
-// kind of message (such as "LogoutRequest:") so that the IDs of different
-// kinds cannot collide.
+// messages from SPs use it; prefix id with the kind of message so that the
+// IDs of different kinds cannot collide, as x/samlidp/idpslo does with
+// "LogoutRequest:" and "LogoutResponse:". AuthnRequests are recorded by
+// their bare ID.
 func (c *Config) Consume(ctx context.Context, serviceProvider, id string, expiresAt time.Time) error {
 	return c.replayState.Consume(ctx, ReplayKey(serviceProvider, id), expiresAt)
 }
