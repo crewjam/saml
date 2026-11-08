@@ -47,7 +47,10 @@ var (
 
 	// IsPassive asks the IdP not to interact with the user. If it cannot
 	// authenticate the user silently, ParseResponse fails with an error
-	// that matches saml.ErrBadStatus with the status NoPassive.
+	// that matches saml.ErrBadStatus with the status Responder and the
+	// second-level status NoPassive (saml-core §3.2.2.2):
+	//
+	//	errors.Is(err, saml.ErrBadStatus{Status: saml.StatusResponder, SubStatus: saml.StatusNoPassive})
 	IsPassive AuthnOption = authnOptionFunc(func(o *authnOptions) { o.isPassive = true })
 )
 

@@ -37,6 +37,26 @@ func TestClassify(t *testing.T) {
 	assert.Equal(t, "urn:oasis:names:tc:SAML:2.0:status:Requester", badStatus.Status)
 }
 
+// ErrBadStatus reports the second-level status code and message, and
+// matches with errors.Is a target that leaves them empty.
+func TestErrBadStatusSubStatus(t *testing.T) {
+	err := error(newErrBadStatus(Status{
+		StatusCode:    StatusCode{Value: StatusResponder, StatusCode: &StatusCode{Value: StatusNoPassive}},
+		StatusMessage: &StatusMessage{Value: "no UI"},
+	}))
+	assert.Error(t, err, StatusResponder+" ("+StatusNoPassive+"): no UI")
+	wrapped := &InvalidResponseError{PrivateErr: err}
+	assert.Check(t, errors.Is(wrapped, ErrBadStatus{Status: StatusResponder}))
+	assert.Check(t, errors.Is(wrapped, ErrBadStatus{Status: StatusResponder, SubStatus: StatusNoPassive}))
+	assert.Check(t, !errors.Is(wrapped, ErrBadStatus{Status: StatusResponder, SubStatus: StatusNoAuthnContext}))
+	assert.Check(t, !errors.Is(wrapped, ErrBadStatus{Status: StatusRequester}))
+	var badStatus ErrBadStatus
+	assert.Assert(t, errors.As(wrapped, &badStatus))
+	assert.Check(t, badStatus.SubStatus == StatusNoPassive)
+
+	assert.Error(t, newErrBadStatus(Status{StatusCode: StatusCode{Value: StatusRequester}}), StatusRequester)
+}
+
 func TestClassifyCertificate(t *testing.T) {
 	idpCert := mustParseCertificate(golden.Get(t, "idp_cert.pem"))
 	otherCert := mustParseCertificate(golden.Get(t, "cert_2017.pem"))

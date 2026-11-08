@@ -58,6 +58,7 @@ type testIDP struct {
 	cert      *x509.Certificate
 	spMeta    *saml.EntityDescriptor
 	loggedOut bool
+	noSession bool // answer an IsPassive request with NoPassive
 }
 
 func (ti *testIDP) GetServiceProvider(_ *http.Request, id string) (*saml.EntityDescriptor, error) {
@@ -67,7 +68,13 @@ func (ti *testIDP) GetServiceProvider(_ *http.Request, id string) (*saml.EntityD
 	return nil, errors.New("unknown service provider")
 }
 
-func (ti *testIDP) GetSession(_ http.ResponseWriter, _ *http.Request, _ *saml.IdpAuthnRequest) *saml.Session {
+func (ti *testIDP) GetSession(w http.ResponseWriter, _ *http.Request, req *saml.IdpAuthnRequest) *saml.Session {
+	if ti.noSession && req.Request.IsPassive != nil && *req.Request.IsPassive {
+		if err := ti.idp.SendErrorResponse(w, req, &saml.StatusError{TopLevel: saml.StatusResponder, SecondLevel: saml.StatusNoPassive}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		return nil
+	}
 	return &saml.Session{
 		ID:           "session-1",
 		Index:        "index-1",
@@ -254,6 +261,22 @@ func TestParseResponseRefusesOtherRequestID(t *testing.T) {
 	// A solicited response does not pass as an unsolicited one.
 	if _, err := cfg.ParseResponse(context.Background(), acs, samlsp.AllowUnsolicited); !errors.Is(err, saml.ErrRequestIDMismatch) {
 		t.Fatalf("ParseResponse with AllowUnsolicited = %v, want ErrRequestIDMismatch", err)
+	}
+}
+
+// An IdP that cannot authenticate the user passively answers with
+// Responder and NoPassive, which ParseResponse reports in saml.ErrBadStatus.
+func TestIsPassiveNoPassive(t *testing.T) {
+	ti := newTestIDP(t)
+	ti.noSession = true
+	cfg := newTestConfig(t, ti)
+	msg, err := cfg.AuthnRequest(t.Context(), "s", samlsp.IsPassive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID(msg.ID))
+	if !errors.Is(err, saml.ErrBadStatus{Status: saml.StatusResponder, SubStatus: saml.StatusNoPassive}) {
+		t.Fatalf("err = %v (%v), want NoPassive", err, errors.Unwrap(err))
 	}
 }
 

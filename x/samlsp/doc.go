@@ -139,8 +139,10 @@
 // Errors from verifying a message come from package saml unchanged. Match
 // them with errors.Is against the saml.Err* values, such as
 // saml.ErrUntrustedCertificate and saml.ErrExpired. When the IdP answered
-// with a status other than Success, such as NoPassive for an IsPassive
-// request, use errors.As with saml.ErrBadStatus.
+// with a status other than Success, the error matches saml.ErrBadStatus,
+// whose SubStatus holds the second-level status, such as NoPassive for an
+// IsPassive request. errors.Is matches a saml.ErrBadStatus that leaves
+// SubStatus empty against any second-level status.
 //
 // A Response that does not verify gives a *saml.InvalidResponseError,
 // whose message reveals nothing an attacker could use ("Authentication
