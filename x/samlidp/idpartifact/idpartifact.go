@@ -31,14 +31,18 @@
 //
 // The browser takes the artifact to the SP with a redirect, or, with
 // Binding.Form, with a form it posts. The SP must sign its ArtifactResolve
-// requests; the IdP signs its ArtifactResponses with the key of
-// samlidp.WithSigningKey.
+// requests, or, with Binding.TLSClientAuth, present a TLS client
+// certificate with the key of one of its signing certificates
+// (saml-bindings §3.6.5.2); an SP of x/samlsp presents one with the
+// tls.Config of the client of samlsp.WithHTTPClient. The IdP signs its
+// ArtifactResponses with the key of samlidp.WithSigningKey.
 package idpartifact
 
 import (
 	"context"
 	"crypto/rand"
 	"crypto/sha1" //nolint:gosec // SAML type 0x0004 artifacts identify their source by SHA-1 (saml-bindings §3.6.4)
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/xml"
@@ -101,6 +105,29 @@ type Binding struct {
 	// that ServeHTTP refuses, and why, before it answers with a SOAP
 	// fault, which does not say why. Use it to log the error.
 	OnError func(r *http.Request, err error)
+
+	// TLSClientAuth makes ServeHTTP accept an ArtifactResolve that is not
+	// signed, if the SP authenticated itself instead with a TLS client
+	// certificate (saml-bindings §3.6.5.2, SOAP binding §3.2.3.1): one
+	// whose public key is that of a signing certificate in the metadata of
+	// the SP that the request names as its Issuer. The certificate is
+	// matched by its key, not its name, so its chain need not be verified;
+	// but the server must ask for it, with a tls.Config.ClientAuth of
+	// RequireAnyClientCert or stronger, since a TLS server does not by
+	// default. A signed ArtifactResolve is verified as without
+	// TLSClientAuth, and refused if its signature is not valid, whatever
+	// the client certificate.
+	TLSClientAuth bool
+
+	// ClientCertificate, if not nil, returns the TLS client certificate of
+	// the request for TLSClientAuth, instead of the first of
+	// r.TLS.PeerCertificates. Behind a proxy that terminates TLS, r.TLS is
+	// nil; ClientCertificate can then return the certificate that the
+	// proxy forwards, in a header for example. That certificate is then
+	// only as trustworthy as the proxy, and as the guarantee that no
+	// request reaches the Binding except through it with that header set
+	// by it: anyone who can set the header can claim to be any SP.
+	ClientCertificate func(r *http.Request) *x509.Certificate
 }
 
 var (
@@ -259,7 +286,8 @@ func newArtifact(entityID string, index uint16) (string, error) {
 // artifact.
 //
 // The ArtifactResolve must be signed by an SP that the ServiceProviderFunc
-// knows, be issued by it, and be fresh. A message is given only once, and
+// knows (or, with TLSClientAuth, come with its TLS client certificate), be
+// issued by it, and be fresh. A message is given only once, and
 // only to the SP it was sent to; an artifact that is unknown, expired,
 // already resolved or meant for another SP is answered with no message
 // (saml-core §3.5.3). A request that is refused is answered with a SOAP
@@ -305,8 +333,8 @@ func (b *Binding) resolve(r *http.Request) (*etree.Element, error) {
 		return nil, err
 	}
 
-	// The Issuer names the SP whose keys must verify the signature; it is
-	// trusted only once they have.
+	// The Issuer names the SP whose keys must verify the signature, or
+	// match the TLS client certificate; it is trusted only once they have.
 	issuer := el.FindElement("./Issuer")
 	if issuer == nil || issuer.Text() == "" {
 		return nil, errors.New("idpartifact: the ArtifactResolve names no Issuer")
@@ -316,7 +344,12 @@ func (b *Binding) resolve(r *http.Request) (*etree.Element, error) {
 	if err != nil {
 		return nil, err
 	}
-	signed, err := b.config.IdentityProvider().ValidateSPSignedElement(el, md)
+	var signed *etree.Element
+	if b.TLSClientAuth && !isSigned(el) {
+		signed, err = b.tlsAuthenticated(r, md, el)
+	} else {
+		signed, err = b.config.IdentityProvider().ValidateSPSignedElement(el, md)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("idpartifact: the ArtifactResolve: %w", err)
 	}
