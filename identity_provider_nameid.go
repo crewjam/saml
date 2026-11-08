@@ -48,7 +48,7 @@ func (req *IdpAuthnRequest) makeAssertionNameID(session *Session) (*NameID, erro
 	}
 
 	if nameIDFormatDefinesQualifiers(format) {
-		nameID.NameQualifier = req.IDP.Metadata().EntityID
+		nameID.NameQualifier = req.IDP.entityID()
 		nameID.SPNameQualifier = spNameQualifier
 	}
 	return nameID, nil
