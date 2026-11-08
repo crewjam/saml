@@ -27,7 +27,7 @@ func (s *Server) storeError(w http.ResponseWriter, err error) {
 
 func randomBytes(n int) []byte {
 	rv := make([]byte, n)
-	if _, err := io.ReadFull(saml.RandReader, rv); err != nil {
+	if _, err := io.ReadFull(saml.RandReader, rv); err != nil { //nolint:staticcheck // samlsp and samlidp still read the deprecated global
 		panic(err)
 	}
 	return rv

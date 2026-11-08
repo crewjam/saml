@@ -3,6 +3,7 @@ package xmlenc
 import (
 	"bytes"
 	"crypto/rand"
+	"errors"
 	"testing"
 	"testing/iotest"
 
@@ -36,4 +37,49 @@ func TestEncryptFillsRandomBuffersFromShortReads(t *testing.T) {
 	sessionKey, err := Decrypt(privKey, el.FindElement("./KeyInfo/EncryptedKey"))
 	assert.NilError(t, err)
 	assert.Assert(t, !bytes.Equal(sessionKey[1:], make([]byte, 15)), "session key was only partly filled: %x", sessionKey)
+}
+
+// TestEncryptUsesRandField checks that RSA.Rand is the source of all the
+// randomness of Encrypt, including that of the block cipher, and that a
+// block cipher's own Rand takes precedence over it.
+func TestEncryptUsesRandField(t *testing.T) {
+	saved := RandReader
+	globalErr := errors.New("the global RandReader was read")
+	RandReader = iotest.ErrReader(globalErr)
+	t.Cleanup(func() { RandReader = saved })
+
+	cert, privKey := loadTestKeyPair(t)
+	for _, bc := range []BlockCipher{AES128CBC, AES128GCM} {
+		e := OAEP()
+		e.BlockCipher = bc
+		e.Rand = rand.Reader
+		el, err := e.Encrypt(cert, []byte("<x/>"), nil)
+		assert.NilError(t, err, bc.Algorithm())
+		plaintext, err := Decrypt(privKey, el)
+		assert.NilError(t, err, bc.Algorithm())
+		assert.Equal(t, "<x/>", string(plaintext))
+
+		e = PKCS1v15()
+		e.BlockCipher = bc
+		e.Rand = rand.Reader
+		_, err = e.Encrypt(cert, []byte("<x/>"), nil)
+		assert.NilError(t, err, bc.Algorithm())
+	}
+
+	cipherErr := errors.New("the block cipher's Rand was read")
+	gcm := AES128GCM.(GCM)
+	gcm.Rand = iotest.ErrReader(cipherErr)
+	e := OAEP()
+	e.BlockCipher = gcm
+	e.Rand = rand.Reader
+	_, err := e.Encrypt(cert, []byte("<x/>"), nil)
+	assert.ErrorIs(t, err, cipherErr)
+
+	cbc := AES128CBC.(CBC)
+	cbc.Rand = iotest.ErrReader(cipherErr)
+	_, err = cbc.Encrypt(make([]byte, 16), []byte("<x/>"), nil)
+	assert.ErrorIs(t, err, cipherErr)
+
+	_, err = OAEP().Encrypt(cert, []byte("<x/>"), nil)
+	assert.ErrorIs(t, err, globalErr)
 }

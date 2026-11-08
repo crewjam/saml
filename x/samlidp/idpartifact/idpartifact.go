@@ -40,7 +40,6 @@ package idpartifact
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha1" //nolint:gosec // SAML type 0x0004 artifacts identify their source by SHA-1 (saml-bindings §3.6.4)
 	"crypto/x509"
 	"encoding/base64"
@@ -231,7 +230,7 @@ func (b *Binding) Encode(ctx context.Context, m *samlidp.OutboundMessage) (*saml
 	if err != nil {
 		return nil, err
 	}
-	art, err := newArtifact(b.config.EntityID(), b.index)
+	art, err := newArtifact(b.config.Rand(), b.config.EntityID(), b.index)
 	if err != nil {
 		return nil, err
 	}
@@ -268,14 +267,14 @@ func (b *Binding) lifetime() time.Duration {
 
 // newArtifact returns a new type 0x0004 artifact (saml-bindings §3.6.4):
 // the type code, the endpoint index, the SHA-1 hash of the issuer's
-// entity ID and a random message handle.
-func newArtifact(entityID string, index uint16) (string, error) {
+// entity ID and a random message handle, read from r.
+func newArtifact(r io.Reader, entityID string, index uint16) (string, error) {
 	buf := make([]byte, 44)
 	binary.BigEndian.PutUint16(buf[0:2], 0x0004)
 	binary.BigEndian.PutUint16(buf[2:4], index)
 	source := sha1.Sum([]byte(entityID)) //nolint:gosec // see the import
 	copy(buf[4:24], source[:])
-	if _, err := io.ReadFull(rand.Reader, buf[24:44]); err != nil {
+	if _, err := io.ReadFull(r, buf[24:44]); err != nil {
 		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(buf), nil
@@ -448,7 +447,7 @@ func readArtifactResolve(body []byte) (*etree.Element, error) {
 // inResponseTo, carrying message if it is not nil.
 func (b *Binding) artifactResponse(inResponseTo string, t time.Time, message *etree.Element) (*etree.Element, error) {
 	id := make([]byte, 20)
-	if _, err := io.ReadFull(rand.Reader, id); err != nil {
+	if _, err := io.ReadFull(b.config.Rand(), id); err != nil {
 		return nil, err
 	}
 	el := etree.NewElement("samlp:ArtifactResponse")

@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"net/url"
 	"strings"
 	"time"
@@ -287,14 +288,14 @@ func (m *EntityDescriptor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) 
 // made with signingContext (saml-metadata-2.0-os §3).
 //
 // The signature references the EntityDescriptor by its ID attribute; one is
-// generated if ed does not have one. ed itself is not modified. The returned
+// generated from rand if ed does not have one. ed itself is not modified. The returned
 // element must be serialized as-is: re-indenting it changes the signed
 // content.
-func signMetadata(ed *EntityDescriptor, signingContext *dsig.SigningContext) (*etree.Element, error) {
+func signMetadata(ed *EntityDescriptor, signingContext *dsig.SigningContext, rand io.Reader) (*etree.Element, error) {
 	unsigned := *ed
 	unsigned.Signature = nil
 	if unsigned.ID == "" {
-		unsigned.ID = fmt.Sprintf("id-%x", randomBytes(20))
+		unsigned.ID = fmt.Sprintf("id-%x", randomBytes(rand, 20))
 	}
 
 	buf, err := xml.Marshal(unsigned)

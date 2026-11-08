@@ -115,7 +115,7 @@ func signWithCryptoSigner(token *jwt.Token, signer crypto.Signer) (string, error
 		}
 	}
 
-	sig, err := signer.Sign(saml.RandReader, message, opts)
+	sig, err := signer.Sign(saml.RandReader, message, opts) //nolint:staticcheck // samlsp still reads the deprecated global
 	if err != nil {
 		return "", fmt.Errorf("signing with crypto.Signer: %w", err)
 	}

@@ -431,7 +431,7 @@ func (req *IdpLogoutRequest) MakeLogoutResponse(statusCode string) *LogoutRespon
 		destination = logoutResponseLocation(*req.SLOEndpoint)
 	}
 	return &LogoutResponse{
-		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
+		ID:           fmt.Sprintf("id-%x", randomBytes(req.IDP.randReader(), 20)),
 		InResponseTo: req.Request.ID,
 		Version:      "2.0",
 		IssueInstant: req.Now,

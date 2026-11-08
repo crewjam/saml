@@ -490,7 +490,7 @@ func TestSpecMetadata_3_1_2_SignatureReferencesExistingID(t *testing.T) {
 	ed.ID = "_my-metadata-id"
 	ctx, err := sp.signingContext(dsig.RSASHA256SignatureMethod)
 	assert.NilError(t, err)
-	el, err := signMetadata(ed, ctx)
+	el, err := signMetadata(ed, ctx, nil)
 	assert.NilError(t, err)
 	assert.Check(t, is.Equal("_my-metadata-id", el.SelectAttrValue("ID", "")))
 	ref := el.FindElement("./Signature/SignedInfo/Reference")

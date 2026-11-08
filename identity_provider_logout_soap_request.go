@@ -143,7 +143,7 @@ func (idp *IdentityProvider) logoutParticipantsSOAP(r *http.Request, participant
 	}
 
 	// The LogoutRequests are made one at a time, as making them reads
-	// RandReader; only sending them and waiting for the answers is done
+	// the IdentityProvider's Rand; only sending them and waiting for the answers is done
 	// concurrently.
 	failed := 0
 	var logouts []*soapLogout

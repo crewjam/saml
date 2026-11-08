@@ -11,6 +11,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"slices"
@@ -45,6 +46,7 @@ type Config struct {
 	replayState            ReplayState
 	authnContextComparator func(comparison string, requested []string, got string) bool
 	clock                  *dsig.Clock
+	rand                   io.Reader
 	clockSkew              time.Duration
 	issueDelay             time.Duration
 	httpClient             *http.Client
@@ -472,6 +474,16 @@ func (o ClockOption) applyConfig(c *Config, _ *configOptions) { c.clock = o.cloc
 
 func (o ClockOption) applyMetadata(m *metadataOptions) { m.clock = o.clock }
 
+// WithRand sets the source of the cryptographically random bytes the
+// service provider needs: the IDs of the requests, responses and metadata
+// it issues, the keys, IVs and nonces used to encrypt NameIDs, and the
+// artifacts and messages of x/samlsp/artifact. It sets
+// saml.ServiceProvider.Rand, so it applies to this Config only. It is
+// mainly useful in tests. Without it, crypto/rand is used.
+func WithRand(r io.Reader) Option {
+	return optionFunc(func(c *Config, _ *configOptions) { c.rand = r })
+}
+
 // WithClockSkew sets how far the IdP's clock may be from the SP's: the
 // leeway allowed when checking IssueInstant, NotBefore and NotOnOrAfter
 // times, and the AuthnInstant of WithMaxAuthnAge. It sets
@@ -597,6 +609,7 @@ func (c *Config) localServiceProvider() *saml.ServiceProvider {
 		AcsURL:                c.acsURL,
 		AuthnNameIDFormat:     c.nameIDFormat,
 		Clock:                 c.clock,
+		Rand:                  c.Rand(),
 		MaxClockSkew:          c.clockSkew,
 		MaxIssueDelay:         c.issueDelay,
 

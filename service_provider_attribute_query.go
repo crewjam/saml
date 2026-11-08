@@ -106,7 +106,7 @@ func (sp *ServiceProvider) MakeAttributeQuery(nameID NameID, attributes ...Attri
 	}
 
 	query := &AttributeQuery{
-		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
+		ID:           fmt.Sprintf("id-%x", randomBytes(sp.randReader(), 20)),
 		Version:      "2.0",
 		IssueInstant: sp.now(),
 		Destination:  destination,

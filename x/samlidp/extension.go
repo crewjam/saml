@@ -2,9 +2,11 @@ package samlidp
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net/url"
 	"slices"
@@ -149,6 +151,16 @@ func (c *Config) Consume(ctx context.Context, serviceProvider, id string, expire
 // package saml reads it to validate requests and stamp what the IdP
 // issues: without WithClock, from saml.TimeNow.
 func (c *Config) Now() time.Time { return clockNow(c.clock) }
+
+// Rand returns the source of cryptographically random bytes of WithRand,
+// or crypto/rand's Reader without it. Packages that extend this one, such
+// as x/samlidp/idpartifact, read their random IDs and artifacts from it.
+func (c *Config) Rand() io.Reader {
+	if c.rand != nil {
+		return c.rand
+	}
+	return rand.Reader
+}
 
 // clockNow returns the current time in UTC from clock or, if it is nil,
 // from saml.TimeNow, as package saml does.

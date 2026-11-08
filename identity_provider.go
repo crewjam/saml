@@ -190,6 +190,18 @@ type IdentityProvider struct {
 	// concurrently, for example in parallel tests.
 	Clock *dsig.Clock
 
+	// Rand, if non-nil, is the source of the cryptographically random
+	// bytes this IdentityProvider needs: the IDs of the assertions,
+	// responses, logout messages and metadata it issues, the keys, IVs and
+	// nonces used to encrypt assertions and NameIDs (unless
+	// AssertionEncrypter or LogoutNameIDEncrypter has a source of its own),
+	// and the signature of its logout state. It must be safe for concurrent
+	// use if the IdentityProvider is.
+	//
+	// If nil, crypto/rand is used (through the deprecated package-level
+	// RandReader, and xmlenc.RandReader for encryption).
+	Rand io.Reader
+
 	// MaxClockSkew, if not zero, replaces the package-level MaxClockSkew for
 	// this IdentityProvider: the leeway allowed for a service provider's
 	// clock when checking IssueInstant and NotOnOrAfter times, and how far
@@ -733,7 +745,7 @@ func (idp *IdentityProvider) SignedMetadata() (*etree.Element, error) {
 	if err != nil {
 		return nil, err
 	}
-	return signMetadata(idp.Metadata(), signingContext)
+	return signMetadata(idp.Metadata(), signingContext, idp.randReader())
 }
 
 // ServeMetadata is an http.HandlerFunc that serves the IDP metadata. If
@@ -1662,7 +1674,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 	remoteAddress := hostFromRemoteAddr(req.HTTPRequest.RemoteAddr)
 
 	req.Assertion = &Assertion{
-		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
+		ID:           fmt.Sprintf("id-%x", randomBytes(req.IDP.randReader(), 20)),
 		IssueInstant: req.IDP.now(),
 		Version:      "2.0",
 		Issuer: Issuer{
@@ -1804,7 +1816,7 @@ func (req *IdpAuthnRequest) MakeAssertionEl() error {
 	if req.IDP != nil {
 		configured = req.IDP.AssertionEncrypter
 	}
-	encryptor := assertionEncrypter(configured, methods)
+	encryptor := encrypterWithRand(assertionEncrypter(configured, methods), req.IDP.configuredRand())
 	encryptedDataEl, err := encryptor.Encrypt(certBuf, signedAssertionBuf, nil)
 	if err != nil {
 		return err
@@ -1843,7 +1855,7 @@ func (req *IdpAuthnRequest) encryptSubjectNameID() error {
 	if req.IDP != nil {
 		configured = req.IDP.AssertionEncrypter
 	}
-	encryptedID, err := encryptIdentifier(subject.NameID.Element(), cert, assertionEncrypter(configured, methods))
+	encryptedID, err := encryptIdentifier(subject.NameID.Element(), cert, encrypterWithRand(assertionEncrypter(configured, methods), req.IDP.configuredRand()))
 	if err != nil {
 		return fmt.Errorf("cannot encrypt NameID: %w", err)
 	}
@@ -2016,7 +2028,7 @@ func (req *IdpAuthnRequest) MakeResponse() error {
 
 	response := &Response{
 		Destination:  req.ACSEndpoint.Location,
-		ID:           fmt.Sprintf("id-%x", randomBytes(20)),
+		ID:           fmt.Sprintf("id-%x", randomBytes(req.IDP.randReader(), 20)),
 		InResponseTo: req.Request.ID,
 		IssueInstant: req.Now,
 		Version:      "2.0",

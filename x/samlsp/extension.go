@@ -3,11 +3,13 @@ package samlsp
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"maps"
 	"net/http"
 	"net/url"
@@ -21,6 +23,16 @@ import (
 // This file holds the extension points of the package: the means for
 // other packages to add bindings, extend the SP metadata, and handle SAML
 // messages this package does not.
+
+// Rand returns the source of cryptographically random bytes of WithRand,
+// or crypto/rand's Reader without it. Packages that extend this one, such
+// as x/samlsp/artifact, read their random IDs and artifacts from it.
+func (c *Config) Rand() io.Reader {
+	if c.rand != nil {
+		return c.rand
+	}
+	return rand.Reader
+}
 
 // Binding sends an OutboundMessage to the IdP. AuthnRequest and Send (and
 // so the packages built on it) use one passed with WithCustomBinding
