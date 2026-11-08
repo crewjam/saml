@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -432,6 +433,26 @@ func TestIDPSOAPLogoutHTTPClient(t *testing.T) {
 		assert.Check(t, used)
 		assert.Check(t, is.Equal(propagationReturnURL, w.Header().Get("Location")))
 		assert.Check(t, is.Len(soapSP.requests(), 1))
+	})
+	t.Run("custom client: redirect to http not followed", func(t *testing.T) {
+		var plainHits atomic.Int32
+		plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			plainHits.Add(1)
+			w.WriteHeader(http.StatusOK)
+		}))
+		t.Cleanup(plain.Close)
+		pt := newPropagationTest(t)
+		soapSP := pt.addSOAPParticipant(t)
+		soapSP.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, plain.URL+"/slo", http.StatusTemporaryRedirect)
+		})
+		// A client with the default redirect policy.
+		pt.idp.HTTPClient = &http.Client{Transport: soapSP.server.Client().Transport, Timeout: 5 * time.Second}
+		pt.login(t, soapSP.sp)
+
+		w := pt.startLogout("")
+		assert.Check(t, is.Contains(w.Body.String(), soapSP.sp.MetadataURL.String()))
+		assert.Check(t, is.Equal(int32(0), plainHits.Load()))
 	})
 	t.Run("unreachable", func(t *testing.T) {
 		pt := newPropagationTest(t)
