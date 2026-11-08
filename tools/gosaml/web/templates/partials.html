@@ -5,29 +5,30 @@
 {{define "expiry"}}<p class="meta">Created {{since .CreatedAt}}. Deleted in {{until .ExpiresAt}}, or when the server restarts.</p>{{end}}
 
 {{define "events"}}
-<section id="log" class="card">
+<section id="log" class="card" data-live="/manage/{{.Secret}}/live" data-after="{{with .Events}}{{(index . 0).ID}}{{end}}" data-max="{{.Max}}">
   <div class="card-head">
-    <h2>Log</h2>
+    <h2>Log <span id="live" class="live" hidden></span></h2>
     <form method="post" action="/manage/{{.Secret}}/clear-events"><button class="small secondary">Clear</button></form>
   </div>
-  <p class="hint">Messages this instance sent and received, newest first. The last {{.Max}} are kept. Reload to see new ones.</p>
-  {{if not .Events}}<p class="empty">Nothing yet.</p>{{end}}
+  <p class="hint">Messages this instance sent and received, newest first, as they happen. The last {{.Max}} are kept.</p>
+  <p class="empty" {{if .Events}}hidden{{end}}>Nothing yet.</p>
   <ol class="events">
-  {{range .Events}}
-    <li class="{{if .OK}}ok{{else}}bad{{end}}">
-      <details>
-        <summary>
-          <span class="dir">{{if eq .Direction "in"}}⇠ in{{else if eq .Direction "out"}}⇢ out{{else}}•{{end}}</span>
-          <span class="title">{{.Title}}</span>
-          <time title="{{clock .At}}">{{since .At}}</time>
-        </summary>
-        {{if .Detail}}<pre class="detail">{{.Detail}}</pre>{{end}}
-        {{if .XML}}<div class="xml-head"><span>XML</span><button type="button" class="small secondary" data-copy-from="next">Copy</button></div><pre class="xml">{{.XML}}</pre>{{end}}
-      </details>
-    </li>
-  {{end}}
+  {{range .Events}}{{template "event" .}}{{end}}
   </ol>
 </section>
+{{end}}
+
+{{define "event"}}<li class="{{if .OK}}ok{{else}}bad{{end}}" data-id="{{.ID}}">
+  <details>
+    <summary>
+      <span class="dir">{{if eq .Direction "in"}}⇠ in{{else if eq .Direction "out"}}⇢ out{{else}}•{{end}}</span>
+      <span class="title">{{.Title}}</span>
+      <time datetime="{{.At.UTC.Format "2006-01-02T15:04:05.000Z07:00"}}" title="{{clock .At}}">{{clock .At}}</time>
+    </summary>
+    {{if .Detail}}<pre class="detail">{{.Detail}}</pre>{{end}}
+    {{if .XML}}<div class="xml-head"><span>XML</span><button type="button" class="small secondary" data-copy-from="next">Copy</button></div><pre class="xml">{{.XML}}</pre>{{end}}
+  </details>
+</li>
 {{end}}
 
 {{define "participants"}}

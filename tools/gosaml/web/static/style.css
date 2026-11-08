@@ -227,3 +227,10 @@ pre.detail { white-space: pre-wrap; word-break: break-word; }
 .current p { margin: 0 0 4px; }
 .current .hint { margin-top: 8px; margin-bottom: 0; }
 .top-actions { margin: 4px 0 8px; }
+.live { font-size: 12px; font-weight: 600; margin-left: 6px; vertical-align: 2px; }
+.live.on { color: var(--ok); }
+.live.on::before { content: "● "; }
+.live.off { color: var(--muted); }
+.events li.new { animation: flash 2s ease-out; }
+@keyframes flash { from { background: var(--accent-soft); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .events li.new { animation: none; } }

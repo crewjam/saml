@@ -36,7 +36,10 @@ of samltest.dev and samltool.io:
   is also checked with its own KeyInfo certificate, which shows whether
   the message was changed but not who signed it.
 
-Every IdP and SP logs the messages it exchanges, decoded.
+Every IdP and SP logs the messages it exchanges, decoded. Management pages
+follow the log live with Server-Sent Events (`/manage/{secret}/live`): an
+in-memory hub, since one process holds all the state, with catch-up from
+`Last-Event-ID` when a browser reconnects.
 
 ## Everything is temporary
 

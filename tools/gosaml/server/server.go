@@ -50,6 +50,7 @@ type Server struct {
 	pages     map[string]*template.Template
 	fetch     *http.Client
 	soap      *http.Client
+	hub       *hub
 	cookieKey []byte
 	static    *staticFiles
 }
@@ -65,6 +66,7 @@ func New(cfg Config) (*Server, error) {
 		mux:       http.NewServeMux(),
 		fetch:     newFetchClient(),
 		cookieKey: make([]byte, 32),
+		hub:       newHub(),
 	}
 	// The key of the cookies that remember SP logins in progress. A new
 	// one at each start is enough: everything else is forgotten then too.
@@ -95,6 +97,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /new/sp", s.newSP)
 	m.HandleFunc("GET /manage/{secret}", s.manage)
 	m.HandleFunc("POST /manage/{secret}/{action}", s.manageAction)
+	m.HandleFunc("GET /manage/{secret}/live", s.liveLog)
 
 	m.HandleFunc("GET /idp/{id}/metadata", s.idpMetadata)
 	m.HandleFunc("GET /idp/{id}/sso", s.idpSSO)
@@ -450,6 +453,7 @@ func (s *Server) manageAction(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, r, http.StatusInternalServerError, "Cannot clear the log.", err)
 			return
 		}
+		s.hub.publish(store.Event{InstanceID: in.ID, ID: clearedEvent})
 		http.Redirect(w, r, "/manage/"+in.Secret+"#log", http.StatusSeeOther)
 		return
 	}
@@ -497,7 +501,9 @@ func (s *Server) certificate(kind store.Kind) http.HandlerFunc {
 func (s *Server) logEvent(ctx context.Context, e *store.Event) {
 	if err := s.Store.AddEvent(ctx, e); err != nil {
 		s.Logger.Error("cannot record event", "instance", e.InstanceID, "err", err)
+		return
 	}
+	s.hub.publish(*e)
 }
 
 // staticFiles serves the embedded static files, gzipped when the browser

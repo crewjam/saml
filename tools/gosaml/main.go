@@ -109,6 +109,7 @@ func run(log *slog.Logger) error {
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	hs.RegisterOnShutdown(srv.CloseLive)
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("listening", "addr", hs.Addr, "base_url", srv.BaseURL, "db", dbPath, "ttl", ttl)

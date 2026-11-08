@@ -219,7 +219,7 @@ func (s *Store) DeleteInstance(ctx context.Context, id string) error {
 	return err
 }
 
-// AddEvent records an event, and drops the instance's oldest events
+// AddEvent records an event, sets its ID and At, and drops the instance's oldest events
 // beyond MaxEventsPerInstance.
 func (s *Store) AddEvent(ctx context.Context, e *Event) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -231,10 +231,16 @@ func (s *Store) AddEvent(ctx context.Context, e *Event) error {
 	if e.OK {
 		ok = 1
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO events (instance_id, at, direction, title, detail, xml, ok)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`, e.InstanceID, s.now().UnixMilli(), e.Direction, e.Title, e.Detail, e.XML, ok); err != nil {
+	at := s.now()
+	res, err := tx.ExecContext(ctx, `INSERT INTO events (instance_id, at, direction, title, detail, xml, ok)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`, e.InstanceID, at.UnixMilli(), e.Direction, e.Title, e.Detail, e.XML, ok)
+	if err != nil {
 		return err
 	}
+	if e.ID, err = res.LastInsertId(); err != nil {
+		return err
+	}
+	e.At = time.UnixMilli(at.UnixMilli())
 	if _, err := tx.ExecContext(ctx, `DELETE FROM events WHERE instance_id = ? AND id NOT IN
 		(SELECT id FROM events WHERE instance_id = ? ORDER BY id DESC LIMIT ?)`,
 		e.InstanceID, e.InstanceID, MaxEventsPerInstance); err != nil {
@@ -245,8 +251,14 @@ func (s *Store) AddEvent(ctx context.Context, e *Event) error {
 
 // Events returns an instance's events, newest first.
 func (s *Store) Events(ctx context.Context, instanceID string) ([]Event, error) {
+	return s.EventsAfter(ctx, instanceID, 0)
+}
+
+// EventsAfter returns an instance's events whose ID is greater than
+// after, newest first.
+func (s *Store) EventsAfter(ctx context.Context, instanceID string, after int64) ([]Event, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, at, direction, title, detail, xml, ok FROM events
-		WHERE instance_id = ? ORDER BY id DESC`, instanceID)
+		WHERE instance_id = ? AND id > ? ORDER BY id DESC`, instanceID, after)
 	if err != nil {
 		return nil, err
 	}
