@@ -58,7 +58,7 @@ linters:
       - path: _test\.go$
         linters:
           - staticcheck
-        text: "SA1019: (github\\.com/crewjam/)?(saml\\.(TimeNow|Clock|RandReader)|xmlenc\\.RandReader) is deprecated"
+        text: "SA1019: (github\\.com/crewjam/)?(saml\\.(TimeNow|Clock|RandReader)|(saml/)?xmlenc\\.RandReader) is deprecated"
 formatters:
   enable:
     - gofmt
