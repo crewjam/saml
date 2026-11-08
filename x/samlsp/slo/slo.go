@@ -344,14 +344,26 @@ func (req *Request) Matches(issuer string, nameID saml.NameID, sessionIndexes []
 // LogoutRequest from the IdP, for ParseRequest: one sent through the
 // browser (a SAMLRequest parameter) or with the SOAP binding.
 func IsRequest(r *http.Request) bool {
-	return saml.IsSOAPRequest(r) || r.FormValue("SAMLRequest") != ""
+	return saml.IsSOAPRequest(r) || formValue(r, "SAMLRequest") != ""
 }
 
 // IsResponse reports whether r, sent to the SLO URL, carries a
 // LogoutResponse from the IdP (a SAMLResponse parameter), for
 // ParseResponse.
 func IsResponse(r *http.Request) bool {
-	return !saml.IsSOAPRequest(r) && r.FormValue("SAMLResponse") != ""
+	return !saml.IsSOAPRequest(r) && formValue(r, "SAMLResponse") != ""
+}
+
+// formValue returns the parameter name of r, from the urlencoded body of
+// a POST (HTTP-POST bindings) or else from the query (HTTP-Redirect), as
+// package saml reads it. Unlike r.FormValue, it does not read a multipart
+// body, whose files could be spooled to disk: r.ParseForm reads only an
+// urlencoded body, of at most 10 MB. A form it cannot read has no value.
+func formValue(r *http.Request, name string) string {
+	if err := r.ParseForm(); err != nil {
+		return ""
+	}
+	return r.Form.Get(name)
 }
 
 // WriteRequestError answers a LogoutRequest that ParseRequest refused: with
@@ -400,7 +412,7 @@ func (s *Service) ParseRequest(ctx context.Context, r *http.Request, opts ...sam
 		if req, err = sp.ValidateLogoutRequest(r.WithContext(ctx)); err != nil {
 			return nil, err
 		}
-		out.RelayState = r.FormValue("RelayState")
+		out.RelayState = r.Form.Get("RelayState")
 		switch {
 		case r.URL.Query().Get("SAMLRequest") != "":
 			out.Binding = saml.HTTPRedirectBinding

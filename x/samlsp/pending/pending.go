@@ -407,11 +407,18 @@ func (t *Tracker) Remember(w http.ResponseWriter, msg *samlsp.Message, data stri
 //
 // It returns ErrNotFound if there is no login in progress for the
 // RelayState in this browser, and ErrInvalid if there is none and the
-// cookie of the RelayState's slot is not valid. An ACS that also accepts
+// cookie of the RelayState's slot is not valid, and another error if the
+// form cannot be read. It reads the RelayState with r.ParseForm, from the
+// urlencoded body of a POST or else from the query, as ParseResponse
+// does; it does not read a multipart body, whose files could be spooled
+// to disk. An ACS that also accepts
 // IdP-initiated logins with samlsp.AllowUnsolicited passes
 // samlsp.WithRequestID only when Find succeeds.
 func (t *Tracker) Find(w http.ResponseWriter, r *http.Request) (*Login, error) {
-	relayState := r.FormValue("RelayState")
+	if err := r.ParseForm(); err != nil {
+		return nil, fmt.Errorf("pending: cannot read the form: %w", err)
+	}
+	relayState := r.Form.Get("RelayState")
 	own := t.cookieName(t.slot(relayState))
 	now := t.clock.Now().Unix()
 	var (
