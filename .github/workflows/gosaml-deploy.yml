@@ -1,0 +1,100 @@
+# Deploys tools/gosaml to gosaml.dev (Fly.io) on every push to main that
+# could change it. See "Deploying from GitHub Actions" in
+# tools/gosaml/README.md for the one-time setup of the FLY_API_TOKEN secret.
+#
+# How the token is kept safe:
+#   - It is an *environment* secret of the "gosaml-production" environment,
+#     not a repository secret, and that environment only lets the main
+#     branch deploy. A workflow run on any other branch, or for a pull
+#     request (from a fork or not), cannot read it, even if it edits this
+#     file.
+#   - It is a Fly deploy token for the gosaml app alone, not an
+#     organization or personal token.
+#   - Only the deploy job uses the environment. All of the Go code (the
+#     tests, go vet, the build, and the modules they download) runs in the
+#     build job, which has no secrets; the deploy job only runs flyctl on
+#     the binary the build job made. The token is given to that one step.
+#   - There is no pull_request_target or workflow_run trigger, every
+#     action is pinned to a commit, and the GITHUB_TOKEN is read-only and
+#     is not left in the checkout.
+name: gosaml deploy
+
+on:
+  push:
+    branches: [ 'main' ]
+    # gosaml builds the library from this checkout (the replace directive
+    # in tools/gosaml/go.mod), so a library change is a gosaml change.
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'tools/gosaml/**'
+      - '.github/workflows/gosaml-deploy.yml'
+  # To redeploy by hand. Only main may deploy: the environment refuses
+  # any other branch picked here.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time, in order; never cancel one halfway.
+concurrency:
+  group: gosaml-deploy
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/gosaml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # All of history and its tags, for `git describe` (the version
+          # in the footer).
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tools/gosaml/go.mod
+          cache-dependency-path: tools/gosaml/go.sum
+      - name: test and build for linux/amd64
+        run: ./deploy.sh dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gosaml
+          path: tools/gosaml/build/gosaml
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: gosaml-production
+      url: https://gosaml.dev
+    defaults:
+      run:
+        working-directory: tools/gosaml
+    steps:
+      # For fly.toml and the Dockerfile; nothing from the checkout is run.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: gosaml
+          path: tools/gosaml/build
+      # Artifacts do not keep file modes.
+      - run: chmod +x build/gosaml
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
+        with:
+          version: 0.5.5
+      - name: fly deploy
+        # One machine only, as in deploy.sh: the SQLite database is on that
+        # machine's volume.
+        run: flyctl deploy --ha=false --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

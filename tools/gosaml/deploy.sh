@@ -4,6 +4,8 @@
 #   ./deploy.sh            test, build for linux/amd64 and deploy to Fly.io
 #   ./deploy.sh build      build for this machine, into build/gosaml
 #   ./deploy.sh run        build for this machine and run it at http://localhost:8080
+#   ./deploy.sh dist       test and build for linux/amd64, without deploying
+#                          (the GitHub Actions workflow deploys what this builds)
 #
 # Extra arguments after "deploy" are passed to `fly deploy`.
 #
@@ -35,8 +37,21 @@ build_wasm() {
 
 build_server() {
 	echo "==> building the server ($1/$2)"
+	# The footer shows this version; the commit hash comes from the VCS
+	# information that go build stamps into the binary.
+	local version
+	version="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+	echo "    version: $version"
 	mkdir -p build
-	GOOS="$1" GOARCH="$2" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o build/gosaml .
+	GOOS="$1" GOARCH="$2" CGO_ENABLED=0 go build -trimpath \
+		-ldflags="-s -w -X github.com/crewjam/saml/tools/gosaml/server.Version=$version" \
+		-o build/gosaml .
+}
+
+test_all() {
+	echo "==> testing"
+	go vet ./...
+	go test ./...
 }
 
 case "$cmd" in
@@ -49,15 +64,18 @@ run)
 	build_server "$(go env GOOS)" "$(go env GOARCH)"
 	exec ./build/gosaml
 	;;
+dist)
+	test_all
+	build_wasm
+	build_server linux amd64
+	;;
 deploy)
 	fly="$(command -v fly || command -v flyctl || true)"
 	if [ -z "$fly" ]; then
 		echo "flyctl is not installed: https://fly.io/docs/flyctl/install/" >&2
 		exit 1
 	fi
-	echo "==> testing"
-	go vet ./...
-	go test ./...
+	test_all
 	build_wasm
 	build_server linux amd64
 	echo "==> deploying"
@@ -67,7 +85,7 @@ deploy)
 	"$fly" deploy --ha=false "$@"
 	;;
 *)
-	echo "usage: $0 [deploy|build|run] [fly deploy flags...]" >&2
+	echo "usage: $0 [deploy|build|run|dist] [fly deploy flags...]" >&2
 	exit 2
 	;;
 esac
