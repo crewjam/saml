@@ -1497,6 +1497,17 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 	return sp.parseResponseHTTP(req, possibleRequestIDs)
 }
 
+// ConfirmsClientAddress reports whether the Address of data, a bearer
+// SubjectConfirmationData, passes the check ParseResponse makes for req:
+// it does if data has no Address, if there is no client address for req
+// (see ClientAddress), or if Address names the client's IP address. It is
+// for callers that look at the confirmations of an assertion that
+// ParseResponse returned, to tell which of them it accepted.
+func (sp *ServiceProvider) ConfirmsClientAddress(data *SubjectConfirmationData, req *http.Request) bool {
+	client := sp.clientAddressOf(req)
+	return data == nil || data.Address == "" || client == "" || subjectConfirmationAddressMatches(data.Address, client)
+}
+
 // clientAddressOf returns the address of the user agent that sent req, as
 // ClientAddress has it.
 func (sp *ServiceProvider) clientAddressOf(req *http.Request) string {

@@ -118,3 +118,22 @@ func TestParseResponseClientAddress(t *testing.T) {
 	err = parse(t, "192.0.2.1:54321", func(*http.Request) string { return "203.0.113.5" })
 	assert.Check(t, errors.Is(err, ErrDestinationMismatch), "%v", err)
 }
+
+// ConfirmsClientAddress makes the same Address check as ParseResponse.
+func TestConfirmsClientAddress(t *testing.T) {
+	sp := &ServiceProvider{}
+	req := httptest.NewRequest(http.MethodPost, "/acs", nil)
+	req.RemoteAddr = "192.0.2.1:54321"
+	data := func(address string) *SubjectConfirmationData { return &SubjectConfirmationData{Address: address} }
+
+	assert.Check(t, sp.ConfirmsClientAddress(nil, req))
+	assert.Check(t, sp.ConfirmsClientAddress(data(""), req))
+	assert.Check(t, sp.ConfirmsClientAddress(data("192.0.2.1"), req))
+	assert.Check(t, !sp.ConfirmsClientAddress(data("192.0.2.2"), req))
+
+	sp.ClientAddress = func(*http.Request) string { return "" }
+	assert.Check(t, sp.ConfirmsClientAddress(data("192.0.2.2"), req))
+	sp.ClientAddress = func(*http.Request) string { return "192.0.2.2" }
+	assert.Check(t, sp.ConfirmsClientAddress(data("192.0.2.2"), req))
+	assert.Check(t, !sp.ConfirmsClientAddress(data("192.0.2.1"), req))
+}
