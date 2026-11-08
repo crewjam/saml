@@ -12,9 +12,9 @@ import (
 
 	"github.com/beevik/etree"
 
-	"github.com/crewjam/saml/internal/safehttp"
 	"github.com/crewjam/saml/internal/xmlroundtrip"
 	"github.com/crewjam/saml/logger"
+	"github.com/crewjam/saml/pkg/safehttp"
 )
 
 // This file holds what the requester and the responder sides of the SAML
@@ -39,7 +39,7 @@ const defaultSOAPTimeout = 10 * time.Second
 // hold up a logout, and does not follow redirects: the SOAP binding has
 // none, and the message must only go to the endpoint in the metadata. It
 // connects only to public addresses, since the endpoint is whatever the
-// peer's metadata says (see package internal/safehttp).
+// peer's metadata says (see package pkg/safehttp).
 var defaultSOAPHTTPClient = safehttp.Client(defaultSOAPTimeout, refuseSOAPRedirect)
 
 // soapHTTPClient returns the HTTP client to send a SOAP message with:

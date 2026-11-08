@@ -17,9 +17,9 @@ import (
 	"time"
 
 	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/internal/safehttp"
 	"github.com/crewjam/saml/internal/xmlroundtrip"
 	"github.com/crewjam/saml/logger"
+	"github.com/crewjam/saml/pkg/safehttp"
 )
 
 // MultipleIDPsError is returned by Parse for an aggregate that holds more
@@ -250,7 +250,7 @@ func (v metadataValidity) applyTo(entity *saml.EntityDescriptor) {
 }
 
 // defaultHTTPClient times out after two minutes, and connects only to
-// public addresses (see package internal/safehttp).
+// public addresses (see package pkg/safehttp).
 var defaultHTTPClient = safehttp.Client(2*time.Minute, nil)
 
 // Fetch returns the body of a GET of metadataURL, refusing a response that
