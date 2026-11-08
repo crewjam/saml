@@ -1,0 +1,211 @@
+diff --git a/integrations/operator/controllers/resources/saml_idp_service_providerv1_controller_test.go b/integrations/operator/controllers/resources/saml_idp_service_providerv1_controller_test.go
+index 3fc2170..66f324f 100644
+--- a/integrations/operator/controllers/resources/saml_idp_service_providerv1_controller_test.go
++++ b/integrations/operator/controllers/resources/saml_idp_service_providerv1_controller_test.go
+@@ -23,7 +23,7 @@ import (
+ 	"slices"
+ 	"testing"
+ 
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlidp"
+ 	"github.com/google/go-cmp/cmp"
+ 	"github.com/google/go-cmp/cmp/cmpopts"
+ 	"github.com/gravitational/trace"
+@@ -264,7 +264,7 @@ func TestSAMLIdPServiceProviderCreateValidationError(t *testing.T) {
+ }
+ 
+ func compareEntityDescriptorSemantics(entityDescriptor string, expectedResource types.SAMLIdPServiceProvider) (string, error) {
+-	descriptor, err := samlsp.ParseMetadata([]byte(entityDescriptor))
++	descriptor, err := samlidp.ParseMetadata([]byte(entityDescriptor))
+ 	if err != nil {
+ 		return "", trace.BadParameter("failed to parse Teleport entity_descriptor: %v", err)
+ 	}
+diff --git a/lib/services/local/saml_idp_service_provider.go b/lib/services/local/saml_idp_service_provider.go
+index 9f24486..527d4a6 100644
+--- a/lib/services/local/saml_idp_service_provider.go
++++ b/lib/services/local/saml_idp_service_provider.go
+@@ -29,7 +29,7 @@ import (
+ 	"time"
+ 
+ 	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlidp"
+ 	"github.com/gravitational/trace"
+ 
+ 	"github.com/gravitational/teleport"
+@@ -290,7 +290,7 @@ func (s *SAMLIdPServiceProviderService) fetchAndSetEntityDescriptor(sp types.SAM
+ 	}
+ 
+ 	// parse body to check if it's a valid entity descriptor
+-	_, err = samlsp.ParseMetadata(body)
++	_, err = samlidp.ParseMetadata(body)
+ 	if err != nil {
+ 		return trace.Wrap(err)
+ 	}
+@@ -336,7 +336,7 @@ func (s *SAMLIdPServiceProviderService) generateAndSetEntityDescriptor(sp types.
+ 
+ // embedAttributeMapping embeds attribute mapping input into entity descriptor.
+ func (s *SAMLIdPServiceProviderService) embedAttributeMapping(sp types.SAMLIdPServiceProvider) error {
+-	ed, err := samlsp.ParseMetadata([]byte(sp.GetEntityDescriptor()))
++	ed, err := samlidp.ParseMetadata([]byte(sp.GetEntityDescriptor()))
+ 	if err != nil {
+ 		return trace.Wrap(err)
+ 	}
+diff --git a/lib/services/local/saml_idp_service_provider_test.go b/lib/services/local/saml_idp_service_provider_test.go
+index 9e8a7ce..4c81f67 100644
+--- a/lib/services/local/saml_idp_service_provider_test.go
++++ b/lib/services/local/saml_idp_service_provider_test.go
+@@ -27,7 +27,7 @@ import (
+ 	"testing"
+ 
+ 	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlidp"
+ 	"github.com/google/go-cmp/cmp"
+ 	"github.com/google/go-cmp/cmp/cmpopts"
+ 	"github.com/gravitational/trace"
+@@ -294,10 +294,10 @@ func TestCreateSAMLIdPServiceProvider_fetchOrGenerateEntityDescriptor(t *testing
+ 
+ 	metadataTemplate := services.NewSAMLTestSPMetadata(notFoundURL, testSPServer.URL)
+ 
+-	expected, err := samlsp.ParseMetadata([]byte(metadataTemplate))
++	expected, err := samlidp.ParseMetadata([]byte(metadataTemplate))
+ 	require.NoError(t, err)
+ 
+-	actual, err := samlsp.ParseMetadata([]byte(sp2FromBackend.GetEntityDescriptor()))
++	actual, err := samlidp.ParseMetadata([]byte(sp2FromBackend.GetEntityDescriptor()))
+ 	require.NoError(t, err)
+ 
+ 	// ignoring ValidUntil as its value (duration) is set using time.Now() and comparing it will create flaky test.
+@@ -429,7 +429,7 @@ func TestCreateSAMLIdPServiceProvider_embedAttributeMapping(t *testing.T) {
+ 	spFromBackend, err := idpSPService.GetSAMLIdPServiceProvider(ctx, sp.GetName())
+ 	require.NoError(t, err)
+ 
+-	edWithEmbeddedAttributes, err := samlsp.ParseMetadata([]byte(spFromBackend.GetEntityDescriptor()))
++	edWithEmbeddedAttributes, err := samlidp.ParseMetadata([]byte(spFromBackend.GetEntityDescriptor()))
+ 	require.NoError(t, err)
+ 
+ 	_, teleportSPSSODescriptor := GetTeleportSPSSODescriptor(edWithEmbeddedAttributes.SPSSODescriptors)
+@@ -453,7 +453,7 @@ func TestCreateSAMLIdPServiceProvider_embedAttributeMapping(t *testing.T) {
+ 	require.NoError(t, err)
+ 	updatedSPFromBackend, err := idpSPService.GetSAMLIdPServiceProvider(ctx, sp.GetName())
+ 	require.NoError(t, err)
+-	edWithUpdatedAttributes, err := samlsp.ParseMetadata([]byte(updatedSPFromBackend.GetEntityDescriptor()))
++	edWithUpdatedAttributes, err := samlidp.ParseMetadata([]byte(updatedSPFromBackend.GetEntityDescriptor()))
+ 	require.NoError(t, err)
+ 	_, teleportSPSSODescriptor = GetTeleportSPSSODescriptor(edWithUpdatedAttributes.SPSSODescriptors)
+ 	embeddedAttributes = teleportSPSSODescriptorToAttributeMapping(teleportSPSSODescriptor)
+@@ -480,7 +480,7 @@ func TestCreateSAMLIdPServiceProvider_embedAttributeMapping(t *testing.T) {
+ 	require.NoError(t, err)
+ 	newMultipleSSODescriptorSPFromBackend, err := idpSPService.GetSAMLIdPServiceProvider(ctx, newMultipleSSODescriptorSP.GetName())
+ 	require.NoError(t, err)
+-	edWithEmbeddedAttributes, err = samlsp.ParseMetadata([]byte(newMultipleSSODescriptorSPFromBackend.GetEntityDescriptor()))
++	edWithEmbeddedAttributes, err = samlidp.ParseMetadata([]byte(newMultipleSSODescriptorSPFromBackend.GetEntityDescriptor()))
+ 	require.NoError(t, err)
+ 	_, teleportSPSSODescriptor = GetTeleportSPSSODescriptor(edWithEmbeddedAttributes.SPSSODescriptors)
+ 	embeddedAttributes = teleportSPSSODescriptorToAttributeMapping(teleportSPSSODescriptor)
+@@ -493,9 +493,9 @@ func TestCreateSAMLIdPServiceProvider_embedAttributeMapping(t *testing.T) {
+ 	require.NoError(t, err)
+ 	newMultipleSSODescriptorSPFromBackend, err = idpSPService.GetSAMLIdPServiceProvider(ctx, newMultipleSSODescriptorSP.GetName())
+ 	require.NoError(t, err)
+-	edWithoutEmbeddedAttributes, err := samlsp.ParseMetadata([]byte(newMultipleSSODescriptorSPFromBackend.GetEntityDescriptor()))
++	edWithoutEmbeddedAttributes, err := samlidp.ParseMetadata([]byte(newMultipleSSODescriptorSPFromBackend.GetEntityDescriptor()))
+ 	require.NoError(t, err)
+-	originalED, err := samlsp.ParseMetadata([]byte(edWithMultipleSPSSODescriptor))
++	originalED, err := samlidp.ParseMetadata([]byte(edWithMultipleSPSSODescriptor))
+ 	require.NoError(t, err)
+ 	require.Empty(t, cmp.Diff(originalED, edWithoutEmbeddedAttributes))
+ }
+@@ -557,7 +557,7 @@ const edWithMultipleSPSSODescriptor = `<EntityDescriptor xmlns="urn:oasis:names:
+ 
+ func TestCreateSAMLIdPServiceProvider_GetTeleportSPSSODescriptor(t *testing.T) {
+ 	// edWithMultipleSPSSODescriptor has predefined two ACS elements
+-	ed, err := samlsp.ParseMetadata([]byte(edWithMultipleSPSSODescriptor))
++	ed, err := samlidp.ParseMetadata([]byte(edWithMultipleSPSSODescriptor))
+ 	require.NoError(t, err)
+ 
+ 	ed.SPSSODescriptors = append(ed.SPSSODescriptors, saml.SPSSODescriptor{
+@@ -728,7 +728,7 @@ func TestGenerateAndSetEntityDescriptorPerPreset(t *testing.T) {
+ 
+ 			spFromBackend, err := service.GetSAMLIdPServiceProvider(ctx, sp.GetName())
+ 			require.NoError(t, err)
+-			ed, err := samlsp.ParseMetadata([]byte(spFromBackend.GetEntityDescriptor()))
++			ed, err := samlidp.ParseMetadata([]byte(spFromBackend.GetEntityDescriptor()))
+ 			require.NoError(t, err)
+ 			getFirstNameID := func(t *testing.T, ed *saml.EntityDescriptor) saml.NameIDFormat {
+ 				t.Helper()
+diff --git a/lib/services/saml_idp_service_provider.go b/lib/services/saml_idp_service_provider.go
+index 875c711..9af415d 100644
+--- a/lib/services/saml_idp_service_provider.go
++++ b/lib/services/saml_idp_service_provider.go
+@@ -27,7 +27,7 @@ import (
+ 	"strings"
+ 
+ 	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlidp"
+ 	"github.com/gravitational/trace"
+ 
+ 	"github.com/gravitational/teleport/api/types"
+@@ -187,7 +187,7 @@ const (
+ //   - performs filtering on the Assertion Consumer service (ACS) binding format or its location URL endpoint.
+ //     filterThreshold dictates if ValidateAndFilterEntityDescriptor should return or ignore error on filtering result.
+ func ValidateAndFilterEntityDescriptor(sp types.SAMLIdPServiceProvider, filterThreshold SAMLACSInputFilteringThreshold) error {
+-	edOriginal, err := samlsp.ParseMetadata([]byte(sp.GetEntityDescriptor()))
++	edOriginal, err := samlidp.ParseMetadata([]byte(sp.GetEntityDescriptor()))
+ 	if err != nil {
+ 		return trace.BadParameter("invalid entity descriptor for SAML IdP Service Provider %q: %v", sp.GetEntityID(), err)
+ 	}
+diff --git a/lib/services/saml_idp_service_provider_test.go b/lib/services/saml_idp_service_provider_test.go
+index da19418..5a6e520 100644
+--- a/lib/services/saml_idp_service_provider_test.go
++++ b/lib/services/saml_idp_service_provider_test.go
+@@ -24,7 +24,7 @@ import (
+ 	"testing"
+ 
+ 	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlidp"
+ 	"github.com/stretchr/testify/require"
+ 
+ 	"github.com/gravitational/teleport/api/types"
+@@ -119,7 +119,7 @@ func TestFilterSAMLEntityDescriptor(t *testing.T) {
+ 
+ 	for _, tt := range tts {
+ 		t.Run(tt.name, func(t *testing.T) {
+-			ed, err := samlsp.ParseMetadata([]byte(tt.eds))
++			ed, err := samlidp.ParseMetadata([]byte(tt.eds))
+ 			require.NoError(t, err)
+ 
+ 			require.Equal(t, tt.before, getACSCount(ed))
+diff --git a/tool/tctl/common/resources/saml_idp_service_provider.go b/tool/tctl/common/resources/saml_idp_service_provider.go
+index 83ef4d7..656559c 100644
+--- a/tool/tctl/common/resources/saml_idp_service_provider.go
++++ b/tool/tctl/common/resources/saml_idp_service_provider.go
+@@ -24,7 +24,7 @@ import (
+ 	"io"
+ 	"log/slog"
+ 
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlidp"
+ 	"github.com/gravitational/trace"
+ 
+ 	"github.com/gravitational/teleport/api/types"
+@@ -97,7 +97,7 @@ func createSAMLIdPServiceProvider(ctx context.Context, client *authclient.Client
+ 
+ 	if sp.GetEntityDescriptor() != "" {
+ 		// verify that entity descriptor parses
+-		ed, err := samlsp.ParseMetadata([]byte(sp.GetEntityDescriptor()))
++		ed, err := samlidp.ParseMetadata([]byte(sp.GetEntityDescriptor()))
+ 		if err != nil {
+ 			return trace.BadParameter("invalid entity descriptor for SAML IdP Service Provider %q: %v", sp.GetEntityID(), err)
+ 		}
+@@ -135,7 +135,7 @@ func updateSAMLIdPServiceProvider(ctx context.Context, client *authclient.Client
+ 
+ 	if sp.GetEntityDescriptor() != "" {
+ 		// verify that entity descriptor parses
+-		ed, err := samlsp.ParseMetadata([]byte(sp.GetEntityDescriptor()))
++		ed, err := samlidp.ParseMetadata([]byte(sp.GetEntityDescriptor()))
+ 		if err != nil {
+ 			return trace.BadParameter("invalid entity descriptor for SAML IdP Service Provider %q: %v", sp.GetEntityID(), err)
+ 		}

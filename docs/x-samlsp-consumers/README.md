@@ -14,6 +14,8 @@ consumers were found with a GitHub code search for
 | [`kubepi.patch`](kubepi.patch) | 1Panel-dev/KubePi `e183085` | `samlsp.Middleware` whose cookie session carries the login into KubePi's own session |
 | [`supabase-auth.patch`](supabase-auth.patch) | supabase/auth `35307ce` | multi-tenant: `samlsp.DefaultServiceProvider` per request, metadata in Postgres, key rotation |
 | [`saml-auth-proxy.patch`](saml-auth-proxy.patch) | itzg/saml-auth-proxy `6135cf7` | `samlsp.Middleware` heavily customized: own request tracker, JWE session codec, anonymous sessions |
+| [`teleport.patch`](teleport.patch) | gravitational/teleport `1283425` | as an IdP: `ParseMetadata` on the metadata of the SPs it serves |
+| [`authorizer.patch`](authorizer.patch) | authorizerdev/authorizer `da7a5c9` | as an IdP: `ParseMetadata` on SP metadata an admin imports |
 
 Apply with `git apply` at the root of each repository. Each one also needs its
 `go.mod` to require a `github.com/crewjam/saml` version that contains `x/samlsp`;
@@ -27,7 +29,7 @@ most popular, other than this one:
 
 | # | Repository | Stars | How it uses samlsp | Port |
 |---|---|---|---|---|
-| 1 | gravitational/teleport | 21,078 | `ParseMetadata` on **SP** metadata, as an IdP; its SAML login builds `saml.ServiceProvider` itself | none: see finding 7 |
+| 1 | gravitational/teleport | 21,078 | `ParseMetadata` on **SP** metadata, as an IdP; its SAML login builds `saml.ServiceProvider` itself | done, with `x/samlidp` |
 | 2 | zitadel/zitadel | 15,544 | middleware types (`TrackedRequest`, `RequestTracker`, `Options`) as building blocks of a multi-IdP broker | done |
 | 3 | Velocidex/velociraptor | 4,428 | `Middleware` with its cookie sessions | done |
 | 4 | octelium/octelium | 4,164 | `ParseMetadata`/`FetchMetadata`, own `saml.ServiceProvider`, multi-IdP | done |
@@ -37,7 +39,7 @@ most popular, other than this one:
 | 8 | supabase/auth | 2,595 | `DefaultServiceProvider`, `ParseMetadata`, multi-tenant | done |
 | 9 | subspacecloud/subspace | 2,588 | `Middleware`, basic | skipped: no push since 2022 |
 | 10 | cortezaproject/corteza | 2,187 | `Middleware` with its own request tracker and error handler | not yet |
-| 11 | authorizerdev/authorizer | 2,118 | `ParseMetadata` on **SP** metadata, as an IdP | none: see finding 7 |
+| 11 | authorizerdev/authorizer | 2,118 | `ParseMetadata` on **SP** metadata, as an IdP | done, with `x/samlidp` |
 | 12 | siderolabs/omni | 1,428 | `Middleware` heavily customized: request tracker, assertion handler | not yet |
 | 13 | paralus/paralus | 1,214 | `Middleware` with its own session provider and request tracker | not yet |
 | 14 | buildbuddy-io/buildbuddy | 803 | `Middleware` with its own session and tracked-request codecs | not yet |
@@ -67,7 +69,8 @@ Most consumers use `samlsp` in one of three ways:
   IdPs. The port replaces the hand-built service provider with a `Config` and
   the helpers with `ParseMetadata`, `StaticMetadata` and `RemoteMetadata`.
 - **As an IdP** (2, including the most popular): `ParseMetadata` to read the
-  metadata of the SPs they serve. `x/samlsp` has nothing for them.
+  metadata of the SPs they serve. `x/samlsp` has nothing for them; the port
+  moves them to `x/samlidp.ParseMetadata`.
 
 ## What each port changes
 
@@ -143,6 +146,21 @@ replay record shared across rebuilds. Remote metadata is now refreshed instead
 of fetched once. Its server-side login state is kept, and the request ID is now
 required on every callback (a missing one used to panic).
 
+**Teleport.** Its SAML IdP parses each SP's metadata, whether fetched from
+the entity ID URL, stored, or given to `tctl`, in 15 calls across six files
+(tests included). Each becomes `samlidp.ParseMetadata`, with Teleport's error
+wrapping kept. Metadata with no SPSSODescriptor is now refused: `tctl` and
+validation report it, and creating a provider from a fetched URL falls back to
+generating the descriptor, as it does when the fetch fails. An aggregate with
+one SP is now accepted where the old code wanted an IdP and failed. Teleport
+pins its own fork of this library, and `e_imports.go` still imports `samlsp`
+for the closed-source `e/` module, so Teleport is not off `samlsp` entirely.
+
+**Authorizer.** `ImportSAMLSPMetadata` parses the SP metadata an admin pastes
+in; it moves to `samlidp.ParseMetadata`, so metadata without an SP is refused
+when parsed rather than later, for lacking an ACS URL. Its end-to-end test
+reads Authorizer's own IdP metadata, so it moves to `x/samlsp.ParseMetadata`.
+
 **KubePi.** Used the middleware's cookie session only to carry the login into
 its own session. The ACS now verifies the Response, requiring this browser's
 request ID through `x/samlsp/pending`, and starts KubePi's session directly, so
@@ -217,6 +235,13 @@ The second round of ports, Zitadel, Octelium and KubePi, found these:
    IdP-metadata parser, because `ParseMetadata` has no `CharsetReader` for
    metadata that declares a non-UTF-8 encoding, and refuses an aggregate with
    several IdPs instead of taking the first.
+   **Still stands, from the IdP ports:** `ParseMetadata` returns the one
+   EntityDescriptor but not a normalized copy of the XML, so a caller that
+   stores what it was given stores the aggregate. Teleport stores the input
+   unless it has attribute mappings to add, and its SSO code, which reads that
+   back, is closed source. The error for several SPs names
+   `WithServiceProviderEntityID`, a Go API, which Authorizer would show to
+   admins through GraphQL.
 8. **Every `pending` port derived its cookie key by hand**, four times with the
    same HMAC construction. **Addressed:** `pending.DeriveKey(secret, label)`.
 9. **The Name-then-FriendlyName lookup was written twice** (Velociraptor,
@@ -283,4 +308,6 @@ allowed in this environment.
 | bloodhound | `go vet` clean for the changed packages, tests included, with and without the `integration` build tag |
 | octelium | `go vet ./authserver/providers/saml/` (tests included) and `go build ./...` clean in `cluster/authserver` |
 | kubepi | `go vet` of the changed packages (tests included), `go build ./...` and `go vet ./internal/... ./cmd/...` clean, using throwaway stand-ins for its embedded web assets |
+| teleport | `go build` and `go vet` (tests included) clean for `lib/services`, `lib/services/local`, `tool/tctl/common/resources` and `integrations/operator/controllers/resources`, in a sparse clone, with Teleport's `replace` of its fork swapped for this repository. Every SP metadata fixture in the changed files also parses with `samlidp.ParseMetadata` |
+| authorizer | `go build ./internal/service/` and `go vet ./internal/service/ ./internal/integration_tests/` clean |
 | zitadel | `go vet` clean for `internal/idp/providers/saml/...` (tests included) and the acceptance test SP. The other changed packages import Zitadel's generated protobuf code, which is not in its repository, so they were type-checked with a tool that tolerates missing imports: the only errors are those missing packages. This is weaker than `go vet` |
