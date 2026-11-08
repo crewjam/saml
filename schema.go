@@ -1908,11 +1908,16 @@ type AttributeValue struct {
 
 	// XML holds the element content of a value of a complex type, such as
 	// an attribute whose values are XML structures (saml-core §2.7.3.1.1):
-	// its child elements, other than a NameID, as self-contained XML that
-	// declares the namespaces it uses. Value then holds only the text
-	// directly inside the AttributeValue. XML is empty for a value of a
-	// simple type, which is the usual case. When the value is written,
-	// XML is added after any NameID.
+	// its child elements, other than a NameID, as XML in which each element
+	// declares the namespaces that were in scope for it, so that prefixes in
+	// its names and in QName values (such as xsi:type) still resolve.
+	// Value then holds only the text directly inside the AttributeValue.
+	// XML is empty for a value of a simple type, which is the usual case.
+	//
+	// The ServiceProvider sets XML on the assertions it returns; plain
+	// xml.Unmarshal does not. When the value is written by Element, XML
+	// is added after any NameID; if XML is not well-formed, Element leaves
+	// it out, since it cannot return an error.
 	XML string `xml:"-"`
 }
 

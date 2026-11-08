@@ -1987,6 +1987,9 @@ func (sp *ServiceProvider) parseReceivedAssertion(assertionEl, receivedEl *etree
 	if err := unmarshalElement(assertionEl, &assertion); err != nil {
 		return nil, err
 	}
+	if err := fillAttributeValuesXML(assertionEl, &assertion); err != nil {
+		return nil, err
+	}
 	if err := sp.decryptEncryptedIDs(assertion.Subject); err != nil {
 		return nil, err
 	}
@@ -2147,6 +2150,9 @@ func (sp *ServiceProvider) decryptEncryptedAttribute(encryptedEl *etree.Element)
 	}
 	var attribute Attribute
 	if err := unmarshalElement(plaintext, &attribute); err != nil {
+		return nil, err
+	}
+	if err := fillAttributeXML(plaintext, &attribute); err != nil {
 		return nil, err
 	}
 	return &attribute, nil

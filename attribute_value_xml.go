@@ -1,78 +1,76 @@
 package saml
 
 import (
-	"bytes"
-	"encoding/xml"
-	"strconv"
 	"strings"
+
+	"github.com/beevik/etree"
 )
 
-// xmlSchemaInstanceNamespace is the namespace of xsi:type and xsi:nil.
-const xmlSchemaInstanceNamespace = "http://www.w3.org/2001/XMLSchema-instance"
-
-// UnmarshalXML implements xml.Unmarshaler. It reads the attributes, the
-// text and a NameID as the struct tags of AttributeValue describe, and
-// keeps any other child elements in XML.
-func (a *AttributeValue) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
-	*a = AttributeValue{}
-	for _, attr := range start.Attr {
-		switch {
-		case attr.Name.Space == xmlSchemaInstanceNamespace && attr.Name.Local == "type":
-			a.Type = attr.Value
-		case attr.Name.Space == xmlSchemaInstanceNamespace && attr.Name.Local == "nil":
-			isNil, err := strconv.ParseBool(strings.TrimSpace(attr.Value))
-			if err != nil {
-				return err
-			}
-			a.Nil = isNil
-		case attr.Name.Space == X500AttributeNamespace && attr.Name.Local == "Encoding":
-			a.Encoding = attr.Value
-		}
+// fillAttributeValuesXML sets AttributeValue.XML, for the attributes of
+// assertion, from assertionEl, the element assertion was read from. It is
+// called before encrypted attributes are added, so the attributes of each
+// statement match its Attribute elements in order.
+func fillAttributeValuesXML(assertionEl *etree.Element, assertion *Assertion) error {
+	statementEls, err := findChildren(assertionEl, samlAssertionNamespace, "AttributeStatement")
+	if err != nil {
+		return err
 	}
-
-	var text strings.Builder
-	var content bytes.Buffer
-	enc := xml.NewEncoder(&content)
-	depth := 0
-	for {
-		tok, err := d.Token()
+	if len(statementEls) != len(assertion.AttributeStatements) {
+		return nil // the attributes cannot be matched; leave XML empty
+	}
+	for i, statementEl := range statementEls {
+		attributeEls, err := findChildren(statementEl, samlAssertionNamespace, "Attribute")
 		if err != nil {
 			return err
 		}
-		switch t := tok.(type) {
-		case xml.StartElement:
-			if depth == 0 && a.NameID == nil &&
-				t.Name.Space == "urn:oasis:names:tc:SAML:2.0:assertion" && t.Name.Local == "NameID" {
-				var nameID NameID
-				if err := d.DecodeElement(&nameID, &t); err != nil {
-					return err
-				}
-				a.NameID = &nameID
-				continue
-			}
-			depth++
-			if err := enc.EncodeToken(t.Copy()); err != nil {
-				return err
-			}
-		case xml.EndElement:
-			if depth == 0 {
-				a.Value = text.String()
-				if err := enc.Flush(); err != nil {
-					return err
-				}
-				a.XML = content.String()
-				return nil
-			}
-			depth--
-			if err := enc.EncodeToken(t); err != nil {
-				return err
-			}
-		case xml.CharData:
-			if depth == 0 {
-				text.Write(t)
-			} else if err := enc.EncodeToken(t.Copy()); err != nil {
+		statement := &assertion.AttributeStatements[i]
+		if len(attributeEls) != len(statement.Attributes) {
+			continue
+		}
+		for j, attributeEl := range attributeEls {
+			if err := fillAttributeXML(attributeEl, &statement.Attributes[j]); err != nil {
 				return err
 			}
 		}
 	}
+	return nil
+}
+
+// fillAttributeXML sets the XML of the values of attribute from
+// attributeEl, the element it was read from.
+func fillAttributeXML(attributeEl *etree.Element, attribute *Attribute) error {
+	valueEls, err := findChildren(attributeEl, samlAssertionNamespace, "AttributeValue")
+	if err != nil {
+		return err
+	}
+	if len(valueEls) != len(attribute.Values) {
+		return nil
+	}
+	for i, valueEl := range valueEls {
+		content, err := elementContentXML(valueEl)
+		if err != nil {
+			return err
+		}
+		attribute.Values[i].XML = content
+	}
+	return nil
+}
+
+// elementContentXML returns the child elements of el, other than a
+// saml:NameID, as XML. Each child carries the declarations of the
+// namespaces in scope where it was, so that the prefixes it uses, in its
+// names and in QName values such as xsi:type, resolve as they did.
+func elementContentXML(el *etree.Element) (string, error) {
+	var b strings.Builder
+	for _, child := range el.ChildElements() {
+		if child.Tag == "NameID" && child.NamespaceURI() == samlAssertionNamespace {
+			continue
+		}
+		buf, err := elementCopyToBytes(elementWithNamespaces(child))
+		if err != nil {
+			return "", err
+		}
+		b.Write(buf)
+	}
+	return b.String(), nil
 }
