@@ -95,3 +95,26 @@ func TestWithACSIndex(t *testing.T) {
 		t.Error("an ACS index that is not in the metadata was accepted")
 	}
 }
+
+// Nil options are skipped, as New skips them, rather than panicking.
+func TestNilOptionsSkipped(t *testing.T) {
+	ti := newTestIDP(t)
+	cfg := newTestConfig(t, ti)
+	msg, err := cfg.AuthnRequest(t.Context(), "s", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cfg.ParseResponse(t.Context(), login(t, ti, msg), nil, samlsp.WithRequestID(msg.ID), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cfg.Send(t.Context(), pingRequest(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := cfg.Prepare(t.Context(), nil); err != nil {
+		t.Fatal(err)
+	}
+	// QueryAttributes fails for want of an AttributeService, not a nil option.
+	if _, err := cfg.QueryAttributes(t.Context(), saml.NameID{Value: "alice"}, nil); !errors.Is(err, samlsp.ErrNoEndpoint) {
+		t.Fatalf("QueryAttributes: %v", err)
+	}
+}

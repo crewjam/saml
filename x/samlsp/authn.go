@@ -268,7 +268,9 @@ func chooseBinding(preferred string, locate func(string) string) (string, string
 func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...AuthnOption) (*Message, error) {
 	o := authnOptions{responseBinding: saml.HTTPPostBinding}
 	for _, opt := range opts {
-		opt.applyAuthn(&o)
+		if opt != nil {
+			opt.applyAuthn(&o)
+		}
 	}
 	switch o.responseBinding {
 	case saml.HTTPPostBinding, saml.HTTPArtifactBinding, saml.HTTPPostSimpleSignBinding:
@@ -368,7 +370,9 @@ var AllowUnsolicited ResponseOption = responseOptionFunc(func(o *responseOptions
 func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...ResponseOption) (*Assertion, error) {
 	var o responseOptions
 	for _, opt := range opts {
-		opt.applyResponse(&o)
+		if opt != nil {
+			opt.applyResponse(&o)
+		}
 	}
 	ctx = IdentityProviderContext(ctx, o.idp)
 	sp, err := c.serviceProvider(ctx, o.sp)

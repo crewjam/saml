@@ -94,7 +94,9 @@ func (o *messageOptions) modifier() func(any) error {
 func (c *Config) Send(ctx context.Context, msg OutgoingMessage, opts ...MessageOption) (*Message, error) {
 	var o messageOptions
 	for _, opt := range opts {
-		opt.applyMessage(&o)
+		if opt != nil {
+			opt.applyMessage(&o)
+		}
 	}
 	return c.send(IdentityProviderContext(ctx, o.idp), msg, o)
 }
@@ -198,7 +200,9 @@ func (c *Config) send(ctx context.Context, msg OutgoingMessage, o messageOptions
 func (c *Config) Prepare(ctx context.Context, opts ...MessageOption) (*saml.ServiceProvider, func(message any) error, error) {
 	var o messageOptions
 	for _, opt := range opts {
-		opt.applyMessage(&o)
+		if opt != nil {
+			opt.applyMessage(&o)
+		}
 	}
 	sp, err := c.serviceProvider(IdentityProviderContext(ctx, o.idp), o.sp)
 	if err != nil {
