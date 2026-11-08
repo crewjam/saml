@@ -43,14 +43,14 @@ const (
 type AuthnContextComparison string
 
 const (
-	// ComparisonExact requires one of the classes exactly.
-	ComparisonExact AuthnContextComparison = "exact"
-	// ComparisonMinimum requires a class at least as strong as one of the
+	// AuthnContextComparisonExact requires one of the classes exactly.
+	AuthnContextComparisonExact AuthnContextComparison = "exact"
+	// AuthnContextComparisonMinimum requires a class at least as strong as one of the
 	// classes.
-	ComparisonMinimum AuthnContextComparison = "minimum"
-	// ComparisonMaximum requires a class as strong as possible, but no
+	AuthnContextComparisonMinimum AuthnContextComparison = "minimum"
+	// AuthnContextComparisonMaximum requires a class as strong as possible, but no
 	// stronger than one of the classes.
-	ComparisonMaximum AuthnContextComparison = "maximum"
-	// ComparisonBetter requires a class stronger than all of the classes.
-	ComparisonBetter AuthnContextComparison = "better"
+	AuthnContextComparisonMaximum AuthnContextComparison = "maximum"
+	// AuthnContextComparisonBetter requires a class stronger than all of the classes.
+	AuthnContextComparisonBetter AuthnContextComparison = "better"
 )

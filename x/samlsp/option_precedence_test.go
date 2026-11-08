@@ -61,7 +61,7 @@ func TestParseResponseKeepsServiceProviderSettings(t *testing.T) {
 	// The response's class is PasswordProtectedTransport.
 	requireKerberos := samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
 		sp.RequestedAuthnContext = &saml.RequestedAuthnContext{
-			Comparison:            string(saml.ComparisonExact),
+			Comparison:            string(saml.AuthnContextComparisonExact),
 			AuthnContextClassRefs: []string{string(saml.AuthnContextKerberos)},
 		}
 	})
@@ -70,7 +70,7 @@ func TestParseResponseKeepsServiceProviderSettings(t *testing.T) {
 	}
 	// An AuthnContextOption of the call takes precedence.
 	if _, err := parseIDPInitiated(t, []samlsp.Option{requireKerberos}, samlsp.AllowUnsolicited,
-		samlsp.WithAuthnContext(saml.ComparisonExact, saml.AuthnContextPasswordProtectedTransport)); err != nil {
+		samlsp.WithAuthnContext(saml.AuthnContextComparisonExact, saml.AuthnContextPasswordProtectedTransport)); err != nil {
 		t.Errorf("with the call's AuthnContextOption: %v (%v)", err, errors.Unwrap(err))
 	}
 }

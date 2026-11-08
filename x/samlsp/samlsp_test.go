@@ -289,7 +289,7 @@ func TestAuthnRequestOptions(t *testing.T) {
 	msg, err := cfg.AuthnRequest(t.Context(), "s",
 		samlsp.ForceAuthn,
 		samlsp.IsPassive,
-		samlsp.WithAuthnContext(saml.ComparisonMinimum, saml.AuthnContextPasswordProtectedTransport, saml.AuthnContextX509),
+		samlsp.WithAuthnContext(saml.AuthnContextComparisonMinimum, saml.AuthnContextPasswordProtectedTransport, saml.AuthnContextX509),
 		samlsp.WithResponseBinding(saml.HTTPArtifactBinding),
 	)
 	if err != nil {
@@ -628,9 +628,9 @@ func TestAuthnContextChecked(t *testing.T) {
 		ctx     samlsp.AuthnContextOption
 		wantErr error
 	}{
-		{"satisfied", samlsp.WithAuthnContext(saml.ComparisonExact, saml.AuthnContextX509, saml.AuthnContextPasswordProtectedTransport), nil},
-		{"not satisfied", samlsp.WithAuthnContext(saml.ComparisonExact, saml.AuthnContextX509), saml.ErrAuthnContextMismatch},
-		{"no comparator", samlsp.WithAuthnContext(saml.ComparisonMinimum, saml.AuthnContextPassword), saml.ErrUnsupported},
+		{"satisfied", samlsp.WithAuthnContext(saml.AuthnContextComparisonExact, saml.AuthnContextX509, saml.AuthnContextPasswordProtectedTransport), nil},
+		{"not satisfied", samlsp.WithAuthnContext(saml.AuthnContextComparisonExact, saml.AuthnContextX509), saml.ErrAuthnContextMismatch},
+		{"no comparator", samlsp.WithAuthnContext(saml.AuthnContextComparisonMinimum, saml.AuthnContextPassword), saml.ErrUnsupported},
 	} {
 		msg, err := cfg.AuthnRequest(t.Context(), "s", tt.ctx)
 		if err != nil {
@@ -645,10 +645,10 @@ func TestAuthnContextChecked(t *testing.T) {
 	// With a comparator, "minimum" is decided by it.
 	cfg = newTestConfig(t, ti, samlsp.WithAuthnContextComparator(
 		func(c saml.AuthnContextComparison, requested []saml.AuthnContextClass, got saml.AuthnContextClass) bool {
-			return c == saml.ComparisonMinimum && requested[0] == saml.AuthnContextPassword &&
+			return c == saml.AuthnContextComparisonMinimum && requested[0] == saml.AuthnContextPassword &&
 				got == saml.AuthnContextPasswordProtectedTransport
 		}))
-	minimum := samlsp.WithAuthnContext(saml.ComparisonMinimum, saml.AuthnContextPassword)
+	minimum := samlsp.WithAuthnContext(saml.AuthnContextComparisonMinimum, saml.AuthnContextPassword)
 	msg, err := cfg.AuthnRequest(t.Context(), "s", minimum)
 	if err != nil {
 		t.Fatal(err)

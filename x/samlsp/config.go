@@ -356,7 +356,7 @@ func WithReplayState(state ReplayState) Option {
 
 // WithAuthnContextComparator sets how ParseResponse decides whether the
 // authentication context class the IdP used satisfies a WithAuthnContext
-// whose comparison is not saml.ComparisonExact. satisfies reports whether got
+// whose comparison is not saml.AuthnContextComparisonExact. satisfies reports whether got
 // is acceptable when classes were requested with comparison. The SAML
 // specification leaves the order of the classes to each deployment.
 func WithAuthnContextComparator(satisfies func(comparison saml.AuthnContextComparison, requested []saml.AuthnContextClass, got saml.AuthnContextClass) bool) Option {

@@ -79,7 +79,7 @@ func ExampleWithAuthnContext() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	stepUp := samlsp.WithAuthnContext(saml.ComparisonExact,
+	stepUp := samlsp.WithAuthnContext(saml.AuthnContextComparisonExact,
 		saml.AuthnContextMobileTwoFactorContract,
 		saml.AuthnContextSmartcardPKI)
 
@@ -108,7 +108,7 @@ func ExampleWithAuthnContext() {
 	})
 }
 
-// A comparison other than ComparisonExact needs an order of the classes,
+// A comparison other than AuthnContextComparisonExact needs an order of the classes,
 // which WithAuthnContextComparator gives.
 func ExampleWithAuthnContextComparator() {
 	strength := map[saml.AuthnContextClass]int{
@@ -120,7 +120,7 @@ func ExampleWithAuthnContextComparator() {
 	entityID := "https://sp.example.com/saml/metadata"
 	config, err := samlsp.New(entityID, exampleIDP(),
 		samlsp.WithAuthnContextComparator(func(comparison saml.AuthnContextComparison, requested []saml.AuthnContextClass, got saml.AuthnContextClass) bool {
-			if comparison != saml.ComparisonMinimum {
+			if comparison != saml.AuthnContextComparisonMinimum {
 				return false
 			}
 			for _, r := range requested {
@@ -133,7 +133,7 @@ func ExampleWithAuthnContextComparator() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	atLeastTwoFactor := samlsp.WithAuthnContext(saml.ComparisonMinimum, saml.AuthnContextMobileTwoFactorContract)
+	atLeastTwoFactor := samlsp.WithAuthnContext(saml.AuthnContextComparisonMinimum, saml.AuthnContextMobileTwoFactorContract)
 	_, _ = config, atLeastTwoFactor // pass to AuthnRequest and ParseResponse
 }
 

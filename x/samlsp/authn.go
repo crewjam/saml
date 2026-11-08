@@ -55,7 +55,7 @@ var (
 //
 // Pass the same option to ParseResponse, which then refuses an assertion
 // whose AuthnContextClassRef does not satisfy it, with an error matching
-// saml.ErrAuthnContextMismatch. A comparison other than saml.ComparisonExact
+// saml.ErrAuthnContextMismatch. A comparison other than saml.AuthnContextComparisonExact
 // needs WithAuthnContextComparator, since the order of the classes is
 // up to each deployment; without it, ParseResponse refuses every
 // assertion.

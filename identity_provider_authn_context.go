@@ -111,13 +111,13 @@ func (idp *IdentityProvider) authnContextClassStrengths() map[string]int {
 func authnContextSatisfies(comparison string, requested []string, achieved string, strengths map[string]int) (ok, known bool) {
 	var match func(achieved, requested int) bool
 	switch comparison {
-	case "", string(ComparisonExact):
+	case "", string(AuthnContextComparisonExact):
 		return containsString(requested, achieved), true
-	case string(ComparisonMinimum):
+	case string(AuthnContextComparisonMinimum):
 		match = func(a, r int) bool { return a >= r }
-	case string(ComparisonMaximum):
+	case string(AuthnContextComparisonMaximum):
 		match = func(a, r int) bool { return a <= r }
-	case string(ComparisonBetter):
+	case string(AuthnContextComparisonBetter):
 		return authnContextRankedMatch(requested, achieved, strengths, func(a, r int) bool { return a > r }), true
 	default:
 		return false, false
