@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/flate"
 	"crypto"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -273,9 +275,10 @@ type logoutState struct {
 // JSON names are those of SessionParticipant, which the state held before,
 // so that a logout in progress during an upgrade carries on.
 //
-// The cookie is signed, not encrypted. So that it does not hold in the
-// clear the NameIDs that EncryptLogoutNameID keeps out of the
-// LogoutRequests, sealLogoutNameIDs replaces NameID, before the state is
+// Unless LogoutStateKey is set, the cookie is signed, not encrypted. So
+// that it does not then hold in the clear the NameIDs that
+// EncryptLogoutNameID keeps out of the LogoutRequests, sealLogoutNameIDs
+// replaces NameID, before the state is
 // written to the cookie, with EncryptedID: the saml:EncryptedID that the
 // LogoutRequest to the participant then carries, encrypted to its service
 // provider's encryption certificate. To save room in the cookie, that
@@ -329,15 +332,17 @@ func (p pendingParticipant) participant() (SessionParticipant, *etree.Element, e
 	return participant, doc.Root(), nil
 }
 
-// sealLogoutNameIDs replaces, if EncryptLogoutNameID is set, the NameID of
-// each pending participant of state with the EncryptedID that the
-// LogoutRequest to it will carry (see pendingParticipant). A participant
+// sealLogoutNameIDs replaces, if EncryptLogoutNameID is set and
+// LogoutStateKey is not, the NameID of each pending participant of state
+// with the EncryptedID that the LogoutRequest to it will carry (see
+// pendingParticipant). With LogoutStateKey the whole state is encrypted
+// instead, which takes far less room. A participant
 // whose service provider publishes no encryption certificate keeps its
 // NameID, which it is sent in the clear anyway. One whose metadata cannot
 // be found, or whose NameID cannot be encrypted, is given up on and added
 // to state.Failed, as it would be when its turn came.
 func (idp *IdentityProvider) sealLogoutNameIDs(r *http.Request, state *logoutState) {
-	if !idp.EncryptLogoutNameID {
+	if !idp.EncryptLogoutNameID || idp.LogoutStateKey != nil {
 		return
 	}
 	pending := state.Pending[:0]
@@ -1013,6 +1018,90 @@ const maxLogoutStateCookieValue = 3800
 // else the IdP signs.
 const logoutStateSignaturePrefix = "saml-idp-logout-state\x00"
 
+// logoutStateEncryptedPrefix starts the encoded logout state when it is
+// encrypted with LogoutStateKey (see sealLogoutState). Like
+// logoutStateDeflatedPrefix, it is not in the base64url alphabet.
+const logoutStateEncryptedPrefix = "e~"
+
+// logoutStateEncryptionVersion is the first byte of an encrypted logout
+// state: the format, AES-256-GCM over the deflated JSON state.
+const logoutStateEncryptionVersion = 1
+
+// logoutStateEncryptionContext is the start of the additional data
+// authenticated with an encrypted logout state, so that its ciphertext
+// cannot be mistaken for anything else encrypted with the same key.
+const logoutStateEncryptionContext = "saml-idp-logout-state-encryption\x00"
+
+// logoutStateKeyIDLength is the length of the key ID in an encrypted
+// logout state header.
+const logoutStateKeyIDLength = 4
+
+// logoutStateAEAD returns the AES-256-GCM AEAD keyed with LogoutStateKey,
+// and the ID of that key: the start of a SHA-256 digest of it, which tells
+// a state encrypted with another key from a corrupted one.
+func (idp *IdentityProvider) logoutStateAEAD() (cipher.AEAD, []byte, error) {
+	if len(idp.LogoutStateKey) != 32 {
+		return nil, nil, fmt.Errorf("IdentityProvider.LogoutStateKey is %d bytes long, not 32", len(idp.LogoutStateKey))
+	}
+	block, err := aes.NewCipher(idp.LogoutStateKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, nil, err
+	}
+	keyDigest := sha256.Sum256(append([]byte("saml-idp-logout-state-key-id\x00"), idp.LogoutStateKey...))
+	return aead, keyDigest[:logoutStateKeyIDLength], nil
+}
+
+// sealLogoutState encrypts plaintext, the deflated state, with
+// LogoutStateKey. The result is a header (the version
+// logoutStateEncryptionVersion and the key ID), a random nonce, and the
+// ciphertext, which authenticates the header too.
+func (idp *IdentityProvider) sealLogoutState(plaintext []byte) ([]byte, error) {
+	aead, keyID, err := idp.logoutStateAEAD()
+	if err != nil {
+		return nil, err
+	}
+	header := append([]byte{logoutStateEncryptionVersion}, keyID...)
+	nonce := make([]byte, aead.NonceSize())
+	if _, err := io.ReadFull(idp.randReader(), nonce); err != nil {
+		return nil, err
+	}
+	sealed := append(append([]byte{}, header...), nonce...)
+	return aead.Seal(sealed, nonce, plaintext, append([]byte(logoutStateEncryptionContext), header...)), nil
+}
+
+// openLogoutState decrypts sealed, made by sealLogoutState, and returns the
+// deflated state.
+func (idp *IdentityProvider) openLogoutState(sealed []byte) ([]byte, error) {
+	if idp.LogoutStateKey == nil {
+		return nil, errors.New("the logout state is encrypted, but IdentityProvider.LogoutStateKey is not set")
+	}
+	aead, keyID, err := idp.logoutStateAEAD()
+	if err != nil {
+		return nil, err
+	}
+	headerLength := 1 + logoutStateKeyIDLength
+	if len(sealed) < headerLength+aead.NonceSize()+aead.Overhead() {
+		return nil, errors.New("malformed logout state: too short")
+	}
+	header, rest := sealed[:headerLength], sealed[headerLength:]
+	if header[0] != logoutStateEncryptionVersion {
+		return nil, fmt.Errorf("malformed logout state: unknown version %d", header[0])
+	}
+	if !bytes.Equal(header[1:], keyID) {
+		return nil, errors.New("the logout state was encrypted with another LogoutStateKey")
+	}
+	nonce, ciphertext := rest[:aead.NonceSize()], rest[aead.NonceSize():]
+	plaintext, err := aead.Open(nil, nonce, ciphertext, append([]byte(logoutStateEncryptionContext), header...))
+	if err != nil {
+		return nil, fmt.Errorf("cannot decrypt logout state: %w", err)
+	}
+	return plaintext, nil
+}
+
 // logoutStateSigner returns the key the IdP signs with.
 func (idp *IdentityProvider) logoutStateSigner() (crypto.Signer, error) {
 	if !signerutil.IsNil(idp.Signer) {
@@ -1024,7 +1113,8 @@ func (idp *IdentityProvider) logoutStateSigner() (crypto.Signer, error) {
 	return nil, errors.New("cannot sign: IdentityProvider.Key and IdentityProvider.Signer are both nil or invalid")
 }
 
-// encodeLogoutState serializes state and signs it with the IdP's key.
+// encodeLogoutState serializes state, encrypts it if LogoutStateKey is set,
+// and signs it with the IdP's key.
 func (idp *IdentityProvider) encodeLogoutState(state *logoutState) (string, error) {
 	signer, err := idp.logoutStateSigner()
 	if err != nil {
@@ -1035,7 +1125,8 @@ func (idp *IdentityProvider) encodeLogoutState(state *logoutState) (string, erro
 		return "", err
 	}
 	// The state is deflated: the participants' entity IDs and NameIDs (or
-	// the markup of their EncryptedIDs) repeat a lot, and browsers drop cookies over about 4 KB.
+	// the markup of their EncryptedIDs) repeat a lot, and browsers drop
+	// cookies over about 4 KB.
 	var compressed bytes.Buffer
 	fw, err := flate.NewWriter(&compressed, flate.BestCompression)
 	if err != nil {
@@ -1048,6 +1139,13 @@ func (idp *IdentityProvider) encodeLogoutState(state *logoutState) (string, erro
 		return "", err
 	}
 	encoded := logoutStateDeflatedPrefix + base64.RawURLEncoding.EncodeToString(compressed.Bytes())
+	if idp.LogoutStateKey != nil {
+		sealed, err := idp.sealLogoutState(compressed.Bytes())
+		if err != nil {
+			return "", err
+		}
+		encoded = logoutStateEncryptedPrefix + base64.RawURLEncoding.EncodeToString(sealed)
+	}
 	digest := sha256.Sum256([]byte(logoutStateSignaturePrefix + encoded))
 	signature, err := signer.Sign(idp.randReader(), digest[:], crypto.SHA256)
 	if err != nil {
@@ -1086,10 +1184,24 @@ func (idp *IdentityProvider) decodeLogoutState(value string) (*logoutState, erro
 		return nil, fmt.Errorf("invalid logout state signature: %w", err)
 	}
 
-	deflated := strings.HasPrefix(encoded, logoutStateDeflatedPrefix)
-	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(encoded, logoutStateDeflatedPrefix))
-	if err != nil {
-		return nil, fmt.Errorf("malformed logout state: %w", err)
+	var payload []byte
+	deflated := true
+	switch {
+	case strings.HasPrefix(encoded, logoutStateEncryptedPrefix):
+		sealed, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(encoded, logoutStateEncryptedPrefix))
+		if err != nil {
+			return nil, fmt.Errorf("malformed logout state: %w", err)
+		}
+		if payload, err = idp.openLogoutState(sealed); err != nil {
+			return nil, err
+		}
+	default:
+		// A state written while LogoutStateKey was not set is signed, and
+		// is read whether or not it is set now.
+		deflated = strings.HasPrefix(encoded, logoutStateDeflatedPrefix)
+		if payload, err = base64.RawURLEncoding.DecodeString(strings.TrimPrefix(encoded, logoutStateDeflatedPrefix)); err != nil {
+			return nil, fmt.Errorf("malformed logout state: %w", err)
+		}
 	}
 	if deflated {
 		// A state written before the state was deflated has no prefix.
@@ -1144,10 +1256,10 @@ func (idp *IdentityProvider) logoutStateCookie(r *http.Request, value string, ma
 
 // setLogoutStateCookie writes state to the logout state cookie.
 //
-// If EncryptLogoutNameID is set, the NameIDs of the pending participants
-// are first replaced with the EncryptedIDs their LogoutRequests will carry
-// (see sealLogoutNameIDs). These take more room, so fewer participants
-// then fit.
+// If EncryptLogoutNameID is set and LogoutStateKey is not, the NameIDs of
+// the pending participants are first replaced with the EncryptedIDs their
+// LogoutRequests will carry (see sealLogoutNameIDs). These take more room,
+// so fewer participants then fit.
 //
 // A browser would silently drop a cookie that is too large, and the logout
 // would then stop at the next LogoutResponse. So if the encoded state is

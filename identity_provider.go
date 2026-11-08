@@ -404,13 +404,33 @@ type IdentityProvider struct {
 	// assertions, a service provider whose metadata publishes no encryption
 	// certificate cannot decrypt, so it is sent the NameID in the clear.
 	//
-	// The cookie in which the IdP keeps the progress of a logout it
-	// propagates through the browser then holds, for each service provider
-	// still to be logged out, the encrypted NameID that it will be sent, not
-	// the NameID. An encrypted NameID takes more room, so fewer service
-	// providers fit in the cookie (a few, rather than dozens); those that do
-	// not are not logged out, and the logout ends with StatusPartialLogout.
+	// The IdP keeps the progress of a logout it propagates through the
+	// browser, including the NameIDs still to be sent, in a signed cookie.
+	// So that the cookie does not give the browser the NameIDs this keeps
+	// out of the LogoutRequests, set LogoutStateKey: the whole cookie is
+	// then encrypted. Without it, the cookie holds, for each service
+	// provider still to be logged out, the encrypted NameID that it will be
+	// sent instead of the NameID. An encrypted NameID takes much more room,
+	// so only a few service providers then fit in the cookie, rather than
+	// dozens; those that do not are not logged out, and the logout ends
+	// with StatusPartialLogout.
 	EncryptLogoutNameID bool
+
+	// LogoutStateKey, if set, is a 32-byte secret key with which the IdP
+	// encrypts (with AES-256-GCM) the cookie that holds the progress of a
+	// logout it propagates through the browser, as well as signing it. The
+	// cookie then holds no NameID in the clear, whether or not
+	// EncryptLogoutNameID is set, and has room for as many service
+	// providers as an unencrypted one. Every instance of the IdP that may
+	// receive a LogoutResponse must have the same key. Generate it with a
+	// cryptographic random number generator, and keep it secret. A key of
+	// another length makes logouts that go through the browser fail.
+	//
+	// The cookie records which key encrypted it, so a cookie encrypted with
+	// a previous key is refused once the key changes: change it when few
+	// logouts are in progress, as those are then abandoned. A cookie written
+	// while no key was set is still accepted, since it is signed.
+	LogoutStateKey []byte
 
 	// LogoutNameIDEncrypter, if set, encrypts the NameID of the
 	// LogoutRequests the IdP sends (see EncryptLogoutNameID). It is passed
