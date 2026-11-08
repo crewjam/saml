@@ -7,6 +7,7 @@ package replay
 
 import (
 	"container/heap"
+	"context"
 	"sync"
 	"time"
 
@@ -49,8 +50,6 @@ type Memory struct {
 	gen     uint64      // identifies the pending timer
 }
 
-var _ saml.AssertionReplayCache = (*Memory)(nil)
-
 // NewMemory returns an empty Memory that uses the system clock.
 func NewMemory() *Memory { return &Memory{} }
 
@@ -68,8 +67,10 @@ func (s *Memory) startTimer(d time.Duration, f func()) func() bool {
 	return time.AfterFunc(d, f).Stop
 }
 
-// Consume implements saml.AssertionReplayCache.
-func (s *Memory) Consume(id string, expiresAt time.Time) error {
+// Consume records id as accepted until expiresAt. It returns
+// saml.ErrAssertionReplayed if id is recorded and has not expired. It
+// implements samlsp.ReplayState; ctx is not used.
+func (s *Memory) Consume(_ context.Context, id string, expiresAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

@@ -561,3 +561,34 @@ func TestResolveFailures(t *testing.T) {
 		t.Errorf("metadata unavailable: %d", w.Code)
 	}
 }
+
+// TestIdentityProviderPerCall sends an AuthnRequest by artifact for a
+// Config made without an IdP: the IdP named for the call reaches the
+// Binding through the context, and middleware names it for the
+// ArtifactResolutionService, which no call option reaches.
+func TestIdentityProviderPerCall(t *testing.T) {
+	idpKey, idpCert := keyPair(t)
+	idp := &fakeIDP{key: idpKey, cert: idpCert}
+	spKey, spCert := keyPair(t)
+	cfg, err := samlsp.New(nil, spEntityID, samlsp.WithSigningKey(spKey, spCert),
+		artifact.ResolutionService(arsURL, 3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := artifact.New(cfg, artifact.NewMemoryStore(), 3)
+	idpMetadata := samlsp.StaticMetadata(idp.metadata())
+
+	msg, err := cfg.AuthnRequest(t.Context(), "relay-1",
+		samlsp.WithCustomBinding(b), samlsp.WithIdentityProvider(idpMetadata))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ars := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b.ServeHTTP(w, r.WithContext(samlsp.IdentityProviderContext(r.Context(), idpMetadata)))
+	})
+	got := artifactResponse(t, idp.resolve(t, ars, msg.RedirectURL().Query().Get("SAMLart"), idpEntityID, idp.key, idp.cert), spCert)
+	if got == nil || got.SelectAttrValue("ID", "") != msg.ID {
+		t.Fatalf("resolved %v, want the AuthnRequest %s", got, msg.ID)
+	}
+}

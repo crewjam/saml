@@ -1,6 +1,8 @@
 package samlsp_test
 
 import (
+	"context"
+	"crypto/rand"
 	"database/sql"
 	"fmt"
 	"log"
@@ -11,6 +13,8 @@ import (
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/x/samlsp"
+	"github.com/crewjam/saml/x/samlsp/pending"
+	"github.com/crewjam/saml/x/samlsp/replay"
 )
 
 // exampleIDP returns the metadata of an identity provider with
@@ -145,10 +149,11 @@ func startSession(_ http.ResponseWriter, _ *samlsp.Assertion) {}
 //	CREATE TABLE saml_replay (id text PRIMARY KEY, expires_at timestamptz NOT NULL);
 type sqlReplayState struct{ db *sql.DB }
 
-func (s sqlReplayState) Consume(id string, expiresAt time.Time) error {
+func (s sqlReplayState) Consume(ctx context.Context, id string, expiresAt time.Time) error {
 	// Insert the ID, or take over an expired record of it. Nothing changes
-	// if an unexpired record exists: that is a replay.
-	res, err := s.db.Exec(`
+	// if an unexpired record exists: that is a replay. ctx is that of the
+	// request whose message is accepted.
+	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO saml_replay (id, expires_at) VALUES ($1, $2)
 		ON CONFLICT (id) DO UPDATE SET expires_at = EXCLUDED.expires_at
 		WHERE saml_replay.expires_at < now()`, id, expiresAt)
@@ -177,4 +182,134 @@ func ExampleWithReplayState() {
 
 	// Expired records can go at any time, for example from a periodic job:
 	//	DELETE FROM saml_replay WHERE expires_at < now()
+}
+
+// tenant is an SP tenant, with its IdP's metadata as an administrator
+// uploaded it (see ParseMetadata).
+type tenant struct {
+	name        string
+	idpMetadata *saml.EntityDescriptor
+}
+
+// lookupTenant finds the tenant named in a request path.
+func lookupTenant(string) (*tenant, bool) { return nil, false }
+
+// When the SP itself differs per tenant, here by its entity ID and ACS
+// URL, build a Config per request: New is cheap. The replay record and the
+// pending-login cookies must outlive the request, so they are made once
+// and shared by every Config.
+func ExampleNew_perRequest() {
+	accepted := replay.NewMemory() // or a table every process shares
+	var cookieKey []byte           // 32 or more random bytes, from the application's secrets
+
+	configFor := func(t *tenant) (*samlsp.Config, *pending.Tracker, error) {
+		config, err := samlsp.New(samlsp.StaticMetadata(t.idpMetadata),
+			"https://sp.example.com/t/"+t.name+"/saml/metadata", // the ACS is .../saml/acs
+			samlsp.WithReplayState(accepted))
+		if err != nil {
+			return nil, nil, err
+		}
+		tracker, err := pending.New(config, cookieKey)
+		return config, tracker, err
+	}
+
+	http.HandleFunc("/t/{tenant}/login", func(w http.ResponseWriter, r *http.Request) {
+		t, ok := lookupTenant(r.PathValue("tenant"))
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		config, tracker, err := configFor(t)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		msg, err := config.AuthnRequest(r.Context(), rand.Text())
+		if err == nil {
+			err = tracker.Remember(w, msg, "")
+		}
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		msg.Write(w)
+	})
+
+	http.HandleFunc("/t/{tenant}/saml/acs", func(w http.ResponseWriter, r *http.Request) {
+		t, ok := lookupTenant(r.PathValue("tenant"))
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		config, tracker, err := configFor(t)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		login, err := tracker.Take(w, r)
+		if err != nil {
+			http.Error(w, "no login in progress", http.StatusBadRequest)
+			return
+		}
+		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
+		if err != nil {
+			http.Error(w, "login failed", http.StatusForbidden)
+			return
+		}
+		startSession(w, assertion)
+	})
+}
+
+// When only the IdP differs per tenant, one Config serves them all: each
+// call names the tenant's IdP. The pending login remembers the tenant, so
+// the ACS knows which IdP the Response must come from.
+func ExampleWithIdentityProvider() {
+	config, err := samlsp.New(nil, "https://sp.example.com/saml/metadata")
+	if err != nil {
+		log.Fatal(err)
+	}
+	var cookieKey []byte // 32 or more random bytes, from the application's secrets
+	tracker, err := pending.New(config, cookieKey)
+	if err != nil {
+		log.Fatal(err)
+	}
+	idpOf := func(t *tenant) samlsp.IdentityProviderOption {
+		return samlsp.WithIdentityProvider(samlsp.StaticMetadata(t.idpMetadata))
+	}
+
+	http.HandleFunc("/t/{tenant}/login", func(w http.ResponseWriter, r *http.Request) {
+		t, ok := lookupTenant(r.PathValue("tenant"))
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		msg, err := config.AuthnRequest(r.Context(), rand.Text(), idpOf(t))
+		if err == nil {
+			err = tracker.Remember(w, msg, t.name)
+		}
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		msg.Write(w)
+	})
+
+	http.HandleFunc(config.ACSPath(), func(w http.ResponseWriter, r *http.Request) {
+		login, err := tracker.Take(w, r)
+		if err != nil {
+			http.Error(w, "no login in progress", http.StatusBadRequest)
+			return
+		}
+		t, ok := lookupTenant(login.Data)
+		if !ok {
+			http.Error(w, "unknown tenant", http.StatusBadRequest)
+			return
+		}
+		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID), idpOf(t))
+		if err != nil {
+			http.Error(w, "login failed", http.StatusForbidden)
+			return
+		}
+		startSession(w, assertion)
+	})
 }

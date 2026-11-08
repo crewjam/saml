@@ -25,7 +25,6 @@ import (
 	"html"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -34,12 +33,14 @@ import (
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/x/samlsp"
+	"github.com/crewjam/saml/x/samlsp/pending"
 	"github.com/crewjam/saml/x/samlsp/slo"
 )
 
 var (
-	config *samlsp.Config
-	logout *slo.Service
+	config  *samlsp.Config
+	logout  *slo.Service
+	tracker *pending.Tracker
 )
 
 func main() {
@@ -77,6 +78,12 @@ func main() {
 		log.Fatal(err)
 	}
 	if logout, err = slo.New(config); err != nil {
+		log.Fatal(err)
+	}
+	// The key authenticates the cookies of logins in progress. A real
+	// deployment loads it from its secrets, so that every server shares
+	// it and logins in progress survive a restart.
+	if tracker, err = pending.New(config, []byte(rand.Text()+rand.Text())); err != nil {
 		log.Fatal(err)
 	}
 
@@ -122,37 +129,31 @@ func requireLogin(next http.Handler) http.Handler {
 }
 
 // startLogin sends the browser to the IdP with an AuthnRequest. The
-// request's ID, and where to go after login, wait in a cookie named after
-// the RelayState, so that the Response is accepted only in the browser
+// request's ID, and where to go after login, wait in a cookie (see
+// x/samlsp/pending), so that the Response is accepted only in the browser
 // that asked for it.
 func startLogin(w http.ResponseWriter, r *http.Request, returnTo string) {
-	relayState := rand.Text()
-	msg, err := config.AuthnRequest(r.Context(), relayState)
+	msg, err := config.AuthnRequest(r.Context(), rand.Text())
+	if err == nil {
+		err = tracker.Remember(w, msg, returnTo)
+	}
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
-	setTempCookie(w, "saml_"+relayState, config.ACSPath(), url.Values{"id": {msg.ID}, "to": {returnTo}}.Encode())
 	msg.Write(w)
 }
 
 // acs is the assertion consumer service: it verifies the IdP's Response
 // and starts a session.
 func acs(w http.ResponseWriter, r *http.Request) {
-	name := "saml_" + r.FormValue("RelayState")
-	cookie, err := r.Cookie(name)
-	if err != nil {
-		http.Error(w, "no login in progress", http.StatusForbidden)
-		return
-	}
-	deleteCookie(w, name, config.ACSPath())
-	pending, err := url.ParseQuery(cookie.Value)
+	login, err := tracker.Take(w, r)
 	if err != nil {
 		http.Error(w, "no login in progress", http.StatusForbidden)
 		return
 	}
 
-	assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(pending.Get("id")))
+	assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
 	if err != nil {
 		log.Printf("login failed: %v", errors.Unwrap(err))
 		http.Error(w, "login failed", http.StatusForbidden)
@@ -160,7 +161,7 @@ func acs(w http.ResponseWriter, r *http.Request) {
 	}
 	startSession(w, assertion)
 
-	returnTo := pending.Get("to")
+	returnTo := login.Data
 	if !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") {
 		returnTo = "/hello"
 	}

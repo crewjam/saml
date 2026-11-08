@@ -96,7 +96,7 @@ func (c *Config) Send(ctx context.Context, msg OutgoingMessage, opts ...MessageO
 	for _, opt := range opts {
 		opt.applyMessage(&o)
 	}
-	return c.send(ctx, msg, o)
+	return c.send(IdentityProviderContext(ctx, o.idp), msg, o)
 }
 
 func (c *Config) send(ctx context.Context, msg OutgoingMessage, o messageOptions) (*Message, error) {
@@ -200,7 +200,7 @@ func (c *Config) Prepare(ctx context.Context, opts ...MessageOption) (*saml.Serv
 	for _, opt := range opts {
 		opt.applyMessage(&o)
 	}
-	sp, err := c.serviceProvider(ctx, o.sp)
+	sp, err := c.serviceProvider(IdentityProviderContext(ctx, o.idp), o.sp)
 	if err != nil {
 		return nil, nil, err
 	}

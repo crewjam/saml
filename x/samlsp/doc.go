@@ -38,8 +38,13 @@
 // do not. RemoteMetadata fetches and caches metadata from a URL, StaticMetadata and
 // StaticMetadataBytes use metadata the application already has, and an
 // application can supply its own function: for example, one that reads
-// metadata from a database, or picks the IdP for the tenant named in the
-// context.
+// metadata from a database.
+//
+// An SP that serves several IdPs, such as one per tenant, can instead
+// name the IdP per call with WithIdentityProvider, and pass New a nil
+// MetadataFunc. IdentityProviderContext names it for calls that take no
+// such option. When the SP itself differs per tenant, by entity ID or ACS
+// URL, build a Config per request; New is cheap, but see WithReplayState.
 //
 // Settings that have no Option of their own are reached with a
 // ServiceProviderOption, which adjusts the saml.ServiceProvider that each
@@ -77,8 +82,10 @@
 // LogoutRequest), so that a message copied from a browser's history or a
 // log cannot be used again. By default the IDs are kept in memory, in a
 // replay.Memory of package github.com/crewjam/saml/x/samlsp/replay, which
-// protects a single process. Applications served by several processes
-// share a record with WithReplayState.
+// protects a single process. Applications served by several processes,
+// or that build a Config per request, share a record with WithReplayState.
+// Its Consume gets the context of the call that accepts the message, so a
+// record kept in a database can use the request's deadline.
 //
 // # Web Browser SSO
 //
