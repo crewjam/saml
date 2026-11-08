@@ -363,6 +363,10 @@ The SAML specification is a collection of PDFs (sadly):
 
 [SAMLTest](https://www.samltest.dev/) is a free SAML identity provider and SCIM directory for testing SAML service providers.
 
+## AI Disclosure
+
+Since approximately November 1, 2026, AI tools have been used to generate code in this repository. All AI-generated code is reviewed personally by the maintainer, except for the code in `tools/gosaml`.
+
 ## Security Issues
 
 Please do not report security issues in the issue tracker. Instead, report them privately through GitHub: on the [Security tab](https://github.com/crewjam/saml/security), choose **Report a vulnerability** (or go straight to [the advisory form](https://github.com/crewjam/saml/security/advisories/new)). See [SECURITY.md](SECURITY.md) for details. If your issue is *not* a security issue, please use the issue tracker so other contributors can help.
