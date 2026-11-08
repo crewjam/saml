@@ -119,12 +119,9 @@ func (s *Server) logEntry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if ev.XML != "" {
-		res := inspect.Parse(ev.XML, ev.At)
-		for _, m := range res.Messages {
-			p.Decoded = append(p.Decoded, m.View)
-			if m.View != nil {
-				p.Checks = append(p.Checks, m.View.Checks...)
-			}
+		for _, v := range decodedViews(ev, p.HTTPRequest) {
+			p.Decoded = append(p.Decoded, v)
+			p.Checks = append(p.Checks, v.Checks...)
 		}
 	}
 	reason := lastCause(ev.Detail)
@@ -142,6 +139,47 @@ func (s *Server) logEntry(w http.ResponseWriter, r *http.Request) {
 		p.InspectHref = "/inspect#m=" + strings.ReplaceAll(url.QueryEscape(inspectInput), "+", "%20")
 	}
 	s.renderStatus(w, r, http.StatusOK, "logentry", p.Row.Title, p)
+}
+
+// decodedViews decodes an event's message for its log entry. The XML an
+// event keeps is indented for reading, which breaks its signatures, so a
+// message the instance received is decoded from the raw request it came
+// in, when that was kept. Otherwise signatures are not judged: the page
+// says so instead of calling them broken.
+func decodedViews(ev *store.Event, rawRequest string) []*inspect.View {
+	if ev.Direction == "in" && rawRequest != "" {
+		res := inspect.Parse(rawRequest, ev.At)
+		if res.Error == "" && len(res.Messages) > 0 && res.Messages[0].Error == "" {
+			return viewsOf(res)
+		}
+	}
+	views := viewsOf(inspect.Parse(ev.XML, ev.At))
+	for _, v := range views {
+		checks := v.Checks[:0:0]
+		dropped := false
+		for _, c := range v.Checks {
+			if strings.Contains(c.Text, "signature broken") || strings.HasSuffix(c.Text, " signed") {
+				dropped = true
+				continue
+			}
+			checks = append(checks, c)
+		}
+		if dropped {
+			checks = append(checks, inspect.ViewCheck{Level: "warn", Text: "Signatures not checked: only an indented copy was kept"})
+		}
+		v.Checks = checks
+	}
+	return views
+}
+
+func viewsOf(res *inspect.Result) []*inspect.View {
+	var out []*inspect.View
+	for _, m := range res.Messages {
+		if m.View != nil {
+			out = append(out, m.View)
+		}
+	}
+	return out
 }
 
 // lastCause returns the most specific line of an error chain in an

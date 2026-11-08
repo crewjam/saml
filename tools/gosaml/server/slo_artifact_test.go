@@ -183,7 +183,12 @@ func TestLogEntry(t *testing.T) {
 		"HTTP/1.1 200 OK", // the answer
 		"Form parameters, decoded", "SAMLResponse=", "RelayState=",
 		"Copy as cURL", "Open in the inspector",
-		"✓ Accepted", "Response <span class=\"decoded-sub\">")
+		"✓ Accepted", "Response <span class=\"decoded-sub\">", "✓ Response signed")
+	// Decoded from the raw request, not the indented copy, so the
+	// signature of an accepted Response is not reported broken.
+	if strings.Contains(page, "signature broken") {
+		t.Error("an accepted Response's signature is shown as broken")
+	}
 	// The browser sent the pending-login cookie; its value is shortened.
 	if c := regexp.MustCompile(`Cookie: ([^\n]*)`).FindStringSubmatch(page); c == nil || !strings.Contains(c[1], "…") {
 		t.Errorf("cookie not redacted: %v", c)

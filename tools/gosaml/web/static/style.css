@@ -400,3 +400,4 @@ fieldset.relax .help { clear: both; max-width: 40em; margin-top: 0; padding-top:
 .error-msg { margin-bottom: 32px; font-size: 15px; }
 .logout-results { margin-top: 32px; }
 .about-p { margin: 16px 0 0; color: var(--ink-body); }
+.http-grid .pane, .entry-params .pane, .entry-detail { max-height: 480px; overflow: auto; }
