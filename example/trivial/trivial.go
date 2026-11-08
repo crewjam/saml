@@ -134,6 +134,12 @@ func requireLogin(next http.Handler) http.Handler {
 // x/samlsp/pending), so that the Response is accepted only in the browser
 // that asked for it.
 func startLogin(w http.ResponseWriter, r *http.Request, returnTo string) {
+	// The return path comes from the URL, which anyone can make long: keep
+	// it short, so that the cookie stays within its share of the Cookie
+	// header (see pending.WithMaxCookiesSize).
+	if len(returnTo) > 100 {
+		returnTo = "/"
+	}
 	msg, err := config.AuthnRequest(r.Context(), rand.Text())
 	if err == nil {
 		err = tracker.Remember(w, msg, returnTo)
