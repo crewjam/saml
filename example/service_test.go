@@ -116,13 +116,13 @@ func TestLinksConcurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
-func TestIsLocalPath(t *testing.T) {
+func TestIsLocalURL(t *testing.T) {
 	for p, want := range map[string]bool{
 		"/": true, "/links?x=1": true,
 		"": false, "https://evil.example": false, "//evil.example": false, `/\evil.example`: false, "evil": false, "/\t/evil.example": false, "/\n/evil.example": false,
 	} {
-		if got := isLocalPath(p); got != want {
-			t.Errorf("isLocalPath(%q) = %v, want %v", p, got, want)
+		if got := isLocalURL(p); got != want {
+			t.Errorf("isLocalURL(%q) = %v, want %v", p, got, want)
 		}
 	}
 }
