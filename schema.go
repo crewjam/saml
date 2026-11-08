@@ -120,6 +120,10 @@ type AuthnRequest struct {
 	Issuer       *Issuer   `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
 	Signature    *etree.Element
 
+	// Extensions is the samlp:Extensions element, if any, which holds
+	// extension elements agreed between the parties (saml-core §3.2.1).
+	Extensions *etree.Element `xml:"urn:oasis:names:tc:SAML:2.0:protocol Extensions"`
+
 	Subject               *Subject
 	NameIDPolicy          *NameIDPolicy `xml:"urn:oasis:names:tc:SAML:2.0:protocol NameIDPolicy"`
 	Conditions            *Conditions   `xml:"urn:oasis:names:tc:SAML:2.0:assertion Conditions"`
@@ -356,6 +360,9 @@ func (r *AuthnRequest) Element() *etree.Element {
 	if r.Signature != nil {
 		el.AddChild(r.Signature)
 	}
+	if r.Extensions != nil {
+		el.AddChild(r.Extensions.Copy())
+	}
 	if r.Subject != nil {
 		el.AddChild(r.Subject.Element())
 	}
@@ -404,11 +411,14 @@ func (r AuthnRequest) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 		// the schema requires.
 		Issuer    *Issuer          `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
 		Signature *etreeElementXML `xml:"Signature"`
+		// Extensions is repeated so that it is written after Signature.
+		Extensions *etreeElementXML `xml:"urn:oasis:names:tc:SAML:2.0:protocol Extensions"`
 		*Alias
 	}{
 		IssueInstant: RelaxedTime(r.IssueInstant),
 		Issuer:       r.Issuer,
 		Signature:    (*etreeElementXML)(r.Signature),
+		Extensions:   (*etreeElementXML)(r.Extensions),
 		Alias:        (*Alias)(&r),
 	}
 	return e.Encode(aux)
@@ -420,6 +430,7 @@ func (r *AuthnRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) erro
 	aux := &struct {
 		IssueInstant RelaxedTime      `xml:",attr"`
 		Signature    *etreeElementXML `xml:"Signature"`
+		Extensions   *etreeElementXML `xml:"urn:oasis:names:tc:SAML:2.0:protocol Extensions"`
 		*Alias
 	}{
 		Alias: (*Alias)(r),
@@ -428,6 +439,7 @@ func (r *AuthnRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) erro
 		return err
 	}
 	r.Signature = (*etree.Element)(aux.Signature)
+	r.Extensions = (*etree.Element)(aux.Extensions)
 	r.IssueInstant = time.Time(aux.IssueInstant)
 	return nil
 }

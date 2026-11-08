@@ -12,11 +12,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/beevik/etree"
 	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/x/samlidp"
 	"github.com/crewjam/saml/x/samlsp"
+	"github.com/crewjam/saml/xmlenc"
 )
 
 // decodeResponse returns the Response that msg posts.
@@ -149,6 +151,12 @@ func TestRequestFields(t *testing.T) {
 			}},
 			RequesterIDs: []string{"https://app.example.com"},
 		}
+		ext := etree.NewElement("samlp:Extensions")
+		ext.CreateAttr("xmlns:samlp", "urn:oasis:names:tc:SAML:2.0:protocol")
+		hint := ext.CreateElement("ex:Hint")
+		hint.CreateAttr("xmlns:ex", "urn:example:ext")
+		hint.SetText("value")
+		req.Extensions = ext
 		return nil
 	}))
 	if err != nil {
@@ -162,6 +170,16 @@ func TestRequestFields(t *testing.T) {
 		s.IDPList.IDPEntries[0].ProviderID != idpEntityID || s.IDPList.IDPEntries[0].Loc != "https://idp.example.com/saml/sso" ||
 		len(s.RequesterIDs) != 1 || s.RequesterIDs[0] != "https://app.example.com" {
 		t.Fatalf("Scoping = %+v", s)
+	}
+	if len(req.Extensions) != 1 {
+		t.Fatalf("Extensions = %q", req.Extensions)
+	}
+	hint := etree.NewDocument()
+	if err := hint.ReadFromBytes(req.Extensions[0]); err != nil {
+		t.Fatal(err)
+	}
+	if root := hint.Root(); root.Tag != "Hint" || root.NamespaceURI() != "urn:example:ext" || root.Text() != "value" {
+		t.Fatalf("Extensions = %q", req.Extensions)
 	}
 
 	buf, err := json.Marshal(req)
@@ -182,7 +200,8 @@ func TestRequestFields(t *testing.T) {
 	}
 	for name, kept := range map[string]*samlidp.AuthnRequest{"json": &fromJSON, "gob": &fromGob} {
 		if !reflect.DeepEqual(kept.Scoping, req.Scoping) || kept.Consent != req.Consent ||
-			kept.AttributeConsumingServiceIndex != req.AttributeConsumingServiceIndex || !kept.IssueInstant.Equal(req.IssueInstant) {
+			kept.AttributeConsumingServiceIndex != req.AttributeConsumingServiceIndex || !kept.IssueInstant.Equal(req.IssueInstant) ||
+			!reflect.DeepEqual(kept.Extensions, req.Extensions) {
 			t.Errorf("%s: kept %+v, want %+v", name, kept, req)
 		}
 		if _, err := p.idp.Response(context.Background(), kept, testSubject); err != nil {
@@ -227,10 +246,42 @@ func TestEncryptedNameIDFormat(t *testing.T) {
 	_, err = p.idp.Response(context.Background(), req, testSubject)
 	_ = asStatus(t, err, saml.StatusRequester, saml.StatusInvalidNameIDPolicy)
 
-	// It can: the NameID is in the encrypted assertion.
+	// It can: the NameID is issued as an EncryptedID (saml-core §8.3.9),
+	// in the encrypted assertion, which the SP decrypts.
 	p = newPair(t, nil, []samlsp.Option{samlsp.WithNameIDFormat(encrypted), samlsp.WithEncryptionKey(spKey, spCert)})
-	a, _ := p.login(t, nil, testSubject)
-	if a.Subject != testSubject.NameID {
+	ctx := context.Background()
+	msg, req, err := p.parse(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := p.idp.Response(ctx, req, testSubject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The participant, for single logout, has the plaintext NameID.
+	if resp.Participant == nil || resp.Participant.NameID.Value != testSubject.NameID || resp.Participant.NameID.Format != string(saml.TransientNameIDFormat) {
+		t.Fatalf("Participant = %+v", resp.Participant)
+	}
+	encryptedData := decodeResponse(t, resp).EncryptedAssertion.FindElement("./EncryptedData")
+	if encryptedData == nil {
+		t.Fatal("the assertion is not encrypted")
+	}
+	plaintext, err := xmlenc.Decrypt(spKey, encryptedData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(plaintext); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Root().FindElement("./Subject/NameID") != nil || doc.Root().FindElement("./Subject/EncryptedID/EncryptedData") == nil {
+		t.Fatalf("the assertion's Subject has no EncryptedID: %s", plaintext)
+	}
+	a, err := p.sp.ParseResponse(ctx, postForm(t, resp.Destination, formOf(t, resp)), samlsp.WithRequestID(msg.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Subject != testSubject.NameID || a.NameID.Format != string(saml.TransientNameIDFormat) {
 		t.Fatalf("got %+v", a)
 	}
 }

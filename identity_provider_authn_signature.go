@@ -20,18 +20,22 @@ var errAuthnRequestNotSigned = errors.New("authn request is not signed")
 // When the request has an enveloped XML signature, Request is read again
 // from what the signature covers, its Issuer must still be the service
 // provider whose keys verified it, and its fields are checked again.
+//
+// RequestSigned is set once a signature is verified.
 func (req *IdpAuthnRequest) verifySignature() error {
 	switch {
 	case req.simpleSign != nil:
 		if err := req.verifySimpleSignSignature(); err != nil {
 			return fmt.Errorf("cannot verify HTTP-POST-SimpleSign signature: %w", err)
 		}
+		req.RequestSigned = true
 		return nil
 
 	case req.redirectMessage != nil && req.redirectMessage.SignedContent != nil:
 		if err := req.verifyRedirectSignature(); err != nil {
 			return classify(fmt.Errorf("cannot verify HTTP-Redirect signature: %w", err), ErrInvalidSignature)
 		}
+		req.RequestSigned = true
 		return nil
 
 	case req.Request.Signature != nil:
@@ -39,7 +43,11 @@ func (req *IdpAuthnRequest) verifySignature() error {
 			return classify(fmt.Errorf("cannot verify signature of authn request: %w", err), ErrInvalidSignature)
 		}
 		// Check what the signature covers, not what came with it.
-		return req.validateFields()
+		if err := req.validateFields(); err != nil {
+			return err
+		}
+		req.RequestSigned = true
+		return nil
 
 	case req.IDP.WantAuthnRequestsSigned:
 		return classify(fmt.Errorf("%w, and the IdP wants signed authn requests", errAuthnRequestNotSigned), ErrInvalidSignature)
