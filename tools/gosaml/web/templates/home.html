@@ -7,8 +7,18 @@
 <div class="grid three">
   <section class="card" id="idp">
     <h2>Test identity provider</h2>
-    <p>An IdP with users you define. Register your service provider by its metadata, then log in to it as any user, with any attributes, or answer with an error to see how your SP copes.</p>
-    <form method="post" action="/new/idp"><button>Create an IdP</button></form>
+    <p>An IdP with users you define. Register your service provider by its metadata, then log in to it as any user, with any attributes, or answer with an error to see how your SP copes. It can imitate the responses of Okta, Entra ID or Shibboleth.</p>
+    <form method="post" action="/new/idp" class="create">
+      <label>Shaped like
+        <select name="profile">
+          <option value="generic">Generic</option>
+          <option value="okta">Okta</option>
+          <option value="entra">Entra ID</option>
+          <option value="shibboleth">Shibboleth</option>
+        </select>
+      </label>
+      <button>Create an IdP</button>
+    </form>
   </section>
   <section class="card" id="sp">
     <h2>Test service provider</h2>

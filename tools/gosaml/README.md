@@ -9,6 +9,14 @@ of samltest.dev and samltool.io:
   answer with an error status to see how the SP copes. IdP-initiated
   login too. A login starts an IdP session, so later logins from the same
   browser are single sign-on (and IsPassive requests succeed).
+- **Profiles.** A test IdP can imitate the shape of Okta's, Entra ID's or
+  Shibboleth's default responses: entity ID, attribute names and name
+  formats, NameID format, assertion IDs and session indexes, validity
+  window, encryption algorithms, and (Shibboleth) the `shibmd:Scope`
+  metadata extension. The shapes come from the products' real responses,
+  including the Okta and Entra fixtures in `../../testdata`. `x/samlidp`
+  always signs both the Response and the assertion, so an IdP that signs
+  only one (as Entra ID does by default) cannot be imitated yet.
 - **Test service providers.** Trust any IdP by its metadata, log in, and
   see what it asserted: NameID, attributes, authentication context, the
   decrypted assertion. When a Response is refused, see why: the full error
@@ -60,6 +68,7 @@ in-memory hub, since one process holds all the state, with catch-up from
 | `main.go` | Configuration (environment variables), startup, reaper |
 | `server/` | The web app: `idp.go` uses `x/samlidp`, `sp.go` uses `x/samlsp` and `x/samlsp/pending` |
 | `server/idp_flow.go`, `server/idp_slo.go` | IdP SSO, sessions, single logout, artifact resolution |
+| `server/profiles.go` | The Okta-, Entra ID- and Shibboleth-like IdP profiles |
 | `server/sp_slo.go` | SP sessions, single logout, artifact resolution |
 | `server/backchannel.go` | The SOAP client (in-process for this server's own URLs) and the artifact store |
 | `store/` | SQLite (`modernc.org/sqlite`, pure Go): instances, logs, pending logins and logouts, sessions, artifacts, and the library's replay state |

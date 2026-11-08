@@ -70,11 +70,13 @@ func decodeSPConfig(raw json.RawMessage) (*SPConfig, error) {
 func (s *Server) spEntityID(id string) string { return s.BaseURL + "/sp/" + id + "/metadata" }
 
 func (s *Server) newSP(w http.ResponseWriter, r *http.Request) {
-	s.createInstance(w, r, store.KindSP, &SPConfig{
-		Name:                 "Test SP",
-		SignAuthnRequests:    true,
-		PublishEncryptionKey: true,
-		AllowUnsolicited:     true,
+	s.createInstance(w, r, store.KindSP, func(string) any {
+		return &SPConfig{
+			Name:                 "Test SP",
+			SignAuthnRequests:    true,
+			PublishEncryptionKey: true,
+			AllowUnsolicited:     true,
+		}
 	})
 }
 

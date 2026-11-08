@@ -372,8 +372,9 @@ func (s *Server) inspectPage(w http.ResponseWriter, r *http.Request) {
 	s.renderStatus(w, r, http.StatusOK, "inspect", "Inspector", struct{ Posted string }{posted})
 }
 
-// createInstance stores a new instance with a fresh key pair.
-func (s *Server) createInstance(w http.ResponseWriter, r *http.Request, kind store.Kind, config any) {
+// createInstance stores a new instance with a fresh key pair, and the
+// configuration config makes given the instance's ID.
+func (s *Server) createInstance(w http.ResponseWriter, r *http.Request, kind store.Kind, config func(id string) any) {
 	n, err := s.Store.CountInstances(r.Context())
 	if err != nil {
 		s.fail(w, r, http.StatusInternalServerError, "Cannot create the instance.", err)
@@ -390,7 +391,7 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request, kind sto
 		s.fail(w, r, http.StatusInternalServerError, "Cannot create a key.", err)
 		return
 	}
-	b, err := encodeConfig(config)
+	b, err := encodeConfig(config(id))
 	if err != nil {
 		s.fail(w, r, http.StatusInternalServerError, "Cannot create the instance.", err)
 		return

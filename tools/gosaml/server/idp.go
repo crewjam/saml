@@ -60,6 +60,12 @@ type IdPConfig struct {
 	// ArtifactForm sends artifacts to SPs with a form the browser posts,
 	// instead of a redirect.
 	ArtifactForm bool
+
+	// Profile is the key of the idpProfile that shapes the IdP's
+	// assertions, and ProfileKey what it generated for this IdP (Okta's
+	// app ID, Entra's tenant ID).
+	Profile    string
+	ProfileKey string
 }
 
 // RegisteredSP is an SP registered with a test IdP.
@@ -157,13 +163,18 @@ func decodeIdPConfig(raw json.RawMessage) (*IdPConfig, error) {
 func (s *Server) idpEntityID(id string) string { return s.BaseURL + "/idp/" + id + "/metadata" }
 
 func (s *Server) newIdP(w http.ResponseWriter, r *http.Request) {
-	s.createInstance(w, r, store.KindIdP, &IdPConfig{
-		Name:                "Test IdP",
-		AutoFetchSPMetadata: true,
-		Users:               defaultUsers(),
-		SignatureMethod:     "sha256",
-		Encryption:          "auto",
-		RememberSessions:    true,
+	profile := profileByKey(r.FormValue("profile"))
+	s.createInstance(w, r, store.KindIdP, func(id string) any {
+		cfg := &IdPConfig{
+			Name:                "Test IdP",
+			AutoFetchSPMetadata: true,
+			RememberSessions:    true,
+		}
+		if profile.Key != "generic" {
+			cfg.Name = profile.Name + " test IdP"
+		}
+		applyProfile(cfg, id, profile.Key)
+		return cfg
 	})
 }
 
@@ -230,14 +241,23 @@ func (s *Server) samlIdP(in *store.Instance, cfg *IdPConfig) (*samlidp.Config, e
 			enc.BlockCipher = xmlenc.AES256GCM
 			idp.AssertionEncrypter = enc
 		}))
-	case "cbc":
+	case "cbc", "cbc256", "gcm128":
+		cipher := map[string]xmlenc.BlockCipher{"cbc": xmlenc.AES128CBC, "cbc256": xmlenc.AES256CBC, "gcm128": xmlenc.AES128GCM}[cfg.Encryption]
 		opts = append(opts, samlidp.WithIdentityProvider(func(idp *saml.IdentityProvider) {
-			enc := xmlenc.OAEP()
-			enc.BlockCipher = xmlenc.AES128CBC
+			enc := xmlenc.OAEP() // RSA-OAEP-MGF1P, SHA-1 digest
+			enc.BlockCipher = cipher
 			idp.AssertionEncrypter = enc
 		}))
 	}
-	return samlidp.New(s.idpEntityID(in.ID), sps, opts...)
+	if cfg.Profile == "shibboleth" {
+		opts = append(opts, samlidp.WithIdentityProvider(func(idp *saml.IdentityProvider) {
+			idp.MetadataScopes = []saml.ShibbolethScope{{Value: shibbolethScope(in.ID)}}
+		}))
+	}
+	// The entity ID may be shaped like a product's (see profiles.go), so
+	// name the SSO URL rather than have it derived from the entity ID.
+	opts = append(opts, samlidp.WithSSOURL(s.BaseURL+"/idp/"+in.ID+"/sso"))
+	return samlidp.New(s.idpEntityIDFor(in.ID, cfg), sps, opts...)
 }
 
 func (s *Server) lookupSP(ctx context.Context, cfg *IdPConfig, entityID string) (*saml.EntityDescriptor, error) {
@@ -434,6 +454,8 @@ type idpManagePage struct {
 	CertURL     string
 	SLOURL      string
 	ArtifactURL string
+	Profile     idpProfile
+	Profiles    []idpProfile
 	Sessions    []idpSessionView
 	Events      []store.Event
 	Flash       string
@@ -456,7 +478,8 @@ func (s *Server) manageIdP(w http.ResponseWriter, r *http.Request, in *store.Ins
 	}
 	p := idpManagePage{
 		Secret: in.Secret, Max: store.MaxEventsPerInstance,
-		Instance: in, Config: cfg, EntityID: s.idpEntityID(in.ID),
+		Instance: in, Config: cfg, EntityID: s.idpEntityIDFor(in.ID, cfg),
+		Profile: profileByKey(cfg.Profile), Profiles: idpProfiles,
 		SSOURL:      s.BaseURL + "/idp/" + in.ID + "/sso",
 		MetadataURL: s.idpEntityID(in.ID),
 		CertURL:     s.BaseURL + "/idp/" + in.ID + "/certificate.pem",
@@ -508,7 +531,7 @@ func (s *Server) idpAction(w http.ResponseWriter, r *http.Request, in *store.Ins
 		cfg.AutoFetchSPMetadata = r.FormValue("auto_fetch") != ""
 		cfg.RequireSignedRequests = r.FormValue("require_signed") != ""
 		cfg.SignatureMethod = oneOf(r.FormValue("signature_method"), "sha256", "sha384", "sha512")
-		cfg.Encryption = oneOf(r.FormValue("encryption"), "auto", "gcm", "cbc", "off")
+		cfg.Encryption = oneOf(r.FormValue("encryption"), "auto", "gcm", "gcm128", "cbc256", "cbc", "off")
 		cfg.RememberSessions = r.FormValue("remember_sessions") != ""
 		cfg.BackChannelLogout = r.FormValue("back_channel") != ""
 		cfg.ArtifactForm = r.FormValue("artifact_form") != ""
@@ -647,6 +670,11 @@ func (s *Server) idpAction(w http.ResponseWriter, r *http.Request, in *store.Ins
 			return
 		}
 		s.startIdPLogout(w, r, run, r.FormValue("session_id"))
+
+	case "profile":
+		p := profileByKey(r.FormValue("profile"))
+		applyProfile(cfg, in.ID, p.Key)
+		s.saveIdPConfig(w, r, in, cfg, "Profile "+p.Name+" applied: the entity ID, users and encryption are now its. Give your SPs the new metadata.", "profile")
 
 	case "session-delete":
 		if err := s.Store.DeleteSession(ctx, r.FormValue("session_id"), in.ID); err != nil {

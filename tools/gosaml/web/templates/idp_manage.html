@@ -23,6 +23,20 @@
   <div class="field"><span class="label">Signing certificate</span><a href="{{.CertURL}}">Download PEM</a></div>
 </section>
 
+<section class="card" id="profile">
+  <h2>Profile: {{.Profile.Name}}</h2>
+  <p>{{.Profile.Description}}</p>
+  <form method="post" action="/manage/{{.Secret}}/profile" class="row" data-confirm="Applying a profile replaces this IdP's users, entity ID and encryption setting. Your SPs will need its new metadata. Continue?">
+    <label class="inline">Imitate
+      <select name="profile">
+        {{range .Profiles}}<option value="{{.Key}}" {{if eq .Key $.Data.Profile.Key}}selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+    </label>
+    <button class="secondary">Apply</button>
+  </form>
+  <p class="hint">Profiles imitate the shape of these products' default responses, so you can test that your SP copes with each; gosaml.dev is not affiliated with their makers. The IdP always signs both the Response and the assertion, which not all of them do.</p>
+</section>
+
 <section class="card" id="sps">
   <h2>Service providers</h2>
   {{if .Config.AutoFetchSPMetadata}}<p class="hint">An SP whose entity ID is its metadata URL can log in without being registered: its metadata is fetched at each login. Register others here.</p>{{end}}
@@ -143,6 +157,8 @@
       <select name="encryption">
         <option value="auto" {{if eq .Config.Encryption "auto"}}selected{{end}}>Automatic: the strongest the SP's metadata lists</option>
         <option value="gcm" {{if eq .Config.Encryption "gcm"}}selected{{end}}>RSA-OAEP-SHA256 and AES-256-GCM</option>
+        <option value="gcm128" {{if eq .Config.Encryption "gcm128"}}selected{{end}}>RSA-OAEP and AES-128-GCM (Shibboleth's default)</option>
+        <option value="cbc256" {{if eq .Config.Encryption "cbc256"}}selected{{end}}>RSA-OAEP and AES-256-CBC (Okta's and Entra ID's)</option>
         <option value="cbc" {{if eq .Config.Encryption "cbc"}}selected{{end}}>RSA-OAEP and AES-128-CBC (legacy)</option>
         <option value="off" {{if eq .Config.Encryption "off"}}selected{{end}}>Off: never encrypt</option>
       </select>

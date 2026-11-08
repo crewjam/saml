@@ -234,3 +234,8 @@ pre.detail { white-space: pre-wrap; word-break: break-word; }
 .events li.new { animation: flash 2s ease-out; }
 @keyframes flash { from { background: var(--accent-soft); } to { background: transparent; } }
 @media (prefers-reduced-motion: reduce) { .events li.new { animation: none; } }
+.create { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.create label { font-size: 13px; }
+.create select { width: auto; }
+label.inline { flex-direction: row; align-items: center; gap: 8px; }
+label.inline select { width: auto; }

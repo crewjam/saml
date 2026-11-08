@@ -177,7 +177,11 @@ func (s *Server) idpLogin(w http.ResponseWriter, r *http.Request) {
 	if authnContext == "" {
 		authnContext = saml.AuthnContextPasswordProtectedTransport
 	}
-	sess := &idpSession{Username: user.Username, AuthnInstant: time.Now(), AuthnContext: authnContext, SessionIndex: rand.Text()}
+	sessionIndex := rand.Text()
+	if p := profileByKey(cfg.Profile); p.NewSessionIndex != nil {
+		sessionIndex = p.NewSessionIndex()
+	}
+	sess := &idpSession{Username: user.Username, AuthnInstant: time.Now(), AuthnContext: authnContext, SessionIndex: sessionIndex}
 	subject := buildSubject(&req, user, r.FormValue("nameid_format"), sess.AuthnContext, sess.AuthnInstant, sess.SessionIndex, hours)
 	_ = s.Store.DeletePending(ctx, pid)
 	// A login, as opposed to single sign-on, starts a new IdP session.
@@ -225,7 +229,11 @@ func (s *Server) respond(w http.ResponseWriter, r *http.Request, run *idpRun, re
 	subject samlidp.Subject, sess *idpSession, sessID string) {
 	ctx := r.Context()
 	opts := []samlidp.ResponseOption{samlidp.WithScriptNonce(nonce(r)), run.binding()}
-	msg, err := run.c.Response(ctx, req, subject, opts...)
+	respOpts := opts
+	if o := profileByKey(run.cfg.Profile).assertionOption(); o != nil {
+		respOpts = append(respOpts[:len(respOpts):len(respOpts)], o)
+	}
+	msg, err := run.c.Response(ctx, req, subject, respOpts...)
 	var status *saml.StatusError
 	if errors.As(err, &status) {
 		// The SP asked for what this user cannot be asserted with: tell
