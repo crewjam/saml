@@ -794,10 +794,50 @@ func TestMemoryStoreMaxEntries(t *testing.T) {
 	}
 }
 
-// TestMemoryStoreFlood checks that, while many goroutines flood the
-// store, a message saved can be resolved right after, and that the store
-// never keeps more than MaxEntries. Run with -race.
-func TestMemoryStoreFlood(t *testing.T) {
+// TestMemoryStoreFloodBoundary checks that a full store pushes out only
+// the oldest message: a message survives MaxEntries-1 Saves after its own,
+// and is pushed out by the MaxEntries-th.
+func TestMemoryStoreFloodBoundary(t *testing.T) {
+	const maxEntries = 100
+	s := &artifact.MemoryStore{MaxEntries: maxEntries}
+	ctx := context.Background()
+	m := artifact.StoredMessage{XML: []byte("<x/>"), Recipient: idpEntityID, ExpiresAt: time.Now().Add(time.Minute)}
+	flood := func(prefix string, n int) {
+		t.Helper()
+		for i := range n {
+			if err := s.Save(ctx, fmt.Sprintf("%s-%d", prefix, i), m); err != nil {
+				t.Fatalf("Save during a flood: %v", err)
+			}
+		}
+	}
+	flood("fill", maxEntries) // the store is full
+
+	if err := s.Save(ctx, "kept", m); err != nil {
+		t.Fatal(err)
+	}
+	flood("a", maxEntries-1)
+	if got, err := s.Take(ctx, "kept", idpEntityID); err != nil || got == nil {
+		t.Fatalf("Take after %d other Saves = %v, %v; want the message", maxEntries-1, got, err)
+	}
+
+	if err := s.Save(ctx, "lost", m); err != nil {
+		t.Fatal(err)
+	}
+	flood("b", maxEntries)
+	if got, err := s.Take(ctx, "lost", idpEntityID); err != nil || got != nil {
+		t.Fatalf("Take after %d other Saves = %v, %v; want it pushed out", maxEntries, got, err)
+	}
+	if n := s.Len(); n != maxEntries {
+		t.Fatalf("Len = %d, want %d", n, maxEntries)
+	}
+}
+
+// TestMemoryStoreFloodConcurrent floods the store from many goroutines
+// while another saves and takes messages: Save never fails and the store
+// never keeps more than MaxEntries. Whether a message survives depends on
+// how many Saves the scheduler lets in between, so that is checked by
+// TestMemoryStoreFloodBoundary instead. Run with -race.
+func TestMemoryStoreFloodConcurrent(t *testing.T) {
 	const maxEntries = 1000
 	s := &artifact.MemoryStore{MaxEntries: maxEntries}
 	ctx := context.Background()
@@ -821,18 +861,13 @@ func TestMemoryStoreFlood(t *testing.T) {
 			}
 		}()
 	}
-	lost := 0
 	for i := range 200 {
 		art := fmt.Sprintf("user-%d", i)
 		if err := s.Save(ctx, art, m); err != nil {
 			t.Fatalf("Save(%s) during a flood: %v", art, err)
 		}
-		// Only maxEntries other Saves between this Save and Take could
-		// push the message out.
-		if got, err := s.Take(ctx, art, idpEntityID); err != nil {
+		if _, err := s.Take(ctx, art, idpEntityID); err != nil {
 			t.Fatal(err)
-		} else if got == nil {
-			lost++
 		}
 		if n := s.Len(); n > maxEntries {
 			t.Fatalf("Len = %d, more than MaxEntries", n)
@@ -840,9 +875,6 @@ func TestMemoryStoreFlood(t *testing.T) {
 	}
 	close(stop)
 	wg.Wait()
-	if lost > 0 {
-		t.Errorf("%d of 200 messages were pushed out by the flood before they could be taken", lost)
-	}
 }
 
 // An ArtifactResolve must be SAML 2.0 and, if it has a Destination,
