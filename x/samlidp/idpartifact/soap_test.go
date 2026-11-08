@@ -35,10 +35,18 @@ func (w *world) artifact(t *testing.T) string {
 // as XML.
 func (w *world) signedResolve(t *testing.T, art string) string {
 	t.Helper()
+	return w.signedResolveWith(t, art, func(*saml.ArtifactResolve) {})
+}
+
+// signedResolveWith is signedResolve, with the request changed by modify
+// before it is signed.
+func (w *world) signedResolveWith(t *testing.T, art string, modify func(*saml.ArtifactResolve)) string {
+	t.Helper()
 	req := &saml.ArtifactResolve{
 		ID: "id-resolve-1", Version: "2.0", IssueInstant: time.Now().UTC(),
 		Issuer: &saml.Issuer{Value: w.sps[0].EntityID()}, Artifact: art,
 	}
+	modify(req)
 	signed, err := w.sps[0].SignElement(req.Element())
 	if err != nil {
 		t.Fatal(err)
@@ -143,5 +151,24 @@ func TestResolveKeepsMessageWhenSigningFails(t *testing.T) {
 	}
 	if w.store.Len() != 1 {
 		t.Errorf("%d messages stored after a failed ArtifactResponse, want 1", w.store.Len())
+	}
+}
+
+// An ArtifactResolve must be SAML 2.0 and, if it has a Destination,
+// addressed to this ArtifactResolutionService (saml-core §3.2.1, §3.2.2).
+func TestResolveChecksVersionAndDestination(t *testing.T) {
+	w := newWorld(t, nil)
+	art := w.artifact(t)
+	for name, modify := range map[string]func(*saml.ArtifactResolve){
+		"SAML 1.1":          func(r *saml.ArtifactResolve) { r.Version = "1.1" },
+		"other Destination": func(r *saml.ArtifactResolve) { r.Destination = "https://other.example.com/saml/artifact" },
+	} {
+		if rec := post(w.binding, soapStart+w.signedResolveWith(t, art, modify)+soapEnd); rec.Code != http.StatusInternalServerError {
+			t.Errorf("%s: %d %s", name, rec.Code, rec.Body.String())
+		}
+	}
+	right := w.signedResolveWith(t, art, func(r *saml.ArtifactResolve) { r.Destination = w.server.URL + "/saml/artifact" })
+	if !carriesResponse(t, post(w.binding, soapStart+right+soapEnd)) {
+		t.Error("the right Destination: no Response")
 	}
 }
