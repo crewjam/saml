@@ -359,27 +359,27 @@ type ServiceProvider struct {
 	// InResponseTo, passed as Response.InResponseTo.
 	ValidateRequestID func(response Response, possibleRequestIDs []string) error
 
-	// ClientAddress, if set, is the network address (an IPv4 or IPv6
+	// ClientAddress returns the network address (an IPv4 or IPv6
 	// address, optionally with a port, as in http.Request.RemoteAddr) of
-	// the user agent presenting the Response being parsed. A bearer
-	// SubjectConfirmationData that has an Address (saml-core §2.4.1.2)
-	// then confirms the subject only if Address is the same IP address;
-	// one without an Address is not affected. IPv4 and IPv6 spellings of an
-	// address are compared as addresses, not as text.
+	// the user agent that presented the Response in req. ParseResponse
+	// then checks that a bearer SubjectConfirmationData with an Address
+	// (saml-core §2.4.1.2) names the same IP address; one without an
+	// Address is not affected. IPv4 and IPv6 spellings of an address are
+	// compared as addresses, not as text, and a port is ignored.
 	//
-	// It is off (empty) by default, because the SP often cannot know the
-	// client's address: behind a proxy or load balancer, RemoteAddr is the
-	// proxy's, and the client address must come from a header that only a
-	// trusted proxy can be relied on to set. Clients also change address
-	// (between IPv4 and IPv6, or across a carrier-grade NAT) during a
-	// login. Set it only when the address is known to be the client's, and
-	// set it per call, on a copy of the ServiceProvider made for the
-	// request, since it describes one request:
+	// If ClientAddress is nil, the address is req.RemoteAddr. Behind a
+	// proxy or load balancer, RemoteAddr is the proxy's, so set
+	// ClientAddress to return the client's address as the proxy reports
+	// it, from a header that only the trusted proxy can set. If it returns
+	// "", the Address is not checked: return "" to turn the check off.
 	//
-	//	reqSP := *sp
-	//	reqSP.ClientAddress = clientIP // as determined by the application
-	//	assertion, err := reqSP.ParseResponse(r, requestIDs)
-	ClientAddress string
+	// ParseXMLResponse, which has no request, does not check the Address.
+	ClientAddress func(req *http.Request) string
+
+	// clientAddress is the address ParseResponse found with ClientAddress
+	// for the request it is parsing, on the copy of the ServiceProvider it
+	// parses with, or "" for none.
+	clientAddress string
 
 	// Clock, if non-nil, is the time source for everything this
 	// ServiceProvider does that depends on the current time: timestamps on
@@ -1460,10 +1460,22 @@ func (e ErrBadStatus) Is(target error) bool {
 // conditions, decryption, ReplayCache) applies as for HTTP-POST. A form
 // without SigAlg and Signature is handled as HTTP-POST, as before.
 func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs []string) (*Assertion, error) {
+	reqSP := *sp
+	reqSP.clientAddress = sp.clientAddressOf(req)
+	sp = &reqSP
 	if artifactID := req.Form.Get("SAMLart"); artifactID != "" {
 		return sp.handleArtifactRequest(req.Context(), artifactID, possibleRequestIDs)
 	}
 	return sp.parseResponseHTTP(req, possibleRequestIDs)
+}
+
+// clientAddressOf returns the address of the user agent that sent req, as
+// ClientAddress has it.
+func (sp *ServiceProvider) clientAddressOf(req *http.Request) string {
+	if sp.ClientAddress != nil {
+		return sp.ClientAddress(req)
+	}
+	return req.RemoteAddr
 }
 
 func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID string, possibleRequestIDs []string) (*Assertion, error) {
@@ -2668,8 +2680,8 @@ func (sp *ServiceProvider) validateBearerSubjectConfirmationData(data *SubjectCo
 	if sp.limits().pastDeadline(data.NotOnOrAfter, now) {
 		return classify(fmt.Errorf("assertion SubjectConfirmationData is expired"), ErrExpired)
 	}
-	if sp.ClientAddress != "" && data.Address != "" && !subjectConfirmationAddressMatches(data.Address, sp.ClientAddress) {
-		return classify(fmt.Errorf("assertion SubjectConfirmationData Address %q is not the client address %q", data.Address, sp.ClientAddress), ErrDestinationMismatch)
+	if sp.clientAddress != "" && data.Address != "" && !subjectConfirmationAddressMatches(data.Address, sp.clientAddress) {
+		return classify(fmt.Errorf("assertion SubjectConfirmationData Address %q is not the client address %q", data.Address, sp.clientAddress), ErrDestinationMismatch)
 	}
 	return nil
 }
