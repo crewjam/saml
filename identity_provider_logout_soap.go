@@ -18,12 +18,11 @@ import (
 // ones that are not https; see AllowInsecureSOAPEndpoints).
 var ErrNoSOAPLogoutEndpoint = errors.New("the service provider metadata has no SOAP SingleLogoutService endpoint")
 
-// httpClient returns the client the IdP sends SOAP messages with.
+// httpClient returns the client the IdP sends SOAP messages with: HTTPClient,
+// or defaultSOAPHTTPClient, never following a redirect to a location that
+// checkSOAPEndpoint refuses (see soapHTTPClient).
 func (idp *IdentityProvider) httpClient() *http.Client {
-	if idp.HTTPClient != nil {
-		return idp.HTTPClient
-	}
-	return defaultSOAPHTTPClient
+	return soapHTTPClient(idp.HTTPClient, idp.AllowInsecureSOAPEndpoints)
 }
 
 // soapLogoutEndpoint returns the first SingleLogoutService of metadata with

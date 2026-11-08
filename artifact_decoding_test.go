@@ -196,34 +196,42 @@ func TestArtifactDecodingStrictness(t *testing.T) {
 }
 
 // saml-bindings-2.0-os §3.6.5.2: an artifact is resolved only once. With a
-// ReplayCache, the SP refuses a second resolution of the same artifact
-// before contacting the IdP.
+// ReplayCache, the SP records each artifact once it has resolved to a
+// verified Response, and refuses it after that.
 func TestArtifactDecodingReplay(t *testing.T) {
 	e, s := artifactdecSetup(t)
 	cache := memoryReplayCache{}
 	e.sp.ReplayCache = cache
 
 	artifact := artifactdecMake(7, artifactdecIDPSourceID(), 0x08)
+	artifactKey := "Artifact:" + bytesHex(artifactdecIDPSourceID()) + ":" + bytesHex(fill20(0x08))
 	_, err := e.sp.ParseResponse(spcovArtifactRequest(artifact), []string{spcovRequestID})
 	assert.NilError(t, err)
 	assert.Check(t, is.Len(s.paths, 1))
-	_, recorded := cache["Artifact:"+bytesHex(artifactdecIDPSourceID())+":"+bytesHex(fill20(0x08))]
+	_, recorded := cache[artifactKey]
 	assert.Check(t, recorded, "cache keys: %v", cache)
 	_, recorded = cache["id-assertion"]
 	assert.Check(t, recorded)
 
 	t.Run("same artifact again", func(t *testing.T) {
+		// The test IdP resolves the artifact again, as a real one would
+		// not; forget the assertion so that the artifact record refuses it.
+		delete(cache, "id-assertion")
 		_, err := e.sp.ParseResponse(spcovArtifactRequest(artifact), []string{spcovRequestID})
 		privateErr := spcovPrivateErr(t, err)
 		assert.Check(t, is.ErrorIs(privateErr, ErrArtifactResolution))
 		assert.Check(t, is.ErrorIs(privateErr, ErrAssertionReplayed))
-		assert.Check(t, is.Len(s.paths, 1), "the IdP must not be contacted again")
+	})
+
+	t.Run("same artifact again, assertion recorded", func(t *testing.T) {
+		_, err := e.sp.ParseResponse(spcovArtifactRequest(artifact), []string{spcovRequestID})
+		assert.Check(t, is.ErrorIs(spcovPrivateErr(t, err), ErrAssertionReplayed))
 	})
 
 	t.Run("same MessageHandle through another EndpointIndex", func(t *testing.T) {
+		delete(cache, "id-assertion")
 		_, err := e.sp.ParseResponse(spcovArtifactRequest(artifactdecMake(0, artifactdecIDPSourceID(), 0x08)), []string{spcovRequestID})
 		assert.Check(t, is.ErrorIs(spcovPrivateErr(t, err), ErrAssertionReplayed))
-		assert.Check(t, is.Len(s.paths, 1))
 	})
 
 	t.Run("non-standard artifact is recorded by value", func(t *testing.T) {
@@ -232,9 +240,9 @@ func TestArtifactDecodingReplay(t *testing.T) {
 		assert.NilError(t, err)
 		_, recorded := cache["Artifact:raw:the-artifact"]
 		assert.Check(t, recorded)
+		delete(cache, "id-assertion")
 		_, err = e.sp.ParseResponse(spcovArtifactRequest("the-artifact"), []string{spcovRequestID})
 		assert.Check(t, is.ErrorIs(spcovPrivateErr(t, err), ErrAssertionReplayed))
-		assert.Check(t, is.Len(s.paths, 2))
 	})
 
 	t.Run("cache error refuses the artifact", func(t *testing.T) {
@@ -242,10 +250,78 @@ func TestArtifactDecodingReplay(t *testing.T) {
 		sp.ReplayCache = failingReplayCache{}
 		_, err := sp.ParseResponse(spcovArtifactRequest(artifactdecMake(7, artifactdecIDPSourceID(), 0x09)), []string{spcovRequestID})
 		privateErr := spcovPrivateErr(t, err)
-		assert.Check(t, is.ErrorIs(privateErr, ErrArtifactResolution))
-		assert.Check(t, is.Error(privateErr, "artifact: store unavailable"))
+		assert.Check(t, is.ErrorContains(privateErr, "store unavailable"))
 		assert.Check(t, !errors.Is(privateErr, ErrAssertionReplayed))
-		assert.Check(t, is.Len(s.paths, 2))
+	})
+}
+
+// An artifact is recorded only once it resolves: one that the IdP does not
+// resolve to a verified Response, though its format and SourceID are
+// right, leaves no record, and the same artifact can be resolved later.
+func TestArtifactDecodingUnresolvedNotRecorded(t *testing.T) {
+	e := spcovSetup(t)
+	cache := memoryReplayCache{}
+	e.sp.ReplayCache = cache
+	e.sp.RequireStandardArtifacts = true
+
+	var mode string
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		doc := etree.NewDocument()
+		if _, err := doc.ReadFrom(r.Body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		resolveEl := doc.FindElement("//ArtifactResolve")
+		if resolveEl == nil {
+			http.Error(w, "no ArtifactResolve", http.StatusBadRequest)
+			return
+		}
+		requestID := resolveEl.SelectAttrValue("ID", "")
+		var el *etree.Element
+		switch mode {
+		case "http error":
+			http.Error(w, "unknown artifact", http.StatusInternalServerError)
+			return
+		case "empty":
+			// saml-bindings-2.0-os §3.6.5.2: an IdP that has no message for
+			// the artifact answers with an ArtifactResponse that has none.
+			el = e.artifactResponseEl(t, requestID, false, nil)
+			for _, child := range el.ChildElements() {
+				if child.Tag == "Response" {
+					el.RemoveChild(child)
+				}
+			}
+			el = e.idpSign(t, el)
+		case "wrong InResponseTo":
+			el = e.artifactResponseEl(t, "id-not-ours", true, nil)
+		default:
+			el = e.artifactResponseEl(t, requestID, true, nil)
+		}
+		w.Header().Set("Content-Type", "text/xml")
+		_, _ = w.Write(spcovSerialize(t, spcovSOAPEnvelope(el)))
+	}))
+	t.Cleanup(srv.Close)
+	e.sp.HTTPClient = srv.Client()
+	e.sp.IDPMetadata.IDPSSODescriptors[0].ArtifactResolutionServices = []Endpoint{
+		{Binding: SOAPBinding, Location: srv.URL},
+	}
+
+	artifact := artifactdecMake(0, artifactdecIDPSourceID(), 0x0a)
+	for _, m := range []string{"http error", "empty", "wrong InResponseTo"} {
+		t.Run(m, func(t *testing.T) {
+			mode = m
+			_, err := e.sp.ParseResponse(spcovArtifactRequest(artifact), []string{spcovRequestID})
+			assert.Check(t, err != nil)
+			assert.Check(t, is.Len(cache, 0), "cache keys: %v", cache)
+		})
+	}
+
+	t.Run("then resolved", func(t *testing.T) {
+		mode = ""
+		_, err := e.sp.ParseResponse(spcovArtifactRequest(artifact), []string{spcovRequestID})
+		assert.NilError(t, err)
+		_, recorded := cache["Artifact:"+bytesHex(artifactdecIDPSourceID())+":"+bytesHex(fill20(0x0a))]
+		assert.Check(t, recorded, "cache keys: %v", cache)
 	})
 }
 

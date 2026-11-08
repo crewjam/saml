@@ -41,7 +41,8 @@ func TestSPArtifactBounds(t *testing.T) {
 			assert.Check(t, errors.Is(err, ErrArtifactResolution), "%v", err)
 			if tc.ok {
 				assert.Check(t, is.Equal(int32(1), calls.Load()))
-				assert.Check(t, is.Len(cache.keys, 1))
+				// The IdP did not resolve it, so it is not recorded.
+				assert.Check(t, is.Len(cache.keys, 0))
 				return
 			}
 			assert.Check(t, errors.Is(err, ErrMalformedMessage), "%v", err)
