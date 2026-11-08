@@ -374,7 +374,15 @@ func (m *Middleware) CreateSessionFromAssertion(w http.ResponseWriter, r *http.R
 				return
 			}
 
-			redirectURI = trackedRequest.URI
+			// The tracked URI is the URL of the request that started the
+			// login, which is whatever request-target the client sent: a
+			// path beginning "//" makes it "//evil.example/...", which
+			// http.Redirect would send the newly logged-in user off to. So
+			// it is followed only to a path on this site, like the
+			// RelayState of an IdP-initiated response.
+			if isLocalRedirect(trackedRequest.URI) {
+				redirectURI = trackedRequest.URI
+			}
 
 			if m.FormReplayStore != nil {
 				saved, ok, err := m.FormReplayStore.TakeForm(r, trackedRequestIndex)
@@ -408,7 +416,7 @@ func (m *Middleware) CreateSessionFromAssertion(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	http.Redirect(w, r, redirectURI, http.StatusFound) //nolint:gosec // redirectURI is the tracked request URI, a local RelayState path, or the caller's default
+	http.Redirect(w, r, redirectURI, http.StatusFound) //nolint:gosec // redirectURI is a local tracked request URI, a local RelayState path, or the caller's default
 }
 
 // isLocalRedirect reports whether uri is an absolute path on this site, and
