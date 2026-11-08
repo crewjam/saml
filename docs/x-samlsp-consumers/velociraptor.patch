@@ -31,7 +31,7 @@ index b1c7520..7a1489a 100644
  	tokenString, err := token.SignedString([]byte(config_obj.Frontend.PrivateKey))
  	if err != nil {
 diff --git a/api/authenticators/saml.go b/api/authenticators/saml.go
-index 9689cbb..be03bb2 100644
+index 9689cbb..05858ef 100644
 --- a/api/authenticators/saml.go
 +++ b/api/authenticators/saml.go
 @@ -2,34 +2,39 @@ package authenticators
@@ -82,25 +82,30 @@ index 9689cbb..be03bb2 100644
  }
  
  func (self *SamlAuthenticator) IsPasswordLess() bool {
-@@ -58,50 +63,38 @@ func (self *SamlAuthenticator) AddHandlers(mux *api_utils.ServeMux) error {
+@@ -58,50 +63,39 @@ func (self *SamlAuthenticator) AddHandlers(mux *api_utils.ServeMux) error {
  		return fmt.Errorf("SamlAuthenticator: %w", err)
  	}
  
 -	idpMetadataURL, err := url.Parse(self.authenticator.SamlIdpMetadataUrl)
--	if err != nil {
--		return fmt.Errorf("SamlAuthenticator: %w", err)
--	}
 +	// The IdP metadata is fetched when first needed and refreshed as
 +	// its cacheDuration says, so a rotated IdP certificate is picked up
 +	// without a restart.
 +	idpMetadata := samlsp.RemoteMetadata(self.authenticator.SamlIdpMetadataUrl)
- 
--	rootURL, err := url.Parse(self.authenticator.SamlRootUrl)
++
 +	// The same entity ID and ACS URL that samlsp.Middleware derived from
 +	// saml_root_url, so the registration at the IdP does not change.
 +	rootURL := strings.TrimSuffix(self.authenticator.SamlRootUrl, "/")
 +	self.sp, err = samlsp.New(idpMetadata, rootURL+"/saml/metadata",
-+		samlsp.WithKey(key, cert))
++		samlsp.WithSigningKey(key, cert),
++		samlsp.WithEncryptionKey(key, cert)) // as samlsp.Middleware did
+ 	if err != nil {
+ 		return fmt.Errorf("SamlAuthenticator: %w", err)
+ 	}
+ 
+-	rootURL, err := url.Parse(self.authenticator.SamlRootUrl)
++	// Each login in progress is remembered in a cookie, as the
++	// oauthstate cookie does for OIDC.
++	self.pending, err = pending.New(self.sp, samlCookieKey(self.config_obj))
  	if err != nil {
  		return fmt.Errorf("SamlAuthenticator: %w", err)
  	}
@@ -109,10 +114,9 @@ index 9689cbb..be03bb2 100644
 -		context.Background(),
 -		http.DefaultClient,
 -		*idpMetadataURL)
-+	// Each login in progress is remembered in a cookie, as the
-+	// oauthstate cookie does for OIDC.
-+	self.pending, err = pending.New(self.sp, samlCookieKey(self.config_obj))
- 	if err != nil {
+-	if err != nil {
++	// Fail at startup if the IdP metadata cannot be fetched, as before.
++	if _, err := idpMetadata(context.Background()); err != nil {
  		return fmt.Errorf("SamlAuthenticator: %w", err)
  	}
  
@@ -125,11 +129,9 @@ index 9689cbb..be03bb2 100644
 -	}
 -	samlMiddleware, err = samlsp.New(opts)
 -	if err != nil {
-+	// Fail at startup if the IdP metadata cannot be fetched, as before.
-+	if _, err := idpMetadata(context.Background()); err != nil {
- 		return fmt.Errorf("SamlAuthenticator: %w", err)
- 	}
- 
+-		return fmt.Errorf("SamlAuthenticator: %w", err)
+-	}
+-
 -	expiry_min := self.authenticator.DefaultSessionExpiryMin
 -	if expiry_min == 0 {
 -		expiry_min = 60 * 24 // 1 Day by default
@@ -153,7 +155,7 @@ index 9689cbb..be03bb2 100644
  	logger.Info("Authentication via SAML enabled")
  	return nil
  }
-@@ -115,44 +108,82 @@ func (self *SamlAuthenticator) AuthenticateUserHandler(
+@@ -115,44 +109,82 @@ func (self *SamlAuthenticator) AuthenticateUserHandler(
  	parent http.Handler,
  	permission acls.ACL_PERMISSION,
  ) http.Handler {
@@ -256,7 +258,7 @@ index 9689cbb..be03bb2 100644
  				http.Error(w,
  					fmt.Sprintf("authorization failed: %v", err),
  					http.StatusUnauthorized)
-@@ -160,56 +191,63 @@ func (self *SamlAuthenticator) AuthenticateUserHandler(
+@@ -160,56 +192,61 @@ func (self *SamlAuthenticator) AuthenticateUserHandler(
  			}
  			err = self.MaybeAssignRoles(r.Context(), username)
  			if err != nil {
@@ -327,16 +329,14 @@ index 9689cbb..be03bb2 100644
 +// samlsp.Middleware keyed session attributes by FriendlyName (or by Name
 +// when there was none), and x/samlsp looks attributes up by Name only.
 +// A saml_user_attribute that names a FriendlyName, such as "name" or
-+// "mail", keeps working through the fallback; new configurations should
-+// use the attribute's Name.
++// "mail", keeps working through LegacyMap; new configurations should use
++// the attribute's Name.
 +func samlAttribute(attrs samlsp.Attributes, name string) string {
 +	if v := attrs.Get(name); v != "" {
 +		return v
 +	}
-+	for _, a := range attrs {
-+		if a.FriendlyName == name && len(a.Values) > 0 {
-+			return a.Values[0]
-+		}
++	if v := attrs.LegacyMap()[name]; len(v) > 0 {
++		return v[0]
 +	}
 +	return ""
 +}

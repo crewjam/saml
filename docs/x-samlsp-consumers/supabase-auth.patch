@@ -1,8 +1,8 @@
 diff --git a/internal/api/saml.go b/internal/api/saml.go
-index 5eb762b..48f72cd 100644
+index 5eb762b..55b8c9f 100644
 --- a/internal/api/saml.go
 +++ b/internal/api/saml.go
-@@ -1,21 +1,22 @@
+@@ -1,8 +1,7 @@
  package api
  
  import (
@@ -11,10 +11,8 @@ index 5eb762b..48f72cd 100644
 +	"context"
  	"encoding/base64"
  	"encoding/xml"
-+	"errors"
  	"net/http"
- 	"net/url"
- 	"strings"
+@@ -11,11 +10,12 @@ import (
  	"time"
  
  	"github.com/crewjam/saml"
@@ -28,34 +26,24 @@ index 5eb762b..48f72cd 100644
  )
  
  // loadSAMLDedicatedScopeID reads the optional {sso_provider_id} route
-@@ -48,22 +49,43 @@ func (a *API) loadSAMLDedicatedScopeID(r *http.Request) (*uuid.UUID, error) {
+@@ -48,22 +48,34 @@ func (a *API) loadSAMLDedicatedScopeID(r *http.Request) (*uuid.UUID, error) {
  	return &ssoProvider.ID, nil
  }
  
 -// newSAMLServiceProvider constructs a ServiceProvider for the given IdP
 -// metadata, using the provided key/cert pair.  Callers are responsible for
 -// passing the correct pair (primary or rotation fallback).
-+type samlSSOProviderKey struct{}
-+
-+// withSAMLProvider names the SSO provider that SAML calls made with ctx
-+// talk to.
-+func withSAMLProvider(ctx context.Context, p *models.SSOProvider) context.Context {
-+	return context.WithValue(ctx, samlSSOProviderKey{}, p)
-+}
-+
-+// samlIdentityProvider is the samlsp.MetadataFunc of every SAML config: the
-+// metadata of the SSO provider that withSAMLProvider put in the context.
-+func samlIdentityProvider(ctx context.Context) (*saml.EntityDescriptor, error) {
-+	p, ok := ctx.Value(samlSSOProviderKey{}).(*models.SSOProvider)
-+	if !ok || p == nil {
-+		return nil, errors.New("saml: no SSO provider in context")
-+	}
-+	return p.SAMLProvider.EntityDescriptor()
++// samlIdentityProvider names the IdP of ssoProvider for a SAML call. The
++// metadata is read when the call needs it, so that metadata refreshed
++// before the call is used.
++func samlIdentityProvider(ssoProvider *models.SSOProvider) samlsp.IdentityProviderOption {
++	return samlsp.WithIdentityProvider(func(context.Context) (*saml.EntityDescriptor, error) {
++		return ssoProvider.SAMLProvider.EntityDescriptor()
++	})
 +}
 +
 +// samlConfig returns the SAML service provider that GoTrue presents to
-+// every IdP. Calls made with it must carry the IdP's SSO provider in their
-+// context (withSAMLProvider).
++// every IdP. Calls made with it name the IdP with samlIdentityProvider.
  //
  // When dedicatedScopeID is not nil, the ACS URL (and, by extension, the
 -// entity ID GoTrue presents to the IdP, which defaults to its metadata URL)
@@ -65,8 +53,9 @@ index 5eb762b..48f72cd 100644
  // every SAML provider. The same key/cert pair is still used.
 -func (a *API) newSAMLServiceProvider(identityProvider *saml.EntityDescriptor, idpInitiated bool, key *rsa.PrivateKey, cert *x509.Certificate, dedicatedScopeID *uuid.UUID) *saml.ServiceProvider {
 +//
-+// During key rotation, RSAPrivateKeyNext also decrypts assertions, since
-+// the IdP may have cached the next certificate from the metadata.
++// The key is advertised for encryption only if encrypted assertions are
++// allowed. During key rotation, RSAPrivateKeyNext also decrypts assertions,
++// since the IdP may have cached the next certificate from the metadata.
 +func (a *API) samlConfig(dedicatedScopeID *uuid.UUID) (*samlsp.Config, error) {
  	raw := a.config.SAML.ExternalURL
  	if raw == "" {
@@ -79,7 +68,7 @@ index 5eb762b..48f72cd 100644
  	}
  	if !strings.HasSuffix(u.Path, "/") {
  		u.Path += "/"
-@@ -73,54 +95,35 @@ func (a *API) newSAMLServiceProvider(identityProvider *saml.EntityDescriptor, id
+@@ -73,62 +85,39 @@ func (a *API) newSAMLServiceProvider(identityProvider *saml.EntityDescriptor, id
  		u.Path += dedicatedScopeID.String() + "/"
  	}
  
@@ -102,17 +91,7 @@ index 5eb762b..48f72cd 100644
 -	dedicatedScopeID, err := a.loadSAMLDedicatedScopeID(r)
 -	if err != nil {
 -		return err
-+	cfg := a.config.SAML
-+	opts := []samlsp.Option{
-+		samlsp.WithKey(cfg.RSAPrivateKey, cfg.Certificate),
-+		samlsp.SignAuthnRequests,
-+		samlsp.WithNameIDFormat(saml.PersistentNameIDFormat),
-+		// advertize the requested NameID formats (either persistent or email address)
-+		samlsp.WithNameIDFormats(saml.EmailAddressNameIDFormat),
-+		// accept each assertion once, across every instance
-+		samlsp.WithReplayState(samlReplayState{a.db}),
-+		samlsp.WithMetadata(a.adjustSAMLMetadata),
- 	}
+-	}
 -
 -	serviceProvider := a.newSAMLServiceProvider(nil, true, a.config.SAML.RSAPrivateKey, a.config.SAML.Certificate, dedicatedScopeID)
 -
@@ -121,10 +100,8 @@ index 5eb762b..48f72cd 100644
 -	if r.FormValue("download") == "true" {
 -		// 5 year expiration, comparable to what GSuite does
 -		metadata.ValidUntil = time.Now().UTC().AddDate(5, 0, 0)
-+	if cfg.RSAPrivateKeyNext != nil {
-+		opts = append(opts, samlsp.WithDecryptionKeys(cfg.RSAPrivateKeyNext))
- 	}
- 
+-	}
+-
 -	for i := range metadata.SPSSODescriptors {
 -		// we set this to false since the IdP initiated flow can only
 -		// sign the Assertion, and not the full Request
@@ -133,30 +110,53 @@ index 5eb762b..48f72cd 100644
 -		// https://github.com/crewjam/saml/blob/v0.4.8/service_provider.go#L217
 -		metadata.SPSSODescriptors[i].AuthnRequestsSigned = nil
 -
--		// advertize the requested NameID formats (either persistent or email address)
++	cfg := a.config.SAML
++	opts := []samlsp.Option{
++		samlsp.WithSigningKey(cfg.RSAPrivateKey, cfg.Certificate),
++		samlsp.SignAuthnRequests,
++		samlsp.WithNameIDFormat(saml.PersistentNameIDFormat),
+ 		// advertize the requested NameID formats (either persistent or email address)
 -		metadata.SPSSODescriptors[i].NameIDFormats = []saml.NameIDFormat{
 -			saml.EmailAddressNameIDFormat,
 -			saml.PersistentNameIDFormat,
--		}
--	}
++		samlsp.WithNameIDFormats(saml.EmailAddressNameIDFormat),
++		// accept each assertion once, across every instance
++		samlsp.WithReplayState(samlReplayState{a.db}),
++		samlsp.WithMetadata(a.adjustSAMLMetadata),
++	}
++	if cfg.AllowEncryptedAssertions {
++		opts = append(opts, samlsp.WithEncryptionKey(cfg.RSAPrivateKey, cfg.Certificate))
++		if cfg.RSAPrivateKeyNext != nil {
++			opts = append(opts, samlsp.WithDecryptionKeys(cfg.RSAPrivateKeyNext))
+ 		}
+ 	}
+ 
 +	// The metadata is at <base>/sso/[<id>/]saml/metadata and the ACS
 +	// beside it at .../saml/acs, as samlsp.DefaultServiceProvider had them.
-+	return samlsp.New(samlIdentityProvider, u.String()+"saml/metadata", opts...)
++	return samlsp.New(nil, u.String()+"saml/metadata", opts...)
 +}
- 
++
 +// adjustSAMLMetadata adjusts GoTrue's SP metadata.
 +func (a *API) adjustSAMLMetadata(metadata *saml.EntityDescriptor) {
  	for i := range metadata.SPSSODescriptors {
  		spd := &metadata.SPSSODescriptors[i]
  
+-		var keyDescriptors []saml.KeyDescriptor
 +		// we set this to false since the IdP initiated flow can only
 +		// sign the Assertion, and not the full Request
 +		spd.AuthnRequestsSigned = nil
-+
- 		var keyDescriptors []saml.KeyDescriptor
  
- 		for _, kd := range spd.KeyDescriptors {
-@@ -155,11 +158,43 @@ func (a *API) SAMLMetadata(w http.ResponseWriter, r *http.Request) error {
+-		for _, kd := range spd.KeyDescriptors {
+-			// only advertize key as usable for encryption if allowed
+-			if kd.Use == "signing" || (a.config.SAML.AllowEncryptedAssertions && kd.Use == "encryption") {
+-				keyDescriptors = append(keyDescriptors, kd)
+-			}
+-		}
++		keyDescriptors := spd.KeyDescriptors
+ 
+ 		// During key rotation, advertise the next certificate so IdPs can
+ 		// cache it before we promote it to primary.
+@@ -155,11 +144,43 @@ func (a *API) SAMLMetadata(w http.ResponseWriter, r *http.Request) error {
  		spd.KeyDescriptors = keyDescriptors
  	}
  
@@ -175,8 +175,8 @@ index 5eb762b..48f72cd 100644
 +	db *storage.Connection
 +}
 +
-+func (s samlReplayState) Consume(id string, expiresAt time.Time) error {
-+	return models.ConsumeSAMLID(s.db, id, expiresAt)
++func (s samlReplayState) Consume(ctx context.Context, id string, expiresAt time.Time) error {
++	return models.ConsumeSAMLID(s.db.WithContext(ctx), id, expiresAt)
 +}
 +
 +// SAMLMetadata serves GoTrue's SAML Service Provider metadata file.
@@ -204,7 +204,7 @@ index 5eb762b..48f72cd 100644
  	}
  
 diff --git a/internal/api/samlacs.go b/internal/api/samlacs.go
-index 0fbd72a..fc2f61e 100644
+index 0fbd72a..3dc9f1c 100644
 --- a/internal/api/samlacs.go
 +++ b/internal/api/samlacs.go
 @@ -5,11 +5,13 @@ import (
@@ -233,7 +233,7 @@ index 0fbd72a..fc2f61e 100644
  
  	// SECURITY: ACS confusion check. The SAML spec makes Destination
  	// optional on a Response (many real IdPs omit it, especially for
-@@ -225,45 +230,38 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
+@@ -225,45 +230,39 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
  	// violation and must not block the flow. But when an IdP does declare
  	// one, it must name the exact ACS URL of the endpoint this request was
  	// actually POSTed to -- whether that's the global, shared ACS URL or a
@@ -274,9 +274,10 @@ index 0fbd72a..fc2f61e 100644
 +	// Response answers none. During a key-rotation window the IdP may have
 +	// encrypted the assertion to the next certificate, which samlConfig
 +	// also decrypts with. Each assertion is accepted only once.
-+	responseOptions := []samlsp.ResponseOption{samlsp.AllowUnsolicited}
-+	if initiatedBy == "sp" {
-+		responseOptions = nil
++	responseOptions := []samlsp.ResponseOption{samlIdentityProvider(ssoProvider)}
++	if initiatedBy == "idp" {
++		responseOptions = append(responseOptions, samlsp.AllowUnsolicited)
++	} else {
 +		for _, id := range requestIds {
 +			responseOptions = append(responseOptions, samlsp.WithRequestID(id))
  		}
@@ -288,7 +289,7 @@ index 0fbd72a..fc2f61e 100644
 -			}
 -
 -			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion is not valid").WithInternalError(err)
-+	verified, err := samlConfig.ParseResponse(withSAMLProvider(ctx, ssoProvider), r, responseOptions...)
++	verified, err := samlConfig.ParseResponse(ctx, r, responseOptions...)
 +	if err != nil {
 +		if errors.Is(err, saml.ErrAssertionReplayed) {
 +			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion has already been used")
@@ -508,7 +509,7 @@ index 072b1e5..9f9e368 100644
 -// Compile-time check: x509.Certificate.Raw is the field we compare.
 -var _ = (*x509.Certificate)(nil)
 diff --git a/internal/api/sso.go b/internal/api/sso.go
-index 2f8cb59..cdb40cb 100644
+index 2f8cb59..70c7d90 100644
 --- a/internal/api/sso.go
 +++ b/internal/api/sso.go
 @@ -4,6 +4,7 @@ import (
@@ -519,7 +520,7 @@ index 2f8cb59..cdb40cb 100644
  	"github.com/gofrs/uuid"
  	"github.com/supabase/auth/internal/api/apierrors"
  	"github.com/supabase/auth/internal/models"
-@@ -100,34 +101,44 @@ func (a *API) SingleSignOn(w http.ResponseWriter, r *http.Request) error {
+@@ -100,34 +101,47 @@ func (a *API) SingleSignOn(w http.ResponseWriter, r *http.Request) error {
  	}
  	flowStateID := &flowState.ID
  
@@ -544,10 +545,13 @@ index 2f8cb59..cdb40cb 100644
  	if err != nil {
 -		return apierrors.NewInternalServerError("Error creating SAML Authentication Request").WithInternalError(err)
 +		return apierrors.NewInternalServerError("Error creating SAML service provider").WithInternalError(err)
++	}
++
++	authnOptions := []samlsp.AuthnOption{
++		samlsp.WithBinding(saml.HTTPRedirectBinding),
++		samlIdentityProvider(ssoProvider),
  	}
  
-+	authnOptions := []samlsp.AuthnOption{samlsp.WithBinding(saml.HTTPRedirectBinding)}
-+
  	// Some IdPs do not support the use of the `persistent` NameID format,
  	// and require a different format to be sent to work.
 -	if ssoProvider.SAMLProvider.NameIDFormat != nil {
@@ -569,7 +573,7 @@ index 2f8cb59..cdb40cb 100644
 +		return apierrors.NewInternalServerError("Error creating SAML relay state").WithInternalError(err)
 +	}
 +
-+	authnRequest, err := samlConfig.AuthnRequest(withSAMLProvider(ctx, ssoProvider), relayStateID.String(), authnOptions...)
++	authnRequest, err := samlConfig.AuthnRequest(ctx, relayStateID.String(), authnOptions...)
 +	if err != nil {
 +		return apierrors.NewInternalServerError("Error creating SAML Authentication Request").WithInternalError(err)
  	}
@@ -579,7 +583,7 @@ index 2f8cb59..cdb40cb 100644
  		SSOProviderID: ssoProvider.ID,
  		RequestID:     authnRequest.ID,
  		RedirectTo:    params.RedirectTo,
-@@ -144,10 +155,7 @@ func (a *API) SingleSignOn(w http.ResponseWriter, r *http.Request) error {
+@@ -144,10 +158,7 @@ func (a *API) SingleSignOn(w http.ResponseWriter, r *http.Request) error {
  		return err
  	}
  
@@ -591,6 +595,19 @@ index 2f8cb59..cdb40cb 100644
  
  	skipHTTPRedirect := false
  
+diff --git a/internal/api/ssoadmin.go b/internal/api/ssoadmin.go
+index 403d737..51a12f0 100644
+--- a/internal/api/ssoadmin.go
++++ b/internal/api/ssoadmin.go
+@@ -9,7 +9,7 @@ import (
+ 	"unicode/utf8"
+ 
+ 	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlsp"
+ 	"github.com/go-chi/chi/v5"
+ 	"github.com/gofrs/uuid"
+ 	"github.com/supabase/auth/internal/api/apierrors"
 diff --git a/internal/models/cleanup.go b/internal/models/cleanup.go
 index 27d52ad..dd62de1 100644
 --- a/internal/models/cleanup.go
@@ -654,6 +671,19 @@ index 0000000..535ced2
 +	}
 +	return nil
 +}
+diff --git a/internal/models/sso.go b/internal/models/sso.go
+index ea51533..04bc77d 100644
+--- a/internal/models/sso.go
++++ b/internal/models/sso.go
+@@ -10,7 +10,7 @@ import (
+ 	"time"
+ 
+ 	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlsp"
+ 	"github.com/gofrs/uuid"
+ 	"github.com/pkg/errors"
+ 	"github.com/supabase/auth/internal/storage"
 diff --git a/migrations/20261108120000_add_saml_consumed_ids.up.sql b/migrations/20261108120000_add_saml_consumed_ids.up.sql
 new file mode 100644
 index 0000000..774a6bf
