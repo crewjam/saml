@@ -1,10 +1,12 @@
-package samlsp
+package replay
 
 import (
 	"errors"
 	"fmt"
 	"testing"
 	"time"
+
+	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml"
 )
@@ -55,10 +57,9 @@ func (ft *fakeTimers) advance(d time.Duration) {
 	}
 }
 
-func newTestReplayState() (*memoryReplayState, *fakeTimers) {
+func newTestReplayState() (*Memory, *fakeTimers) {
 	ft := newFakeTimers()
-	s := newMemoryReplayState(func() time.Time { return ft.now })
-	s.afterFunc = ft.afterFunc
+	s := &Memory{now: func() time.Time { return ft.now }, afterFunc: ft.afterFunc}
 	return s, ft
 }
 
@@ -95,12 +96,12 @@ func TestMemoryReplayState(t *testing.T) {
 		t.Fatalf("c at its expiry: err = %v", err)
 	}
 	ft.advance(time.Second)
-	if n := s.len(); n != 2 {
+	if n := s.Len(); n != 2 {
 		t.Fatalf("%d records once c expired, want 2", n)
 	}
 
 	ft.advance(time.Minute)
-	if n := s.len(); n != 1 {
+	if n := s.Len(); n != 1 {
 		t.Fatalf("%d records once a expired, want 1", n)
 	}
 	// An expired ID is accepted again; package saml refuses the expired
@@ -110,7 +111,7 @@ func TestMemoryReplayState(t *testing.T) {
 	}
 
 	ft.advance(time.Hour + time.Second)
-	if n := s.len(); n != 0 {
+	if n := s.Len(); n != 0 {
 		t.Fatalf("%d records once all expired, want 0", n)
 	}
 	if len(ft.pending) != 0 {
@@ -149,26 +150,40 @@ func TestMemoryReplayStateBounded(t *testing.T) {
 		if err := s.Consume(fmt.Sprint(i), ft.now.Add(lifetime)); err != nil {
 			t.Fatal(err)
 		}
-		peak = max(peak, s.len())
+		peak = max(peak, s.Len())
 	}
 	if limit := int(lifetime/interval) + 1; peak > limit {
 		t.Errorf("peak of %d records, want at most %d", peak, limit)
 	}
-	if len(s.queue) != s.len() {
-		t.Errorf("%d queued for %d records", len(s.queue), s.len())
+	if len(s.queue) != s.Len() {
+		t.Errorf("%d queued for %d records", len(s.queue), s.Len())
 	}
 }
 
 func TestMemoryReplayStateRealTimer(t *testing.T) {
-	s := newMemoryReplayState(time.Now)
+	s := NewMemory()
 	if err := s.Consume("a", time.Now().Add(10*time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
-	for s.len() != 0 {
+	for s.Len() != 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("the record was not removed by the timer")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestMemoryClock checks that IDs expire by the Memory's Clock: an ID
+// valid for a minute by a clock set in the past is recorded, and refused
+// the second time.
+func TestMemoryClock(t *testing.T) {
+	past := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	s := &Memory{Clock: dsig.NewFakeClockAt(past)}
+	if err := s.Consume("a", past.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Consume("a", past.Add(time.Minute)); !errors.Is(err, saml.ErrAssertionReplayed) {
+		t.Fatalf("replay: err = %v", err)
 	}
 }

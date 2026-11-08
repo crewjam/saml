@@ -17,6 +17,7 @@ import (
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/internal/signerutil"
+	"github.com/crewjam/saml/x/samlsp/replay"
 )
 
 // Config is a SAML service provider (SP) and the identity provider (IdP)
@@ -92,7 +93,7 @@ func New(identityProvider MetadataFunc, entityID string, opts ...Option) (*Confi
 		c.acsURL = *u.ResolveReference(&url.URL{Path: "acs"})
 	}
 	if c.replayState == nil {
-		c.replayState = newMemoryReplayState(c.clock.Now)
+		c.replayState = &replay.Memory{Clock: c.clock}
 	}
 	if c.encryptionKey != nil || c.encryptionCert != nil {
 		if c.encryptionKey == nil || c.encryptionCert == nil {
@@ -269,13 +270,15 @@ func WithNameIDFormat(format saml.NameIDFormat) Option {
 // x/samlsp/slo) record the IDs of the messages they accept, so that each is
 // accepted only once.
 //
-// By default, a Config records them in memory, which protects one process
-// only: a Response replayed to another process, or after a restart, is
-// accepted. Applications served by several processes need state that the
-// processes share, such as a table with a unique key on the ID. Consume
-// must fail with saml.ErrAssertionReplayed for an ID it has recorded with
-// an expiry that has not passed, and may forget an ID once its expiry has
-// passed. Records need no size limit: see the package documentation.
+// By default, each Config records them in its own replay.Memory, which
+// protects one process only: a Response replayed to another process, or
+// after a restart, is accepted. Pass a replay.NewMemory to share one
+// record between several Configs of a process. Applications served by
+// several processes need state that the processes share, such as a table
+// with a unique key on the ID. Consume must fail with
+// saml.ErrAssertionReplayed for an ID it has recorded with an expiry that
+// has not passed, and may forget an ID once its expiry has passed. Records
+// need no size limit (see replay.Memory).
 func WithReplayState(state saml.AssertionReplayCache) Option {
 	return optionFunc(func(c *Config, _ *configOptions) { c.replayState = state })
 }

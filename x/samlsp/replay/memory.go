@@ -1,33 +1,45 @@
-package samlsp
+// Package replay keeps the record that makes each SAML message accepted
+// only once: the IDs of the assertions (and logout requests) a service
+// provider has accepted, each until the message could no longer be
+// accepted anyway. It is the replay state of
+// github.com/crewjam/saml/x/samlsp; see samlsp.WithReplayState.
+package replay
 
 import (
 	"container/heap"
 	"sync"
 	"time"
 
+	dsig "github.com/russellhaering/goxmldsig"
+
 	"github.com/crewjam/saml"
 )
 
-// memoryReplayState is the default replay state of a Config: the IDs of the
-// assertions (and LogoutRequests) it has accepted, in memory, each until
-// the message could no longer be accepted anyway.
+// Memory records message IDs in memory, which protects a single process.
+// Applications served by several processes need a record that they share,
+// such as a database table with a unique key on the ID.
 //
 // It has no size limit, because it does not need one. Package saml records
 // an ID only after the message is fully verified: signed by the IdP,
 // addressed to this SP, answering a request of this SP (unless unsolicited
 // responses are allowed), and fresh. The expiry it records is at most
-// saml.MaxIssueDelay after the message's IssueInstant. So the state holds
+// saml.MaxIssueDelay after the message's IssueInstant. So the record holds
 // only messages the IdP really issued in the last few minutes, and grows
 // with the rate of logins, not with anything an attacker can send.
 //
-// Each record is removed when it expires, by a timer set for the earliest
-// expiry. There is no timer while the state is empty.
+// Each ID is removed when it expires, by a timer set for the earliest
+// expiry. There is no timer while the record is empty.
 //
-// It protects one process only. Applications served by several processes
-// need state that they share (see WithReplayState).
-type memoryReplayState struct {
-	now       func() time.Time
-	afterFunc func(d time.Duration, f func()) (stop func() bool)
+// A Memory is safe for concurrent use, and may be shared by several
+// samlsp.Configs. The zero value is ready to use.
+type Memory struct {
+	// Clock is the time source by which IDs expire; nil means the system
+	// clock. Use the clock passed to samlsp.WithClock. Set it before the
+	// first Consume.
+	Clock *dsig.Clock
+
+	now       func() time.Time                                   // for tests; Clock.Now if nil
+	afterFunc func(d time.Duration, f func()) (stop func() bool) // for tests; time.AfterFunc if nil
 
 	mu      sync.Mutex
 	expiry  map[string]time.Time
@@ -37,30 +49,40 @@ type memoryReplayState struct {
 	gen     uint64      // identifies the pending timer
 }
 
-var _ saml.AssertionReplayCache = (*memoryReplayState)(nil)
+var _ saml.AssertionReplayCache = (*Memory)(nil)
 
-func newMemoryReplayState(now func() time.Time) *memoryReplayState {
-	return &memoryReplayState{
-		now: now,
-		afterFunc: func(d time.Duration, f func()) func() bool {
-			return time.AfterFunc(d, f).Stop
-		},
-		expiry: map[string]time.Time{},
+// NewMemory returns an empty Memory that uses the system clock.
+func NewMemory() *Memory { return &Memory{} }
+
+func (s *Memory) currentTime() time.Time {
+	if s.now != nil {
+		return s.now()
 	}
+	return s.Clock.Now()
+}
+
+func (s *Memory) startTimer(d time.Duration, f func()) func() bool {
+	if s.afterFunc != nil {
+		return s.afterFunc(d, f)
+	}
+	return time.AfterFunc(d, f).Stop
 }
 
 // Consume implements saml.AssertionReplayCache.
-func (s *memoryReplayState) Consume(id string, expiresAt time.Time) error {
+func (s *Memory) Consume(id string, expiresAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	now := s.now()
+	now := s.currentTime()
 	if exp, ok := s.expiry[id]; ok && !now.After(exp) {
 		return saml.ErrAssertionReplayed
 	}
 	if !now.Before(expiresAt) {
 		// Already expired: package saml would refuse the message anyway.
 		return nil
+	}
+	if s.expiry == nil {
+		s.expiry = map[string]time.Time{}
 	}
 	s.expiry[id] = expiresAt
 	heap.Push(&s.queue, queued{id: id, expiresAt: expiresAt})
@@ -70,7 +92,7 @@ func (s *memoryReplayState) Consume(id string, expiresAt time.Time) error {
 
 // schedule sets the timer for the earliest expiry, unless it is already
 // set for it. s.mu must be held.
-func (s *memoryReplayState) schedule(now time.Time) {
+func (s *Memory) schedule(now time.Time) {
 	if len(s.queue) == 0 {
 		s.stopTimer()
 		return
@@ -84,10 +106,10 @@ func (s *memoryReplayState) schedule(now time.Time) {
 	gen := s.gen
 	s.timerAt = next
 	// A record is valid until its expiry inclusive, so fire just after.
-	s.stop = s.afterFunc(next.Sub(now)+time.Nanosecond, func() { s.expire(gen) })
+	s.stop = s.startTimer(next.Sub(now)+time.Nanosecond, func() { s.expire(gen) })
 }
 
-func (s *memoryReplayState) stopTimer() {
+func (s *Memory) stopTimer() {
 	if s.stop != nil {
 		s.stop()
 		s.stop = nil
@@ -97,7 +119,7 @@ func (s *memoryReplayState) stopTimer() {
 // expire removes the expired records and sets the timer for the next
 // expiry. gen identifies the timer that calls it; a timer that has been
 // replaced does nothing.
-func (s *memoryReplayState) expire(gen uint64) {
+func (s *Memory) expire(gen uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if gen != s.gen {
@@ -105,7 +127,7 @@ func (s *memoryReplayState) expire(gen uint64) {
 	}
 	s.stop = nil
 
-	now := s.now()
+	now := s.currentTime()
 	for len(s.queue) > 0 && now.After(s.queue[0].expiresAt) {
 		q := heap.Pop(&s.queue).(queued)
 		// The ID may have been recorded again, with a later expiry, after
@@ -117,8 +139,8 @@ func (s *memoryReplayState) expire(gen uint64) {
 	s.schedule(now)
 }
 
-// len returns the number of records.
-func (s *memoryReplayState) len() int {
+// Len returns the number of IDs recorded.
+func (s *Memory) Len() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.expiry)
