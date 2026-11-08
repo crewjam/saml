@@ -114,7 +114,7 @@ func New(entityID string, serviceProviders ServiceProviderFunc, opts ...Option) 
 		}
 	}
 	if c.replayState == nil {
-		c.replayState = &replay.Memory{Clock: c.clock}
+		c.replayState = &replay.Memory{Now: c.Now}
 	}
 	if len(c.checks) > 0 {
 		idp := c.identityProvider(nil)
@@ -260,7 +260,7 @@ func WithMetadata(modify func(md *saml.EntityDescriptor)) Option {
 // periods: that of the saml.IdentityProvider each method builds, of Now,
 // of the default ReplayState, and of ParseMetadata's validUntil check. It
 // is mainly useful in tests. Without it, times come from saml.TimeNow, as
-// in package saml, and the default ReplayState reads the system clock.
+// in package saml.
 func WithClock(clock *dsig.Clock) ClockOption { return ClockOption{clock} }
 
 // ClockOption is the option that WithClock returns. It is both an Option,

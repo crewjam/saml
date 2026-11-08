@@ -111,7 +111,8 @@ func New(entityID string, identityProvider MetadataFunc, opts ...Option) (*Confi
 		c.acsURL = *u.ResolveReference(&url.URL{Path: "acs"})
 	}
 	if c.replayState == nil {
-		c.replayState = &replay.Memory{Clock: c.clock}
+		clock := c.clock
+		c.replayState = &replay.Memory{Now: func() time.Time { return clockNow(clock) }}
 	}
 	if c.encryptionKey != nil || c.encryptionCert != nil {
 		if c.encryptionKey == nil || c.encryptionCert == nil {
@@ -447,9 +448,20 @@ func (c *Config) signWithGeneralMethod(sp *saml.ServiceProvider) {
 	sp.SignatureMethod = method
 }
 
-// WithClock sets the time source used to check validity periods. It is
-// mainly useful in tests.
+// WithClock sets the time source used to check validity periods, and by
+// which the records of the default ReplayState expire. It is mainly useful
+// in tests. Without it, the default ReplayState, like package saml, reads
+// saml.TimeNow.
 func WithClock(clock *dsig.Clock) ClockOption { return ClockOption{clock} }
+
+// clockNow returns the current time in UTC from clock or, if it is nil,
+// from saml.TimeNow, as package saml does.
+func clockNow(clock *dsig.Clock) time.Time {
+	if clock != nil {
+		return clock.Now().UTC()
+	}
+	return saml.TimeNow() //nolint:staticcheck // package saml's fallback when no Clock is set
+}
 
 // ClockOption is the option that WithClock returns. It is both an Option,
 // for New, and a MetadataOption, for RemoteMetadata and MDQMetadata, whose

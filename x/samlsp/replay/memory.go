@@ -15,8 +15,6 @@ import (
 	"sync"
 	"time"
 
-	dsig "github.com/russellhaering/goxmldsig"
-
 	"github.com/crewjam/saml"
 )
 
@@ -33,18 +31,20 @@ import (
 // really issued in the last few minutes, and grows with the rate of logins
 // and logouts, not with anything an attacker can send.
 //
-// Each ID is removed when it expires, by a timer set for the earliest
-// expiry. There is no timer while the record is empty.
+// Each ID is removed once it has expired, by a timer set for the earliest
+// expiry, but at most maxTimerDelay ahead, so that IDs are still removed
+// when Now is not the system clock. Consume also removes the IDs that have
+// expired. There is no timer while the record is empty.
 //
 // A Memory is safe for concurrent use, and may be shared by several
 // samlsp.Configs and samlidp.Configs. The zero value is ready to use.
 type Memory struct {
-	// Clock is the time source by which IDs expire; nil means the system
-	// clock. Use the clock passed to samlsp.WithClock. Set it before the
-	// first Consume.
-	Clock *dsig.Clock
+	// Now is the time source by which IDs expire; nil means time.Now. The
+	// default record of samlsp.New and samlidp.New uses the time source of
+	// package saml: the clock of WithClock, or else saml.TimeNow. Set it
+	// before the first Consume.
+	Now func() time.Time
 
-	now       func() time.Time                                   // for tests; Clock.Now if nil
 	afterFunc func(d time.Duration, f func()) (stop func() bool) // for tests; time.AfterFunc if nil
 
 	mu      sync.Mutex
@@ -55,14 +55,20 @@ type Memory struct {
 	gen     uint64      // identifies the pending timer
 }
 
+// maxTimerDelay bounds how long the timer waits, by the system clock,
+// before it checks again for expired IDs. Now may run apart from the
+// system clock, so a timer set for an expiry by Now could otherwise fire
+// long after it, or long before.
+const maxTimerDelay = time.Minute
+
 // NewMemory returns an empty Memory that uses the system clock.
 func NewMemory() *Memory { return &Memory{} }
 
 func (s *Memory) currentTime() time.Time {
-	if s.now != nil {
-		return s.now()
+	if s.Now != nil {
+		return s.Now()
 	}
-	return s.Clock.Now()
+	return time.Now()
 }
 
 func (s *Memory) startTimer(d time.Duration, f func()) func() bool {
@@ -84,8 +90,10 @@ func (s *Memory) Consume(_ context.Context, key []byte, expiresAt time.Time) err
 	if exp, ok := s.expiry[k]; ok && !now.After(exp) {
 		return saml.ErrAssertionReplayed
 	}
+	s.removeExpired(now)
 	if !now.Before(expiresAt) {
 		// Already expired: package saml would refuse the message anyway.
+		s.schedule(now)
 		return nil
 	}
 	if s.expiry == nil {
@@ -113,7 +121,8 @@ func (s *Memory) schedule(now time.Time) {
 	gen := s.gen
 	s.timerAt = next
 	// A record is valid until its expiry inclusive, so fire just after.
-	s.stop = s.startTimer(next.Sub(now)+time.Nanosecond, func() { s.expire(gen) })
+	d := min(next.Sub(now)+time.Nanosecond, maxTimerDelay)
+	s.stop = s.startTimer(d, func() { s.expire(gen) })
 }
 
 func (s *Memory) stopTimer() {
@@ -135,6 +144,13 @@ func (s *Memory) expire(gen uint64) {
 	s.stop = nil
 
 	now := s.currentTime()
+	s.removeExpired(now)
+	s.schedule(now)
+}
+
+// removeExpired removes the records that have expired at now. s.mu must be
+// held.
+func (s *Memory) removeExpired(now time.Time) {
 	for len(s.queue) > 0 && now.After(s.queue[0].expiresAt) {
 		q := heap.Pop(&s.queue).(queued)
 		// The ID may have been recorded again, with a later expiry, after
@@ -143,7 +159,6 @@ func (s *Memory) expire(gen uint64) {
 			delete(s.expiry, q.key)
 		}
 	}
-	s.schedule(now)
 }
 
 // Len returns the number of IDs recorded.
