@@ -1,6 +1,9 @@
-// Package idpmetadata parses and fetches the metadata of SAML identity
-// providers. It is shared by samlsp and x/samlsp.
-package idpmetadata
+// Package samlmd parses, checks, fetches and caches SAML metadata. It is
+// shared by samlsp, x/samlsp and x/samlidp: Parse and ParseByEntityID
+// pick an identity provider out of metadata, Entities lists every entity
+// in it, Validity and Expired judge an entity by the roles a caller relies
+// on, and Remote fetches and caches metadata from a URL.
+package samlmd
 
 import (
 	"bytes"
@@ -25,6 +28,14 @@ type MultipleIDPsError struct{ N int }
 
 func (e *MultipleIDPsError) Error() string {
 	return fmt.Sprintf("metadata holds %d entities with an IDPSSODescriptor", e.N)
+}
+
+// StatusError is returned by Fetch for a response whose status is not
+// 2xx.
+type StatusError struct{ Code int }
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("failed to fetch metadata: unexpected status code %d", e.Code)
 }
 
 // TooLargeError is returned by Fetch for a response larger than its limit.
@@ -104,6 +115,47 @@ func ParseByEntityID(data []byte, entityID string) (*saml.EntityDescriptor, erro
 		}
 	}
 	return nil, fmt.Errorf("no entity found with entityID %q", entityID)
+}
+
+// Entities returns the entities in data: an EntityDescriptor, or those of
+// an EntitiesDescriptor and of any EntitiesDescriptor nested in it, in
+// document order of each level before the levels nested in it. Each
+// entity of an aggregate is a copy that inherits the validUntil and
+// cacheDuration of the aggregates around it (saml-metadata §4.3.1), as
+// Parse's does. It does not check signatures.
+func Entities(data []byte) ([]*saml.EntityDescriptor, error) {
+	if err := xmlroundtrip.Validate(data); err != nil {
+		return nil, err
+	}
+	root, err := metadataRootElement(data)
+	if err != nil {
+		return nil, err
+	}
+	if root.Local != "EntitiesDescriptor" {
+		entity := &saml.EntityDescriptor{}
+		if err := xml.Unmarshal(data, entity); err != nil {
+			return nil, err
+		}
+		return []*saml.EntityDescriptor{entity}, nil
+	}
+	entities := &saml.EntitiesDescriptor{}
+	if err := xml.Unmarshal(data, entities); err != nil {
+		return nil, err
+	}
+	return appendEntities(nil, entities, metadataValidity{}), nil
+}
+
+func appendEntities(out []*saml.EntityDescriptor, entities *saml.EntitiesDescriptor, outer metadataValidity) []*saml.EntityDescriptor {
+	validity := outer.narrow(entities.ValidUntil, entities.CacheDuration)
+	for i := range entities.EntityDescriptors {
+		entity := entities.EntityDescriptors[i]
+		validity.applyTo(&entity)
+		out = append(out, &entity)
+	}
+	for i := range entities.EntitiesDescriptors {
+		out = appendEntities(out, &entities.EntitiesDescriptors[i], validity)
+	}
+	return out
 }
 
 func countIDPEntities(entities *saml.EntitiesDescriptor) int {
@@ -231,7 +283,7 @@ func Fetch(ctx context.Context, httpClient *http.Client, metadataURL url.URL, li
 	// Only a successful response holds the metadata: the body of a redirect
 	// the client did not follow (or of any other status) is not it.
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("failed to fetch metadata: unexpected status code %d", resp.StatusCode)
+		return nil, &StatusError{Code: resp.StatusCode}
 	}
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))

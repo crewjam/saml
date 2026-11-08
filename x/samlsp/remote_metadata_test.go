@@ -16,7 +16,7 @@ import (
 	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/internal/idpmetadata"
+	"github.com/crewjam/saml/internal/samlmd"
 )
 
 // metadataServer serves IdP metadata whose SSO location is the current
@@ -73,29 +73,23 @@ func ssoVersion(md *saml.EntityDescriptor) string {
 	return loc[len(loc)-1:]
 }
 
-// testRemote returns a remoteMetadata for s whose clock the test sets.
-func testRemote(s *metadataServer, opts ...MetadataOption) (*remoteMetadata, *time.Time) {
+// testRemote returns the samlmd.Remote of RemoteMetadata for s, whose
+// clock the test sets.
+func testRemote(s *metadataServer, opts ...MetadataOption) (*samlmd.Remote, *time.Time) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	r := &remoteMetadata{url: s.URL, opts: newMetadataOptions(append(opts, WithHTTPClient(s.Client())))}
-	r.now = func() time.Time { return now }
+	r := newRemote(s.URL, newMetadataOptions(append(opts, WithHTTPClient(s.Client()))))
+	r.Now = func() time.Time { return now }
 	return r, &now
 }
 
 // waitIdle waits for r's fetch in progress, if any, to end.
-func waitIdle(r *remoteMetadata) {
-	r.mu.Lock()
-	f := r.inflight
-	r.mu.Unlock()
-	if f != nil {
-		<-f.done
-	}
-}
+func waitIdle(r *samlmd.Remote) { r.Wait() }
 
 func TestRemoteMetadataCaches(t *testing.T) {
 	s := newMetadataServer(t)
 	r, _ := testRemote(s)
 	for range 3 {
-		if _, err := r.get(t.Context()); err != nil {
+		if _, err := r.Get(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -107,7 +101,7 @@ func TestRemoteMetadataCaches(t *testing.T) {
 func TestRemoteMetadataRefreshesInBackground(t *testing.T) {
 	s := newMetadataServer(t)
 	r, now := testRemote(s, WithRefreshInterval(time.Hour))
-	if _, err := r.get(t.Context()); err != nil {
+	if _, err := r.Get(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -116,19 +110,19 @@ func TestRemoteMetadataRefreshesInBackground(t *testing.T) {
 	*now = now.Add(2 * time.Hour)
 	s.version.Store(1)
 	s.gate = make(chan struct{})
-	md, err := r.get(t.Context())
+	md, err := r.Get(t.Context())
 	if err != nil || ssoVersion(md) != "0" {
 		t.Fatalf("got version %s, %v; want the cached 0", ssoVersion(md), err)
 	}
 	// More callers neither wait nor start another fetch.
-	if md, _ := r.get(t.Context()); ssoVersion(md) != "0" {
+	if md, _ := r.Get(t.Context()); ssoVersion(md) != "0" {
 		t.Error("a second caller did not get the cached metadata")
 	}
 	close(s.gate)
 	waitIdle(r)
 	s.gate = nil
 
-	if md, _ := r.get(t.Context()); ssoVersion(md) != "1" {
+	if md, _ := r.Get(t.Context()); ssoVersion(md) != "1" {
 		t.Errorf("after the refresh, version %s, want 1", ssoVersion(md))
 	}
 	if n := s.hits.Load(); n != 2 {
@@ -139,12 +133,12 @@ func TestRemoteMetadataRefreshesInBackground(t *testing.T) {
 func TestRemoteMetadataKeepsCachedOnFailure(t *testing.T) {
 	s := newMetadataServer(t)
 	r, now := testRemote(s, WithRefreshInterval(time.Hour))
-	if _, err := r.get(t.Context()); err != nil {
+	if _, err := r.Get(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	*now = now.Add(2 * time.Hour)
 	s.fail.Store(true)
-	if _, err := r.get(t.Context()); err != nil {
+	if _, err := r.Get(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	waitIdle(r)
@@ -152,7 +146,7 @@ func TestRemoteMetadataKeepsCachedOnFailure(t *testing.T) {
 
 	// Within the retry interval, no new fetch.
 	*now = now.Add(30 * time.Second)
-	if _, err := r.get(t.Context()); err != nil {
+	if _, err := r.Get(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	waitIdle(r)
@@ -163,11 +157,11 @@ func TestRemoteMetadataKeepsCachedOnFailure(t *testing.T) {
 	*now = now.Add(time.Minute)
 	s.fail.Store(false)
 	s.version.Store(1)
-	if _, err := r.get(t.Context()); err != nil {
+	if _, err := r.Get(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	waitIdle(r)
-	if md, _ := r.get(t.Context()); ssoVersion(md) != "1" {
+	if md, _ := r.Get(t.Context()); ssoVersion(md) != "1" {
 		t.Errorf("version %s after the retry, want 1", ssoVersion(md))
 	}
 }
@@ -175,19 +169,16 @@ func TestRemoteMetadataKeepsCachedOnFailure(t *testing.T) {
 func TestRemoteMetadataWaitsWhenExpired(t *testing.T) {
 	s := newMetadataServer(t)
 	r, now := testRemote(s)
-	if _, err := r.get(t.Context()); err != nil {
+	validUntil := now.Add(time.Minute)
+	s.edit = func(md *saml.EntityDescriptor) { md.ValidUntil = validUntil }
+	if _, err := r.Get(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	// The cached metadata has a validUntil that has passed: callers must
 	// wait for the fetch, and see its failure.
-	r.mu.Lock()
-	r.md.ValidUntil = now.Add(time.Minute)
-	r.expiresAt = now.Add(time.Minute)
-	r.refreshAt = now.Add(time.Minute)
-	r.mu.Unlock()
 	*now = now.Add(2 * time.Minute)
 	s.fail.Store(true)
-	if _, err := r.get(t.Context()); err == nil {
+	if _, err := r.Get(t.Context()); err == nil {
 		t.Error("expired metadata was returned")
 	}
 }
@@ -203,7 +194,7 @@ func TestRemoteMetadataSharesFirstFetch(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := r.get(context.Background())
+			_, err := r.Get(context.Background())
 			errs <- err
 		}()
 	}
@@ -233,7 +224,7 @@ func TestRemoteMetadataCallerCancels(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error)
 	go func() {
-		_, err := r.get(ctx)
+		_, err := r.Get(ctx)
 		done <- err
 	}()
 	for s.hits.Load() == 0 {
@@ -246,7 +237,7 @@ func TestRemoteMetadataCallerCancels(t *testing.T) {
 	// The fetch goes on, and its result is cached.
 	close(s.gate)
 	waitIdle(r)
-	if _, err := r.get(t.Context()); err != nil || s.hits.Load() != 1 {
+	if _, err := r.Get(t.Context()); err != nil || s.hits.Load() != 1 {
 		t.Errorf("err = %v after %d fetches; the cancelled caller's fetch was lost", err, s.hits.Load())
 	}
 }
@@ -287,7 +278,7 @@ var (
 
 func TestNextRefresh(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	r := &remoteMetadata{opts: newMetadataOptions([]MetadataOption{WithRefreshInterval(time.Hour)})}
+	r := newRemote("", newMetadataOptions([]MetadataOption{WithRefreshInterval(time.Hour)}))
 	for _, tt := range []struct {
 		name string
 		md   saml.EntityDescriptor
@@ -303,7 +294,7 @@ func TestNextRefresh(t *testing.T) {
 		{"validUntil passed", saml.EntityDescriptor{ValidUntil: now.Add(-time.Hour)}, now.Add(time.Minute)},
 		{"tiny cacheDuration", saml.EntityDescriptor{CacheDuration: time.Second}, now.Add(time.Minute)},
 	} {
-		if got := r.nextRefresh(&tt.md, now); !got.Equal(tt.want) {
+		if got := r.NextRefresh(&tt.md, now); !got.Equal(tt.want) {
 			t.Errorf("%s: %v, want %v", tt.name, got, tt.want)
 		}
 	}
@@ -358,12 +349,12 @@ func TestRemoteMetadataErrorBackoff(t *testing.T) {
 	s := newMetadataServer(t)
 	s.fail.Store(true)
 	r, now := testRemote(s)
-	_, first := r.get(t.Context())
+	_, first := r.Get(t.Context())
 	if first == nil {
 		t.Fatal("no error")
 	}
 	*now = now.Add(30 * time.Second)
-	if _, err := r.get(t.Context()); err != first {
+	if _, err := r.Get(t.Context()); err != first {
 		t.Errorf("got %v, want the first error", err)
 	}
 	if n := s.hits.Load(); n != 1 {
@@ -372,7 +363,7 @@ func TestRemoteMetadataErrorBackoff(t *testing.T) {
 
 	s.fail.Store(false)
 	*now = now.Add(time.Minute)
-	if _, err := r.get(t.Context()); err != nil {
+	if _, err := r.Get(t.Context()); err != nil {
 		t.Errorf("after the minute: %v", err)
 	}
 	if n := s.hits.Load(); n != 2 {
@@ -421,7 +412,7 @@ func TestRemoteMetadataFetchErrors(t *testing.T) {
 // IdP's roles, and the WithMaxStale bound, can make metadata due sooner.
 func TestNextRefreshRoles(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	r := &remoteMetadata{opts: newMetadataOptions([]MetadataOption{WithRefreshInterval(time.Hour)})}
+	r := newRemote("", newMetadataOptions([]MetadataOption{WithRefreshInterval(time.Hour)}))
 	in := func(d time.Duration) *time.Time { t := now.Add(d); return &t }
 	role := func(validUntil *time.Time, cacheDuration time.Duration) saml.RoleDescriptor {
 		return saml.RoleDescriptor{ValidUntil: validUntil, CacheDuration: cacheDuration}
@@ -446,14 +437,14 @@ func TestNextRefreshRoles(t *testing.T) {
 			SPSSODescriptors: []saml.SPSSODescriptor{{SSODescriptor: saml.SSODescriptor{RoleDescriptor: role(in(10*time.Minute), 0)}}},
 		}, now.Add(time.Hour)},
 	} {
-		if got := r.nextRefresh(&tt.md, now); !got.Equal(tt.want) {
+		if got := r.NextRefresh(&tt.md, now); !got.Equal(tt.want) {
 			t.Errorf("%s: %v, want %v", tt.name, got, tt.want)
 		}
 	}
 
 	// A refresh interval longer than WithMaxStale.
-	r = &remoteMetadata{opts: newMetadataOptions([]MetadataOption{WithRefreshInterval(5 * time.Hour), WithMaxStale(2 * time.Hour)})}
-	if got := r.nextRefresh(&saml.EntityDescriptor{}, now); !got.Equal(now.Add(2 * time.Hour)) {
+	r = newRemote("", newMetadataOptions([]MetadataOption{WithRefreshInterval(5 * time.Hour), WithMaxStale(2 * time.Hour)}))
+	if got := r.NextRefresh(&saml.EntityDescriptor{}, now); !got.Equal(now.Add(2 * time.Hour)) {
 		t.Errorf("WithMaxStale: %v, want %v", got, now.Add(2*time.Hour))
 	}
 }
@@ -465,12 +456,12 @@ func TestRemoteMetadataRoleExpiry(t *testing.T) {
 	r, now := testRemote(s, WithRefreshInterval(time.Hour))
 	roleValidUntil := now.Add(30 * time.Minute)
 	s.edit = func(md *saml.EntityDescriptor) { md.IDPSSODescriptors[0].ValidUntil = &roleValidUntil }
-	if _, err := r.get(t.Context()); err != nil {
+	if _, err := r.Get(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	*now = now.Add(31 * time.Minute)
 	s.fail.Store(true)
-	if _, err := r.get(t.Context()); err == nil {
+	if _, err := r.Get(t.Context()); err == nil {
 		t.Error("got metadata whose IDPSSODescriptor has expired")
 	}
 	if n := s.hits.Load(); n != 2 {
@@ -480,7 +471,7 @@ func TestRemoteMetadataRoleExpiry(t *testing.T) {
 	// Fetched expired, it is refused.
 	s.fail.Store(false)
 	*now = now.Add(2 * time.Minute)
-	if _, err := r.get(t.Context()); !errors.Is(err, saml.ErrExpired) {
+	if _, err := r.Get(t.Context()); !errors.Is(err, saml.ErrExpired) {
 		t.Errorf("err = %v, want saml.ErrExpired", err)
 	}
 }
@@ -493,12 +484,12 @@ func TestRemoteMetadataMaxStale(t *testing.T) {
 	var errs []error // the handler is never called concurrently
 	r, now := testRemote(s, WithRefreshInterval(time.Hour), WithMaxStale(3*time.Hour),
 		WithFetchErrorHandler(func(err error) { errs = append(errs, err) }))
-	if _, err := r.get(t.Context()); err != nil {
+	if _, err := r.Get(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	s.fail.Store(true)
 	*now = now.Add(2 * time.Hour)
-	if _, err := r.get(t.Context()); err != nil {
+	if _, err := r.Get(t.Context()); err != nil {
 		t.Fatalf("within WithMaxStale: %v", err)
 	}
 	waitIdle(r)
@@ -507,7 +498,7 @@ func TestRemoteMetadataMaxStale(t *testing.T) {
 	}
 
 	*now = now.Add(time.Hour)
-	if _, err := r.get(t.Context()); err == nil {
+	if _, err := r.Get(t.Context()); err == nil {
 		t.Error("stale metadata returned after WithMaxStale")
 	}
 	if len(errs) != 2 {
@@ -573,7 +564,7 @@ func TestRemoteMetadataTransport(t *testing.T) {
 func TestWithMaxMetadataSize(t *testing.T) {
 	s := newMetadataServer(t)
 	_, err := RemoteMetadata(s.URL, WithHTTPClient(s.Client()), WithMaxMetadataSize(100))(t.Context())
-	var tooLarge *idpmetadata.TooLargeError
+	var tooLarge *samlmd.TooLargeError
 	if !errors.As(err, &tooLarge) || tooLarge.Limit != 100 {
 		t.Errorf("err = %v, want a TooLargeError", err)
 	}
