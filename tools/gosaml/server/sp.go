@@ -191,7 +191,12 @@ func (s *Server) spLogin(w http.ResponseWriter, r *http.Request) {
 	case "simplesign":
 		opts = append(opts, samlsp.WithBinding(saml.HTTPPostSimpleSignBinding))
 	case "artifact":
-		opts = append(opts, samlsp.WithCustomBinding(s.spArtifactBinding(in, cfg, c)))
+		b, err := s.spArtifactBinding(in, cfg, c)
+		if err != nil {
+			s.fail(w, r, http.StatusInternalServerError, "The SP is misconfigured.", err)
+			return
+		}
+		opts = append(opts, samlsp.WithCustomBinding(b))
 	}
 	responseBinding := cfg.ResponseBinding
 	if b := r.Form.Get("response_binding"); b != "" {

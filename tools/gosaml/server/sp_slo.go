@@ -345,10 +345,13 @@ func (s *Server) spSLORequest(w http.ResponseWriter, r *http.Request, in *store.
 
 // spArtifactBinding sends the SP's messages with the HTTP-Artifact
 // binding: the IdP fetches them at /sp/{id}/artifact.
-func (s *Server) spArtifactBinding(in *store.Instance, cfg *SPConfig, c *samlsp.Config) *artifact.Binding {
-	b := artifact.New(c, artifactStore{s: s, instanceID: in.ID}, 1)
+func (s *Server) spArtifactBinding(in *store.Instance, cfg *SPConfig, c *samlsp.Config) (*artifact.Binding, error) {
+	b, err := artifact.New(c, artifactStore{s: s, instanceID: in.ID}, 1)
+	if err != nil {
+		return nil, err
+	}
 	b.Form = cfg.ArtifactForm
-	return b
+	return b, nil
 }
 
 // spArtifact serves the SP's ArtifactResolutionService.
@@ -363,7 +366,12 @@ func (s *Server) spArtifact(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "misconfigured", http.StatusInternalServerError)
 		return
 	}
-	s.serveSOAP(w, r, in.ID, "ArtifactResolve", s.spArtifactBinding(in, cfg, c))
+	b, err := s.spArtifactBinding(in, cfg, c)
+	if err != nil {
+		http.Error(w, "misconfigured", http.StatusInternalServerError)
+		return
+	}
+	s.serveSOAP(w, r, in.ID, "ArtifactResolve", b)
 }
 
 // spMessageXML returns the SAML message a samlsp.Message carries, from

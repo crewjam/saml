@@ -48,7 +48,10 @@ func (s *Server) idpRun(ctx context.Context, id string) (*idpRun, error) {
 	if err != nil {
 		return nil, err
 	}
-	b := idpartifact.New(c, artifactStore{s: s, instanceID: in.ID}, 1)
+	b, err := idpartifact.New(c, artifactStore{s: s, instanceID: in.ID}, 1)
+	if err != nil {
+		return nil, err
+	}
 	b.Form = cfg.ArtifactForm
 	return &idpRun{in: in, cfg: cfg, c: c, artifacts: b, slo: logout}, nil
 }
