@@ -227,7 +227,7 @@ func TestEndToEnd(t *testing.T) {
 	}
 }
 
-func TestPublicOnly(t *testing.T) {
+func TestGuard(t *testing.T) {
 	for addr, ok := range map[string]bool{
 		"127.0.0.1:443":              false,
 		"10.1.2.3:443":               false,
@@ -245,7 +245,11 @@ func TestPublicOnly(t *testing.T) {
 		"[::ffff:10.0.0.1]:443":                      false,
 		"0.0.0.0:443":                                false,
 	} {
-		if err := publicOnly("tcp", addr, nil); (err == nil) != ok {
+		network := "tcp4"
+		if strings.HasPrefix(addr, "[") {
+			network = "tcp6"
+		}
+		if err := guard.Safe(network, addr, nil); (err == nil) != ok {
 			t.Errorf("%s: %v", addr, err)
 		}
 	}

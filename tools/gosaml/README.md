@@ -98,15 +98,18 @@ the temporary directory), `GOSAML_TTL` (`24h`), `GOSAML_MAX_INSTANCES`
 
 ## Security notes
 
-- Metadata URLs are fetched only from public addresses: the dialer refuses
-  loopback, private, link-local and CGNAT addresses and Fly's private
-  network, after DNS resolution. Ports are limited to 80, 443, 8080 and
-  8443, size to 2 MiB, time to 15s. URLs of this server's own instances
-  are answered locally, without a request.
-- Server-to-server SAML (artifact resolution, SOAP logout) uses the same
-  public-only dialer, except for this server's own URLs, which are served
-  in-process. Plain-http SOAP endpoints are allowed only when the server's
-  own base URL is http (local development).
+- Every request the server makes on a visitor's behalf (metadata URLs,
+  artifact resolution, SOAP logout) goes through a dialer guarded by
+  [`code.dny.dev/ssrf`](https://pkg.go.dev/code.dny.dev/ssrf), which checks
+  the address actually connected to, after DNS resolution, so redirects and
+  DNS rebinding are covered too. It allows public unicast addresses only,
+  refusing the IANA special-purpose ranges (private, loopback, link-local,
+  CGNAT, Fly's private network, ...) and IPv6 transition prefixes that embed
+  an IPv4 address (NAT64, 6to4, Teredo), and ports 80, 443, 8080 and 8443
+  only. Requests also have no proxy, a 15s timeout and a 2 MiB cap. URLs of
+  this server's own instances are served in-process; plain-http SOAP
+  endpoints are allowed only when the server's own base URL is http (local
+  development).
 - Pages allow only the server's own scripts plus nonce'd inline scripts
   (for the self-submitting SAML forms) and `'wasm-unsafe-eval'`.
   `Referrer-Policy: same-origin` keeps management URLs from leaking to the

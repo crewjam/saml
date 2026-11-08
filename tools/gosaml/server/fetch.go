@@ -7,65 +7,34 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
-	"syscall"
 	"time"
+
+	"code.dny.dev/ssrf"
 )
 
 // maxMetadataSize is the largest metadata document the server fetches.
 const maxMetadataSize = 2 << 20
 
-// errForbiddenAddress is returned when a URL resolves to an address the
-// server must not reach on a visitor's behalf.
-var errForbiddenAddress = errors.New("that address is not on the public internet")
-
-// publicOnly is a net.Dialer Control function that refuses to connect to
-// anything but public unicast addresses. It checks the address actually
-// dialed, after DNS resolution, so a hostname that resolves to a private
-// address (or is rebound to one) cannot reach the server's own network:
-// the machine's private network, the cloud metadata service, localhost.
-func publicOnly(_, address string, _ syscall.RawConn) error {
-	ap, err := netip.ParseAddrPort(address)
-	if err != nil {
-		return err
-	}
-	ip := ap.Addr().Unmap()
-	if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() ||
-		cgnat.Contains(ip) || benchmarking.Contains(ip) {
-		return errForbiddenAddress
-	}
-	for _, p := range embedsIPv4 {
-		if p.Contains(ip) {
-			return errForbiddenAddress
-		}
-	}
-	if p := ap.Port(); p != 80 && p != 443 && p != 8080 && p != 8443 {
-		return fmt.Errorf("port %d is not allowed", p)
-	}
-	return nil
-}
-
-var (
-	cgnat        = netip.MustParsePrefix("100.64.0.0/10")
-	benchmarking = netip.MustParsePrefix("198.18.0.0/15")
-
-	// embedsIPv4 are IPv6 transition prefixes whose addresses carry an
-	// IPv4 address, which a gateway may forward to: through NAT64, the
-	// public-looking 64:ff9b::a00:1 is 10.0.0.1. Metadata has no need of
-	// them, so they are refused rather than decoded and checked.
-	embedsIPv4 = []netip.Prefix{
-		netip.MustParsePrefix("64:ff9b::/96"),   // NAT64, well-known (RFC 6052)
-		netip.MustParsePrefix("64:ff9b:1::/48"), // NAT64, local use (RFC 8215)
-		netip.MustParsePrefix("2002::/16"),      // 6to4 (RFC 3056)
-		netip.MustParsePrefix("2001::/32"),      // Teredo (RFC 4380)
-	}
-)
+// guard is the SSRF protection of every request the server makes on a
+// visitor's behalf: fetching metadata URLs, and the SOAP messages of
+// artifact resolution and back-channel logout. It is the Control hook of
+// the dialer, so it checks the address actually connected to, after DNS
+// resolution, on every connection, redirects included: a hostname that
+// resolves (or is rebound) to a private address cannot reach the
+// machine's private network, the cloud metadata service or localhost.
+//
+// code.dny.dev/ssrf allows only public unicast addresses: it refuses the
+// IANA special-purpose ranges (private, loopback, link-local, CGNAT,
+// documentation, multicast, ...) and, for IPv6, anything outside
+// 2000::/3 and the transition prefixes that embed an IPv4 address (NAT64,
+// 6to4, Teredo).
+var guard = ssrf.New(ssrf.WithPorts(80, 443, 8080, 8443))
 
 // newFetchClient returns the HTTP client the server fetches visitors'
 // metadata URLs with.
 func newFetchClient() *http.Client {
-	dialer := &net.Dialer{Timeout: 5 * time.Second, Control: publicOnly}
+	dialer := &net.Dialer{Timeout: 5 * time.Second, Control: guard.Safe}
 	transport := &http.Transport{
 		Proxy:                 nil,
 		DialContext:           dialer.DialContext,
