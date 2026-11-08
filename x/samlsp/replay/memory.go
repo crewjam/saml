@@ -39,9 +39,13 @@ import (
 // A Memory is safe for concurrent use, and may be shared by several
 // samlsp.Configs and samlidp.Configs. The zero value is ready to use.
 type Memory struct {
-	// Now is the time source by which IDs expire; nil means time.Now. The
-	// default record of samlsp.New and samlidp.New uses the time source of
-	// package saml: the clock of WithClock, or else saml.TimeNow. Set it
+	// Now is the time source by which IDs expire; nil means time.Now. It
+	// must be the clock by which the callers compute the expiries they
+	// pass to Consume: an ID whose expiry is already past by Now is not
+	// recorded at all. The default record of samlsp.New and samlidp.New
+	// uses the time source of package saml: the clock of WithClock, or
+	// else saml.TimeNow; and they set the Now of a Memory passed to
+	// WithReplayState that has none to it too (see DefaultNow). Set it
 	// before the first Consume.
 	Now func() time.Time
 
@@ -63,6 +67,18 @@ const maxTimerDelay = time.Minute
 
 // NewMemory returns an empty Memory that uses the system clock.
 func NewMemory() *Memory { return &Memory{} }
+
+// DefaultNow sets Now to now if Now is nil, under the Memory's lock, so
+// that it is safe while the Memory is in use. samlsp.New and samlidp.New
+// call it with their clock, so that a Memory shared by Configs follows the
+// clock of the first one built.
+func (s *Memory) DefaultNow(now func() time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Now == nil {
+		s.Now = now
+	}
+}
 
 func (s *Memory) currentTime() time.Time {
 	if s.Now != nil {
