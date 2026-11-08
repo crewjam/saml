@@ -60,7 +60,18 @@ hand-written replay check is replaced by `WithReplayState` on the existing
 request's context; it stores the hex-encoded replay key as the identifier. Uploaded metadata is checked with `samlsp.ParseMetadata`. The
 assertion count and expiry helpers go, because the library now does that work.
 The login now remembers its request ID with `x/samlsp/pending`, which closes
-the `BED-5071` TODO.
+the `BED-5071` TODO. As before, AuthnRequests are signed, metadata that
+describes no IdP fails when the config is built, and a database failure while
+recording an assertion is reported as a technical failure
+(`ErrSAMLAssertionNotRecorded`), not as an invalid response.
+
+Its tests are updated: the login handler tests run the real `Client`, so they
+check the signed redirect, the POST form and the pending-login cookie; the
+callback tests mock `ParseResponse` with the errors the library returns for a
+replay or a failed record; a new test runs a login and its callback, checking
+that only the browser that started the login has its request ID required; the
+metadata test parses the served metadata; and `ConsumeSAMLAssertionID` and the
+replay record's error mapping have tests of their own.
 
 The three ports that use `x/samlsp/pending` need no new configuration. Each
 derives the tracker's 32-byte key with HMAC-SHA256, under a fixed label, from a
@@ -133,4 +144,4 @@ allowed in this environment.
 | saml-auth-proxy | `go vet ./...` clean, tests included; the JWE codec tests were rewritten for the new types |
 | supabase-auth | `go vet ./internal/api/ ./internal/models/` clean, tests included; `samlacs_test.go` was rewritten for `samlConfig` |
 | velociraptor | `go vet ./api/authenticators/` clean, using throwaway stand-ins for its generated asset files |
-| bloodhound | `go build` of the changed packages is clean. **Not updated:** the handler tests in `cmd/api/src/api/v2/auth/saml_test.go` (`ServeMetadata`, `SAMLLoginHandler`, `SAMLCallbackHandler`; 28 mock call sites) and `services/saml/saml_integration_test.go` still use the old `Service` signatures |
+| bloodhound | `go vet` clean for the changed packages, tests included, with and without the `integration` build tag |

@@ -31,7 +31,7 @@ index b1c7520..7a1489a 100644
  	tokenString, err := token.SignedString([]byte(config_obj.Frontend.PrivateKey))
  	if err != nil {
 diff --git a/api/authenticators/saml.go b/api/authenticators/saml.go
-index 9689cbb..05858ef 100644
+index 9689cbb..100d4cd 100644
 --- a/api/authenticators/saml.go
 +++ b/api/authenticators/saml.go
 @@ -2,34 +2,39 @@ package authenticators

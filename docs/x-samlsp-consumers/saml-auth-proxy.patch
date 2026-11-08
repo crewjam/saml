@@ -409,7 +409,7 @@ index dac8bde..0000000
 -	return rv
 -}
 diff --git a/server/server.go b/server/server.go
-index 9747373..bcbe6eb 100644
+index 9747373..e528d3d 100644
 --- a/server/server.go
 +++ b/server/server.go
 @@ -3,10 +3,11 @@ package server
