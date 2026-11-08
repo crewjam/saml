@@ -131,7 +131,7 @@ func postSOAPMessage(ctx context.Context, httpClient *http.Client, location stri
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, location, bytes.NewReader(requestBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, location, bytes.NewReader(requestBody)) //nolint:gosec // G704: location is an endpoint from the peer's metadata, never from the request being served
 	if err != nil {
 		return nil, err
 	}

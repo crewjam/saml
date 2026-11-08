@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -42,11 +43,17 @@ type ServiceProviderTest struct {
 //     x4, _ := io.ReadAll(flate.NewReader(bytes.NewReader(x3)))
 //     fmt.Printf("%s\n", x4)
 
+// testRandomReader is a deterministic RandReader. It is locked because the
+// IdP contacts several service providers at once during back-channel
+// logout, and the test service providers read it as they answer.
 type testRandomReader struct {
+	mu   sync.Mutex
 	Next byte
 }
 
 func (tr *testRandomReader) Read(p []byte) (n int, err error) {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
 	for i := 0; i < len(p); i++ {
 		p[i] = tr.Next
 		tr.Next += 2
