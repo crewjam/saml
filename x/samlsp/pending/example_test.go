@@ -14,7 +14,8 @@ import (
 
 // A login handler remembers each AuthnRequest in a cookie, with where to
 // send the user afterwards, and the ACS finds it by the Response's
-// RelayState.
+// RelayState. It forgets the login only once the Response is verified, so
+// that a junk Response does not cancel it.
 func Example() {
 	config, err := samlsp.New(
 		"https://sp.example.com/saml/metadata",
@@ -43,16 +44,18 @@ func Example() {
 	})
 
 	http.HandleFunc("/saml/acs", func(w http.ResponseWriter, r *http.Request) {
-		login, err := tracker.Take(w, r)
+		login, err := tracker.Find(r)
 		if err != nil {
 			http.Error(w, "no login in progress; please sign in again", http.StatusBadRequest)
 			return
 		}
 		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
 		if err != nil {
+			// The login stays in progress, for the real Response.
 			http.Error(w, "login failed", http.StatusForbidden)
 			return
 		}
+		tracker.Forget(w, login)
 		startSession(w, assertion)
 
 		// The data came from the login request, so check it as such: a

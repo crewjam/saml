@@ -570,6 +570,7 @@ func TestRememberErrors(t *testing.T) {
 
 func TestNewErrors(t *testing.T) {
 	cfg, _ := newConfig(t)
+	httpCfg, _ := newConfig(t, samlsp.WithACSURL("http://localhost:8080/saml/acs"))
 	for name, f := range map[string]func() (*pending.Tracker, error){
 		"nil config": func() (*pending.Tracker, error) { return pending.New(nil, testKey) },
 		"short key":  func() (*pending.Tracker, error) { return pending.New(cfg, testKey[:31]) },
@@ -590,9 +591,42 @@ func TestNewErrors(t *testing.T) {
 		"cookie budget too small": func() (*pending.Tracker, error) {
 			return pending.New(cfg, testKey, pending.WithMaxCookiesSize(1000))
 		},
+		// Browsers would reject every slot cookie (RFC 6265bis §4.1.3).
+		"__Host- with the ACS path": func() (*pending.Tracker, error) {
+			return pending.New(cfg, testKey, pending.WithCookiePrefix("__Host-p_"))
+		},
+		"__Host- with a Domain": func() (*pending.Tracker, error) {
+			return pending.New(cfg, testKey, pending.WithCookiePrefix("__Host-p_"), pending.WithPath("/"), pending.WithDomain("example.com"))
+		},
+		"__host- with the ACS path": func() (*pending.Tracker, error) {
+			return pending.New(cfg, testKey, pending.WithCookiePrefix("__host-p_"))
+		},
+		"__Host- over http": func() (*pending.Tracker, error) {
+			return pending.New(httpCfg, testKey, pending.WithCookiePrefix("__Host-p_"), pending.WithPath("/"))
+		},
+		"__Secure- over http": func() (*pending.Tracker, error) {
+			return pending.New(httpCfg, testKey, pending.WithCookiePrefix("__SECURE-p_"))
+		},
 	} {
 		if _, err := f(); err == nil {
 			t.Errorf("%s: no error", name)
+		}
+	}
+}
+
+// TestCookiePrefixes checks that New accepts __Host- and __Secure- prefixes
+// with the cookie attributes browsers require of them, and that the
+// cookies have them.
+func TestCookiePrefixes(t *testing.T) {
+	cfg, _ := newConfig(t)
+	for _, tr := range []*pending.Tracker{
+		newTracker(t, cfg, pending.WithCookiePrefix("__Host-saml_"), pending.WithPath("/")),
+		newTracker(t, cfg, pending.WithCookiePrefix("__Secure-saml_")),
+		newTracker(t, cfg, pending.WithCookiePrefix("__Secure-saml_"), pending.WithDomain("example.com")),
+	} {
+		_, w := remember(t, cfg, tr, "s", "")
+		if c := onlyCookie(t, w); !c.Secure || (strings.HasPrefix(c.Name, "__Host-") && (c.Path != "/" || c.Domain != "")) {
+			t.Errorf("cookie = %+v", c)
 		}
 	}
 }
