@@ -55,9 +55,10 @@ func Example() {
 		}
 		startSession(w, assertion)
 
-		// The data came from the login request, so check it as such.
+		// The data came from the login request, so check it as such: a
+		// path on this site, not one that browsers read as another host.
 		next := "/"
-		if strings.HasPrefix(login.Data, "/") && !strings.HasPrefix(login.Data, "//") {
+		if isLocalPath(login.Data) {
 			next = login.Data
 		}
 		http.Redirect(w, r, next, http.StatusFound)
@@ -94,3 +95,10 @@ func ExampleTracker_Take_unsolicited() {
 }
 
 func startSession(http.ResponseWriter, *samlsp.Assertion) {}
+
+// isLocalPath reports whether p is a path on this site, safe to redirect
+// to: it starts with "/", but not with "//" or "/\", which browsers read as
+// another host.
+func isLocalPath(p string) bool {
+	return strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "//") && !strings.HasPrefix(p, "/\\")
+}

@@ -104,7 +104,9 @@ type Login struct {
 
 	// Data is the data passed to Remember, such as where to send the
 	// user after login. The browser cannot change it, but it is only as
-	// trustworthy as what Remember was given.
+	// trustworthy as what Remember was given. Check a return path before
+	// redirecting to it: it must start with "/", but not with "//" or
+	// "/\", which browsers read as another host.
 	Data string
 
 	// Expires is when the login would have stopped being accepted.
