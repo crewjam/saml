@@ -261,7 +261,7 @@ func setup(t *testing.T) (*fakeIDP, *samlsp.Config, *artifact.Binding, *artifact
 		t.Fatal(err)
 	}
 	store := artifact.NewMemoryStore()
-	return idp, cfg, newBinding(t, cfg, store, 3), store, spCert
+	return idp, cfg, newBinding(t, cfg, store), store, spCert
 }
 
 func TestAuthnRequestByArtifact(t *testing.T) {
@@ -536,7 +536,7 @@ func TestResolveFailures(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			idp, cfg, _, _, _ := setup(t)
-			b := newBinding(t, cfg, store, 3)
+			b := newBinding(t, cfg, store)
 			msg, err := cfg.AuthnRequest(t.Context(), "r", samlsp.WithCustomBinding(b))
 			if err != nil {
 				t.Fatal(err)
@@ -556,7 +556,7 @@ func TestResolveFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := newBinding(t, down, artifact.NewMemoryStore(), 3)
+	b := newBinding(t, down, artifact.NewMemoryStore())
 	if w := idp.resolve(t, b, "AAQAAA==", idpEntityID, idp.key, idp.cert); !isFault(w) {
 		t.Errorf("metadata unavailable: %d", w.Code)
 	}
@@ -575,7 +575,7 @@ func TestIdentityProviderPerCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := newBinding(t, cfg, artifact.NewMemoryStore(), 3)
+	b := newBinding(t, cfg, artifact.NewMemoryStore())
 	idpMetadata := samlsp.StaticMetadata(idp.metadata())
 
 	msg, err := cfg.AuthnRequest(t.Context(), "relay-1",
@@ -593,10 +593,83 @@ func TestIdentityProviderPerCall(t *testing.T) {
 	}
 }
 
-// newBinding returns the Binding of New, failing t on an error.
-func newBinding(t *testing.T, cfg *samlsp.Config, store artifact.Store, index uint16) *artifact.Binding {
+// TestIdentityProviderByIssuer resolves artifacts for a Config made
+// without an IdP, with no middleware: Binding.IdentityProvider finds the
+// IdP by the Issuer of the ArtifactResolve, whose signature must then
+// verify with that IdP's metadata.
+func TestIdentityProviderByIssuer(t *testing.T) {
+	const otherEntityID = "https://idp-b.example.com/metadata"
+	idpA := &fakeIDP{}
+	idpA.key, idpA.cert = keyPair(t)
+	idpB := &fakeIDP{}
+	idpB.key, idpB.cert = keyPair(t)
+	mdB := idpB.metadata()
+	mdB.EntityID = otherEntityID
+	idps := map[string]samlsp.MetadataFunc{
+		idpEntityID:   samlsp.StaticMetadata(idpA.metadata()),
+		otherEntityID: samlsp.StaticMetadata(mdB),
+	}
+
+	spKey, spCert := keyPair(t)
+	cfg, err := samlsp.New(spEntityID, nil, samlsp.WithSigningKey(spKey, spCert),
+		artifact.ResolutionService(arsURL, 3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := newBinding(t, cfg, artifact.NewMemoryStore())
+	var lookups []string
+	b.IdentityProvider = func(_ context.Context, entityID string) (samlsp.MetadataFunc, error) {
+		lookups = append(lookups, entityID)
+		if idp, ok := idps[entityID]; ok {
+			return idp, nil
+		}
+		return nil, errors.New("unknown IdP")
+	}
+	isFault := func(w *httptest.ResponseRecorder) bool {
+		return w.Code == http.StatusInternalServerError && strings.Contains(w.Body.String(), "Fault")
+	}
+
+	msg, err := cfg.AuthnRequest(t.Context(), "relay-1",
+		samlsp.WithCustomBinding(b), samlsp.WithIdentityProvider(idps[idpEntityID]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	art := msg.RedirectURL().Query().Get("SAMLart")
+
+	// IdP B claims to be IdP A, or names itself: either way the message
+	// is not given to it.
+	if w := idpB.resolve(t, b, art, idpEntityID, idpB.key, idpB.cert); !isFault(w) {
+		t.Errorf("IdP B signing as IdP A: %d %s", w.Code, w.Body.String())
+	}
+	if got := artifactResponse(t, idpB.resolve(t, b, art, otherEntityID, idpB.key, idpB.cert), spCert); got != nil {
+		t.Error("IdP B was given the message for IdP A")
+	}
+	// An IdP that IdentityProvider does not know.
+	if w := idpA.resolve(t, b, art, "https://unknown.example.com", idpA.key, idpA.cert); !isFault(w) {
+		t.Errorf("unknown IdP: %d", w.Code)
+	}
+
+	got := artifactResponse(t, idpA.resolve(t, b, art, idpEntityID, idpA.key, idpA.cert), spCert)
+	if got == nil || got.SelectAttrValue("ID", "") != msg.ID {
+		t.Fatalf("resolved %v, want the AuthnRequest %s", got, msg.ID)
+	}
+	if want := []string{idpEntityID, otherEntityID, "https://unknown.example.com", idpEntityID}; strings.Join(lookups, " ") != strings.Join(want, " ") {
+		t.Errorf("IdentityProvider called with %v, want %v", lookups, want)
+	}
+
+	// Without IdentityProvider, and with no IdP in the context, the
+	// request cannot be verified.
+	b.IdentityProvider = nil
+	if w := idpA.resolve(t, b, art, idpEntityID, idpA.key, idpA.cert); !isFault(w) {
+		t.Errorf("no IdP: %d", w.Code)
+	}
+}
+
+// newBinding returns the Binding of New with index 3, failing t on an
+// error.
+func newBinding(t *testing.T, cfg *samlsp.Config, store artifact.Store) *artifact.Binding {
 	t.Helper()
-	b, err := artifact.New(cfg, store, index)
+	b, err := artifact.New(cfg, store, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -641,7 +714,7 @@ func TestMemoryStoreClockFromConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := artifact.NewMemoryStore()
-	b := newBinding(t, cfg, store, 3)
+	b := newBinding(t, cfg, store)
 	if store.Clock != clock {
 		t.Fatal("New did not set the store's Clock")
 	}
@@ -656,7 +729,7 @@ func TestMemoryStoreClockFromConfig(t *testing.T) {
 	// A Clock already set is kept.
 	own := dsig.NewFakeClockAt(past)
 	mine := &artifact.MemoryStore{Clock: own}
-	newBinding(t, cfg, mine, 3)
+	newBinding(t, cfg, mine)
 	if mine.Clock != own {
 		t.Error("New replaced the store's Clock")
 	}

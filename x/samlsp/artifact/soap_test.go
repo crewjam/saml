@@ -91,7 +91,7 @@ func (s unsignableStore) Take(ctx context.Context, art, recipient string) (*arti
 func TestResolveKeepsMessageWhenSigningFails(t *testing.T) {
 	idp, cfg, _, _, _ := setup(t)
 	store := unsignableStore{artifact.NewMemoryStore()}
-	b := newBinding(t, cfg, store, 3)
+	b := newBinding(t, cfg, store)
 	var refused error
 	b.OnError = func(_ *http.Request, err error) { refused = err }
 	msg, err := cfg.AuthnRequest(t.Context(), "r", samlsp.WithCustomBinding(b))

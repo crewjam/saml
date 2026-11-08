@@ -21,6 +21,12 @@
 // endpoint for the message in its metadata, and must sign its
 // ArtifactResolve requests. The SP signs its ArtifactResponses with the
 // key of samlsp.WithSigningKey, which ResolutionService requires.
+//
+// An SP that serves several IdPs, made with a nil MetadataFunc, names the
+// IdP of each message with samlsp.WithIdentityProvider, which reaches the
+// Binding's Encode. The IdP's ArtifactResolve carries no such option: set
+// Binding.IdentityProvider to find the IdP by the request's Issuer, or name
+// it with samlsp.IdentityProviderContext in a handler around the Binding.
 package artifact
 
 import (
@@ -34,6 +40,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/beevik/etree"
@@ -73,6 +80,17 @@ type Binding struct {
 	// that ServeHTTP refuses, and why, before it answers with a SOAP
 	// fault, which does not say why. Use it to log the error.
 	OnError func(r *http.Request, err error)
+
+	// IdentityProvider, if not nil, returns the metadata of the IdP whose
+	// entity ID is entityID. Set it when the SP serves several IdPs and
+	// samlsp.New was given a nil MetadataFunc (see
+	// samlsp.WithIdentityProvider). ServeHTTP calls it when the request's
+	// context names no IdP (see samlsp.IdentityProviderContext), with the
+	// Issuer of the ArtifactResolve, unverified, and then verifies the
+	// request with the metadata it returns, as for any other IdP. A forged
+	// Issuer thus only chooses metadata that the request fails to verify
+	// against; but two IdPs must not share an entity ID.
+	IdentityProvider func(ctx context.Context, entityID string) (samlsp.MetadataFunc, error)
 }
 
 var (
@@ -294,6 +312,13 @@ func (b *Binding) resolve(r *http.Request) (*etree.Element, error) {
 
 	ctx := r.Context()
 	sp, err := b.config.ServiceProvider(ctx)
+	if errors.Is(err, samlsp.ErrNoIdentityProvider) && b.IdentityProvider != nil {
+		ctx, err = b.identityProviderContext(ctx, el)
+		if err != nil {
+			return nil, err
+		}
+		sp, err = b.config.ServiceProvider(ctx)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -337,9 +362,30 @@ func (b *Binding) resolve(r *http.Request) (*etree.Element, error) {
 	return resp, err
 }
 
+// identityProviderContext returns a copy of ctx that names the IdP that
+// IdentityProvider returns for the Issuer of el, an ArtifactResolve that
+// is not yet verified. The Issuer only chooses the metadata that must then
+// verify el.
+func (b *Binding) identityProviderContext(ctx context.Context, el *etree.Element) (context.Context, error) {
+	issuer := el.FindElement("./Issuer")
+	if issuer == nil || issuer.NamespaceURI() != samlAssertionNamespace || strings.TrimSpace(issuer.Text()) == "" {
+		return nil, errors.New("artifact: the ArtifactResolve names no Issuer")
+	}
+	entityID := strings.TrimSpace(issuer.Text())
+	idp, err := b.IdentityProvider(ctx, entityID)
+	if err != nil {
+		return nil, fmt.Errorf("artifact: cannot find the IdP %s: %w", entityID, err)
+	}
+	if idp == nil {
+		return nil, fmt.Errorf("artifact: no IdP %s", entityID)
+	}
+	return samlsp.IdentityProviderContext(ctx, idp), nil
+}
+
 const (
-	soapEnvelopeNamespace = "http://schemas.xmlsoap.org/soap/envelope/"
-	samlProtocolNamespace = "urn:oasis:names:tc:SAML:2.0:protocol"
+	soapEnvelopeNamespace  = "http://schemas.xmlsoap.org/soap/envelope/"
+	samlProtocolNamespace  = "urn:oasis:names:tc:SAML:2.0:protocol"
+	samlAssertionNamespace = "urn:oasis:names:tc:SAML:2.0:assertion"
 )
 
 // readArtifactResolve returns the samlp:ArtifactResolve that must be the
