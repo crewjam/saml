@@ -11,11 +11,11 @@ SAML is a standard for identity federation, i.e. either allowing a third party t
 
 In SAML parlance an **Identity Provider** (IDP) is a service that knows how to authenticate users. A **Service Provider** (SP) is a service that delegates authentication to an IDP. If you are building a service where users log in with someone else's credentials, then you are a **Service Provider**. This package supports implementing both service providers and identity providers.
 
-The core package contains the implementation of SAML. Service providers should use the package x/samlsp, with x/samlsp/slo for single logout (see [Getting Started as a Service Provider](#getting-started-as-a-service-provider)). The older package samlsp provides middleware that also keeps sessions, for existing applications (see [The samlsp middleware](#the-samlsp-middleware)). The package samlidp provides a rudimentary IDP service that is useful for testing or as a starting point for other integrations.
+The core package contains the implementation of SAML. Service providers should use the package x/samlsp, with x/samlsp/slo for single logout (see [Getting Started as a Service Provider](#getting-started-as-a-service-provider)). The older package samlsp provides middleware that also keeps sessions; it remains for existing applications. The package samlidp provides a rudimentary IDP service that is useful for testing or as a starting point for other integrations.
 
 ## Getting Started as a Service Provider
 
-New service providers should use `github.com/crewjam/saml/x/samlsp`. It is a thin layer over `saml.ServiceProvider` shaped after `golang.org/x/oauth2` and `go-oidc`: it builds requests, verifies responses and serves the SP metadata, and the application keeps its own sessions. It lives under `x/` while its API settles. Existing applications built on the `samlsp` middleware are described [below](#the-samlsp-middleware).
+New service providers should use `github.com/crewjam/saml/x/samlsp`. It is a thin layer over `saml.ServiceProvider` shaped after `golang.org/x/oauth2` and `go-oidc`: it builds requests, verifies responses and serves the SP metadata, and the application keeps its own sessions. It lives under `x/` while its API settles.
 
 Each service provider must have an self-signed X.509 key pair established. You can generate your own with something like this:
 
@@ -257,203 +257,6 @@ config, err := samlsp.New(idp, entityID, samlsp.WithSigningKey(key, cert),
 - `example/multitenant` is a multi-tenant SP in the manner of Supabase Auth: each tenant registers its own IDP, one `Config` serves them all with `WithIdentityProvider`, and logins in progress, the replay record and sessions live in a database (a pretend one), with SP- and IDP-initiated login and single logout.
 - The [package documentation](https://pkg.go.dev/github.com/crewjam/saml/x/samlsp) and its examples cover the rest: `AuthnRequest` options such as `ForceAuthn` and `WithAuthnContext`, requested attributes and contacts in the SP metadata, signed metadata, and how to build other messages and bindings on it.
 
-## The samlsp middleware
-
-The `samlsp` package wraps a service provider in HTTP middleware that also keeps sessions, in a cookie holding a signed JWT. It remains for existing applications; new code should use `x/samlsp` (above).
-
-### Getting started with the middleware
-
-With the key pair, the samltest.dev app and its `idp-metadata.xml` set up as [above](#getting-started-as-a-service-provider), `samlsp.Middleware` wraps the endpoint to protect. It provides both an `http.Handler` to serve the SAML specific URLs **and** a set of wrappers to require the user to be logged in.
-
-```golang
-package main
-
-import (
-	"crypto/rsa"
-	"crypto/tls"
-	"crypto/x509"
-	"fmt"
-	"net/http"
-	"net/url"
-	"os"
-
-	"github.com/crewjam/saml/samlsp"
-)
-
-func hello(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hello, %s!", samlsp.AttributeFromContext(r.Context(), "displayName"))
-}
-
-func main() {
-	keyPair, err := tls.LoadX509KeyPair("myservice.cert", "myservice.key")
-	if err != nil {
-		panic(err) // TODO handle error
-	}
-	keyPair.Leaf, err = x509.ParseCertificate(keyPair.Certificate[0])
-	if err != nil {
-		panic(err) // TODO handle error
-	}
-
-	idpMetadataXML, err := os.ReadFile("idp-metadata.xml")
-	if err != nil {
-		panic(err) // TODO handle error
-	}
-	idpMetadata, err := samlsp.ParseMetadata(idpMetadataXML)
-	if err != nil {
-		panic(err) // TODO handle error
-	}
-
-	rootURL, err := url.Parse("http://localhost:8000")
-	if err != nil {
-		panic(err) // TODO handle error
-	}
-
-	samlSP, err := samlsp.New(samlsp.Options{
-		URL:         *rootURL,
-		Key:         keyPair.PrivateKey.(*rsa.PrivateKey),
-		Certificate: keyPair.Leaf,
-		IDPMetadata: idpMetadata,
-	})
-	if err != nil {
-		panic(err) // TODO handle error
-	}
-	app := http.HandlerFunc(hello)
-	http.Handle("/hello", samlSP.RequireAccount(app))
-	http.Handle("/saml/", samlSP)
-	panic(http.ListenAndServe(":8000", nil))
-}
-```
-
-Register the service provider with samltest.dev as above: the middleware serves the same URLs. By default `samlsp` uses `<root URL>/saml/acs` as the ACS URL and `<root URL>/saml/metadata` as the entity ID (set `Options.AcsPath`, `Options.MetadataPath` and `Options.SloPath` to use different paths). You can view the service provider's metadata at `localhost:8000/saml/metadata`.
-
-Now you should be able to authenticate. The flow should look like this:
-
-1. You browse to `localhost:8000/hello`
-
-1. The middleware redirects you to `https://www.samltest.dev/apps/<APP_ID>/login`
-
-1. samltest.dev asks which of the app's test users you want to log in as. There is no password.
-
-1. samltest.dev returns you an HTML document which contains an HTML form setup to POST to `localhost:8000/saml/acs`. The form is automatically submitted if you have javascript enabled.
-
-1. The local service validates the response, issues a session cookie, and redirects you to the original URL, `localhost:8000/hello`.
-
-1. This time when `localhost:8000/hello` is requested there is a valid session and so the main content is served.
-
-### Reading attributes with the middleware
-
-You don't need to parse the SAML response yourself. After the middleware validates it, the handlers wrapped by `RequireAccount` can read the user's details from the request context:
-
-```golang
-func hello(w http.ResponseWriter, r *http.Request) {
-	// The first value of an attribute, or "" if it is missing.
-	email := samlsp.AttributeFromContext(r.Context(), "mail")
-
-	session := samlsp.SessionFromContext(r.Context())
-
-	// Every attribute, with all of its values.
-	if s, ok := session.(samlsp.SessionWithAttributes); ok {
-		for name, values := range s.GetAttributes() {
-			fmt.Fprintf(w, "%s: %v\n", name, values)
-		}
-	}
-
-	// The NameID from the assertion's Subject, often the user's email or ID.
-	if claims, ok := session.(samlsp.JWTSessionClaims); ok {
-		fmt.Fprintf(w, "NameID: %s, email: %s\n", claims.Subject, email)
-	}
-}
-```
-
-Each attribute is stored under its `FriendlyName`, or its `Name` when the IDP sends no `FriendlyName` (for example `urn:oid:0.9.2342.19200300.100.1.3` or `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress`). The IDP decides which attributes it sends and what they are called, so if one you expect is missing, check the IDP's attribute release settings. Listing every attribute as above shows exactly what you received. The `SessionIndex` attribute is added by this package, not sent as an attribute by the IDP.
-
-Attributes the IDP encrypts (`EncryptedAttribute`) are decrypted with the service provider's key, like an encrypted assertion, and read like the others; an assertion with one that cannot be decrypted is refused. An assertion's Subject must identify the user with a NameID (possibly encrypted). One whose Subject has no identifier is refused, and so is one identified by a `BaseID`, unless `ServiceProvider.AcceptAssertionBaseID` is set: the assertion's `Subject.BaseID` then holds the element, which your code must interpret, and the session has no NameID.
-
-### Logging out with the middleware
-
-The middleware serves the SAML Single Logout endpoint, `<root URL>/saml/slo`, alongside the metadata and ACS endpoints. To let users log out, route a path of your application to `HandleStartLogout`:
-
-```golang
-http.Handle("/saml/", samlSP)
-http.HandleFunc("/logout", samlSP.HandleStartLogout)
-```
-
-When a user visits `/logout`:
-
-1. `HandleStartLogout` deletes the session cookie and sends the browser to the IDP's `SingleLogoutService` with a `LogoutRequest` for the session's NameID and every `SessionIndex` of the assertion it was made from. It remembers the request's ID in a short-lived `samlslo_` cookie, scoped to the SLO URL, just as login remembers the `AuthnRequest`. It uses the HTTP-Redirect binding if the IDP supports it, and HTTP-POST otherwise. If the IDP has no `SingleLogoutService` in its metadata, only the local session is ended.
-
-1. The IDP ends its own session and sends a `LogoutResponse` back to `/saml/slo`.
-
-1. The middleware validates the response's signature, issuer, destination and status, checks that its `InResponseTo` is the ID of the request it sent from this browser, and redirects the user to `/`. A response the SP did not ask for, or one that is replayed, is rejected.
-
-The middleware also handles IDP initiated logout: when the IDP sends a signed `LogoutRequest` to `/saml/slo`, the middleware deletes the session cookie of that browser and answers the IDP with a `LogoutResponse`. With the default session provider it also records the logout in its revocation store (see `Options.SessionRevocations`), so that copies of the session in other browsers are refused too: those with the request's `SessionIndex`, or every earlier session of the user if the request names none. If that fails (for example because the store is full), the error goes to `OnError` and the `LogoutResponse` carries `Success` with the second-level status `PartialLogout`: the browser's session has ended, but its copies may not have.
-
-For single logout to work, the IDP needs to know the SLO URL. It is in the service provider's metadata, or you can enter `<root URL>/saml/slo` in the IDP's settings. The SAML single logout profile requires logout requests and responses sent with the HTTP-Redirect or HTTP-POST binding to be signed, and many IDPs enforce it. They are not signed by default: set `Options.SignLogout` to sign them with `Key` (`ServiceProvider.LogoutSignatureMethod`), or `Options.SignRequest`, which signs authentication requests too. If the IDP requires the NameID to be encrypted, set `ServiceProvider.EncryptLogoutNameID`: the request then carries an `EncryptedID`, encrypted to the encryption certificate in the IDP's metadata, with the strongest cipher the metadata lists for it, AES-256-GCM if it lists none. Set `ServiceProvider.LogoutNameIDEncrypter` for an IDP that cannot decrypt AES-GCM. If you need different behaviour, for example to end server-side sessions, the `ServiceProvider` methods `MakeLogoutRequest`, `RedirectLogoutRequestURL`, `ParseLogoutResponse`, `ValidateLogoutRequest` and `MakeRedirectLogoutResponse` are the building blocks `HandleStartLogout` and `ServeSLO` use.
-
-SP initiated logout can also use the SOAP binding. With `Options.LogoutBinding` set to `saml.SOAPBinding`, and an IDP whose metadata lists a SOAP `SingleLogoutService`, `HandleStartLogout` sends the signed `LogoutRequest` to the IDP from the server rather than through the browser (back-channel logout), deletes the session cookie and redirects the user to `/`. If the IDP cannot be reached or does not answer `Success`, the error goes to `OnError`, the session cookie is deleted all the same, and the browser is sent to the IDP's front-channel `SingleLogoutService`, if it has one, with a `LogoutRequest` as described above.
-
-### Loading IDP metadata with the middleware
-
-The service provider trusts whatever signing certificates the IDP metadata names, so get the metadata from a source you trust:
-
-- **A file kept with the service**, as above, checked when you download it and updated when the IDP rotates its keys.
-
-- **Signed metadata.** If the IDP (or its federation) signs its metadata, fetch it and check the signature against the metadata signing certificate, obtained out of band:
-
-  ```golang
-  idpMetadata, err := samlsp.FetchSignedMetadata(context.Background(), http.DefaultClient,
-  	*idpMetadataURL, []*x509.Certificate{idpMetadataSigningCert})
-  ```
-
-  Only what the signature covers is parsed. An IDP served by this package signs its metadata when `IdentityProvider.SignMetadata` is set.
-
-- **An `https` URL you trust**, with `samlsp.FetchMetadata`. The metadata is then only as trustworthy as that server and its TLS certificate, and a plain `http` URL can be changed by anyone on the network path.
-
-Federation metadata (an `<EntitiesDescriptor>` such as eduGAIN or InCommon publishes) holds many IDPs. `ParseMetadata` and `FetchMetadata` refuse metadata with more than one; use `ParseMetadataByEntityID`, `FetchMetadataByEntityID` or their `Signed` variants to choose the IDP by its entity ID.
-
-### Querying attributes with the middleware
-
-With the `samlsp` middleware, `samlSP.QueryAttributes(r, attributes...)` queries the attributes of the user of the request's session. The default session records the NameID of the login, with its Format and qualifiers, for this purpose; a session issued by an earlier version does not, and the user must log in again (`QueryAttributes` then returns an error matching `samlsp.ErrSessionNameIDUnknown`).
-
-### Hardening the middleware
-
-Some protections the SAML profiles call for are opt-in, because turning them on by default could break working deployments. Consider enabling them:
-
-- **Replay protection.** The Web Browser SSO profile says the service provider "MUST ensure that bearer assertions are not replayed". The tracking cookie already ties a response to the request this browser started, but an IDP-initiated response (`AllowIDPInitiated`) can be replayed until it expires unless a replay cache is configured. Set `Options.ReplayCache` (`ServiceProvider.ReplayCache`) to `samlsp.NewMemoryReplayCache(n)` for a single process, or to an `AssertionReplayCache` backed by a store shared by all instances. It also refuses replayed logout requests.
-
-- **Signed logout messages.** Set `Options.SignLogout` (see [Logging out with the middleware](#logging-out-with-the-middleware)).
-
-- **Unknown conditions.** An assertion whose `<Conditions>` holds a condition this package does not understand (an extension `saml:Condition`, for example) is Indeterminate, and SAML Core says it MUST be rejected. Such conditions are ignored by default, since some IDPs send extension conditions. Set `Options.RejectUnknownConditions` (`ServiceProvider.RejectUnknownConditions`) to refuse them, or `ServiceProvider.ValidateUnknownConditions` to evaluate them yourself.
-
-- **Artifact format.** With the HTTP-Artifact binding, a `SAMLart` that is not a standard type 0x0004 artifact, or whose SourceID is not the SHA-1 hash of the IDP's entityID, is sent to the IDP as is, since the ArtifactResponse it resolves to is fully checked anyway. Set `Options.RequireStandardArtifacts` (`ServiceProvider.RequireStandardArtifacts`) to refuse such an artifact without contacting the IDP. With a replay cache (above), each artifact is also resolved only once.
-
-- **Integrity protection for CBC encryption.** An unsigned Response can carry an `EncryptedAssertion` whose signature is inside the encryption, so the service provider decrypts it before anything has authenticated it. With AES-CBC that is what padding and format oracle attacks on XML Encryption need, and the SAML Core errata (E93) say relying parties SHOULD require integrity protection before processing CBC-encrypted assertions. The SP metadata advertises AES-GCM first, but an IDP may still choose CBC. Set `Options.RequireSignedResponseForCBC` (`ServiceProvider.RequireSignedResponseForCBC`) to refuse, before decrypting, a CBC-encrypted assertion in a Response (or ArtifactResponse) that is not signed; the error matches `ErrInvalidSignature`. AES-GCM assertions are unaffected. Many IDPs sign only the assertion, so check that yours signs the Response, or encrypts with AES-GCM, before turning it on.
-
-- **RelayState length.** The bindings limit RelayState to 80 bytes. Set `Options.LimitRelayStateLength` (`ServiceProvider.LimitRelayStateLength`, `IdentityProvider.LimitRelayStateLength`) to refuse to send a longer one. See [RelayState](#relaystate).
-
-### Customizing the session lifetime
-
-Sessions last one hour by default. This used to be set with `samlsp.Options.CookieMaxAge`, which has been removed. To change it, set the `MaxAge` of both the session cookie and the JWT it holds, then assign the provider to the middleware:
-
-```golang
-sessionMaxAge := 12 * time.Hour
-
-codec := samlsp.DefaultSessionCodec(opts)
-codec.MaxAge = sessionMaxAge
-
-sessionProvider := samlsp.DefaultSessionProvider(opts)
-sessionProvider.MaxAge = sessionMaxAge
-sessionProvider.Codec = codec
-
-samlSP, err := samlsp.New(opts)
-if err != nil {
-	return err
-}
-samlSP.Session = sessionProvider
-```
-
-Setting only the cookie's `MaxAge` is not enough: the browser keeps the cookie, but the token in it is rejected once the JWT expires.
-
 ## Getting Started as an Identity Provider
 
 Please see `example/idp/` for a substantially complete example of how to use the library and helpers to be an identity provider.
@@ -492,11 +295,11 @@ Without a `SessionParticipantTracker`, the IdP cannot contact the session's othe
 
 The SAML standard is huge and complex with many dark corners and strange, unused features. This package implements the most commonly used subset of these features required to provide a single sign on experience. The package supports at least the subset of SAML known as [interoperable SAML](https://kantarainitiative.github.io/SAMLprofiles/saml2int.html).
 
-This package supports the **Web SSO** profile. Message flows from the service provider to the IDP are supported using the **HTTP Redirect** binding and the **HTTP POST** binding. Message flows from the IDP to the service provider are supported via the **HTTP POST** binding and, on the service provider side, the **HTTP Artifact** binding (`samlsp.Options.UseArtifactResponse`; the artifact is resolved with the IDP's ArtifactResolutionService over SOAP). The identity provider in this package answers with HTTP POST, or HTTP POST SimpleSign (below); it does not issue artifacts.
+This package supports the **Web SSO** profile. Message flows from the service provider to the IDP are supported using the **HTTP Redirect** binding and the **HTTP POST** binding, and with `x/samlsp/artifact` the **HTTP Artifact** binding. Message flows from the IDP to the service provider are supported via the **HTTP POST** binding and, on the service provider side, the **HTTP Artifact** binding (`ParseResponse` resolves the artifact with the IDP's ArtifactResolutionService over SOAP). The identity provider in this package answers with HTTP POST, or HTTP POST SimpleSign (below); it does not issue artifacts.
 
 The **Single Logout** profile is supported with the HTTP Redirect and HTTP POST bindings: SP initiated and IDP initiated logout on the service provider side (see [Logging out](#logging-out)), and SP initiated logout on the identity provider side (see [Single logout](#single-logout)).
 
-Both directions also support the **HTTP POST SimpleSign** binding ([sstc-saml-binding-simplesign-cs-01](https://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-binding-simplesign-cs-01.pdf)), which posts the message like HTTP POST but signs it with a detached signature over the message XML, the RelayState and the signature algorithm, carried in the `SigAlg` and `Signature` form fields. The service provider accepts it at the ACS and for logout, and can send authentication requests and logout messages with it (`MakeSimpleSignAuthenticationRequest`, or `samlsp.Options.Binding`; `samlsp.Options.UseSimpleSignResponse` asks for SimpleSign responses). The identity provider accepts SimpleSign authentication requests and answers with SimpleSign when the service provider's ACS endpoint uses that binding.
+Both directions also support the **HTTP POST SimpleSign** binding ([sstc-saml-binding-simplesign-cs-01](https://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-binding-simplesign-cs-01.pdf)), which posts the message like HTTP POST but signs it with a detached signature over the message XML, the RelayState and the signature algorithm, carried in the `SigAlg` and `Signature` form fields. The service provider accepts it at the ACS and for logout, and can send authentication requests and logout messages with it (`samlsp.WithBinding(saml.HTTPPostSimpleSignBinding)`; `samlsp.WithResponseBinding` asks for SimpleSign responses). The identity provider accepts SimpleSign authentication requests and answers with SimpleSign when the service provider's ACS endpoint uses that binding.
 
 The package can produce signed SAML assertions, and can validate both signed and encrypted SAML assertions. As an identity provider it also encrypts the assertions it produces, both for SP-initiated and IdP-initiated (`ServeIDPInitiated`) logins, whenever the service provider's metadata publishes an encryption certificate (a `KeyDescriptor` with `use="encryption"`, or one with no `use`). The algorithms default to RSA-OAEP-MGF1P with SHA-1 and AES-128-CBC for compatibility; set `IdentityProvider.AssertionEncrypter` to choose others, for example `xmlenc.OAEP_SHA256()` with `AES256GCM`.
 
@@ -504,7 +307,7 @@ The package can produce signed SAML assertions, and can validate both signed and
 
 The _RelayState_ parameter allows you to pass user state information across the authentication flow. The most common use for this is to allow a user to request a deep link into your site, be redirected through the SAML login flow, and upon successful completion, be directed to the originally requested link, rather than the root.
 
-Unfortunately, _RelayState_ is less useful than it could be. Firstly, it is **not** authenticated, so anything you supply must be signed to avoid XSS or CSRF. Secondly, the SAML bindings limit it to 80 bytes (saml-bindings-2.0-os sections 3.4.3 and 3.5.3), which precludes signing. Many IDPs accept longer values, so the core package does not enforce the limit unless `LimitRelayStateLength` is set on the `ServiceProvider` or `IdentityProvider` (`samlsp.Options.LimitRelayStateLength`); `x/samlsp` sets it. A RelayState received in a request is always returned unchanged.
+Unfortunately, _RelayState_ is less useful than it could be. Firstly, it is **not** authenticated, so anything you supply must be signed to avoid XSS or CSRF. Secondly, the SAML bindings limit it to 80 bytes (saml-bindings-2.0-os sections 3.4.3 and 3.5.3), which precludes signing. Many IDPs accept longer values, so the core package does not enforce the limit unless `LimitRelayStateLength` is set on the `ServiceProvider` or `IdentityProvider`; `x/samlsp` sets it. A RelayState received in a request is always returned unchanged.
 
 ## Conformance notes
 
