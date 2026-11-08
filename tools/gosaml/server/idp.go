@@ -168,19 +168,24 @@ func decodeIdPConfig(raw json.RawMessage) (*IdPConfig, error) {
 func (s *Server) idpEntityID(id string) string { return s.BaseURL + "/idp/" + id + "/metadata" }
 
 func (s *Server) newIdP(w http.ResponseWriter, r *http.Request) {
-	profile := profileByKey(r.FormValue("profile"))
 	s.createInstance(w, r, store.KindIdP, func(id string) any {
-		cfg := &IdPConfig{
-			Name:                "Test IdP",
-			AutoFetchSPMetadata: true,
-			RememberSessions:    true,
-		}
-		if profile.Key != "generic" {
-			cfg.Name = profile.Name + " test IdP"
-		}
-		applyProfile(cfg, id, profile.Key)
-		return cfg
+		return newIdPConfig(id, r.FormValue("profile"))
 	})
+}
+
+// newIdPConfig is the configuration of a new IdP with a profile.
+func newIdPConfig(id, profile string) *IdPConfig {
+	p := profileByKey(profile)
+	cfg := &IdPConfig{
+		Name:                "Test IdP",
+		AutoFetchSPMetadata: true,
+		RememberSessions:    true,
+	}
+	if p.Key != "generic" {
+		cfg.Name = p.Name + " test IdP"
+	}
+	applyProfile(cfg, id, p.Key)
+	return cfg
 }
 
 // loadIdP returns the instance named in the URL and its configuration.
@@ -591,38 +596,10 @@ func (s *Server) idpAction(w http.ResponseWriter, r *http.Request, in *store.Ins
 		s.saveIdPConfig(w, r, in, cfg, "Settings saved.", "settings")
 
 	case "sp-add":
-		var data []byte
-		source := strings.TrimSpace(r.FormValue("metadata_url"))
-		if source != "" {
-			data, err = s.fetchMetadata(ctx, source)
-		} else {
-			data = []byte(strings.TrimSpace(r.FormValue("metadata_xml")))
-			if len(data) == 0 {
-				err = errors.New("give a metadata URL or paste the metadata XML")
-			}
-		}
-		var md *saml.EntityDescriptor
-		if err == nil {
-			md, err = samlidp.ParseMetadata(data)
-		}
+		md, err := s.addSP(ctx, cfg, strings.TrimSpace(r.FormValue("metadata_url")), r.FormValue("metadata_xml"))
 		if err != nil {
 			flash(w, r, in, "Cannot add the service provider: "+err.Error(), "sps")
 			return
-		}
-		sp := RegisteredSP{EntityID: md.EntityID, Source: source, Metadata: string(data), AddedAt: time.Now()}
-		replaced := false
-		for i := range cfg.ServiceProviders {
-			if cfg.ServiceProviders[i].EntityID == md.EntityID {
-				cfg.ServiceProviders[i] = sp
-				replaced = true
-			}
-		}
-		if !replaced {
-			if len(cfg.ServiceProviders) >= maxSPs {
-				flash(w, r, in, fmt.Sprintf("An IdP can have at most %d service providers.", maxSPs), "sps")
-				return
-			}
-			cfg.ServiceProviders = append(cfg.ServiceProviders, sp)
 		}
 		s.saveIdPConfig(w, r, in, cfg, "Service provider "+md.EntityID+" saved.", "sps")
 
@@ -646,60 +623,31 @@ func (s *Server) idpAction(w http.ResponseWriter, r *http.Request, in *store.Ins
 		s.saveIdPConfig(w, r, in, cfg, "Metadata refreshed.", "sps")
 
 	case "sp-remove":
-		entityID := r.FormValue("entity_id")
-		var kept []RegisteredSP
-		for _, sp := range cfg.ServiceProviders {
-			if sp.EntityID != entityID {
-				kept = append(kept, sp)
-			}
-		}
-		cfg.ServiceProviders = kept
+		removeSP(cfg, r.FormValue("entity_id"))
 		s.saveIdPConfig(w, r, in, cfg, "Service provider removed.", "sps")
 
 	case "user-save":
-		username := limit(strings.TrimSpace(r.FormValue("username")), 100)
-		if username == "" {
-			flash(w, r, in, "A user needs a username.", "users")
-			return
-		}
+		username := strings.TrimSpace(r.FormValue("username"))
 		attrs, err := parseAttributes(r.FormValue("attributes"))
+		if err == nil {
+			err = putUser(cfg, User{
+				Username:     username,
+				NameID:       r.FormValue("nameid"),
+				NameIDFormat: r.FormValue("nameid_format"),
+				Attributes:   attrs,
+			})
+		}
 		if err != nil {
-			flash(w, r, in, "Cannot save "+username+": "+err.Error(), "users")
+			if username != "" {
+				err = fmt.Errorf("cannot save %s: %w", username, err)
+			}
+			flash(w, r, in, capitalize(err.Error()), "users")
 			return
 		}
-		u := User{
-			Username:     username,
-			NameID:       limit(strings.TrimSpace(r.FormValue("nameid")), 1000),
-			NameIDFormat: r.FormValue("nameid_format"),
-			Attributes:   attrs,
-		}
-		if u.NameID == "" {
-			u.NameID = username
-		}
-		replaced := false
-		for i := range cfg.Users {
-			if cfg.Users[i].Username == username {
-				cfg.Users[i] = u
-				replaced = true
-			}
-		}
-		if !replaced {
-			if len(cfg.Users) >= maxUsers {
-				flash(w, r, in, fmt.Sprintf("An IdP can have at most %d users.", maxUsers), "users")
-				return
-			}
-			cfg.Users = append(cfg.Users, u)
-		}
-		s.saveIdPConfig(w, r, in, cfg, "User "+username+" saved.", "users")
+		s.saveIdPConfig(w, r, in, cfg, "User "+limit(username, 100)+" saved.", "users")
 
 	case "user-remove":
-		var kept []User
-		for _, u := range cfg.Users {
-			if u.Username != r.FormValue("username") {
-				kept = append(kept, u)
-			}
-		}
-		cfg.Users = kept
+		removeUser(cfg, r.FormValue("username"))
 		s.saveIdPConfig(w, r, in, cfg, "User removed.", "users")
 
 	case "initiate":
@@ -739,6 +687,107 @@ func (s *Server) idpAction(w http.ResponseWriter, r *http.Request, in *store.Ins
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// errLimit is an error for a request that exceeds one of an instance's
+// limits.
+type errLimit string
+
+func (e errLimit) Error() string { return string(e) }
+
+// addSP registers an SP with an IdP, from the metadata at source or, if
+// source is empty, from metadataXML. An SP with the same entity ID is
+// replaced.
+func (s *Server) addSP(ctx context.Context, cfg *IdPConfig, source, metadataXML string) (*saml.EntityDescriptor, error) {
+	var data []byte
+	var err error
+	if source != "" {
+		data, err = s.fetchMetadata(ctx, source)
+	} else {
+		data = []byte(strings.TrimSpace(metadataXML))
+		if len(data) == 0 {
+			err = errors.New("give a metadata URL or paste the metadata XML")
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	md, err := samlidp.ParseMetadata(data)
+	if err != nil {
+		return nil, err
+	}
+	sp := RegisteredSP{EntityID: md.EntityID, Source: source, Metadata: string(data), AddedAt: time.Now()}
+	for i := range cfg.ServiceProviders {
+		if cfg.ServiceProviders[i].EntityID == md.EntityID {
+			cfg.ServiceProviders[i] = sp
+			return md, nil
+		}
+	}
+	if len(cfg.ServiceProviders) >= maxSPs {
+		return nil, errLimit(fmt.Sprintf("an IdP can have at most %d service providers", maxSPs))
+	}
+	cfg.ServiceProviders = append(cfg.ServiceProviders, sp)
+	return md, nil
+}
+
+// putUser adds u to an IdP's users, or replaces the user with the same
+// username. A user with no NameID has its username as NameID.
+func putUser(cfg *IdPConfig, u User) error {
+	u.Username = limit(strings.TrimSpace(u.Username), 100)
+	if u.Username == "" {
+		return errors.New("a user needs a username")
+	}
+	u.NameID = limit(strings.TrimSpace(u.NameID), 1000)
+	if u.NameID == "" {
+		u.NameID = u.Username
+	}
+	if len(u.Attributes) > 100 {
+		return errors.New("too many attributes")
+	}
+	for i := range cfg.Users {
+		if cfg.Users[i].Username == u.Username {
+			cfg.Users[i] = u
+			return nil
+		}
+	}
+	if len(cfg.Users) >= maxUsers {
+		return errLimit(fmt.Sprintf("an IdP can have at most %d users", maxUsers))
+	}
+	cfg.Users = append(cfg.Users, u)
+	return nil
+}
+
+// removeUser removes a user from an IdP. It reports whether there was one.
+func removeUser(cfg *IdPConfig, username string) bool {
+	var kept []User
+	for _, u := range cfg.Users {
+		if u.Username != username {
+			kept = append(kept, u)
+		}
+	}
+	found := len(kept) < len(cfg.Users)
+	cfg.Users = kept
+	return found
+}
+
+// removeSP removes an SP from an IdP. It reports whether there was one.
+func removeSP(cfg *IdPConfig, entityID string) bool {
+	var kept []RegisteredSP
+	for _, sp := range cfg.ServiceProviders {
+		if sp.EntityID != entityID {
+			kept = append(kept, sp)
+		}
+	}
+	found := len(kept) < len(cfg.ServiceProviders)
+	cfg.ServiceProviders = kept
+	return found
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func oneOf(v string, allowed ...string) string {
