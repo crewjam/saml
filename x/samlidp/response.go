@@ -291,12 +291,16 @@ func (c *Config) answer(ctx context.Context, req *AuthnRequest, o responseOption
 	if err != nil {
 		return nil, err
 	}
+	request, err := req.samlRequest()
+	if err != nil {
+		return nil, err
+	}
 	idp := c.identityProvider(o.idp)
 	ireq := &saml.IdpAuthnRequest{
 		IDP:                     idp,
 		HTTPRequest:             (&http.Request{RemoteAddr: o.address}).WithContext(ctx),
 		RelayState:              req.RelayState,
-		Request:                 req.samlRequest(),
+		Request:                 request,
 		ServiceProviderMetadata: md,
 		Now:                     clockNow(idp.Clock),
 	}

@@ -151,6 +151,12 @@ func TestRequestFields(t *testing.T) {
 			}},
 			RequesterIDs: []string{"https://app.example.com"},
 		}
+		ext := etree.NewElement("samlp:Extensions")
+		ext.CreateAttr("xmlns:samlp", "urn:oasis:names:tc:SAML:2.0:protocol")
+		hint := ext.CreateElement("ex:Hint")
+		hint.CreateAttr("xmlns:ex", "urn:example:ext")
+		hint.SetText("value")
+		req.Extensions = ext
 		return nil
 	}))
 	if err != nil {
@@ -164,6 +170,16 @@ func TestRequestFields(t *testing.T) {
 		s.IDPList.IDPEntries[0].ProviderID != idpEntityID || s.IDPList.IDPEntries[0].Loc != "https://idp.example.com/saml/sso" ||
 		len(s.RequesterIDs) != 1 || s.RequesterIDs[0] != "https://app.example.com" {
 		t.Fatalf("Scoping = %+v", s)
+	}
+	if len(req.Extensions) != 1 {
+		t.Fatalf("Extensions = %q", req.Extensions)
+	}
+	hint := etree.NewDocument()
+	if err := hint.ReadFromBytes(req.Extensions[0]); err != nil {
+		t.Fatal(err)
+	}
+	if root := hint.Root(); root.Tag != "Hint" || root.NamespaceURI() != "urn:example:ext" || root.Text() != "value" {
+		t.Fatalf("Extensions = %q", req.Extensions)
 	}
 
 	buf, err := json.Marshal(req)
@@ -184,7 +200,8 @@ func TestRequestFields(t *testing.T) {
 	}
 	for name, kept := range map[string]*samlidp.AuthnRequest{"json": &fromJSON, "gob": &fromGob} {
 		if !reflect.DeepEqual(kept.Scoping, req.Scoping) || kept.Consent != req.Consent ||
-			kept.AttributeConsumingServiceIndex != req.AttributeConsumingServiceIndex || !kept.IssueInstant.Equal(req.IssueInstant) {
+			kept.AttributeConsumingServiceIndex != req.AttributeConsumingServiceIndex || !kept.IssueInstant.Equal(req.IssueInstant) ||
+			!reflect.DeepEqual(kept.Extensions, req.Extensions) {
 			t.Errorf("%s: kept %+v, want %+v", name, kept, req)
 		}
 		if _, err := p.idp.Response(context.Background(), kept, testSubject); err != nil {

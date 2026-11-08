@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"time"
 
@@ -25,8 +26,7 @@ const bearerMethod = "urn:oasis:names:tc:SAML:2.0:cm:bearer" //nolint:gosec // a
 // logs in, such as in a server-side session or with encoding/json. Keep it
 // where the user cannot change it: its fields are trusted when the
 // Response is made. It holds what bears on the answer, not the whole
-// request: the request's Conditions and Extensions, for example, are not
-// kept. Response checks again that the SP is known and that
+// request: the request's Conditions, for example, are not kept. Response checks again that the SP is known and that
 // ACSURL is one of its assertion consumer services, so a changed
 // AuthnRequest cannot send an assertion anywhere else.
 type AuthnRequest struct {
@@ -121,6 +121,12 @@ type AuthnRequest struct {
 	// authenticate. Response refuses a Subject whose NameID does not
 	// match it, with StatusUnknownPrincipal.
 	Subject *saml.NameID
+
+	// Extensions are the extension elements of the request's
+	// samlp:Extensions, if any (saml-core §3.2.1), each as an XML
+	// document that declares the namespaces it uses. What they mean, and
+	// whether to honour them, is the application's to decide.
+	Extensions [][]byte
 }
 
 // ParseOption customizes ParseAuthnRequest and IDPInitiated.
@@ -347,13 +353,106 @@ func newAuthnRequest(ireq *saml.IdpAuthnRequest) *AuthnRequest {
 		nameID := *q.Subject.NameID
 		req.Subject = &nameID
 	}
+	if q.Extensions != nil {
+		for _, el := range q.Extensions.ChildElements() {
+			if buf, err := standaloneXML(el); err == nil {
+				req.Extensions = append(req.Extensions, buf)
+			}
+		}
+	}
 	return req
+}
+
+// protocolNamespace is the namespace of the SAML protocol elements.
+const protocolNamespace = "urn:oasis:names:tc:SAML:2.0:protocol"
+
+// standaloneXML returns el as an XML document of its own, which declares
+// the namespaces el and its descendants use but its ancestors declare.
+func standaloneXML(el *etree.Element) ([]byte, error) {
+	missing := map[string]string{}
+	collectNamespaces(el, map[string]bool{"xml": true}, missing)
+	out := el.Copy()
+	for prefix, uri := range missing {
+		if prefix == "" {
+			out.CreateAttr("xmlns", uri)
+		} else {
+			out.CreateAttr("xmlns:"+prefix, uri)
+		}
+	}
+	doc := etree.NewDocument()
+	doc.SetRoot(out)
+	return doc.WriteToBytes()
+}
+
+// collectNamespaces adds to missing the prefixes, with their namespaces,
+// that el and its descendants use but that are not in scope, the prefixes
+// declared by the elements from the one being written down to el's parent.
+func collectNamespaces(el *etree.Element, scope map[string]bool, missing map[string]string) {
+	local := scope
+	for _, attr := range el.Attr {
+		prefix := attr.Key
+		switch {
+		case attr.Space == "xmlns":
+		case attr.Space == "" && attr.Key == "xmlns":
+			prefix = ""
+		default:
+			continue
+		}
+		if local[prefix] {
+			continue
+		}
+		if len(local) == len(scope) {
+			local = maps.Clone(scope)
+		}
+		local[prefix] = true
+	}
+	use := func(prefix, uri string) {
+		if _, ok := missing[prefix]; !ok && !local[prefix] && uri != "" {
+			missing[prefix] = uri
+		}
+	}
+	use(el.Space, el.NamespaceURI())
+	for i := range el.Attr {
+		attr := &el.Attr[i]
+		if attr.Space != "" && attr.Space != "xmlns" {
+			use(attr.Space, attr.NamespaceURI())
+		}
+	}
+	for _, child := range el.ChildElements() {
+		collectNamespaces(child, local, missing)
+	}
+}
+
+// extensionsElement returns the samlp:Extensions element that holds
+// extensions, each an XML document, or nil if there are none.
+func extensionsElement(extensions [][]byte) (*etree.Element, error) {
+	if len(extensions) == 0 {
+		return nil, nil
+	}
+	el := etree.NewElement("samlp:Extensions")
+	el.CreateAttr("xmlns:samlp", protocolNamespace)
+	for i, buf := range extensions {
+		doc := etree.NewDocument()
+		if err := doc.ReadFromBytes(buf); err != nil {
+			return nil, fmt.Errorf("samlidp: AuthnRequest.Extensions[%d]: %w", i, err)
+		}
+		if doc.Root() == nil {
+			return nil, fmt.Errorf("samlidp: AuthnRequest.Extensions[%d] has no element", i)
+		}
+		el.AddChild(doc.Root())
+	}
+	return el, nil
 }
 
 // samlRequest returns the saml.AuthnRequest that req describes, as package
 // saml needs it to make the Response.
-func (req *AuthnRequest) samlRequest() saml.AuthnRequest {
+func (req *AuthnRequest) samlRequest() (saml.AuthnRequest, error) {
+	extensions, err := extensionsElement(req.Extensions)
+	if err != nil {
+		return saml.AuthnRequest{}, err
+	}
 	q := saml.AuthnRequest{
+		Extensions:                  extensions,
 		ID:                          req.ID,
 		Version:                     "2.0",
 		IssueInstant:                req.IssueInstant,
@@ -400,7 +499,7 @@ func (req *AuthnRequest) samlRequest() saml.AuthnRequest {
 		nameID := *req.Subject
 		q.Subject = &saml.Subject{NameID: &nameID}
 	}
-	return q
+	return q, nil
 }
 
 // requestSubjectError returns the error status for a request whose
