@@ -1,38 +1,17 @@
 package samlsp_test
 
 import (
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"fmt"
 	"log"
 	"net/http"
 	"strings"
-	"sync"
 
 	"github.com/crewjam/saml/x/samlsp"
+	"github.com/crewjam/saml/x/samlsp/pending"
 )
-
-// pendingRequests is a toy store of pending AuthnRequest IDs by RelayState.
-// A real application would keep them in a signed, short-lived cookie or in
-// its session store.
-type pendingRequests struct {
-	mu  sync.Mutex
-	ids map[string]string
-}
-
-func (p *pendingRequests) put(relayState, id string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.ids[relayState] = id
-}
-
-func (p *pendingRequests) take(relayState string) string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	id := p.ids[relayState]
-	delete(p.ids, relayState)
-	return id
-}
 
 func Example() {
 	var (
@@ -48,24 +27,35 @@ func Example() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	pending := &pendingRequests{ids: map[string]string{}}
+	// Remembers each login in progress in a cookie. The key is 32 or
+	// more random bytes, the same on every server.
+	tracker, err := pending.New(config, cookieKey)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	http.HandleFunc(config.MetadataPath(), config.ServeMetadata)
 
 	http.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
-		relayState := randomString()
-		req, err := config.AuthnRequest(r.Context(), relayState)
+		req, err := config.AuthnRequest(r.Context(), rand.Text())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		pending.put(relayState, req.ID)
+		if err := tracker.Remember(w, req, ""); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		req.Write(w)
 	})
 
 	http.HandleFunc(config.ACSPath(), func(w http.ResponseWriter, r *http.Request) {
-		requestID := pending.take(r.FormValue("RelayState"))
-		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(requestID))
+		login, err := tracker.Take(w, r)
+		if err != nil {
+			http.Error(w, "no login in progress", http.StatusBadRequest)
+			return
+		}
+		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
 		if err != nil {
 			http.Error(w, "login failed", http.StatusForbidden)
 			return
@@ -84,4 +74,4 @@ func Example() {
 	})
 }
 
-func randomString() string { return "relay-state" }
+var cookieKey []byte // loaded from the application's secrets

@@ -3,8 +3,10 @@
 //
 // It is a thin layer over saml.ServiceProvider that builds AuthnRequests,
 // verifies Responses, and serves the SP metadata. Single logout is in
-// github.com/crewjam/saml/x/samlsp/slo. For a ready-made middleware with
-// sessions, see github.com/crewjam/saml/samlsp.
+// github.com/crewjam/saml/x/samlsp/slo. Sessions are the application's;
+// github.com/crewjam/saml/x/samlsp/pending keeps the one piece of state
+// every login needs, the ID of the request in progress, in a cookie. For a
+// ready-made middleware with sessions, see github.com/crewjam/saml/samlsp.
 //
 // The shape of the API follows golang.org/x/oauth2 and
 // github.com/coreos/go-oidc: a Config made once with New, a function that
@@ -82,13 +84,15 @@
 //
 // Login has two steps. First, send the browser to the IdP with an
 // AuthnRequest. The application must remember the request's ID, keyed by
-// the RelayState, until the Response arrives:
+// the RelayState, in this browser, until the Response arrives. Package
+// github.com/crewjam/saml/x/samlsp/pending keeps it in a cookie:
+//
+//	tracker, err := pending.New(config, cookieKey)
 //
 //	func login(w http.ResponseWriter, r *http.Request) {
-//		relayState := rand.Text()
-//		req, err := config.AuthnRequest(r.Context(), relayState)
+//		req, err := config.AuthnRequest(r.Context(), rand.Text())
 //		if err != nil { ... }
-//		rememberPendingRequest(w, relayState, req.ID) // e.g. in a signed cookie
+//		if err := tracker.Remember(w, req, ""); err != nil { ... }
 //		req.Write(w)
 //	}
 //
@@ -96,11 +100,16 @@
 // check that its InResponseTo is the remembered ID:
 //
 //	func acs(w http.ResponseWriter, r *http.Request) {
-//		requestID := takePendingRequest(w, r, r.FormValue("RelayState"))
-//		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(requestID))
+//		login, err := tracker.Take(w, r)
+//		if err != nil { ... }
+//		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
 //		if err != nil { ... }
 //		startSession(w, assertion.NameID, assertion.SessionIndexes, assertion.Attributes)
 //	}
+//
+// An application can keep the ID elsewhere instead, such as in a
+// server-side session. A cookie for it must reach the ACS with the IdP's
+// cross-site POST, so it must be SameSite=None and Secure.
 //
 // ParseResponse returns a verified Assertion. It accepts the HTTP-POST,
 // HTTP-POST-SimpleSign and HTTP-Artifact bindings. For HTTP-Artifact it

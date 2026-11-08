@@ -68,8 +68,8 @@ documentation:
 3. **Every port wrote the same pending-request cookie.** Each one is keyed by
    RelayState, scoped to the ACS path, and needs `SameSite=None; Secure`, or
    browsers drop it on the IdP's cross-site POST. That boilerplate is easy to get
-   wrong. A small optional helper, or at least an example that sets `SameSite`,
-   would help.
+   wrong. **Addressed:** `x/samlsp/pending` now provides it. The patches above
+   predate it and still carry their own cookie code.
 4. **A Config per request drops replay protection.** Multi-tenant apps whose
    entity ID or ACS URL differs per tenant (BloodHound, and Supabase's dedicated
    scopes) build a `Config` per request. The default in-memory replay state then
