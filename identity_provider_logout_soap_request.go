@@ -90,12 +90,22 @@ func (idp *IdentityProvider) serveSOAPLogoutRequest(w http.ResponseWriter, r *ht
 	idp.writeSOAPLogoutResponse(w, req, makeLogoutResponseWithStatus(req, partial))
 }
 
-// BackChannelLogoutTimeout bounds how long ServeSLO spends logging the
-// other session participants out over the SOAP binding when it answers a
-// LogoutRequest that came over SOAP, so that it can answer before the
-// service provider that sent it gives up. A participant that has not
-// answered by then counts as not logged out (StatusPartialLogout). Each
-// request is also bounded by the IdP's HTTPClient timeout.
+// BackChannelLogoutTimeout bounds how long the IdP spends logging session
+// participants out over the SOAP binding while it handles one request.
+//
+// When it answers a LogoutRequest that came over SOAP, it bounds the whole
+// back-channel logout, so that the IdP can answer before the service
+// provider that sent it gives up; a participant that has not answered by
+// then counts as not logged out (StatusPartialLogout).
+//
+// When a browser is present (ServeSLO for a front-channel LogoutRequest,
+// StartLogout, and each LogoutResponse that continues a logout), it bounds
+// the SOAP requests made before the IdP answers the browser: once it has
+// passed, participants are logged out through the browser instead, if
+// their metadata lists a front-channel SingleLogoutService, so that slow
+// SOAP endpoints cannot hold up the user's logout.
+//
+// Each request is also bounded by the IdP's HTTPClient timeout.
 var BackChannelLogoutTimeout = 15 * time.Second
 
 // backChannelLogoutConcurrency is how many participants logoutParticipantsSOAP
