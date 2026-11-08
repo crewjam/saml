@@ -1,0 +1,44 @@
+diff --git a/internal/integration_tests/saml_idp_e2e_test.go b/internal/integration_tests/saml_idp_e2e_test.go
+index 0d0e2c0..de26e96 100644
+--- a/internal/integration_tests/saml_idp_e2e_test.go
++++ b/internal/integration_tests/saml_idp_e2e_test.go
+@@ -12,7 +12,7 @@ import (
+ 	"time"
+ 
+ 	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlsp"
+ 	"github.com/gin-gonic/gin"
+ 	"github.com/google/uuid"
+ 	"github.com/stretchr/testify/assert"
+diff --git a/internal/service/admin_saml_idp.go b/internal/service/admin_saml_idp.go
+index 606fb8d..58be71f 100644
+--- a/internal/service/admin_saml_idp.go
++++ b/internal/service/admin_saml_idp.go
+@@ -9,7 +9,7 @@ import (
+ 	"strings"
+ 
+ 	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlidp"
+ 
+ 	"github.com/authorizerdev/authorizer/internal/audit"
+ 	"github.com/authorizerdev/authorizer/internal/constants"
+@@ -336,7 +336,7 @@ func (p *provider) ListSAMLIDPKeys(ctx context.Context, meta RequestMetadata, pa
+ // ImportSAMLSPMetadata parses pasted SP metadata XML and returns the extracted
+ // entity_id / acs_url / certificate. It does NOT create a record.
+ //
+-// Security: parsing uses crewjam/samlsp.ParseMetadata over Go's encoding/xml,
++// Security: parsing uses crewjam/saml/x/samlidp.ParseMetadata over Go's encoding/xml,
+ // which ignores DTDs and does not resolve external entities — no XXE surface.
+ //
+ // Permissions: super-admin (no org context).
+@@ -348,7 +348,7 @@ func (p *provider) ImportSAMLSPMetadata(ctx context.Context, meta RequestMetadat
+ 	if raw == "" {
+ 		return nil, nil, InvalidArgument("metadata_xml is required")
+ 	}
+-	ed, err := samlsp.ParseMetadata([]byte(raw))
++	ed, err := samlidp.ParseMetadata([]byte(raw))
+ 	if err != nil {
+ 		return nil, nil, InvalidArgument(fmt.Sprintf("could not parse SP metadata XML: %v", err))
+ 	}
