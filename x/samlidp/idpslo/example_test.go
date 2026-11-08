@@ -135,7 +135,8 @@ func Example() {
 			}
 			_, err := logout.ParseResponse(r.Context(), r, state.current, state.requestID)
 			var bad saml.ErrBadStatus
-			if errors.As(err, &bad) {
+			if errors.As(err, &bad) || errors.Is(err, idpslo.ErrPartialLogout) {
+				// This SP kept some or all of its sessions.
 				state.partial = true
 			} else if err != nil {
 				http.Error(w, "invalid logout response", http.StatusBadRequest)

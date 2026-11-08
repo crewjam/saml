@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -400,6 +401,43 @@ func TestBadResponses(t *testing.T) {
 	}
 }
 
+// partialStatus is the status of an SP that logged the user out only in
+// part.
+var partialStatus = saml.Status{StatusCode: saml.StatusCode{
+	Value:      saml.StatusSuccess,
+	StatusCode: &saml.StatusCode{Value: saml.StatusPartialLogout},
+}}
+
+func TestParseResponsePartialLogout(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, worldOptions{})
+	p2, _ := w.login(t, 1, "s1")
+	toSP2, err := w.logout.Request(ctx, p2, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp2 := w.sps[1]
+	sp2req, err := sp2.slo.ParseRequest(ctx, deliver(t, toSP2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	partial, err := sp2.slo.Response(ctx, sp2req, slo.WithStatus(partialStatus))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := w.logout.ParseResponse(ctx, toIDP(t, partial), sp2.config.EntityID(), toSP2.ID)
+	if !errors.Is(err, idpslo.ErrPartialLogout) || resp == nil {
+		t.Fatalf("got %v, %v", resp, err)
+	}
+	var bad saml.ErrBadStatus
+	if errors.As(err, &bad) {
+		t.Errorf("partial logout matches saml.ErrBadStatus: %v", err)
+	}
+	if s := resp.Status.StatusCode.StatusCode; s == nil || s.Value != saml.StatusPartialLogout {
+		t.Fatalf("status %+v", resp.Status)
+	}
+}
+
 func TestUnsignedRequestRefused(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t, worldOptions{})
@@ -481,6 +519,7 @@ func TestBackChannel(t *testing.T) {
 	ctx := context.Background()
 	var w *world
 	sp2Got := make(chan *saml.LogoutRequest, 1)
+	var sp2Partial atomic.Bool
 	idpServer := httptest.NewTLSServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		req, err := w.logout.ParseRequest(r.Context(), r)
 		if err != nil {
@@ -503,7 +542,11 @@ func TestBackChannel(t *testing.T) {
 			return
 		}
 		sp2Got <- req.Raw
-		msg, err := s.Response(r.Context(), req)
+		var opts []samlsp.MessageOption
+		if sp2Partial.Load() {
+			opts = append(opts, slo.WithStatus(partialStatus))
+		}
+		msg, err := s.Response(r.Context(), req, opts...)
 		if err != nil {
 			http.Error(rw, err.Error(), http.StatusInternalServerError)
 			return
@@ -549,6 +592,14 @@ func TestBackChannel(t *testing.T) {
 	if got := <-sp2Got; got.Reason != saml.LogoutReasonAdmin || got.NotOnOrAfter == nil || !got.NotOnOrAfter.Equal(deadline) {
 		t.Fatalf("SP 2 got %+v", got)
 	}
+
+	// SP 2 ends the user's sessions only in part.
+	sp2Partial.Store(true)
+	resp, err = w.logout.SendRequest(ctx, p2)
+	if !errors.Is(err, idpslo.ErrPartialLogout) || resp == nil {
+		t.Fatalf("partial: got %v, %v", resp, err)
+	}
+	<-sp2Got
 }
 
 func TestSendRequestNeedsBackChannel(t *testing.T) {
