@@ -120,8 +120,9 @@ func WithScriptNonce(nonce string) ResponseOption {
 // user is, as the answer to req, to send with Message.Write. The assertion
 // is signed, and so is the Response (to sign only one of them, as some
 // IdPs do, set saml.IdentityProvider.ResponseSigning with
-// WithIdentityProvider); the assertion is encrypted if the SP's metadata
-// publishes an encryption certificate.
+// WithIdentityProvider; the assertion is signed all the same for an SP
+// whose metadata says WantAssertionsSigned="true"); the assertion is
+// encrypted if the SP's metadata publishes an encryption certificate.
 //
 // The service provider is looked up again, and req.ACSURL must still be
 // one of its assertion consumer services.

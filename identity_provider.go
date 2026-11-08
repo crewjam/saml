@@ -1740,16 +1740,27 @@ const (
 	// SignResponseOnly signs the Response, and not the assertion in it,
 	// as some IdPs (and Active Directory Federation Services, as an
 	// option) do. The assertion is then protected only while it is in
-	// that Response: it cannot be passed on, or kept, verifiably.
+	// that Response: it cannot be passed on, or kept, verifiably. The
+	// assertion is signed all the same for a service provider whose
+	// metadata says WantAssertionsSigned="true" (saml-metadata §2.4.4).
 	SignResponseOnly
 )
+
+// wantAssertionsSigned reports whether the service provider's metadata
+// asks for signed assertions (WantAssertionsSigned, saml-metadata §2.4.4),
+// which ResponseSigning cannot turn off.
+func (req *IdpAuthnRequest) wantAssertionsSigned() bool {
+	return req.SPSSODescriptor != nil && req.SPSSODescriptor.WantAssertionsSigned != nil && *req.SPSSODescriptor.WantAssertionsSigned
+}
 
 // The Canonicalizer prefix list MUST be empty. Various implementations
 // (maybe ours?) do not appear to support non-empty prefix lists in XML C14N.
 const canonicalizerPrefixList = ""
 
 // MakeAssertionEl sets `AssertionEl` to a signed, possibly encrypted, version of `Assertion`.
-// It is not signed if IDP.ResponseSigning is SignResponseOnly.
+// It is not signed if IDP.ResponseSigning is SignResponseOnly, unless the
+// service provider's metadata says WantAssertionsSigned="true"
+// (saml-metadata §2.4.4).
 //
 // When the request's NameIDPolicy Format is
 // urn:oasis:names:tc:SAML:2.0:nameid-format:encrypted and the service
@@ -1772,7 +1783,7 @@ func (req *IdpAuthnRequest) MakeAssertionEl() error {
 	}
 
 	var signedAssertionEl *etree.Element
-	if req.IDP == nil || req.IDP.ResponseSigning != SignResponseOnly {
+	if req.IDP == nil || req.IDP.ResponseSigning != SignResponseOnly || req.wantAssertionsSigned() {
 		signedAssertionEl, err = signingContext.SignEnveloped(req.Assertion.Element())
 		if err != nil {
 			return err

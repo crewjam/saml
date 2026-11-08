@@ -64,9 +64,11 @@ func TestResponseSigning(t *testing.T) {
 		{saml.SignAssertionOnly, false, true},
 		{saml.SignResponseOnly, true, false},
 	} {
-		p := newPair(t, []samlidp.Option{samlidp.WithIdentityProvider(func(idp *saml.IdentityProvider) {
+		// The SP's metadata says WantAssertionsSigned="false", so that
+		// SignResponseOnly is allowed to leave the assertion unsigned.
+		p := newPairWithMetadata(t, []samlidp.Option{samlidp.WithIdentityProvider(func(idp *saml.IdentityProvider) {
 			idp.ResponseSigning = tc.signing
-		})}, nil)
+		})}, nil, setWantAssertionsSigned(false))
 		_, root, a, err := p.respond(t, testSubject)
 		if err != nil {
 			t.Fatalf("%v: the SP refused the Response: %v", tc.signing, errors.Unwrap(err))
@@ -81,6 +83,29 @@ func TestResponseSigning(t *testing.T) {
 		if signed(root) != tc.responseSigned || signed(assertion) != tc.assertSigned {
 			t.Errorf("%v: Response signed %v, assertion signed %v", tc.signing, signed(root), signed(assertion))
 		}
+	}
+}
+
+func setWantAssertionsSigned(want bool) func(*saml.EntityDescriptor) {
+	return func(md *saml.EntityDescriptor) {
+		for i := range md.SPSSODescriptors {
+			md.SPSSODescriptors[i].WantAssertionsSigned = &want
+		}
+	}
+}
+
+// SignResponseOnly still signs the assertion for an SP whose metadata
+// says WantAssertionsSigned="true" (saml-metadata §2.4.4).
+func TestSignResponseOnlyHonorsWantAssertionsSigned(t *testing.T) {
+	p := newPairWithMetadata(t, []samlidp.Option{samlidp.WithIdentityProvider(func(idp *saml.IdentityProvider) {
+		idp.ResponseSigning = saml.SignResponseOnly
+	})}, nil, setWantAssertionsSigned(true))
+	_, root, _, err := p.respond(t, testSubject)
+	if err != nil {
+		t.Fatalf("the SP refused the Response: %v", errors.Unwrap(err))
+	}
+	if !signed(root) || !signed(root.FindElement("./Assertion")) {
+		t.Fatalf("Response signed %v, assertion signed %v", signed(root), signed(root.FindElement("./Assertion")))
 	}
 }
 
