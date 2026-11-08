@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -155,5 +157,40 @@ func TestQueryAttributes(t *testing.T) {
 	plain := newTestConfig(t, ti)
 	if _, err := plain.QueryAttributes(ctx, alice); !errors.Is(err, samlsp.ErrNoEndpoint) {
 		t.Errorf("err = %v, want ErrNoEndpoint", err)
+	}
+}
+
+// An entity that is only an attribute authority can answer QueryAttributes,
+// while the methods that need an IDPSSODescriptor fail.
+func TestQueryAttributesAttributeAuthorityOnly(t *testing.T) {
+	ti := newTestIDP(t)
+	aa := newAttributeAuthority(t, ti)
+	idpMD := ti.idp.Metadata()
+	md := &saml.EntityDescriptor{
+		EntityID: idpMD.EntityID,
+		AttributeAuthorityDescriptors: []saml.AttributeAuthorityDescriptor{{
+			RoleDescriptor: saml.RoleDescriptor{
+				ProtocolSupportEnumeration: "urn:oasis:names:tc:SAML:2.0:protocol",
+				KeyDescriptors:             idpMD.IDPSSODescriptors[0].KeyDescriptors,
+			},
+			AttributeServices: []saml.Endpoint{{Binding: saml.SOAPBinding, Location: aa.URL}},
+		}},
+	}
+	cfg := newTestConfigWithIDP(t, ti, samlsp.StaticMetadata(md), samlsp.WithHTTPClient(aa.Client()))
+	alice := saml.NameID{Format: string(saml.EmailAddressNameIDFormat), Value: "alice@example.com"}
+	attrs, err := cfg.QueryAttributes(t.Context(), alice)
+	if err != nil {
+		t.Fatalf("QueryAttributes: %v (%v)", err, errors.Unwrap(err))
+	}
+	if attrs.Get(attrname.Mail) != "alice@example.com" {
+		t.Errorf("attributes = %+v", attrs)
+	}
+
+	if _, err := cfg.AuthnRequest(t.Context(), "s"); !errors.Is(err, samlsp.ErrNoEndpoint) {
+		t.Errorf("AuthnRequest: err = %v, want ErrNoEndpoint", err)
+	}
+	r := postForm(spACSURL, url.Values{"SAMLResponse": {"x"}})
+	if _, err := cfg.ParseResponse(t.Context(), r, samlsp.AllowUnsolicited); err == nil || !strings.Contains(err.Error(), "no IDPSSODescriptor") {
+		t.Errorf("ParseResponse: err = %v, want no IDPSSODescriptor", err)
 	}
 }

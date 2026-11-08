@@ -37,10 +37,12 @@ func WithQueriedAttributes(names ...string) QueryOption {
 }
 
 // QueryAttributes asks the identity provider's attribute authority for the
-// current attributes of the user identified by nameID, with a signed
+// current attributes of the user identified by nameID, with an
 // AttributeQuery sent directly to it with the SOAP binding (saml-profiles
 // §6, saml-core §3.3.2.3). Pass the NameID of the user's login
-// (Assertion.NameID), so that the IdP knows who it names.
+// (Assertion.NameID), so that the IdP knows who it names. The IdP
+// metadata may describe an attribute authority alone: an entity with an
+// AttributeAuthorityDescriptor and no IDPSSODescriptor.
 //
 // The answer is verified as a login is, except that it need not answer a
 // browser request. It describes the user; it does not say the user is
@@ -50,8 +52,11 @@ func WithQueriedAttributes(names ...string) QueryOption {
 // It returns an error matching ErrNoEndpoint if the IdP metadata has no
 // SOAP AttributeService, and one matching saml.ErrBadStatus if the IdP
 // refused the query. The query is sent with the HTTP client of
-// WithHTTPClient, to an https endpoint only, and signed with the key of
-// WithSigningKey, by which most attribute authorities decide what to release.
+// WithHTTPClient, to an https endpoint only. It is signed with the key of
+// WithSigningKey, by which most attribute authorities decide what to
+// release. Without one it is sent unsigned, as the profile allows
+// (saml-profiles §6), for an attribute authority that authenticates the
+// SP some other way, such as by a TLS client certificate.
 func (c *Config) QueryAttributes(ctx context.Context, nameID saml.NameID, opts ...QueryOption) (Attributes, error) {
 	var o queryOptions
 	for _, opt := range opts {

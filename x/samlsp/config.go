@@ -151,7 +151,8 @@ func New(entityID string, identityProvider MetadataFunc, opts ...Option) (*Confi
 // harden turns on every check that package saml leaves off by default only
 // for compatibility. A ServiceProviderOption can turn one off again.
 func harden(sp *saml.ServiceProvider) {
-	// Check the AuthnContextClassRef against WithAuthnContext.
+	// Check the AuthnContextClassRef against a RequestedAuthnContext.
+	// ParseResponse turns it on again for a WithAuthnContext.
 	sp.ValidateAuthnContextClassRef = true
 	// Refuse assertions with conditions that are not understood
 	// (saml-core §2.5.1.1).
