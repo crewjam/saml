@@ -53,8 +53,9 @@ type MetadataProvider struct {
 }
 
 type metadataRefreshCall struct {
-	done chan struct{}
-	err  error
+	done   chan struct{}
+	err    error
+	forced bool
 }
 
 // NewMetadataProvider creates an on-demand metadata provider. If entityID is
@@ -130,7 +131,7 @@ func (p *MetadataProvider) get(ctx context.Context, force bool) (*saml.EntityDes
 			return nil, err
 		}
 		p.mu.Lock()
-		now := saml.TimeNow()
+		now := time.Now()
 		if !force && now.Before(p.nextRefreshAt) {
 			if p.current != nil && p.current.ValidateMetadataAt(now) == nil {
 				metadata := p.current
@@ -148,7 +149,10 @@ func (p *MetadataProvider) get(ctx context.Context, force bool) (*saml.EntityDes
 			p.mu.Unlock()
 			select {
 			case <-wait.done:
-				if force || errors.Is(wait.err, context.Canceled) {
+				if force && wait.forced {
+					return nil, wait.err
+				}
+				if errors.Is(wait.err, context.Canceled) {
 					return nil, wait.err
 				}
 				continue
@@ -157,7 +161,7 @@ func (p *MetadataProvider) get(ctx context.Context, force bool) (*saml.EntityDes
 			}
 		}
 
-		wait := &metadataRefreshCall{done: make(chan struct{})}
+		wait := &metadataRefreshCall{done: make(chan struct{}), forced: force}
 		p.refreshing = wait
 		previous := p.current
 		previousRetrievedAt := p.currentRetrievedAt
@@ -181,19 +185,20 @@ func (p *MetadataProvider) runRefresh(callerCtx context.Context, call *metadataR
 	defer cancel()
 
 	updated, retrievedAt, err := p.fetch(ctx)
-	now := saml.TimeNow()
+	now := time.Now()
 
 	p.mu.Lock()
-	if err == nil {
+	switch {
+	case err == nil:
 		p.current = updated
 		p.currentRetrievedAt = retrievedAt
 		p.nextRefreshAt = metadataRefreshAt(updated, retrievedAt, now)
 		p.lastError = nil
-	} else if errors.Is(err, context.Canceled) {
+	case errors.Is(err, context.Canceled):
 		p.lastError = nil
 		p.nextRefreshAt = now
 		call.err = err
-	} else {
+	default:
 		p.lastError = err
 		p.nextRefreshAt = metadataRetryAt(previous, now)
 		if previous != nil && previous.ValidateMetadataAt(now) == nil {
@@ -212,7 +217,7 @@ func (p *MetadataProvider) fetch(ctx context.Context) (*saml.EntityDescriptor, t
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	retrievedAt := saml.TimeNow()
+	retrievedAt := time.Now()
 	var metadata *saml.EntityDescriptor
 	switch {
 	case len(p.signingCerts) > 0 && p.entityID == "":

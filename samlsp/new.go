@@ -29,15 +29,15 @@ import (
 
 // Options represents the parameters for creating a new middleware
 type Options struct {
-	EntityID              string
-	URL                   url.URL
-	Key                   crypto.Signer
-	Certificate           *x509.Certificate
-	Intermediates         []*x509.Certificate
-	HTTPClient            *http.Client
-	AllowIDPInitiated     bool
-	DefaultRedirectURI    string
-	IDPMetadata           *saml.EntityDescriptor
+	EntityID           string
+	URL                url.URL
+	Key                crypto.Signer
+	Certificate        *x509.Certificate
+	Intermediates      []*x509.Certificate
+	HTTPClient         *http.Client
+	AllowIDPInitiated  bool
+	DefaultRedirectURI string
+	IDPMetadata        *saml.EntityDescriptor
 	// IDPMetadataProvider supplies metadata on demand and can refresh it over
 	// time. When set, its value takes precedence over IDPMetadata.
 	IDPMetadataProvider   IDPMetadataProvider

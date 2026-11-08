@@ -77,6 +77,57 @@ func TestMetadataProviderFallsBackAfterRefreshFailure(t *testing.T) {
 	assert.Equal(t, requestCount.Load(), int32(2))
 }
 
+func TestMetadataProviderForcedRefreshRunsAfterInFlightLoad(t *testing.T) {
+	metadataXML := providerTestMetadata()
+	requestStarted := make(chan struct{}, 2)
+	releaseFirstResponse := make(chan struct{})
+	defer func() {
+		select {
+		case <-releaseFirstResponse:
+		default:
+			close(releaseFirstResponse)
+		}
+	}()
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requestCount.Add(1) == 1 {
+			requestStarted <- struct{}{}
+			<-releaseFirstResponse
+		}
+		_, _ = w.Write(metadataXML)
+	}))
+	defer server.Close()
+
+	provider := newTestMetadataProvider(t, server)
+	metadataResult := make(chan error, 1)
+	go func() {
+		_, err := provider.Metadata(context.Background())
+		metadataResult <- err
+	}()
+	<-requestStarted
+
+	refreshResult := make(chan error, 1)
+	go func() {
+		refreshResult <- provider.Refresh(context.Background())
+	}()
+	// Let Refresh join the in-flight initial load before allowing it to finish.
+	time.Sleep(25 * time.Millisecond)
+	close(releaseFirstResponse)
+
+	for name, result := range map[string]<-chan error{
+		"metadata":       metadataResult,
+		"forced refresh": refreshResult,
+	} {
+		select {
+		case err := <-result:
+			assert.NilError(t, err, "%s", name)
+		case <-time.After(3 * time.Second):
+			t.Fatalf("%s did not finish", name)
+		}
+	}
+	assert.Equal(t, requestCount.Load(), int32(2), "forced refresh should perform its own fetch")
+}
+
 func TestMetadataProviderSharesConcurrentFetch(t *testing.T) {
 	metadataXML := providerTestMetadata()
 	requestStarted := make(chan struct{}, 1)
