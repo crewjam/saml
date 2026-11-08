@@ -126,3 +126,36 @@ func signedWith(t *testing.T, cfg *samlsp.Config, opts ...samlsp.ServiceProvider
 	}
 	return m.SelectAttrValue("Algorithm", "")
 }
+
+// A ServiceProviderOption that sets SignatureMethod makes the metadata say
+// AuthnRequestsSigned="true", so the AuthnRequests are signed too.
+func TestServiceProviderSignatureMethodSignsAuthnRequests(t *testing.T) {
+	ti := newTestIDP(t)
+	ti.idp.WantAuthnRequestsSigned = true
+	cfg := newTestConfig(t, ti, samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
+		sp.SignatureMethod = dsig.RSASHA512SignatureMethod
+	}))
+	if md := cfg.Metadata(t.Context()); !*md.SPSSODescriptors[0].AuthnRequestsSigned {
+		t.Fatal("the metadata does not say AuthnRequestsSigned")
+	}
+	msg, err := cfg.AuthnRequest(t.Context(), "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := msg.RedirectURL().Query().Get("SigAlg"); got != dsig.RSASHA512SignatureMethod {
+		t.Fatalf("AuthnRequest SigAlg = %q", got)
+	}
+	if _, err := cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID(msg.ID)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A signing key without its certificate could sign nothing the IdP can
+// verify, and the metadata would publish no signing key.
+func TestSigningKeyWithoutCertificate(t *testing.T) {
+	ti := newTestIDP(t)
+	key, _ := newKeyPair(t, "sp")
+	if _, err := samlsp.New(spEntityID, staticIDP(ti), samlsp.WithSigningKey(key, nil)); err == nil {
+		t.Fatal("New accepted WithSigningKey without a certificate")
+	}
+}

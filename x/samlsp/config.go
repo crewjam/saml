@@ -116,19 +116,8 @@ func New(entityID string, identityProvider MetadataFunc, opts ...Option) (*Confi
 		clock := c.clock
 		c.replayState = &replay.Memory{Now: func() time.Time { return clockNow(clock) }}
 	}
-	if c.encryptionKey != nil || c.encryptionCert != nil {
-		if c.encryptionKey == nil || c.encryptionCert == nil {
-			return nil, errors.New("samlsp: WithEncryptionKey needs both the key and its certificate")
-		}
-		if pub, ok := c.encryptionCert.PublicKey.(*rsa.PublicKey); !ok || !pub.Equal(&c.encryptionKey.PublicKey) {
-			return nil, errors.New("samlsp: the certificate of WithEncryptionKey is not for its key")
-		}
-	}
-	if !signerutil.IsNil(c.key) && c.certificate != nil {
-		pub, ok := c.key.Public().(interface{ Equal(crypto.PublicKey) bool })
-		if !ok || !pub.Equal(c.certificate.PublicKey) {
-			return nil, errors.New("samlsp: the certificate of WithSigningKey is not for its key")
-		}
+	if err := c.checkKeys(); err != nil {
+		return nil, err
 	}
 	if err := c.spMetadata.check(); err != nil {
 		return nil, err
@@ -251,13 +240,37 @@ func urlPath(u *url.URL) string {
 	return "/"
 }
 
+// checkKeys returns an error if the keys of WithEncryptionKey and
+// WithSigningKey lack their certificates, or have the wrong ones.
+func (c *Config) checkKeys() error {
+	if c.encryptionKey != nil || c.encryptionCert != nil {
+		if c.encryptionKey == nil || c.encryptionCert == nil {
+			return errors.New("samlsp: WithEncryptionKey needs both the key and its certificate")
+		}
+		if pub, ok := c.encryptionCert.PublicKey.(*rsa.PublicKey); !ok || !pub.Equal(&c.encryptionKey.PublicKey) {
+			return errors.New("samlsp: the certificate of WithEncryptionKey is not for its key")
+		}
+	}
+	if signerutil.IsNil(c.key) {
+		return nil
+	}
+	if c.certificate == nil {
+		return errors.New("samlsp: WithSigningKey needs the key's certificate")
+	}
+	pub, ok := c.key.Public().(interface{ Equal(crypto.PublicKey) bool })
+	if !ok || !pub.Equal(c.certificate.PublicKey) {
+		return errors.New("samlsp: the certificate of WithSigningKey is not for its key")
+	}
+	return nil
+}
+
 // WithSigningKey sets the key that the SP signs with, and its certificate,
 // which the SP metadata publishes for signing, with any intermediates of
 // its chain. It signs logout messages, attribute queries, artifact
 // resolution requests and artifact responses, AuthnRequests with SignAuthnRequests, and the metadata with
 // SignMetadata. It is used only for signing: to accept encrypted
 // assertions, use WithEncryptionKey, which may be given the same RSA key.
-// New returns an error if cert is not for key.
+// New returns an error if cert is nil or not for key.
 func WithSigningKey(key crypto.Signer, cert *x509.Certificate, intermediates ...*x509.Certificate) Option {
 	return optionFunc(func(c *Config, _ *configOptions) {
 		c.key, c.certificate = key, cert
