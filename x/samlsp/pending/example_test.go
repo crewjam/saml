@@ -57,11 +57,11 @@ func Example() {
 
 		// The data came from the login request, so check it as such: a
 		// path on this site, not one that browsers read as another host.
-		next := "/"
-		if isLocalPath(login.Data) {
-			next = login.Data
+		next := login.Data
+		if !isLocalPath(next) {
+			next = "/"
 		}
-		http.Redirect(w, r, next, http.StatusFound)
+		http.Redirect(w, r, next, http.StatusFound) //nolint:gosec // G710: next is checked by isLocalPath
 	})
 }
 

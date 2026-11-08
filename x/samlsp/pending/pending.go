@@ -283,18 +283,17 @@ func (t *Tracker) mac(name string, body []byte) []byte {
 }
 
 func (t *Tracker) cookie(name, value string, maxAge int) *http.Cookie {
-	c := &http.Cookie{
+	c := &http.Cookie{ //nolint:gosec // G124: Secure and SameSite=None are set below when the ACS is https; plain http keeps the browser default
 		Name:     name,
 		Value:    value,
 		Path:     t.path,
 		Domain:   t.domain,
 		MaxAge:   maxAge,
 		HttpOnly: true,
-		Secure:   t.secure,
 	}
 	if t.secure {
 		// The IdP's Response arrives with a cross-site POST.
-		c.SameSite = http.SameSiteNoneMode
+		c.Secure, c.SameSite = true, http.SameSiteNoneMode
 	}
 	return c
 }

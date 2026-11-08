@@ -266,7 +266,11 @@ func TestInvalid(t *testing.T) {
 		_, err := tr.Take(httptest.NewRecorder(), r)
 		return err
 	}
-	with := func(value string) *http.Cookie { return &http.Cookie{Name: c.Name, Value: value} }
+	// requestCookie is a cookie as the browser sends it, by name and value.
+	requestCookie := func(name, value string) *http.Cookie {
+		return &http.Cookie{Name: name, Value: value} //nolint:gosec // G124: a request cookie carries no attributes
+	}
+	with := func(value string) *http.Cookie { return requestCookie(c.Name, value) }
 	body, mac, _ := strings.Cut(c.Value, ".")
 
 	for _, tc := range []struct {
@@ -278,9 +282,7 @@ func TestInvalid(t *testing.T) {
 		{"other RelayState", pending.ErrNotFound, func(t *testing.T) error { return take(t, tr, "other", c) }},
 		{"moved to other RelayState", pending.ErrInvalid, func(t *testing.T) error {
 			_, w := remember(t, cfg, tr, "other", "")
-			moved := onlyCookie(t, w)
-			moved.Value = c.Value
-			return take(t, tr, "other", moved)
+			return take(t, tr, "other", requestCookie(onlyCookie(t, w).Name, c.Value))
 		}},
 		{"changed body", pending.ErrInvalid, func(t *testing.T) error {
 			return take(t, tr, "s", with(body+"x."+mac))
