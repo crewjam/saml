@@ -31,14 +31,16 @@ index b1c7520..7a1489a 100644
  	tokenString, err := token.SignedString([]byte(config_obj.Frontend.PrivateKey))
  	if err != nil {
 diff --git a/api/authenticators/saml.go b/api/authenticators/saml.go
-index 9689cbb..19406ac 100644
+index 9689cbb..be03bb2 100644
 --- a/api/authenticators/saml.go
 +++ b/api/authenticators/saml.go
-@@ -2,34 +2,35 @@ package authenticators
+@@ -2,34 +2,39 @@ package authenticators
  
  import (
  	"context"
++	"crypto/hmac"
 +	"crypto/rand"
++	"crypto/sha256"
 +	"errors"
  	"fmt"
  	"net/http"
@@ -50,6 +52,7 @@ index 9689cbb..19406ac 100644
 -	"github.com/crewjam/saml/samlsp"
 -	"github.com/gorilla/csrf"
 +	"github.com/crewjam/saml/x/samlsp"
++	"github.com/crewjam/saml/x/samlsp/pending"
  	"www.velocidex.com/golang/velociraptor/acls"
  	acl_proto "www.velocidex.com/golang/velociraptor/acls/proto"
  	api_proto "www.velocidex.com/golang/velociraptor/api/proto"
@@ -75,19 +78,15 @@ index 9689cbb..19406ac 100644
  	authenticator  *config_proto.Authenticator
  	user_roles     []string
 +	sp             *samlsp.Config
++	pending        *pending.Tracker
  }
  
  func (self *SamlAuthenticator) IsPasswordLess() bool {
-@@ -58,50 +59,31 @@ func (self *SamlAuthenticator) AddHandlers(mux *api_utils.ServeMux) error {
+@@ -58,50 +63,38 @@ func (self *SamlAuthenticator) AddHandlers(mux *api_utils.ServeMux) error {
  		return fmt.Errorf("SamlAuthenticator: %w", err)
  	}
  
 -	idpMetadataURL, err := url.Parse(self.authenticator.SamlIdpMetadataUrl)
--	if err != nil {
--		return fmt.Errorf("SamlAuthenticator: %w", err)
--	}
--
--	rootURL, err := url.Parse(self.authenticator.SamlRootUrl)
 -	if err != nil {
 -		return fmt.Errorf("SamlAuthenticator: %w", err)
 -	}
@@ -96,15 +95,23 @@ index 9689cbb..19406ac 100644
 +	// without a restart.
 +	idpMetadata := samlsp.RemoteMetadata(self.authenticator.SamlIdpMetadataUrl)
  
--	idpMetadata, err := samlsp.FetchMetadata(
--		context.Background(),
--		http.DefaultClient,
--		*idpMetadataURL)
+-	rootURL, err := url.Parse(self.authenticator.SamlRootUrl)
 +	// The same entity ID and ACS URL that samlsp.Middleware derived from
 +	// saml_root_url, so the registration at the IdP does not change.
 +	rootURL := strings.TrimSuffix(self.authenticator.SamlRootUrl, "/")
 +	self.sp, err = samlsp.New(idpMetadata, rootURL+"/saml/metadata",
 +		samlsp.WithKey(key, cert))
+ 	if err != nil {
+ 		return fmt.Errorf("SamlAuthenticator: %w", err)
+ 	}
+ 
+-	idpMetadata, err := samlsp.FetchMetadata(
+-		context.Background(),
+-		http.DefaultClient,
+-		*idpMetadataURL)
++	// Each login in progress is remembered in a cookie, as the
++	// oauthstate cookie does for OIDC.
++	self.pending, err = pending.New(self.sp, samlCookieKey(self.config_obj))
  	if err != nil {
  		return fmt.Errorf("SamlAuthenticator: %w", err)
  	}
@@ -146,7 +153,7 @@ index 9689cbb..19406ac 100644
  	logger.Info("Authentication via SAML enabled")
  	return nil
  }
-@@ -115,44 +97,92 @@ func (self *SamlAuthenticator) AuthenticateUserHandler(
+@@ -115,44 +108,82 @@ func (self *SamlAuthenticator) AuthenticateUserHandler(
  	parent http.Handler,
  	permission acls.ACL_PERMISSION,
  ) http.Handler {
@@ -160,33 +167,29 @@ index 9689cbb..19406ac 100644
 +}
  
 -	reject_handler := samlMiddleware.RequireAccount(parent)
-+const samlRequestCookiePrefix = "samlrequest_"
++// samlCookieKey derives the key of the pending-login cookies from the
++// frontend key, which also signs the VelociraptorAuth cookie.
++func samlCookieKey(config_obj *config_proto.Config) []byte {
++	mac := hmac.New(sha256.New, []byte(config_obj.Frontend.PrivateKey))
++	mac.Write([]byte("velociraptor saml pending login cookie"))
++	return mac.Sum(nil)
++}
  
 -	logger := GetLoggingHandler(self.config_obj)(parent)
-+// samlLogin sends the browser to the IdP. Like the oauthstate cookie of
-+// OIDC, a cookie named after the RelayState remembers the AuthnRequest's
-+// ID, which the ACS requires the Response to answer.
++// samlLogin sends the browser to the IdP, remembering the AuthnRequest's ID
++// until the IdP answers.
 +func (self *SamlAuthenticator) samlLogin() http.Handler {
 +	return api_utils.HandlerFunc(nil,
 +		func(w http.ResponseWriter, r *http.Request) {
-+			relayState := rand.Text()
-+			msg, err := self.sp.AuthnRequest(r.Context(), relayState)
++			msg, err := self.sp.AuthnRequest(r.Context(), rand.Text())
++			if err == nil {
++				err = self.pending.Remember(w, msg, "")
++			}
 +			if err != nil {
 +				self.Error("SamlAuthenticator: %v", err)
 +				RedirectWithError(w, r, api_utils.Homepage(self.config_obj), err)
 +				return
 +			}
-+			http.SetCookie(w, &http.Cookie{
-+				Name:     samlRequestCookiePrefix + relayState,
-+				Value:    msg.ID,
-+				Path:     api_utils.GetBasePath(self.config_obj, "/saml/acs"),
-+				MaxAge:   600,
-+				Secure:   true,
-+				HttpOnly: true,
-+				// Browsers do not send a Lax cookie with the
-+				// IdP's cross-site POST to the ACS.
-+				SameSite: http.SameSiteNoneMode,
-+			})
 +			msg.Write(w)
 +		})
 +}
@@ -199,14 +202,8 @@ index 9689cbb..19406ac 100644
  		func(w http.ResponseWriter, r *http.Request) {
 -			w.Header().Set("X-CSRF-Token", csrf.Token(r))
 +			var opts []samlsp.ResponseOption
-+			name := samlRequestCookiePrefix + r.FormValue("RelayState")
-+			if cookie, err := r.Cookie(name); err == nil {
-+				opts = append(opts, samlsp.WithRequestID(cookie.Value))
-+				http.SetCookie(w, &http.Cookie{
-+					Name:   name,
-+					Path:   api_utils.GetBasePath(self.config_obj, "/saml/acs"),
-+					MaxAge: -1,
-+				})
++			if login, err := self.pending.Take(w, r); err == nil {
++				opts = append(opts, samlsp.WithRequestID(login.ID))
 +			}
 +			if self.authenticator.SamlAllowIdpInitiated {
 +				opts = append(opts, samlsp.AllowUnsolicited)
@@ -259,7 +256,7 @@ index 9689cbb..19406ac 100644
  				http.Error(w,
  					fmt.Sprintf("authorization failed: %v", err),
  					http.StatusUnauthorized)
-@@ -160,56 +190,63 @@ func (self *SamlAuthenticator) AuthenticateUserHandler(
+@@ -160,56 +191,63 @@ func (self *SamlAuthenticator) AuthenticateUserHandler(
  			}
  			err = self.MaybeAssignRoles(r.Context(), username)
  			if err != nil {

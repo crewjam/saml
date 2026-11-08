@@ -66,45 +66,34 @@ index 3333deb..0000000
 -}
 diff --git a/server/auth.go b/server/auth.go
 new file mode 100644
-index 0000000..55700a4
+index 0000000..fe0966e
 --- /dev/null
 +++ b/server/auth.go
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,135 @@
 +package server
 +
 +import (
 +	"crypto/rand"
 +	"errors"
 +	"net/http"
-+	"time"
 +
 +	"github.com/crewjam/saml/x/samlsp"
-+	"github.com/golang-jwt/jwt/v5"
++	"github.com/crewjam/saml/x/samlsp/pending"
 +	"go.uber.org/zap"
 +)
 +
-+// authenticator does what samlsp.Middleware, its CookieSessionProvider and
-+// CookieRequestTracker did: x/samlsp handles only the SAML messages, and
-+// the cookies are ours.
++// authenticator does what samlsp.Middleware and its CookieSessionProvider
++// did: x/samlsp handles only the SAML messages, and the session cookie is
++// ours. The pending tracker replaces CookieRequestTracker.
 +type authenticator struct {
 +	sp           *samlsp.Config
++	pending      *pending.Tracker
 +	cfg          *Config
 +	logger       *zap.Logger
 +	codec        SessionCodec
 +	cookieDomain string
-+	acsPath      string
 +	secure       bool
 +}
-+
-+// pendingLogin is a login in progress, kept in a signed cookie named after
-+// its RelayState until the IdP answers. It replaces samlsp.TrackedRequest.
-+type pendingLogin struct {
-+	jwt.RegisteredClaims
-+	RequestID string `json:"rid"`
-+	URI       string `json:"uri"`
-+}
-+
-+const pendingCookiePrefix = "saml_"
 +
 +// session returns the session of the request's cookie.
 +func (a *authenticator) session(r *http.Request) (*Session, error) {
@@ -154,31 +143,12 @@ index 0000000..55700a4
 +		w.WriteHeader(http.StatusInternalServerError)
 +		return
 +	}
-+	value, err := a.codec.Encode(pendingLogin{
-+		RegisteredClaims: jwt.RegisteredClaims{
-+			Audience:  jwt.ClaimStrings{a.sp.EntityID()},
-+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(90 * time.Second)),
-+		},
-+		RequestID: msg.ID,
-+		URI:       a.returnURI(r),
-+	})
-+	if err != nil {
-+		a.logger.Error("Failed to encode pending login", zap.Error(err))
++	// Remember the request, and where to return to, until the IdP answers.
++	if err := a.pending.Remember(w, msg, a.returnURI(r)); err != nil {
++		a.logger.Error("Failed to remember the login", zap.Error(err))
 +		w.WriteHeader(http.StatusInternalServerError)
 +		return
 +	}
-+	http.SetCookie(w, &http.Cookie{
-+		Name:     pendingCookiePrefix + relayState,
-+		Value:    value,
-+		Domain:   a.cookieDomain,
-+		Path:     a.acsPath,
-+		MaxAge:   90,
-+		HttpOnly: true,
-+		Secure:   a.secure,
-+		// Browsers send a Lax cookie with a top-level GET, not with the
-+		// IdP's cross-site POST to the ACS.
-+		SameSite: http.SameSiteNoneMode,
-+	})
 +	msg.Write(w)
 +}
 +
@@ -196,14 +166,11 @@ index 0000000..55700a4
 +func (a *authenticator) acs(w http.ResponseWriter, r *http.Request) {
 +	var opts []samlsp.ResponseOption
 +	returnTo := "/"
-+	name := pendingCookiePrefix + r.FormValue("RelayState")
-+	if c, err := r.Cookie(name); err == nil {
-+		var p pendingLogin
-+		if err := a.codec.Decode(c.Value, &p); err == nil {
-+			opts = append(opts, samlsp.WithRequestID(p.RequestID))
-+			returnTo = p.URI
-+		}
-+		http.SetCookie(w, &http.Cookie{Name: name, Domain: a.cookieDomain, Path: a.acsPath, MaxAge: -1})
++	if login, err := a.pending.Take(w, r); err == nil {
++		opts = append(opts, samlsp.WithRequestID(login.ID))
++		returnTo = login.Data
++	} else if !errors.Is(err, pending.ErrNotFound) {
++		a.logger.Warn("Invalid pending login cookie", zap.Error(err))
 +	}
 +	if a.cfg.AllowIdpInitiated {
 +		opts = append(opts, samlsp.AllowUnsolicited)
@@ -442,11 +409,15 @@ index dac8bde..0000000
 -	return rv
 -}
 diff --git a/server/server.go b/server/server.go
-index 9747373..13322ef 100644
+index 9747373..238c0c1 100644
 --- a/server/server.go
 +++ b/server/server.go
-@@ -5,8 +5,6 @@ import (
+@@ -3,10 +3,10 @@ package server
+ import (
+ 	"context"
  	"crypto"
++	"crypto/hmac"
++	"crypto/sha256"
  	"crypto/tls"
  	"crypto/x509"
 -	"encoding/xml"
@@ -454,7 +425,7 @@ index 9747373..13322ef 100644
  	"fmt"
  	"log"
  	"net"
-@@ -14,16 +12,13 @@ import (
+@@ -14,16 +14,14 @@ import (
  	"net/url"
  	"os"
  	"strings"
@@ -465,6 +436,7 @@ index 9747373..13322ef 100644
  	"github.com/crewjam/saml"
 -	"github.com/crewjam/saml/samlsp"
 +	"github.com/crewjam/saml/x/samlsp"
++	"github.com/crewjam/saml/x/samlsp/pending"
  )
  
 -const fetchMetadataTimeout = 30 * time.Second
@@ -472,7 +444,7 @@ index 9747373..13322ef 100644
  func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *Config) error {
  	keyPair, err := tls.LoadX509KeyPair(cfg.SpCertPath, cfg.SpKeyPath)
  	if err != nil {
-@@ -39,12 +34,7 @@ func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *
+@@ -39,12 +37,7 @@ func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *
  		return fmt.Errorf("unsupported SP private key type %T: key must implement crypto.Signer", keyPair.PrivateKey)
  	}
  
@@ -486,7 +458,7 @@ index 9747373..13322ef 100644
  	if err != nil {
  		return fmt.Errorf("failed to parse base URL: %w", err)
  	}
-@@ -54,74 +44,59 @@ func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *
+@@ -54,74 +47,67 @@ func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *
  		return fmt.Errorf("failed to setup HTTP client: %w", err)
  	}
  
@@ -558,10 +530,7 @@ index 9747373..13322ef 100644
 -		CookieDomain:          cookieDomain,
 -		StaticRelayState:      cfg.StaticRelayState,
 -		TrustForwardedHeaders: cfg.AuthVerify,
-+	jwtCodec, err := NewJWTSessionCodec(privateKey, entityID)
-+	if err != nil {
-+		return err
- 	}
+-	}
 -	cookieSessionProvider := samlsp.DefaultSessionProvider(samlOpts)
 -	cookieSessionProvider.Name = cfg.CookieName
 -	cookieSessionProvider.Domain = cookieDomain
@@ -571,6 +540,10 @@ index 9747373..13322ef 100644
 -	codec.MaxAge = cfg.CookieMaxAge
 -	cookieSessionProvider.Codec = codec
 -
++	jwtCodec, err := NewJWTSessionCodec(privateKey, entityID)
++	if err != nil {
++		return err
++	}
 +	var codec SessionCodec = jwtCodec
  	if cfg.EncryptJWT {
 -		jweSessionCodec, err := NewJWESessionCodec(codec, codec.Key.Public(), privateKey)
@@ -585,18 +558,26 @@ index 9747373..13322ef 100644
 -		middleware.Session = NewInitAnonymousSessionProvider(logger, cfg.InitiateSessionPath, cookieSessionProvider)
 -	} else {
 -		middleware.Session = cookieSessionProvider
++	pendingKey, err := pendingCookieKey(keyPair.PrivateKey)
++	if err != nil {
++		return err
++	}
++	tracker, err := pending.New(sp, pendingKey, pending.WithDomain(cookieDomain))
++	if err != nil {
++		return fmt.Errorf("failed to create pending login tracker: %w", err)
++	}
 +	auth := &authenticator{
 +		sp:           sp,
++		pending:      tracker,
 +		cfg:          cfg,
 +		logger:       logger,
 +		codec:        codec,
 +		cookieDomain: cookieDomain,
-+		acsPath:      "/saml/acs",
 +		secure:       rootUrl.Scheme == "https",
  	}
  
  	proxy, err := NewProxy(logger, cfg)
-@@ -132,46 +107,17 @@ func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *
+@@ -132,46 +118,17 @@ func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *
  	app := http.HandlerFunc(proxy.handler)
  	if cfg.AuthVerify {
  		if cfg.AuthVerifyRequireLogin {
@@ -649,10 +630,22 @@ index 9747373..13322ef 100644
  
  	logger.
  		With(zap.String("baseUrl", cfg.BaseUrl)).
-@@ -181,6 +127,40 @@ func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *
+@@ -181,6 +138,52 @@ func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *
  	return http.Serve(listener, nil)
  }
  
++// pendingCookieKey derives the key of the pending-login cookies from the SP
++// private key, which signed them before as well.
++func pendingCookieKey(key crypto.PrivateKey) ([]byte, error) {
++	der, err := x509.MarshalPKCS8PrivateKey(key)
++	if err != nil {
++		return nil, fmt.Errorf("failed to derive the pending login cookie key: %w", err)
++	}
++	mac := hmac.New(sha256.New, der)
++	mac.Write([]byte("saml-auth-proxy pending login cookie"))
++	return mac.Sum(nil), nil
++}
++
 +func nameIDFormat(format string) saml.NameIDFormat {
 +	switch format {
 +	case "unspecified":
@@ -690,7 +683,7 @@ index 9747373..13322ef 100644
  func isNonInteractiveRequest(r *http.Request) bool {
  	// Legacy AJAX signal
  	if strings.EqualFold(r.Header.Get("X-Requested-With"), "XMLHttpRequest") {
-@@ -213,25 +193,6 @@ func isNonInteractiveRequest(r *http.Request) bool {
+@@ -213,25 +216,6 @@ func isNonInteractiveRequest(r *http.Request) bool {
  	return false
  }
  
@@ -716,7 +709,7 @@ index 9747373..13322ef 100644
  func setupHttpClient(idpCaFile string) (*http.Client, error) {
  	if idpCaFile == "" {
  		return http.DefaultClient, nil
-@@ -261,38 +222,24 @@ func setupHttpClient(idpCaFile string) (*http.Client, error) {
+@@ -261,38 +245,24 @@ func setupHttpClient(idpCaFile string) (*http.Client, error) {
  	return client, nil
  }
  
@@ -766,7 +759,7 @@ index 9747373..13322ef 100644
  }
 diff --git a/server/session.go b/server/session.go
 new file mode 100644
-index 0000000..fdd7a3f
+index 0000000..8a8e757
 --- /dev/null
 +++ b/server/session.go
 @@ -0,0 +1,133 @@
@@ -834,7 +827,7 @@ index 0000000..fdd7a3f
 +}
 +
 +// SessionCodec turns claims into a cookie value and back. It replaces
-+// samlsp.SessionCodec; it also encodes the pending-login cookie.
++// samlsp.SessionCodec.
 +type SessionCodec interface {
 +	Encode(claims jwt.Claims) (string, error)
 +	Decode(token string, claims jwt.Claims) error

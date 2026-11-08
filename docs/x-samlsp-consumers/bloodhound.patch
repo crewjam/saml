@@ -1,20 +1,20 @@
 diff --git a/cmd/api/src/api/v2/auth/saml.go b/cmd/api/src/api/v2/auth/saml.go
-index 7d87c7c..8addc95 100644
+index 7d87c7c..013d968 100644
 --- a/cmd/api/src/api/v2/auth/saml.go
 +++ b/cmd/api/src/api/v2/auth/saml.go
-@@ -18,18 +18,20 @@ package auth
+@@ -18,7 +18,9 @@ package auth
  
  import (
  	"context"
 -	"encoding/xml"
++	"crypto/hmac"
 +	"crypto/rand"
++	"crypto/sha256"
  	"errors"
  	"fmt"
  	"io"
- 	"log/slog"
- 	"mime/multipart"
+@@ -27,9 +29,11 @@ import (
  	"net/http"
-+	"net/url"
  	"strconv"
  	"strings"
 +	"time"
@@ -22,10 +22,11 @@ index 7d87c7c..8addc95 100644
  	"github.com/crewjam/saml"
 -	"github.com/crewjam/saml/samlsp"
 +	"github.com/crewjam/saml/x/samlsp"
++	"github.com/crewjam/saml/x/samlsp/pending"
  	"github.com/gorilla/mux"
  	"github.com/specterops/bloodhound/cmd/api/src/api"
  	v2 "github.com/specterops/bloodhound/cmd/api/src/api/v2"
-@@ -39,24 +41,14 @@ import (
+@@ -39,24 +43,14 @@ import (
  	"github.com/specterops/bloodhound/cmd/api/src/database/types/null"
  	"github.com/specterops/bloodhound/cmd/api/src/model"
  	"github.com/specterops/bloodhound/cmd/api/src/services/dogtags"
@@ -47,13 +48,13 @@ index 7d87c7c..8addc95 100644
 -</html>
 -`
 -)
-+// samlRequestCookie remembers the ID of the AuthnRequest of a login in
-+// progress, with its RelayState, until the IdP answers.
-+const samlRequestCookie = "bh_saml_request"
++// samlPendingLabel derives the key of the pending-login cookies from the
++// JWT signing key.
++const samlPendingLabel = "bloodhound saml pending login cookie"
  
  var ErrSAMLProviderMissing = errors.New("saml provider missing")
  
-@@ -86,7 +78,7 @@ func getMetadataFromMultipartRequest(multipartForm *multipart.Form, isRequired b
+@@ -86,7 +80,7 @@ func getMetadataFromMultipartRequest(multipartForm *multipart.Form, isRequired b
  		return nil, nil, fmt.Errorf("expected only one \"metadata\" parameter")
  	} else if metadataXML, err := getMetadataXML(metadataXMLFileHandles[0]); err != nil {
  		return nil, nil, err
@@ -62,7 +63,7 @@ index 7d87c7c..8addc95 100644
  		return nil, nil, err
  	} else {
  		return metadataXML, metadata, nil
-@@ -343,31 +335,41 @@ func (s ManagementResource) ServeMetadata(response http.ResponseWriter, request
+@@ -343,29 +337,39 @@ func (s ManagementResource) ServeMetadata(response http.ResponseWriter, request
  		api.HandleDatabaseError(request, response, err)
  	} else if ssoProvider.SAMLProvider == nil {
  		api.WriteErrorResponse(request.Context(), api.BuildErrorResponse(http.StatusNotFound, api.ErrorResponseDetailsResourceNotFound, request), response)
@@ -91,9 +92,9 @@ index 7d87c7c..8addc95 100644
 -		}
 +		// Note: This is the SP metadata tied to authenticate flow and will not be the same as the XML metadata used to import the SAML provider initially
 +		samlConfig.ServeMetadata(response, request)
- 	}
- }
- 
++	}
++}
++
 +// samlConfig returns the SAML service provider for ssoProvider.
 +func (s ManagementResource) samlConfig(request *http.Request, ssoProvider model.SSOProvider) (*samlsp.Config, error) {
 +	var issuer string
@@ -117,14 +118,12 @@ index 7d87c7c..8addc95 100644
 +	err := c.db.ConsumeSAMLAssertionID(c.ctx, c.ssoProviderID, c.issuer, assertionID, expiresAt)
 +	if errors.Is(err, database.ErrSAMLIdentifierAlreadyConsumed) {
 +		return saml.ErrAssertionReplayed
-+	}
+ 	}
 +	return err
-+}
-+
+ }
+ 
  // Provide the saml provider certificate
- func (s ManagementResource) ServeSigningCertificate(response http.ResponseWriter, request *http.Request) {
- 	rawProviderID := mux.Vars(request)[api.URIPathVariableSSOProviderID]
-@@ -391,12 +393,12 @@ func (s ManagementResource) ServeSigningCertificate(response http.ResponseWriter
+@@ -391,12 +395,12 @@ func (s ManagementResource) ServeSigningCertificate(response http.ResponseWriter
  	}
  }
  
@@ -139,7 +138,7 @@ index 7d87c7c..8addc95 100644
  		slog.WarnContext(
  			request.Context(),
  			"[SAML] Service provider creation failed",
-@@ -404,68 +406,36 @@ func (s ManagementResource) SAMLLoginHandler(response http.ResponseWriter, reque
+@@ -404,68 +408,35 @@ func (s ManagementResource) SAMLLoginHandler(response http.ResponseWriter, reque
  		)
  		// Technical issues scenario
  		api.RedirectToLoginURL(response, request, "Your SSO connection failed due to misconfiguration, please contact your Administrator")
@@ -147,10 +146,10 @@ index 7d87c7c..8addc95 100644
 -		var (
 -			binding         = saml.HTTPRedirectBinding
 -			bindingLocation = serviceProvider.GetSSOBindingLocation(binding)
-+	} else if authReq, err := s.SAML.AuthnRequest(request.Context(), samlConfig, rand.Text()); err != nil {
++	} else if tracker, err := s.samlPending(samlConfig); err != nil {
 +		slog.WarnContext(
 +			request.Context(),
-+			"[SAML] Failed creating SAML authentication request",
++			"[SAML] Pending login tracker creation failed",
 +			attr.Error(err),
  		)
 -		if bindingLocation == "" {
@@ -209,34 +208,34 @@ index 7d87c7c..8addc95 100644
 -				// Treating unknown binding as a misconfiguration
 -				api.RedirectToLoginURL(response, request, "Your SSO connection failed due to misconfiguration, please contact your Administrator")
 -			}
+-		}
++		api.RedirectToLoginURL(response, request, "Your SSO connection failed due to misconfiguration, please contact your Administrator")
++	} else if authReq, err := s.SAML.AuthnRequest(request.Context(), samlConfig, rand.Text()); err != nil {
++		slog.WarnContext(
++			request.Context(),
++			"[SAML] Failed creating SAML authentication request",
++			attr.Error(err),
++		)
 +		// SAML misconfiguration or technical issue
 +		// Since this likely indicates a configuration problem, we treat it as a misconfiguration scenario
 +		api.RedirectToLoginURL(response, request, "Your SSO connection failed due to misconfiguration, please contact your Administrator")
-+	} else {
++	} else if err := tracker.Remember(response, authReq, ""); err != nil {
 +		// Remember the request, so that the callback accepts only the
 +		// response to it (or an IdP-initiated one).
-+		acsPath := "/"
-+		if acsURL, err := url.Parse(samlConfig.ACSURL()); err == nil {
-+			acsPath = acsURL.Path
- 		}
-+		http.SetCookie(response, &http.Cookie{
-+			Name:     samlRequestCookie,
-+			Value:    authReq.RelayState + "." + authReq.ID,
-+			Path:     acsPath,
-+			MaxAge:   600,
-+			Secure:   true,
-+			HttpOnly: true,
-+			// Browsers do not send a Lax cookie with the IdP's cross-site POST.
-+			SameSite: http.SameSiteNoneMode,
-+		})
-+
++		slog.WarnContext(
++			request.Context(),
++			"[SAML] Failed to remember the SAML authentication request",
++			attr.Error(err),
++		)
++		api.RedirectToLoginURL(response, request, "Your SSO connection failed, please try again")
++	} else {
 +		// A redirect, or a page whose form posts itself, with its own
 +		// Content-Security-Policy.
 +		authReq.Write(response)
  	}
  }
  
-@@ -474,72 +444,36 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
+@@ -474,72 +445,36 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
  	if ssoProvider.SAMLProvider == nil {
  		// SAML misconfiguration
  		api.RedirectToLoginURL(response, request, "Your SSO connection failed due to misconfiguration, please contact your Administrator")
@@ -282,7 +281,7 @@ index 7d87c7c..8addc95 100644
 -		validatedResponse.ResponseID,
 -		validatedResponse.Assertion.ID,
 -		bhceSAML.CalculateSAMLTimeExpiry(validatedResponse.ResponseIssueInstant, validatedResponse.Assertion.IssueInstant)); err != nil {
-+	} else if validatedResponse, err := s.SAML.ParseResponse(request.Context(), samlConfig, request, s.samlResponseOptions(response, request)...); err != nil {
++	} else if validatedResponse, err := s.SAML.ParseResponse(request.Context(), samlConfig, request, s.samlResponseOptions(response, request, samlConfig)...); err != nil {
  		switch {
 -		case errors.Is(err, database.ErrSAMLIdentifierAlreadyConsumed):
 +		case errors.Is(err, saml.ErrAssertionReplayed):
@@ -317,7 +316,7 @@ index 7d87c7c..8addc95 100644
  		slog.WarnContext(
  			request.Context(),
  			"[SAML] Failed to lookup user for SAML provider",
-@@ -550,7 +484,7 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
+@@ -550,7 +485,7 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
  		api.RedirectToLoginURL(response, request, "Invalid assertion: no valid email address found")
  	} else {
  		if ssoProvider.Config.AutoProvision.Enabled {
@@ -326,19 +325,35 @@ index 7d87c7c..8addc95 100644
  				// It is safe to let this request drop into the CreateSSOSession function below to ensure proper audit logging
  				slog.WarnContext(
  					request.Context(),
-@@ -564,6 +498,19 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
+@@ -564,6 +499,35 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
  	}
  }
  
++// samlPending returns the tracker of the logins in progress with
++// samlConfig.
++func (s ManagementResource) samlPending(samlConfig *samlsp.Config) (*pending.Tracker, error) {
++	signingKey, err := s.config.Crypto.JWT.SigningKeyBytes()
++	if err != nil {
++		return nil, fmt.Errorf("invalid JWT signing key: %w", err)
++	}
++	mac := hmac.New(sha256.New, signingKey)
++	mac.Write([]byte(samlPendingLabel))
++	return pending.New(samlConfig, mac.Sum(nil))
++}
++
 +// samlResponseOptions accepts the response to the request that this
 +// browser started, if any, and an IdP-initiated response.
-+func (s ManagementResource) samlResponseOptions(response http.ResponseWriter, request *http.Request) []samlsp.ResponseOption {
++func (s ManagementResource) samlResponseOptions(response http.ResponseWriter, request *http.Request, samlConfig *samlsp.Config) []samlsp.ResponseOption {
 +	opts := []samlsp.ResponseOption{samlsp.AllowUnsolicited}
-+	if cookie, err := request.Cookie(samlRequestCookie); err == nil {
-+		if relayState, requestID, ok := strings.Cut(cookie.Value, "."); ok && relayState == request.FormValue("RelayState") {
-+			opts = append(opts, samlsp.WithRequestID(requestID))
-+		}
-+		http.SetCookie(response, &http.Cookie{Name: samlRequestCookie, Path: cookie.Path, MaxAge: -1})
++	tracker, err := s.samlPending(samlConfig)
++	if err != nil {
++		slog.WarnContext(request.Context(), "[SAML] Pending login tracker creation failed", attr.Error(err))
++		return opts
++	}
++	if login, err := tracker.Take(response, request); err == nil {
++		opts = append(opts, samlsp.WithRequestID(login.ID))
++	} else if !errors.Is(err, pending.ErrNotFound) {
++		slog.WarnContext(request.Context(), "[SAML] Invalid pending login cookie", attr.Error(err))
 +	}
 +	return opts
 +}
