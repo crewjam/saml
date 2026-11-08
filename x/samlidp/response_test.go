@@ -12,11 +12,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/beevik/etree"
 	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/x/samlidp"
 	"github.com/crewjam/saml/x/samlsp"
+	"github.com/crewjam/saml/xmlenc"
 )
 
 // decodeResponse returns the Response that msg posts.
@@ -227,10 +229,42 @@ func TestEncryptedNameIDFormat(t *testing.T) {
 	_, err = p.idp.Response(context.Background(), req, testSubject)
 	_ = asStatus(t, err, saml.StatusRequester, saml.StatusInvalidNameIDPolicy)
 
-	// It can: the NameID is in the encrypted assertion.
+	// It can: the NameID is issued as an EncryptedID (saml-core §8.3.9),
+	// in the encrypted assertion, which the SP decrypts.
 	p = newPair(t, nil, []samlsp.Option{samlsp.WithNameIDFormat(encrypted), samlsp.WithEncryptionKey(spKey, spCert)})
-	a, _ := p.login(t, nil, testSubject)
-	if a.Subject != testSubject.NameID {
+	ctx := context.Background()
+	msg, req, err := p.parse(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := p.idp.Response(ctx, req, testSubject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The participant, for single logout, has the plaintext NameID.
+	if resp.Participant == nil || resp.Participant.NameID.Value != testSubject.NameID || resp.Participant.NameID.Format != string(saml.TransientNameIDFormat) {
+		t.Fatalf("Participant = %+v", resp.Participant)
+	}
+	encryptedData := decodeResponse(t, resp).EncryptedAssertion.FindElement("./EncryptedData")
+	if encryptedData == nil {
+		t.Fatal("the assertion is not encrypted")
+	}
+	plaintext, err := xmlenc.Decrypt(spKey, encryptedData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(plaintext); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Root().FindElement("./Subject/NameID") != nil || doc.Root().FindElement("./Subject/EncryptedID/EncryptedData") == nil {
+		t.Fatalf("the assertion's Subject has no EncryptedID: %s", plaintext)
+	}
+	a, err := p.sp.ParseResponse(ctx, postForm(t, resp.Destination, formOf(t, resp)), samlsp.WithRequestID(msg.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Subject != testSubject.NameID || a.NameID.Format != string(saml.TransientNameIDFormat) {
 		t.Fatalf("got %+v", a)
 	}
 }

@@ -288,6 +288,10 @@ type IdentityProvider struct {
 	// them, AES-128-CBC is used, for compatibility with existing service
 	// providers. CBC has no integrity protection; set AssertionEncrypter to
 	// use AES-GCM with service providers that support it but do not say so.
+	//
+	// It also encrypts the EncryptedID that MakeAssertionEl issues in place
+	// of the Subject's NameID when the AuthnRequest asks for the encrypted
+	// NameID format (saml-core §3.4.1.1, §8.3.9).
 	AssertionEncrypter xmlenc.Encrypter
 
 	// SignMetadata, if true, causes ServeMetadata to publish metadata that
@@ -459,7 +463,9 @@ type IdentityProvider struct {
 	// what identifier to give under it, is up to the SessionProvider, which
 	// can read the policy from IdpAuthnRequest.Request.
 	//
-	// If false, the NameIDPolicy is ignored, as before.
+	// If false, the NameIDPolicy is ignored, as before, except that a
+	// request for the encrypted format gets an EncryptedID whether or not
+	// it is set (see MakeAssertionEl).
 	//
 	// Service providers built with this package, including samlsp, ask for
 	// the transient format by default (ServiceProvider.AuthnNameIDFormat
@@ -1696,12 +1702,24 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 const canonicalizerPrefixList = ""
 
 // MakeAssertionEl sets `AssertionEl` to a signed, possibly encrypted, version of `Assertion`.
+//
+// When the request's NameIDPolicy Format is
+// urn:oasis:names:tc:SAML:2.0:nameid-format:encrypted and the service
+// provider publishes an encryption certificate, the Subject's NameID is
+// first replaced with a saml:EncryptedID that holds it, encrypted to that
+// certificate with AssertionEncrypter (saml-core §2.2.4, §3.4.1.1,
+// §8.3.9): Assertion.Subject.NameID is then nil and
+// Assertion.Subject.EncryptedID is set. The NameID keeps the format it was
+// issued with. Without a certificate, the NameID is issued as it is.
 func (req *IdpAuthnRequest) MakeAssertionEl() error {
 	if req.Assertion == nil {
 		return errors.New("the request has no assertion: call MakeAssertion first")
 	}
 	signingContext, err := req.signingContext()
 	if err != nil {
+		return err
+	}
+	if err := req.encryptSubjectNameID(); err != nil {
 		return err
 	}
 
@@ -1749,6 +1767,40 @@ func (req *IdpAuthnRequest) MakeAssertionEl() error {
 	encryptedAssertionEl.AddChild(encryptedDataEl)
 	req.AssertionEl = encryptedAssertionEl
 
+	return nil
+}
+
+// requestsEncryptedNameID reports whether the request's NameIDPolicy asks
+// for the encrypted NameID format (saml-core §3.4.1.1, §8.3.9).
+func (req *IdpAuthnRequest) requestsEncryptedNameID() bool {
+	policy := req.Request.NameIDPolicy
+	return policy != nil && policy.Format != nil && *policy.Format == encryptedNameIDFormat
+}
+
+// encryptSubjectNameID replaces the NameID of the Subject of req.Assertion
+// with an EncryptedID that holds it, if the request asks for the encrypted
+// format and the service provider publishes an encryption certificate.
+func (req *IdpAuthnRequest) encryptSubjectNameID() error {
+	subject := req.Assertion.Subject
+	if subject == nil || subject.NameID == nil || subject.EncryptedID != nil || req.SPSSODescriptor == nil || !req.requestsEncryptedNameID() {
+		return nil
+	}
+	cert, methods, err := encryptionKey(req.SPSSODescriptor.KeyDescriptors)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	var configured xmlenc.Encrypter
+	if req.IDP != nil {
+		configured = req.IDP.AssertionEncrypter
+	}
+	encryptedID, err := encryptIdentifier(subject.NameID.Element(), cert, assertionEncrypter(configured, methods))
+	if err != nil {
+		return fmt.Errorf("cannot encrypt NameID: %w", err)
+	}
+	subject.EncryptedID = encryptedID
+	subject.NameID = nil
 	return nil
 }
 

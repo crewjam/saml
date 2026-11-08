@@ -88,8 +88,9 @@ type AuthnRequest struct {
 	// (the Format of its NameIDPolicy). Response refuses a Subject whose
 	// NameIDFormat differs, unless this is unspecified or
 	// "urn:oasis:names:tc:SAML:2.0:nameid-format:encrypted". For the
-	// latter, the assertion must be encrypted: Response refuses it, with
-	// StatusInvalidNameIDPolicy, if the SP publishes no encryption key.
+	// latter, Response issues the NameID as an EncryptedID (saml-core
+	// §8.3.9), and refuses it, with StatusInvalidNameIDPolicy, if the SP
+	// publishes no encryption key.
 	NameIDFormat saml.NameIDFormat
 
 	// SPNameQualifier is the SPNameQualifier of the NameIDPolicy, if any:

@@ -129,9 +129,10 @@ func WithScriptNonce(nonce string) ResponseOption {
 // does not allow, an authentication context that
 // subject.AuthnContextClassRef does not satisfy, or a user other than
 // subject. It may ask for an encrypted NameID: Response issues the NameID
-// in the assertion, which is then encrypted, and refuses the request if
+// as an EncryptedID (saml-core §2.2.4, §8.3.9), and refuses the request if
 // the SP's metadata publishes no encryption certificate. The error then
 // matches *saml.StatusError; send it to the SP with ErrorResponse.
+// WithAssertion sees the plaintext NameID, which is encrypted after it.
 //
 // If req.ForceAuthn is set, subject.AuthnInstant must not be before
 // req.IssueInstant, give or take the clock skew (see WithClockSkew): Response returns an
@@ -190,25 +191,26 @@ func (c *Config) Response(ctx context.Context, req *AuthnRequest, subject Subjec
 	if err := ireq.CheckRequestSubject(); err != nil {
 		return nil, err
 	}
-	if err := ireq.MakeAssertionEl(); err != nil {
-		return nil, err
-	}
-	// Package saml issues a plaintext NameID whatever the policy asks;
-	// within an encrypted assertion it is as confidential as an
-	// EncryptedID would make it.
-	if ireq.IDP.EnforceNameIDPolicy && req.NameIDFormat == encryptedNameIDFormat && ireq.AssertionEl.Tag != "EncryptedAssertion" {
-		return nil, &saml.StatusError{
-			TopLevel:    saml.StatusRequester,
-			SecondLevel: saml.StatusInvalidNameIDPolicy,
-			Message:     "an encrypted name identifier needs an encryption key in the service provider's metadata",
-		}
-	}
+	// The participant is identified by the plaintext NameID, which
+	// MakeAssertionEl replaces with an EncryptedID if the request asks.
 	participant := &saml.SessionParticipant{
 		ServiceProviderID: ireq.ServiceProviderMetadata.EntityID,
 		SessionIndex:      subject.SessionIndex,
 	}
 	if a.Subject != nil && a.Subject.NameID != nil {
 		participant.NameID = *a.Subject.NameID
+	}
+	if err := ireq.MakeAssertionEl(); err != nil {
+		return nil, err
+	}
+	// Package saml issues an EncryptedID for the encrypted format only if
+	// the SP has an encryption key (saml-core §3.4.1.1, §8.3.9).
+	if ireq.IDP.EnforceNameIDPolicy && req.NameIDFormat == encryptedNameIDFormat && (a.Subject == nil || a.Subject.EncryptedID == nil) {
+		return nil, &saml.StatusError{
+			TopLevel:    saml.StatusRequester,
+			SecondLevel: saml.StatusInvalidNameIDPolicy,
+			Message:     "an encrypted name identifier needs an encryption key in the service provider's metadata",
+		}
 	}
 	if err := ireq.MakeResponse(); err != nil {
 		return nil, err
