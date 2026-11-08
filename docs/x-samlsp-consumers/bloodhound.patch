@@ -1,20 +1,18 @@
 diff --git a/cmd/api/src/api/v2/auth/saml.go b/cmd/api/src/api/v2/auth/saml.go
-index 7d87c7c..95ae85b 100644
+index 7d87c7c..1f428b8 100644
 --- a/cmd/api/src/api/v2/auth/saml.go
 +++ b/cmd/api/src/api/v2/auth/saml.go
-@@ -18,7 +18,10 @@ package auth
+@@ -18,7 +18,8 @@ package auth
  
  import (
  	"context"
 -	"encoding/xml"
-+	"crypto/hmac"
 +	"crypto/rand"
-+	"crypto/sha256"
 +	"encoding/hex"
  	"errors"
  	"fmt"
  	"io"
-@@ -27,9 +30,11 @@ import (
+@@ -27,9 +28,11 @@ import (
  	"net/http"
  	"strconv"
  	"strings"
@@ -27,7 +25,7 @@ index 7d87c7c..95ae85b 100644
  	"github.com/gorilla/mux"
  	"github.com/specterops/bloodhound/cmd/api/src/api"
  	v2 "github.com/specterops/bloodhound/cmd/api/src/api/v2"
-@@ -39,24 +44,14 @@ import (
+@@ -39,24 +42,14 @@ import (
  	"github.com/specterops/bloodhound/cmd/api/src/database/types/null"
  	"github.com/specterops/bloodhound/cmd/api/src/model"
  	"github.com/specterops/bloodhound/cmd/api/src/services/dogtags"
@@ -51,11 +49,11 @@ index 7d87c7c..95ae85b 100644
 -)
 +// samlPendingLabel derives the key of the pending-login cookies from the
 +// JWT signing key.
-+const samlPendingLabel = "bloodhound saml pending login cookie"
++const samlPendingLabel = "bloodhound saml pending login"
  
  var ErrSAMLProviderMissing = errors.New("saml provider missing")
  
-@@ -343,31 +338,51 @@ func (s ManagementResource) ServeMetadata(response http.ResponseWriter, request
+@@ -343,31 +336,51 @@ func (s ManagementResource) ServeMetadata(response http.ResponseWriter, request
  		api.HandleDatabaseError(request, response, err)
  	} else if ssoProvider.SAMLProvider == nil {
  		api.WriteErrorResponse(request.Context(), api.BuildErrorResponse(http.StatusNotFound, api.ErrorResponseDetailsResourceNotFound, request), response)
@@ -127,7 +125,7 @@ index 7d87c7c..95ae85b 100644
  // Provide the saml provider certificate
  func (s ManagementResource) ServeSigningCertificate(response http.ResponseWriter, request *http.Request) {
  	rawProviderID := mux.Vars(request)[api.URIPathVariableSSOProviderID]
-@@ -391,12 +406,12 @@ func (s ManagementResource) ServeSigningCertificate(response http.ResponseWriter
+@@ -391,12 +404,12 @@ func (s ManagementResource) ServeSigningCertificate(response http.ResponseWriter
  	}
  }
  
@@ -142,7 +140,7 @@ index 7d87c7c..95ae85b 100644
  		slog.WarnContext(
  			request.Context(),
  			"[SAML] Service provider creation failed",
-@@ -404,68 +419,35 @@ func (s ManagementResource) SAMLLoginHandler(response http.ResponseWriter, reque
+@@ -404,68 +417,35 @@ func (s ManagementResource) SAMLLoginHandler(response http.ResponseWriter, reque
  		)
  		// Technical issues scenario
  		api.RedirectToLoginURL(response, request, "Your SSO connection failed due to misconfiguration, please contact your Administrator")
@@ -239,7 +237,7 @@ index 7d87c7c..95ae85b 100644
  	}
  }
  
-@@ -474,72 +456,51 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
+@@ -474,72 +454,51 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
  	if ssoProvider.SAMLProvider == nil {
  		// SAML misconfiguration
  		api.RedirectToLoginURL(response, request, "Your SSO connection failed due to misconfiguration, please contact your Administrator")
@@ -261,7 +259,8 @@ index 7d87c7c..95ae85b 100644
 -		api.RedirectToLoginURL(response, request, fmt.Sprintf("Invalid SSO response %s", err.Error()))
 -	} else if validatedResponse, err := s.SAML.ParseResponse(serviceProvider, request, nil); err != nil {
 -		var typedErr *saml.InvalidResponseError
--		switch {
++	} else if validatedResponse, err := s.SAML.ParseResponse(request.Context(), samlConfig, request, s.samlResponseOptions(response, request, samlConfig)...); err != nil {
+ 		switch {
 -		case errors.As(err, &typedErr):
 -			slog.WarnContext(
 -				request.Context(),
@@ -285,8 +284,7 @@ index 7d87c7c..95ae85b 100644
 -		validatedResponse.ResponseID,
 -		validatedResponse.Assertion.ID,
 -		bhceSAML.CalculateSAMLTimeExpiry(validatedResponse.ResponseIssueInstant, validatedResponse.Assertion.IssueInstant)); err != nil {
-+	} else if validatedResponse, err := s.SAML.ParseResponse(request.Context(), samlConfig, request, s.samlResponseOptions(response, request, samlConfig)...); err != nil {
- 		switch {
+-		switch {
 -		case errors.Is(err, database.ErrSAMLIdentifierAlreadyConsumed):
 +		case errors.Is(err, saml.ErrAssertionReplayed):
  			slog.WarnContext(
@@ -332,7 +330,7 @@ index 7d87c7c..95ae85b 100644
  		slog.WarnContext(
  			request.Context(),
  			"[SAML] Failed to lookup user for SAML provider",
-@@ -550,7 +511,7 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
+@@ -550,7 +509,7 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
  		api.RedirectToLoginURL(response, request, "Invalid assertion: no valid email address found")
  	} else {
  		if ssoProvider.Config.AutoProvision.Enabled {
@@ -341,7 +339,7 @@ index 7d87c7c..95ae85b 100644
  				// It is safe to let this request drop into the CreateSSOSession function below to ensure proper audit logging
  				slog.WarnContext(
  					request.Context(),
-@@ -564,6 +525,35 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
+@@ -564,6 +523,37 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
  	}
  }
  
@@ -352,9 +350,11 @@ index 7d87c7c..95ae85b 100644
 +	if err != nil {
 +		return nil, fmt.Errorf("invalid JWT signing key: %w", err)
 +	}
-+	mac := hmac.New(sha256.New, signingKey)
-+	mac.Write([]byte(samlPendingLabel))
-+	return pending.New(samlConfig, mac.Sum(nil))
++	key, err := pending.DeriveKey(signingKey, samlPendingLabel)
++	if err != nil {
++		return nil, fmt.Errorf("invalid JWT signing key: %w", err)
++	}
++	return pending.New(samlConfig, key)
 +}
 +
 +// samlResponseOptions accepts the response to the request that this
@@ -431,7 +431,7 @@ index 45b4ccd..577866f 100644
 +	}
 +}
 diff --git a/cmd/api/src/api/v2/auth/saml_test.go b/cmd/api/src/api/v2/auth/saml_test.go
-index 5e220e4..eb48e31 100644
+index 5e220e4..e842d3f 100644
 --- a/cmd/api/src/api/v2/auth/saml_test.go
 +++ b/cmd/api/src/api/v2/auth/saml_test.go
 @@ -20,6 +20,7 @@ import (
@@ -455,10 +455,24 @@ index 5e220e4..eb48e31 100644
  	"github.com/gorilla/mux"
  	"github.com/pkg/errors"
  	"github.com/specterops/bloodhound/cmd/api/src/auth"
-@@ -54,6 +58,35 @@ import (
+@@ -54,6 +58,49 @@ import (
  	"go.uber.org/mock/gomock"
  )
  
++// samlTestConfig is the configuration of the SAML handler tests: the SP's
++// certificate and key, and a JWT signing key, from which the key of the
++// pending-login cookies is derived.
++func samlTestConfig() config.Configuration {
++	cfg := config.Configuration{
++		SAML: config.SAMLConfiguration{
++			ServiceProviderCertificate: ValidCert,
++			ServiceProviderKey:         ValidKey,
++		},
++	}
++	cfg.Crypto.JWT.SetSigningKeyBytes([]byte("0123456789abcdef0123456789abcdef"))
++	return cfg
++}
++
 +// samlTestHost is the host the SAML handlers are served at, as the bhctx
 +// middleware sets it: an absolute URL, which x/samlsp needs for the SP's
 +// URLs. It is http, so that cookies are not Secure, as in the other tests.
@@ -491,7 +505,7 @@ index 5e220e4..eb48e31 100644
  var validMetadataXML = `<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://okta.com/saml">
  		<IDPSSODescriptor WantAuthnRequestsSigned="false" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
  			<SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://okta.com/sso"/>
-@@ -1957,6 +1990,8 @@ func TestManagementResource_ServeMetadata(t *testing.T) {
+@@ -1957,6 +2004,8 @@ func TestManagementResource_ServeMetadata(t *testing.T) {
  		responseCode   int
  		responseHeader http.Header
  		responseBody   string
@@ -500,7 +514,7 @@ index 5e220e4..eb48e31 100644
  	}
  	type testData struct {
  		name         string
-@@ -2010,7 +2045,7 @@ func TestManagementResource_ServeMetadata(t *testing.T) {
+@@ -2010,7 +2059,7 @@ func TestManagementResource_ServeMetadata(t *testing.T) {
  			},
  		},
  		{
@@ -509,7 +523,7 @@ index 5e220e4..eb48e31 100644
  			buildRequest: func() *http.Request {
  				request := &http.Request{
  					URL: &url.URL{
-@@ -2040,7 +2075,7 @@ func TestManagementResource_ServeMetadata(t *testing.T) {
+@@ -2040,7 +2089,7 @@ func TestManagementResource_ServeMetadata(t *testing.T) {
  			expected: expected{
  				responseCode:   http.StatusInternalServerError,
  				responseHeader: http.Header{"Content-Type": []string{"application/json"}},
@@ -518,7 +532,7 @@ index 5e220e4..eb48e31 100644
  			},
  		},
  		{
-@@ -2054,7 +2089,7 @@ func TestManagementResource_ServeMetadata(t *testing.T) {
+@@ -2054,7 +2103,7 @@ func TestManagementResource_ServeMetadata(t *testing.T) {
  				}
  
  				bhContext := &bhctx.Context{
@@ -527,7 +541,7 @@ index 5e220e4..eb48e31 100644
  				}
  				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
  			},
-@@ -2069,13 +2104,32 @@ func TestManagementResource_ServeMetadata(t *testing.T) {
+@@ -2069,13 +2118,32 @@ func TestManagementResource_ServeMetadata(t *testing.T) {
  						IssuerURI:       "https://okta.com/saml",
  						SingleSignOnURI: "https://okta.com/sso",
  						MetadataXML:     []byte(validMetadataXML),
@@ -561,7 +575,22 @@ index 5e220e4..eb48e31 100644
  			},
  		},
  	}
-@@ -2114,14 +2168,7 @@ func TestManagementResource_ServeMetadata(t *testing.T) {
+@@ -2094,13 +2162,7 @@ func TestManagementResource_ServeMetadata(t *testing.T) {
+ 			request := testCase.buildRequest()
+ 			testCase.setupMocks(t, mocks)
+ 
+-			resources := v2auth.NewManagementResource(config.Configuration{
+-				SAML: config.SAMLConfiguration{
+-					ServiceProviderCertificate:        ValidCert,
+-					ServiceProviderKey:                ValidKey,
+-					ServiceProviderCertificateCAChain: "",
+-				},
+-			}, mocks.mockDatabase, auth.NewAuthorizer(mocks.mockDatabase), api.NewAuthenticator(config.Configuration{}, mocks.mockDatabase, nil), nil, nil, nil)
++			resources := v2auth.NewManagementResource(samlTestConfig(), mocks.mockDatabase, auth.NewAuthorizer(mocks.mockDatabase), api.NewAuthenticator(config.Configuration{}, mocks.mockDatabase, nil), nil, nil, nil)
+ 			response := httptest.NewRecorder()
+ 
+ 			router := mux.NewRouter()
+@@ -2114,14 +2176,7 @@ func TestManagementResource_ServeMetadata(t *testing.T) {
  			if status != http.StatusOK {
  				assert.JSONEq(t, testCase.expected.responseBody, body)
  			} else {
@@ -577,7 +606,7 @@ index 5e220e4..eb48e31 100644
  			}
  		})
  	}
-@@ -2303,7 +2350,7 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+@@ -2303,7 +2358,7 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
  				}
  
  				bhContext := &bhctx.Context{
@@ -586,7 +615,7 @@ index 5e220e4..eb48e31 100644
  				}
  				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
  			},
-@@ -2317,11 +2364,11 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+@@ -2317,11 +2372,11 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
  			},
  			expected: expected{
  				responseCode:   http.StatusFound,
@@ -600,7 +629,7 @@ index 5e220e4..eb48e31 100644
  			buildRequest: func() *http.Request {
  				request := http.Request{
  					URL: &url.URL{
-@@ -2331,7 +2378,7 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+@@ -2331,7 +2386,7 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
  				}
  
  				bhContext := &bhctx.Context{
@@ -609,7 +638,7 @@ index 5e220e4..eb48e31 100644
  				}
  				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
  			},
-@@ -2347,11 +2394,11 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+@@ -2347,11 +2402,11 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
  			},
  			expected: expected{
  				responseCode:   http.StatusFound,
@@ -623,7 +652,7 @@ index 5e220e4..eb48e31 100644
  			buildRequest: func() *http.Request {
  				request := http.Request{
  					URL: &url.URL{
-@@ -2361,7 +2408,7 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+@@ -2361,7 +2416,7 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
  				}
  
  				bhContext := &bhctx.Context{
@@ -632,7 +661,7 @@ index 5e220e4..eb48e31 100644
  				}
  				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
  			},
-@@ -2375,15 +2422,15 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+@@ -2375,15 +2430,15 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
  						MetadataXML: []byte(validMetadataXML),
  					},
  				}, nil)
@@ -651,7 +680,7 @@ index 5e220e4..eb48e31 100644
  			buildRequest: func() *http.Request {
  				request := http.Request{
  					URL: &url.URL{
-@@ -2393,7 +2440,7 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+@@ -2393,7 +2448,7 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
  				}
  
  				bhContext := &bhctx.Context{
@@ -660,7 +689,7 @@ index 5e220e4..eb48e31 100644
  				}
  				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
  			},
-@@ -2411,7 +2458,7 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+@@ -2411,7 +2466,7 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
  	</EntityDescriptor>`),
  					},
  				}, nil)
@@ -669,7 +698,7 @@ index 5e220e4..eb48e31 100644
  			},
  			expected: expected{
  				responseCode: http.StatusFound,
-@@ -2421,16 +2468,19 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+@@ -2421,16 +2476,19 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
  
  					locationURL, err := url.Parse(location)
  					require.Nil(t, err)
@@ -690,7 +719,7 @@ index 5e220e4..eb48e31 100644
  			buildRequest: func() *http.Request {
  				request := http.Request{
  					URL: &url.URL{
-@@ -2440,7 +2490,7 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+@@ -2440,7 +2498,7 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
  				}
  
  				bhContext := &bhctx.Context{
@@ -699,7 +728,7 @@ index 5e220e4..eb48e31 100644
  				}
  				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
  			},
-@@ -2454,11 +2504,11 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+@@ -2454,11 +2512,11 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
  						MetadataXML: []byte(validMetadataXML),
  					},
  				}, nil)
@@ -714,7 +743,22 @@ index 5e220e4..eb48e31 100644
  			},
  		},
  	}
-@@ -2533,7 +2583,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -2476,13 +2534,7 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+ 			request := testCase.buildRequest()
+ 			testCase.setupMocks(t, mocks)
+ 
+-			resources := v2auth.NewManagementResource(config.Configuration{
+-				SAML: config.SAMLConfiguration{
+-					ServiceProviderCertificate:        ValidCert,
+-					ServiceProviderKey:                ValidKey,
+-					ServiceProviderCertificateCAChain: "",
+-				},
+-			}, mocks.mockDatabase, auth.NewAuthorizer(mocks.mockDatabase), api.NewAuthenticator(config.Configuration{}, mocks.mockDatabase, nil), nil, nil, nil)
++			resources := v2auth.NewManagementResource(samlTestConfig(), mocks.mockDatabase, auth.NewAuthorizer(mocks.mockDatabase), api.NewAuthenticator(config.Configuration{}, mocks.mockDatabase, nil), nil, nil, nil)
+ 			resources.SAML = mocks.mockSAML
+ 			response := httptest.NewRecorder()
+ 
+@@ -2533,7 +2585,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  				}
  
  				bhContext := &bhctx.Context{
@@ -723,7 +767,7 @@ index 5e220e4..eb48e31 100644
  				}
  				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
  			},
-@@ -2547,11 +2597,11 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -2547,11 +2599,11 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  			},
  			expected: expected{
  				responseCode:   http.StatusFound,
@@ -737,7 +781,7 @@ index 5e220e4..eb48e31 100644
  			buildRequest: func() *http.Request {
  				request := &http.Request{
  					URL: &url.URL{
-@@ -2561,7 +2611,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -2561,7 +2613,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  				}
  
  				bhContext := &bhctx.Context{
@@ -746,7 +790,7 @@ index 5e220e4..eb48e31 100644
  				}
  				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
  			},
-@@ -2577,7 +2627,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -2577,7 +2629,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  			},
  			expected: expected{
  				responseCode:   http.StatusFound,
@@ -755,7 +799,7 @@ index 5e220e4..eb48e31 100644
  			},
  		},
  		{
-@@ -2591,7 +2641,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -2591,7 +2643,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  				}
  
  				bhContext := &bhctx.Context{
@@ -764,7 +808,7 @@ index 5e220e4..eb48e31 100644
  				}
  				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
  			},
-@@ -2612,13 +2662,13 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -2612,13 +2664,13 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  					</EntityDescriptor>`),
  					},
  				}, nil)
@@ -780,7 +824,7 @@ index 5e220e4..eb48e31 100644
  			},
  		},
  		{
-@@ -2632,7 +2682,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -2632,7 +2684,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  				}
  
  				bhContext := &bhctx.Context{
@@ -789,7 +833,7 @@ index 5e220e4..eb48e31 100644
  				}
  				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
  			},
-@@ -2653,11 +2703,11 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -2653,11 +2705,11 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  					</EntityDescriptor>`),
  					},
  				}, nil)
@@ -803,7 +847,7 @@ index 5e220e4..eb48e31 100644
  			},
  		},
  		{
-@@ -2671,7 +2721,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -2671,7 +2723,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  				}
  
  				bhContext := &bhctx.Context{
@@ -812,7 +856,7 @@ index 5e220e4..eb48e31 100644
  				}
  				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
  			},
-@@ -2692,14 +2742,11 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -2692,14 +2744,11 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  					</EntityDescriptor>`),
  					},
  				}, nil)
@@ -829,7 +873,7 @@ index 5e220e4..eb48e31 100644
  			},
  		},
  		{
-@@ -2713,7 +2760,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -2713,7 +2762,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  				}
  
  				bhContext := &bhctx.Context{
@@ -838,7 +882,7 @@ index 5e220e4..eb48e31 100644
  				}
  				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
  			},
-@@ -2734,28 +2781,25 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -2734,28 +2783,25 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  					</EntityDescriptor>`),
  					},
  				}, nil)
@@ -879,7 +923,7 @@ index 5e220e4..eb48e31 100644
  			},
  		},
  		{
-@@ -2769,7 +2813,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -2769,7 +2815,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  				}
  
  				bhContext := &bhctx.Context{
@@ -888,7 +932,7 @@ index 5e220e4..eb48e31 100644
  				}
  				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
  			},
-@@ -2794,22 +2838,19 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -2794,22 +2840,19 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  						ID: int32(1),
  					},
  				}, nil)
@@ -922,7 +966,7 @@ index 5e220e4..eb48e31 100644
  				mock.mockDatabase.EXPECT().CreateAuditLog(gomock.Any(), gomock.Any()).Times(2)
  				mock.mockDatabase.EXPECT().LookupUser(gomock.Any(), "username").Return(model.User{
  					SSOProviderID: null.Int32{
-@@ -2832,7 +2873,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -2832,7 +2875,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  			},
  			expected: expected{
  				responseCode:   http.StatusFound,
@@ -931,7 +975,7 @@ index 5e220e4..eb48e31 100644
  			},
  		},
  		{
-@@ -2846,7 +2887,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -2846,7 +2889,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  				}
  
  				bhContext := &bhctx.Context{
@@ -940,7 +984,7 @@ index 5e220e4..eb48e31 100644
  				}
  				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
  			},
-@@ -2878,23 +2919,19 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -2878,23 +2921,19 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  						},
  					},
  				}, nil)
@@ -975,7 +1019,7 @@ index 5e220e4..eb48e31 100644
  				mock.mockDatabase.EXPECT().GetAllRoles(gomock.Any(), gomock.Any(), gomock.Any()).Return(model.Roles{
  					{
  						Permissions: model.Permissions{model.NewPermission("auth", "ManageUsers")},
-@@ -2924,7 +2961,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -2924,7 +2963,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  			},
  			expected: expected{
  				responseCode:   http.StatusFound,
@@ -984,7 +1028,7 @@ index 5e220e4..eb48e31 100644
  			},
  		},
  		{
-@@ -2938,7 +2975,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -2938,7 +2977,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  				}
  
  				bhContext := &bhctx.Context{
@@ -993,7 +1037,7 @@ index 5e220e4..eb48e31 100644
  				}
  				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
  			},
-@@ -2970,22 +3007,19 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -2970,22 +3009,19 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  						},
  					},
  				}, nil)
@@ -1027,7 +1071,7 @@ index 5e220e4..eb48e31 100644
  				mock.mockDatabase.EXPECT().GetAllRoles(gomock.Any(), gomock.Any(), gomock.Any()).Return(model.Roles{
  					{
  						Permissions: model.Permissions{model.NewPermission("auth", "ManageUsers")},
-@@ -3015,7 +3049,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -3015,7 +3051,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  			},
  			expected: expected{
  				responseCode:   http.StatusFound,
@@ -1036,7 +1080,7 @@ index 5e220e4..eb48e31 100644
  			},
  		},
  		{
-@@ -3029,7 +3063,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -3029,7 +3065,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  				}
  
  				bhContext := &bhctx.Context{
@@ -1045,7 +1089,7 @@ index 5e220e4..eb48e31 100644
  				}
  				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
  			},
-@@ -3054,22 +3088,19 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -3054,22 +3090,19 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  						ID: int32(1),
  					},
  				}, nil)
@@ -1079,7 +1123,7 @@ index 5e220e4..eb48e31 100644
  				mock.mockDatabase.EXPECT().CreateAuditLog(gomock.Any(), gomock.Any()).Times(2)
  				mock.mockDatabase.EXPECT().LookupUser(gomock.Any(), "username").Return(model.User{
  					SSOProviderID: null.Int32{
-@@ -3092,7 +3123,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -3092,7 +3125,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  			},
  			expected: expected{
  				responseCode:   http.StatusFound,
@@ -1088,7 +1132,7 @@ index 5e220e4..eb48e31 100644
  			},
  		},
  		{
-@@ -3106,7 +3137,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -3106,7 +3139,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  				}
  
  				bhContext := &bhctx.Context{
@@ -1097,7 +1141,7 @@ index 5e220e4..eb48e31 100644
  				}
  				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
  			},
-@@ -3166,38 +3197,35 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -3166,38 +3199,35 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  					SSOProviderID: null.Int32From(1),
  					Roles:         model.Roles{model.Role{Name: auth.RoleAdministrator}},
  				}, nil)
@@ -1155,7 +1199,7 @@ index 5e220e4..eb48e31 100644
  			},
  		},
  		{
-@@ -3211,7 +3239,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -3211,7 +3241,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  				}
  
  				bhContext := &bhctx.Context{
@@ -1164,7 +1208,7 @@ index 5e220e4..eb48e31 100644
  				}
  				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
  			},
-@@ -3271,42 +3299,39 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -3271,42 +3301,39 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  					SSOProviderID: null.Int32From(1),
  					Roles:         model.Roles{model.Role{Name: auth.RoleUser}},
  				}, nil)
@@ -1227,7 +1271,7 @@ index 5e220e4..eb48e31 100644
  			buildRequest: func() *http.Request {
  				request := &http.Request{
  					URL: &url.URL{
-@@ -3316,7 +3341,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -3316,7 +3343,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  				}
  
  				bhContext := &bhctx.Context{
@@ -1236,7 +1280,7 @@ index 5e220e4..eb48e31 100644
  				}
  				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
  			},
-@@ -3337,18 +3362,19 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -3337,18 +3364,19 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  					</EntityDescriptor>`),
  					},
  				}, nil)
@@ -1262,7 +1306,7 @@ index 5e220e4..eb48e31 100644
  			buildRequest: func() *http.Request {
  				request := &http.Request{
  					URL: &url.URL{
-@@ -3358,7 +3384,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -3358,7 +3386,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  				}
  
  				bhContext := &bhctx.Context{
@@ -1271,7 +1315,7 @@ index 5e220e4..eb48e31 100644
  				}
  				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
  			},
-@@ -3379,14 +3405,15 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -3379,14 +3407,15 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  					</EntityDescriptor>`),
  					},
  				}, nil)
@@ -1292,7 +1336,22 @@ index 5e220e4..eb48e31 100644
  			},
  		},
  	}
-@@ -3429,3 +3456,112 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+@@ -3403,13 +3432,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 			request := testCase.buildRequest()
+ 			testCase.setupMocks(t, mocks)
+ 
+-			resources := v2auth.NewManagementResource(config.Configuration{
+-				SAML: config.SAMLConfiguration{
+-					ServiceProviderCertificate:        ValidCert,
+-					ServiceProviderKey:                ValidKey,
+-					ServiceProviderCertificateCAChain: "",
+-				},
+-			}, mocks.mockDatabase, auth.NewAuthorizer(mocks.mockDatabase), api.NewAuthenticator(config.Configuration{}, mocks.mockDatabase, nil), nil, dogtags.NewTestService(testCase.dogTagsOverrides), nil)
++			resources := v2auth.NewManagementResource(samlTestConfig(), mocks.mockDatabase, auth.NewAuthorizer(mocks.mockDatabase), api.NewAuthenticator(config.Configuration{}, mocks.mockDatabase, nil), nil, dogtags.NewTestService(testCase.dogTagsOverrides), nil)
+ 			resources.SAML = mocks.mockSAML
+ 			response := httptest.NewRecorder()
+ 
+@@ -3429,3 +3452,107 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
  		})
  	}
  }
@@ -1370,12 +1429,7 @@ index 5e220e4..eb48e31 100644
 +					return nil, errors.New("stop here")
 +				})
 +
-+			resources := v2auth.NewManagementResource(config.Configuration{
-+				SAML: config.SAMLConfiguration{
-+					ServiceProviderCertificate: ValidCert,
-+					ServiceProviderKey:         ValidKey,
-+				},
-+			}, mockDatabase, auth.NewAuthorizer(mockDatabase), api.NewAuthenticator(config.Configuration{}, mockDatabase, nil), nil, nil, nil)
++			resources := v2auth.NewManagementResource(samlTestConfig(), mockDatabase, auth.NewAuthorizer(mockDatabase), api.NewAuthenticator(config.Configuration{}, mockDatabase, nil), nil, nil, nil)
 +			resources.SAML = mockSAML
 +			router := mux.NewRouter()
 +			router.HandleFunc(fmt.Sprintf("/api/v2/sso/{%s}/login", api.URIPathVariableSSOProviderSlug), resources.SSOLoginHandler).Methods(http.MethodGet)
@@ -1406,7 +1460,7 @@ index 5e220e4..eb48e31 100644
 +	return r.WithContext(context.WithValue(r.Context(), bhctx.ValueKey, &bhctx.Context{Host: samlTestHost()}))
 +}
 diff --git a/cmd/api/src/api/v2/auth/sso_test.go b/cmd/api/src/api/v2/auth/sso_test.go
-index 73f3024..089562a 100644
+index 73f3024..83b49f0 100644
 --- a/cmd/api/src/api/v2/auth/sso_test.go
 +++ b/cmd/api/src/api/v2/auth/sso_test.go
 @@ -25,7 +25,6 @@ import (
@@ -1467,7 +1521,22 @@ index 73f3024..089562a 100644
  			},
  		},
  	}
-@@ -516,6 +525,10 @@ func TestManagementResource_SSOLoginHandler(t *testing.T) {
+@@ -499,13 +508,7 @@ func TestManagementResource_SSOLoginHandler(t *testing.T) {
+ 			request := testCase.buildRequest()
+ 			testCase.setupMocks(t, mocks)
+ 
+-			resources := auth.NewManagementResource(config.Configuration{
+-				SAML: config.SAMLConfiguration{
+-					ServiceProviderCertificate:        ValidCert,
+-					ServiceProviderKey:                ValidKey,
+-					ServiceProviderCertificateCAChain: "",
+-				},
+-			}, mocks.mockDatabase, bhceauth.NewAuthorizer(mocks.mockDatabase), api.NewAuthenticator(config.Configuration{}, mocks.mockDatabase, nil), nil, nil, nil)
++			resources := auth.NewManagementResource(samlTestConfig(), mocks.mockDatabase, bhceauth.NewAuthorizer(mocks.mockDatabase), api.NewAuthenticator(config.Configuration{}, mocks.mockDatabase, nil), nil, nil, nil)
+ 			resources.SAML = mocks.mockSAML
+ 			response := httptest.NewRecorder()
+ 
+@@ -516,6 +519,10 @@ func TestManagementResource_SSOLoginHandler(t *testing.T) {
  			status, header, body := test.ProcessResponse(t, response)
  
  			assert.Equal(t, testCase.expected.responseCode, status)

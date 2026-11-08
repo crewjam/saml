@@ -1,0 +1,461 @@
+diff --git a/internal/api/v1/sso/sso.go b/internal/api/v1/sso/sso.go
+index 2ce7841..5942422 100644
+--- a/internal/api/v1/sso/sso.go
++++ b/internal/api/v1/sso/sso.go
+@@ -1,15 +1,18 @@
+ package sso
+ 
+ import (
++	"crypto/rand"
+ 	"net/http"
+ 	"strings"
++	"sync/atomic"
+ 
+ 	v1Session "github.com/1Panel-dev/KubePi/internal/api/v1/session"
+ 	v1Sso "github.com/1Panel-dev/KubePi/internal/model/v1/sso"
+ 	"github.com/1Panel-dev/KubePi/internal/server"
+ 	"github.com/1Panel-dev/KubePi/internal/service/v1/common"
+ 	"github.com/1Panel-dev/KubePi/internal/service/v1/sso"
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlsp"
++	"github.com/crewjam/saml/x/samlsp/pending"
+ 	"github.com/google/uuid"
+ 	"github.com/kataras/iris/v12"
+ 	"github.com/kataras/iris/v12/context"
+@@ -20,7 +23,15 @@ type Handler struct {
+ }
+ 
+ var oauth2Config = &v1Sso.OpenID{}
+-var saml2Config = &samlsp.Middleware{}
++
++// saml2SP is the SAML service provider of the last SSO login started, and
++// the tracker of its logins in progress.
++type saml2SP struct {
++	config  *samlsp.Config
++	pending *pending.Tracker
++}
++
++var saml2Config atomic.Pointer[saml2SP]
+ 
+ const ssoStateSessionKey = "sso_oauth_state"
+ 
+@@ -125,12 +136,13 @@ func (h *Handler) LoginSso() iris.Handler {
+ 			sess.Set(ssoStateSessionKey, state)
+ 			ctx.Redirect(oauth2Config.Oauth2Config.AuthCodeURL(state), iris.StatusFound)
+ 		case "saml2":
+-			saml2Config, err = h.ssoService.Saml2Config(ssos, baseUrl)
++			config, tracker, err := h.ssoService.Saml2Config(ssos, baseUrl)
+ 			if err != nil {
+ 				ctx.StatusCode(iris.StatusInternalServerError)
+ 				ctx.Values().Set("message", err.Error())
+ 				return
+ 			}
++			saml2Config.Store(&saml2SP{config: config, pending: tracker})
+ 			ctx.Redirect(callbackSaml2, iris.StatusFound)
+ 		default:
+ 			ctx.StatusCode(iris.StatusInternalServerError)
+@@ -236,72 +248,120 @@ func (h *Handler) AuthSso() iris.Handler {
+ 	}
+ }
+ 
++// loadSaml2 returns the SAML service provider that LoginSso set up, or nil,
++// having answered the request, if no SAML login was started since KubePi
++// started.
++func loadSaml2(ctx *context.Context) *saml2SP {
++	sp := saml2Config.Load()
++	if sp == nil {
++		ctx.StatusCode(iris.StatusNotFound)
++		ctx.Values().Set("message", "SAML2 SSO login has not been started")
++	}
++	return sp
++}
++
++// Saml2Auth sends the browser to the IdP with an AuthnRequest, remembering
++// the request in a cookie until the IdP answers at Saml2Acs.
+ func (h *Handler) Saml2Auth() iris.Handler {
+ 	return func(ctx *context.Context) {
+-		session, err := saml2Config.Session.GetSession(ctx.Request())
+-		if session != nil {
+-			r := ctx.Request()
+-			ctx.Request().WithContext(samlsp.ContextWithSession(ctx.Request().Context(), session))
+-			language := ctx.GetHeader("Accept-Language")
+-			if strings.Contains(language, "zh-CN") {
+-				language = "zh-CN"
+-			} else {
+-				language = "en-US"
+-			}
+-
+-			attributes := session.(samlsp.SessionWithAttributes).GetAttributes()
+-			givenName := attributes.Get("givenName")
+-			email := attributes.Get("email")
+-			userProfile, err := h.ssoService.Saml2(givenName, email, language, common.DBOptions{})
+-			if err != nil {
+-				ctx.StatusCode(iris.StatusInternalServerError)
+-				ctx.Values().Set("message", err.Error())
+-				return
+-			}
+-			// 默认为Session
+-			sId := ctx.GetCookie(server.SessionCookieName)
+-			if sId != "" {
+-				ctx.RemoveCookie(server.SessionCookieName)
+-				ctx.Request().Header.Del("Cookie")
+-			}
+-			sess := server.SessionMgr.Start(ctx)
+-			ctx.SetCookieKV(server.SessionCookieName, sess.ID())
+-			sess.Set("profile", userProfile)
+-
+-			redirectURL := ""
+-			if strings.HasPrefix(strings.ToLower(r.Proto), "https") {
+-				redirectURL = "https://" + r.Host
+-			} else if strings.HasPrefix(strings.ToLower(r.Proto), "http") {
+-				redirectURL = "http://" + r.Host
+-			}
+-			ctx.Redirect(redirectURL, iris.StatusFound)
+-			handler := v1Session.NewHandler()
+-			go handler.SaveLoginLog(ctx, userProfile.Name)
+-			//ctx.Values().Set("data", userProfile)
++		sp := loadSaml2(ctx)
++		if sp == nil {
++			return
+ 		}
+-		if err == samlsp.ErrNoSession {
+-			saml2Config.HandleStartAuthFlow(ctx.ResponseWriter(), ctx.Request())
++		msg, err := sp.config.AuthnRequest(ctx.Request().Context(), rand.Text())
++		if err == nil {
++			err = sp.pending.Remember(ctx.ResponseWriter(), msg, "")
++		}
++		if err != nil {
++			ctx.StatusCode(iris.StatusInternalServerError)
++			ctx.Values().Set("message", err.Error())
+ 			return
+ 		}
+-		saml2Config.OnError(ctx.ResponseWriter(), ctx.Request(), err)
++		msg.Write(ctx.ResponseWriter())
+ 	}
+ }
+ 
+ func (h *Handler) Saml2Metadata() iris.Handler {
+ 	return func(ctx *context.Context) {
+-		saml2Config.ServeMetadata(ctx.ResponseWriter(), ctx.Request())
++		sp := loadSaml2(ctx)
++		if sp == nil {
++			return
++		}
++		sp.config.ServeMetadata(ctx.ResponseWriter(), ctx.Request())
+ 	}
+ }
+ 
++// Saml2Acs verifies the IdP's answer to the AuthnRequest of Saml2Auth and
++// starts the KubePi session.
+ func (h *Handler) Saml2Acs() iris.Handler {
+ 	return func(ctx *context.Context) {
+-		saml2Config.ServeACS(ctx.ResponseWriter(), ctx.Request())
++		sp := loadSaml2(ctx)
++		if sp == nil {
++			return
++		}
++		r := ctx.Request()
++		// IdP-initiated logins were not allowed, so the Response must
++		// answer a login started in this browser.
++		login, err := sp.pending.Take(ctx.ResponseWriter(), r)
++		if err != nil {
++			server.Logger().Errorf("SAML2 login failed: %s", err)
++			ctx.StatusCode(iris.StatusForbidden)
++			ctx.Values().Set("message", "SAML2 login failed")
++			return
++		}
++		assertion, err := sp.config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
++		if err != nil {
++			server.Logger().Errorf("SAML2 login failed: %s", err)
++			ctx.StatusCode(iris.StatusForbidden)
++			ctx.Values().Set("message", "SAML2 login failed")
++			return
++		}
++
++		language := ctx.GetHeader("Accept-Language")
++		if strings.Contains(language, "zh-CN") {
++			language = "zh-CN"
++		} else {
++			language = "en-US"
++		}
++
++		// samlsp.Middleware keyed attributes by FriendlyName, or by Name
++		// when there was none. IdPs often send "givenName" and "email" as
++		// FriendlyNames, so LegacyGet keeps them matching.
++		givenName := assertion.Attributes.LegacyGet("givenName") //nolint:staticcheck // see above
++		email := assertion.Attributes.LegacyGet("email")         //nolint:staticcheck // see above
++		userProfile, err := h.ssoService.Saml2(givenName, email, language, common.DBOptions{})
++		if err != nil {
++			ctx.StatusCode(iris.StatusInternalServerError)
++			ctx.Values().Set("message", err.Error())
++			return
++		}
++		// 默认为Session
++		sId := ctx.GetCookie(server.SessionCookieName)
++		if sId != "" {
++			ctx.RemoveCookie(server.SessionCookieName)
++			ctx.Request().Header.Del("Cookie")
++		}
++		sess := server.SessionMgr.Start(ctx)
++		ctx.SetCookieKV(server.SessionCookieName, sess.ID())
++		sess.Set("profile", userProfile)
++
++		redirectURL := ""
++		if strings.HasPrefix(strings.ToLower(r.Proto), "https") {
++			redirectURL = "https://" + r.Host
++		} else if strings.HasPrefix(strings.ToLower(r.Proto), "http") {
++			redirectURL = "http://" + r.Host
++		}
++		ctx.Redirect(redirectURL, iris.StatusFound)
++		handler := v1Session.NewHandler()
++		go handler.SaveLoginLog(ctx, userProfile.Name)
+ 	}
+ }
+ 
++// Saml2Slo sends the browser home. KubePi keeps no SAML session of its own
++// any more (samlsp.Middleware's cookie, which this deleted), and the SP
++// metadata no longer lists it as a SingleLogoutService.
+ func (h *Handler) Saml2Slo() iris.Handler {
+ 	return func(ctx *context.Context) {
+-		saml2Config.Session.DeleteSession(ctx.ResponseWriter(), ctx.Request())
+ 		ctx.Redirect("/", http.StatusFound)
+ 	}
+ }
+diff --git a/internal/service/v1/sso/sso.go b/internal/service/v1/sso/sso.go
+index 79e64ab..005338c 100644
+--- a/internal/service/v1/sso/sso.go
++++ b/internal/service/v1/sso/sso.go
+@@ -7,7 +7,6 @@ import (
+ 	"encoding/pem"
+ 	"errors"
+ 	"fmt"
+-	"net/http"
+ 	"net/url"
+ 	"time"
+ 
+@@ -24,7 +23,9 @@ import (
+ 	"github.com/asdine/storm/v3"
+ 	"github.com/asdine/storm/v3/q"
+ 	oidc "github.com/coreos/go-oidc/v3/oidc"
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlsp"
++	"github.com/crewjam/saml/x/samlsp/pending"
++	"github.com/crewjam/saml/x/samlsp/replay"
+ 	"github.com/google/uuid"
+ 	"golang.org/x/oauth2"
+ )
+@@ -38,7 +39,7 @@ type Service interface {
+ 	Status(options common.DBOptions) bool
+ 	OpenID(openid *v1Sso.OpenID, options common.DBOptions) (v1Session.UserProfile, error)
+ 	OpenIDConfig(clientId, clientSecret, issuerURL, redirectURL string) (*v1Sso.OpenID, error)
+-	Saml2Config(sso *v1Sso.Sso, baseUrl string) (*samlsp.Middleware, error)
++	Saml2Config(sso *v1Sso.Sso, baseUrl string) (*samlsp.Config, *pending.Tracker, error)
+ 	Saml2(givenName, email, language string, options common.DBOptions) (v1Session.UserProfile, error)
+ }
+ 
+@@ -305,34 +306,57 @@ func (s *service) localProfile(username, email string) (v1Session.UserProfile, e
+ 	}, nil
+ }
+ 
+-func (s *service) Saml2Config(sso *v1Sso.Sso, baseUrl string) (*samlsp.Middleware, error) {
++// saml2Replay records the assertions already accepted, so that each is
++// accepted only once. It is shared by every Config that Saml2Config makes,
++// since a new one is made for each login.
++var saml2Replay = replay.NewMemory()
++
++func (s *service) Saml2Config(sso *v1Sso.Sso, baseUrl string) (*samlsp.Config, *pending.Tracker, error) {
++	idpMetadata := samlsp.RemoteMetadata(sso.IdpMetadataURL)
++	// 与之前一样，发起登录时即获取IdP元数据，获取失败时直接报错
++	if _, err := idpMetadata(context.Background()); err != nil {
++		return nil, nil, errors.New("获取SAML元数据出错: " + err.Error())
++	}
++	return s.newSaml2Config(sso, baseUrl, idpMetadata)
++}
++
++// newSaml2Config returns the SAML service provider of baseUrl, with the
++// entity ID (baseUrl + "saml/metadata") and ACS URL (baseUrl + "saml/acs")
++// that samlsp.Middleware gave it, and the tracker that remembers each
++// login in progress in a cookie until the IdP answers it.
++func (s *service) newSaml2Config(sso *v1Sso.Sso, baseUrl string, idpMetadata samlsp.MetadataFunc) (*samlsp.Config, *pending.Tracker, error) {
+ 	cert, key, err := s.strConverterCertKey(sso.X509Cert, sso.X509Key)
+ 	if err != nil {
+-		return nil, err
++		return nil, nil, err
+ 	}
+ 
+-	idpMetadataURL, err := url.Parse(sso.IdpMetadataURL)
++	baseURL, err := url.Parse(baseUrl)
+ 	if err != nil {
+-		return nil, err
++		return nil, nil, errors.New("解析Base URL出错: " + err.Error())
+ 	}
+-
+-	idpMetadata, err := samlsp.FetchMetadata(context.Background(), http.DefaultClient, *idpMetadataURL)
++	entityID := baseURL.ResolveReference(&url.URL{Path: "saml/metadata"}).String()
++
++	// samlsp.Middleware used the one key both to sign and to decrypt
++	// encrypted assertions.
++	config, err := samlsp.New(entityID, idpMetadata,
++		samlsp.WithSigningKey(key, cert),
++		samlsp.WithEncryptionKey(key, cert),
++		samlsp.WithReplayState(saml2Replay))
+ 	if err != nil {
+-		return nil, errors.New("获取SAML元数据出错: " + err.Error())
++		return nil, nil, err
+ 	}
+-
+-	baseURL, err := url.Parse(baseUrl)
++	// The key of the pending-login cookies is derived from the SP private
++	// key, which also signed the request-tracking cookies of
++	// samlsp.Middleware.
++	pendingKey, err := pending.DeriveKey(x509.MarshalPKCS1PrivateKey(key), "kubepi saml2 pending login")
++	if err != nil {
++		return nil, nil, err
++	}
++	tracker, err := pending.New(config, pendingKey)
+ 	if err != nil {
+-		return nil, errors.New("解析Base URL出错: " + err.Error())
++		return nil, nil, err
+ 	}
+-
+-	samlSP, err := samlsp.New(samlsp.Options{
+-		URL:         *baseURL,
+-		Key:         key,
+-		Certificate: cert,
+-		IDPMetadata: idpMetadata,
+-	})
+-	return samlSP, err
++	return config, tracker, nil
+ }
+ 
+ func (s *service) Saml2(givenName, email, language string, options common.DBOptions) (v1Session.UserProfile, error) {
+diff --git a/internal/service/v1/sso/sso_test.go b/internal/service/v1/sso/sso_test.go
+new file mode 100644
+index 0000000..5ff7375
+--- /dev/null
++++ b/internal/service/v1/sso/sso_test.go
+@@ -0,0 +1,124 @@
++package sso
++
++import (
++	"context"
++	"crypto/rand"
++	"crypto/rsa"
++	"crypto/x509"
++	"crypto/x509/pkix"
++	"encoding/pem"
++	"math/big"
++	"net/http"
++	"net/http/httptest"
++	"testing"
++	"time"
++
++	v1Sso "github.com/1Panel-dev/KubePi/internal/model/v1/sso"
++	"github.com/crewjam/saml"
++	"github.com/crewjam/saml/x/samlsp"
++)
++
++func testSaml2Sso(t *testing.T) *v1Sso.Sso {
++	t.Helper()
++	key, err := rsa.GenerateKey(rand.Reader, 2048)
++	if err != nil {
++		t.Fatal(err)
++	}
++	tmpl := &x509.Certificate{
++		SerialNumber: big.NewInt(1),
++		Subject:      pkix.Name{CommonName: "kubepi"},
++		NotBefore:    time.Now().Add(-time.Hour),
++		NotAfter:     time.Now().Add(time.Hour),
++	}
++	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return &v1Sso.Sso{
++		Protocol:       "saml2",
++		IdpMetadataURL: "https://idp.example.com/metadata",
++		X509Cert:       string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
++		X509Key:        string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})),
++	}
++}
++
++var testIdPMetadata = samlsp.StaticMetadata(&saml.EntityDescriptor{
++	EntityID: "https://idp.example.com/metadata",
++	IDPSSODescriptors: []saml.IDPSSODescriptor{{
++		SSODescriptor: saml.SSODescriptor{RoleDescriptor: saml.RoleDescriptor{
++			ProtocolSupportEnumeration: "urn:oasis:names:tc:SAML:2.0:protocol",
++		}},
++		SingleSignOnServices: []saml.Endpoint{{
++			Binding:  saml.HTTPRedirectBinding,
++			Location: "https://idp.example.com/sso",
++		}},
++	}},
++})
++
++// The entity ID and ACS URL are those samlsp.Middleware derived from the
++// base URL, so the registration at the IdP does not change.
++func TestSaml2ConfigURLs(t *testing.T) {
++	s := &service{}
++	config, _, err := s.newSaml2Config(testSaml2Sso(t), "https://host/kubepi/api/v1/sso/", testIdPMetadata)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got, want := config.EntityID(), "https://host/kubepi/api/v1/sso/saml/metadata"; got != want {
++		t.Errorf("entity ID = %q, want %q", got, want)
++	}
++	if got, want := config.ACSURL(), "https://host/kubepi/api/v1/sso/saml/acs"; got != want {
++		t.Errorf("ACS URL = %q, want %q", got, want)
++	}
++}
++
++// The SP certificate is published for encryption, as before, so the IdP can
++// keep encrypting assertions; AuthnRequests stay unsigned.
++func TestSaml2ConfigMetadata(t *testing.T) {
++	s := &service{}
++	config, _, err := s.newSaml2Config(testSaml2Sso(t), "https://host/kubepi/api/v1/sso/", testIdPMetadata)
++	if err != nil {
++		t.Fatal(err)
++	}
++	md := config.Metadata(context.Background())
++	sp := md.SPSSODescriptors[0]
++	uses := map[string]bool{}
++	for _, kd := range sp.KeyDescriptors {
++		uses[kd.Use] = true
++	}
++	if !uses["encryption"] {
++		t.Errorf("metadata has no encryption key: %+v", sp.KeyDescriptors)
++	}
++	if sp.AuthnRequestsSigned == nil || *sp.AuthnRequestsSigned {
++		t.Errorf("AuthnRequestsSigned = %v, want false", sp.AuthnRequestsSigned)
++	}
++}
++
++// Starting a login sends the browser to the IdP and remembers the request
++// in a cookie that reaches the ACS with the IdP's cross-site POST.
++func TestSaml2PendingLogin(t *testing.T) {
++	s := &service{}
++	config, tracker, err := s.newSaml2Config(testSaml2Sso(t), "https://host/kubepi/api/v1/sso/", testIdPMetadata)
++	if err != nil {
++		t.Fatal(err)
++	}
++	msg, err := config.AuthnRequest(context.Background(), "relay")
++	if err != nil {
++		t.Fatal(err)
++	}
++	w := httptest.NewRecorder()
++	if err := tracker.Remember(w, msg, ""); err != nil {
++		t.Fatal(err)
++	}
++	msg.Write(w)
++	if w.Code != http.StatusFound {
++		t.Fatalf("status = %d, want %d", w.Code, http.StatusFound)
++	}
++	cookies := w.Result().Cookies()
++	if len(cookies) != 1 {
++		t.Fatalf("cookies = %v, want one", cookies)
++	}
++	c := cookies[0]
++	if c.Path != "/kubepi/api/v1/sso/saml/acs" || c.SameSite != http.SameSiteNoneMode || !c.Secure {
++		t.Errorf("cookie = %+v, want Path=/kubepi/api/v1/sso/saml/acs, SameSite=None, Secure", c)
++	}
++}

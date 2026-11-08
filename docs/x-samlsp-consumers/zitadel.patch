@@ -1,0 +1,1234 @@
+diff --git a/apps/login/acceptance/samlsp/main.go b/apps/login/acceptance/samlsp/main.go
+index 9dcfd13..0bdc2d2 100644
+--- a/apps/login/acceptance/samlsp/main.go
++++ b/apps/login/acceptance/samlsp/main.go
+@@ -3,25 +3,26 @@ package main
+ import (
+ 	"bytes"
+ 	"context"
++	"crypto/rand"
+ 	"crypto/rsa"
+ 	"crypto/tls"
+ 	"crypto/x509"
+ 	"encoding/base64"
+ 	"encoding/json"
+-	"encoding/xml"
+ 	"errors"
+ 	"fmt"
+ 	"io"
+ 	"log"
+ 	"net/http"
+-	"net/url"
+ 	"os"
+ 	"os/signal"
+ 	"strings"
++	"sync"
+ 	"syscall"
+ 	"time"
+ 
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlsp"
++	"github.com/crewjam/saml/x/samlsp/pending"
+ )
+ 
+ var keyPair = func() tls.Certificate {
+@@ -86,8 +87,79 @@ FHHEZ+dR4eMaJp6PhNm8hu2O
+ 	return kp
+ }()
+ 
+-func hello(w http.ResponseWriter, r *http.Request) {
+-	fmt.Fprintf(w, "Hello, %s!", samlsp.AttributeFromContext(r.Context(), "UserName"))
++const sessionCookie = "token"
++
++// serviceProvider logs users in with SAML and keeps their sessions in memory.
++type serviceProvider struct {
++	config  *samlsp.Config
++	tracker *pending.Tracker
++
++	mu       sync.Mutex
++	sessions map[string]string // session ID -> UserName attribute
++}
++
++func (s *serviceProvider) hello(w http.ResponseWriter, r *http.Request) {
++	userName, ok := s.session(r)
++	if !ok {
++		s.login(w, r)
++		return
++	}
++	fmt.Fprintf(w, "Hello, %s!", userName)
++}
++
++func (s *serviceProvider) session(r *http.Request) (string, bool) {
++	cookie, err := r.Cookie(sessionCookie)
++	if err != nil {
++		return "", false
++	}
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	userName, ok := s.sessions[cookie.Value]
++	return userName, ok
++}
++
++// login sends the user to the IdP, and back to the requested page after the login.
++func (s *serviceProvider) login(w http.ResponseWriter, r *http.Request) {
++	msg, err := s.config.AuthnRequest(r.Context(), rand.Text())
++	if err != nil {
++		http.Error(w, err.Error(), http.StatusInternalServerError)
++		return
++	}
++	if err := s.tracker.Remember(w, msg, r.URL.RequestURI()); err != nil {
++		http.Error(w, err.Error(), http.StatusInternalServerError)
++		return
++	}
++	msg.Write(w)
++}
++
++func (s *serviceProvider) acs(w http.ResponseWriter, r *http.Request) {
++	login, err := s.tracker.Take(w, r)
++	if err != nil {
++		http.Error(w, err.Error(), http.StatusForbidden)
++		return
++	}
++	assertion, err := s.config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
++	if err != nil {
++		http.Error(w, err.Error(), http.StatusForbidden)
++		return
++	}
++	sessionID := rand.Text()
++	s.mu.Lock()
++	s.sessions[sessionID] = assertion.Attributes.Get("UserName")
++	s.mu.Unlock()
++	http.SetCookie(w, &http.Cookie{
++		Name:     sessionCookie,
++		Value:    sessionID,
++		Path:     "/",
++		HttpOnly: true,
++		Secure:   r.TLS != nil,
++		SameSite: http.SameSiteLaxMode,
++	})
++	redirect := login.Data
++	if !strings.HasPrefix(redirect, "/") || strings.HasPrefix(redirect, "//") || strings.HasPrefix(redirect, "/\\") {
++		redirect = "/"
++	}
++	http.Redirect(w, r, redirect, http.StatusFound)
+ }
+ 
+ func main() {
+@@ -99,37 +171,37 @@ func main() {
+ 	host := os.Getenv("HOST")
+ 	port := os.Getenv("PORT")
+ 
+-	idpMetadataURL, err := url.Parse(idpURL)
+-	if err != nil {
+-		panic(err)
+-	}
+-	idpMetadata, err := samlsp.FetchMetadata(context.Background(), http.DefaultClient,
+-		*idpMetadataURL)
++	idp := samlsp.RemoteMetadata(idpURL, samlsp.WithHTTPClient(http.DefaultClient))
++	idpMetadata, err := idp(context.Background())
+ 	if err != nil {
+ 		panic(fmt.Errorf("failed to fetch IDP metadata from %s: %w", idpURL, err))
+ 	}
+ 	fmt.Printf("idpMetadata: %+v\n", idpMetadata)
+-	rootURL, err := url.Parse(host + ":" + port)
++
++	key := keyPair.PrivateKey.(*rsa.PrivateKey)
++	samlSP, err := samlsp.New(host+":"+port+"/saml/metadata", idp,
++		samlsp.WithSigningKey(key, keyPair.Leaf),
++		samlsp.WithEncryptionKey(key, keyPair.Leaf),
++	)
+ 	if err != nil {
+ 		panic(err)
+ 	}
+-
+-	samlSP, err := samlsp.New(samlsp.Options{
+-		URL:         *rootURL,
+-		Key:         keyPair.PrivateKey.(*rsa.PrivateKey),
+-		Certificate: keyPair.Leaf,
+-		IDPMetadata: idpMetadata,
+-	})
++	trackerKey := make([]byte, pending.MinKeyLength)
++	if _, err := rand.Read(trackerKey); err != nil {
++		panic(err)
++	}
++	tracker, err := pending.New(samlSP, trackerKey)
+ 	if err != nil {
+ 		panic(err)
+ 	}
++	sp := &serviceProvider{config: samlSP, tracker: tracker, sessions: make(map[string]string)}
+ 
+ 	server := &http.Server{
+ 		Addr: ":" + port,
+ 	}
+-	app := http.HandlerFunc(hello)
+-	http.Handle("/hello", samlSP.RequireAccount(app))
+-	http.Handle("/saml/", samlSP)
++	http.HandleFunc("/hello", sp.hello)
++	http.HandleFunc(samlSP.MetadataPath(), samlSP.ServeMetadata)
++	http.HandleFunc(samlSP.ACSPath(), sp.acs)
+ 	go func() {
+ 		if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+ 			log.Fatalf("HTTP server error: %v", err)
+@@ -137,7 +209,7 @@ func main() {
+ 		log.Println("Stopped serving new connections.")
+ 	}()
+ 
+-	metadata, err := xml.MarshalIndent(samlSP.ServiceProvider.Metadata(), "", "  ")
++	metadata, err := samlSP.MetadataXML(context.Background())
+ 	if err != nil {
+ 		panic(err)
+ 	}
+diff --git a/internal/api/grpc/action/v2/integration_test/execution_target_test.go b/internal/api/grpc/action/v2/integration_test/execution_target_test.go
+index 658a39f..ce32885 100644
+--- a/internal/api/grpc/action/v2/integration_test/execution_target_test.go
++++ b/internal/api/grpc/action/v2/integration_test/execution_target_test.go
+@@ -4,7 +4,6 @@ package action_test
+ 
+ import (
+ 	"context"
+-	"encoding/base64"
+ 	"net/http"
+ 	"net/url"
+ 	"strings"
+@@ -12,7 +11,6 @@ import (
+ 	"time"
+ 
+ 	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
+ 	"github.com/stretchr/testify/assert"
+ 	"github.com/stretchr/testify/require"
+ 	"github.com/zitadel/oidc/v3/pkg/client/rp"
+@@ -1348,14 +1346,14 @@ func expectPreSAMLResponseExecution(ctx context.Context, t *testing.T, instance
+ 	return userResp.GetUserId(), closeF
+ }
+ 
+-func createSAMLSP(t *testing.T, idpMetadata *saml.EntityDescriptor, binding string) (string, *samlsp.Middleware) {
++func createSAMLSP(t *testing.T, idpMetadata *saml.EntityDescriptor, binding string) (string, *integration.SAMLSP) {
+ 	rootURL := "example." + integration.DomainName()
+ 	spMiddleware, err := integration.CreateSAMLSP("https://"+rootURL, idpMetadata, binding)
+ 	require.NoError(t, err)
+ 	return rootURL, spMiddleware
+ }
+ 
+-func createSAMLApplication(ctx context.Context, t *testing.T, instance *integration.Instance, idpMetadata *saml.EntityDescriptor, binding string, projectRoleCheck, hasProjectCheck bool) (string, string, *samlsp.Middleware) {
++func createSAMLApplication(ctx context.Context, t *testing.T, instance *integration.Instance, idpMetadata *saml.EntityDescriptor, binding string, projectRoleCheck, hasProjectCheck bool) (string, string, *integration.SAMLSP) {
+ 	project := instance.CreateProject(ctx, t, instance.DefaultOrg.GetId(), integration.ProjectName(), projectRoleCheck, hasProjectCheck)
+ 	rootURL, sp := createSAMLSP(t, idpMetadata, binding)
+ 	_, err := instance.CreateSAMLClient(ctx, project.GetId(), sp)
+@@ -1363,13 +1361,10 @@ func createSAMLApplication(ctx context.Context, t *testing.T, instance *integrat
+ 	return project.GetId(), rootURL, sp
+ }
+ 
+-func getSAMLResponseAttributes(t *testing.T, samlResponse string, sp *samlsp.Middleware) []saml.Attribute {
+-	data, err := base64.StdEncoding.DecodeString(samlResponse)
++func getSAMLResponseAttributes(t *testing.T, samlResponse string, sp *integration.SAMLSP) []saml.Attribute {
++	assertion, err := sp.ParsePostResponse(context.Background(), samlResponse)
+ 	require.NoError(t, err)
+-	sp.ServiceProvider.AllowIDPInitiated = true
+-	assertion, err := sp.ServiceProvider.ParseXMLResponse(data, []string{}, sp.ServiceProvider.AcsURL)
+-	require.NoError(t, err)
+-	return assertion.AttributeStatements[0].Attributes
++	return assertion.Raw.AttributeStatements[0].Attributes
+ }
+ 
+ func contextInfoForUserSAML(instance *integration.Instance, function string, userResp *user.AddHumanUserResponse, email, phone string) *saml_api.ContextInfo {
+diff --git a/internal/api/grpc/action/v2beta/integration_test/execution_target_test.go b/internal/api/grpc/action/v2beta/integration_test/execution_target_test.go
+index c9b6a82..ddf4f90 100644
+--- a/internal/api/grpc/action/v2beta/integration_test/execution_target_test.go
++++ b/internal/api/grpc/action/v2beta/integration_test/execution_target_test.go
+@@ -4,7 +4,6 @@ package action_test
+ 
+ import (
+ 	"context"
+-	"encoding/base64"
+ 	"net/http"
+ 	"net/url"
+ 	"strings"
+@@ -12,7 +11,6 @@ import (
+ 	"time"
+ 
+ 	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
+ 	"github.com/stretchr/testify/assert"
+ 	"github.com/stretchr/testify/require"
+ 	"github.com/zitadel/oidc/v3/pkg/client/rp"
+@@ -1306,14 +1304,14 @@ func expectPreSAMLResponseExecution(ctx context.Context, t *testing.T, instance
+ 	return userResp.GetUserId(), closeF
+ }
+ 
+-func createSAMLSP(t *testing.T, idpMetadata *saml.EntityDescriptor, binding string) (string, *samlsp.Middleware) {
++func createSAMLSP(t *testing.T, idpMetadata *saml.EntityDescriptor, binding string) (string, *integration.SAMLSP) {
+ 	rootURL := "example." + integration.DomainName()
+ 	spMiddleware, err := integration.CreateSAMLSP("https://"+rootURL, idpMetadata, binding)
+ 	require.NoError(t, err)
+ 	return rootURL, spMiddleware
+ }
+ 
+-func createSAMLApplication(ctx context.Context, t *testing.T, instance *integration.Instance, idpMetadata *saml.EntityDescriptor, binding string, projectRoleCheck, hasProjectCheck bool) (string, string, *samlsp.Middleware) {
++func createSAMLApplication(ctx context.Context, t *testing.T, instance *integration.Instance, idpMetadata *saml.EntityDescriptor, binding string, projectRoleCheck, hasProjectCheck bool) (string, string, *integration.SAMLSP) {
+ 	project := instance.CreateProject(ctx, t, instance.DefaultOrg.GetId(), integration.ProjectName(), projectRoleCheck, hasProjectCheck)
+ 	rootURL, sp := createSAMLSP(t, idpMetadata, binding)
+ 	_, err := instance.CreateSAMLClient(ctx, project.GetId(), sp)
+@@ -1321,13 +1319,10 @@ func createSAMLApplication(ctx context.Context, t *testing.T, instance *integrat
+ 	return project.GetId(), rootURL, sp
+ }
+ 
+-func getSAMLResponseAttributes(t *testing.T, samlResponse string, sp *samlsp.Middleware) []saml.Attribute {
+-	data, err := base64.StdEncoding.DecodeString(samlResponse)
++func getSAMLResponseAttributes(t *testing.T, samlResponse string, sp *integration.SAMLSP) []saml.Attribute {
++	assertion, err := sp.ParsePostResponse(context.Background(), samlResponse)
+ 	require.NoError(t, err)
+-	sp.ServiceProvider.AllowIDPInitiated = true
+-	assertion, err := sp.ServiceProvider.ParseXMLResponse(data, []string{}, sp.ServiceProvider.AcsURL)
+-	require.NoError(t, err)
+-	return assertion.AttributeStatements[0].Attributes
++	return assertion.Raw.AttributeStatements[0].Attributes
+ }
+ 
+ func contextInfoForUserSAML(instance *integration.Instance, function string, userResp *user.AddHumanUserResponse, email, phone string) *saml_api.ContextInfo {
+diff --git a/internal/api/grpc/saml/v2/integration_test/saml_test.go b/internal/api/grpc/saml/v2/integration_test/saml_test.go
+index 9f7dfed..28602bf 100644
+--- a/internal/api/grpc/saml/v2/integration_test/saml_test.go
++++ b/internal/api/grpc/saml/v2/integration_test/saml_test.go
+@@ -10,7 +10,6 @@ import (
+ 	"time"
+ 
+ 	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
+ 	"github.com/muhlemmer/gu"
+ 	"github.com/stretchr/testify/assert"
+ 	"github.com/stretchr/testify/require"
+@@ -665,7 +664,7 @@ func createSession(ctx context.Context, t *testing.T, userID string) *session.Cr
+ 	return sessionResp
+ }
+ 
+-func createSessionAndSmlRequestForCallback(ctx context.Context, t *testing.T, sp *samlsp.Middleware, loginClient string, acsRedirect saml.Endpoint, userID, binding string) *saml_pb.CreateResponseRequest {
++func createSessionAndSmlRequestForCallback(ctx context.Context, t *testing.T, sp *integration.SAMLSP, loginClient string, acsRedirect saml.Endpoint, userID, binding string) *saml_pb.CreateResponseRequest {
+ 	_, authRequestID, err := Instance.CreateSAMLAuthRequest(sp, loginClient, acsRedirect, integration.RelayState(), binding)
+ 	require.NoError(t, err)
+ 	sessionResp := createSession(ctx, t, userID)
+@@ -680,14 +679,14 @@ func createSessionAndSmlRequestForCallback(ctx context.Context, t *testing.T, sp
+ 	}
+ }
+ 
+-func createSAMLSP(t *testing.T, idpMetadata *saml.EntityDescriptor, binding string) (string, *samlsp.Middleware) {
++func createSAMLSP(t *testing.T, idpMetadata *saml.EntityDescriptor, binding string) (string, *integration.SAMLSP) {
+ 	rootURL := "example." + integration.DomainName()
+ 	spMiddleware, err := integration.CreateSAMLSP("https://"+rootURL, idpMetadata, binding)
+ 	require.NoError(t, err)
+ 	return rootURL, spMiddleware
+ }
+ 
+-func createSAMLApplication(ctx context.Context, t *testing.T, idpMetadata *saml.EntityDescriptor, binding string, projectRoleCheck, hasProjectCheck bool) (string, string, *samlsp.Middleware) {
++func createSAMLApplication(ctx context.Context, t *testing.T, idpMetadata *saml.EntityDescriptor, binding string, projectRoleCheck, hasProjectCheck bool) (string, string, *integration.SAMLSP) {
+ 	project := Instance.CreateProject(ctx, t, "", integration.ProjectName(), projectRoleCheck, hasProjectCheck)
+ 	rootURL, sp := createSAMLSP(t, idpMetadata, binding)
+ 	_, err := Instance.CreateSAMLClient(ctx, project.GetId(), sp)
+diff --git a/internal/api/idp/idp.go b/internal/api/idp/idp.go
+index ff44d32..31293b8 100644
+--- a/internal/api/idp/idp.go
++++ b/internal/api/idp/idp.go
+@@ -204,7 +204,7 @@ func (h *Handler) handleMetadata(w http.ResponseWriter, r *http.Request) {
+ 		http.Error(w, err.Error(), http.StatusBadRequest)
+ 		return
+ 	}
+-	metadata := sp.ServiceProvider.Metadata()
++	metadata := sp.Metadata(ctx)
+ 
+ 	internalUI, _ := strconv.ParseBool(r.URL.Query().Get(paramInternalUI))
+ 	h.assertionConsumerServices(ctx, metadata, internalUI)
+diff --git a/internal/api/ui/login/external_provider_handler.go b/internal/api/ui/login/external_provider_handler.go
+index b5ef03d..dc74919 100644
+--- a/internal/api/ui/login/external_provider_handler.go
++++ b/internal/api/ui/login/external_provider_handler.go
+@@ -9,8 +9,6 @@ import (
+ 	"slices"
+ 	"strings"
+ 
+-	crewjam_saml "github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
+ 	"github.com/zitadel/logging"
+ 	"github.com/zitadel/oidc/v3/pkg/client/rp"
+ 	"github.com/zitadel/oidc/v3/pkg/oidc"
+@@ -1324,13 +1322,13 @@ func (l *Login) samlProvider(ctx context.Context, identityProvider *query.IDPTem
+ 					useragent, _ := http_mw.UserAgentIDFromCtx(ctx)
+ 					return l.authRepo.SaveSAMLRequestID(ctx, authRequestID, samlRequestID, useragent)
+ 				},
+-				func(ctx context.Context, authRequestID string) (*samlsp.TrackedRequest, error) {
++				func(ctx context.Context, authRequestID string) (*requesttracker.TrackedRequest, error) {
+ 					useragent, _ := http_mw.UserAgentIDFromCtx(ctx)
+ 					auhRequest, err := l.authRepo.AuthRequestByID(ctx, authRequestID, useragent)
+ 					if err != nil {
+ 						return nil, err
+ 					}
+-					return &samlsp.TrackedRequest{
++					return &requesttracker.TrackedRequest{
+ 						SAMLRequestID: auhRequest.SAMLRequestID,
+ 						Index:         authRequestID,
+ 					}, nil
+@@ -1726,46 +1724,16 @@ func (l *Login) externalLogoutProvider(r *http.Request, providerID string) (*sam
+ }
+ 
+ func samlLogoutRequest(w http.ResponseWriter, r *http.Request, provider *saml.Provider, nameID, sessionID string) error {
+-	mw, err := provider.GetSP()
+-	if err != nil {
+-		return err
+-	}
+ 	// We ignore the configured binding and only check the available SLO endpoints from the metadata.
+ 	// For example, Azure documents that only redirect binding is possible and also only provides a redirect SLO in the metadata.
+-	slo := mw.ServiceProvider.GetSLOBindingLocation(crewjam_saml.HTTPRedirectBinding)
+-	if slo != "" {
+-		return samlRedirectLogoutRequest(w, r, mw.ServiceProvider, slo, nameID, sessionID)
+-	}
+-	slo = mw.ServiceProvider.GetSLOBindingLocation(crewjam_saml.HTTPPostBinding)
+-	return samlPostLogoutRequest(w, mw.ServiceProvider, slo, nameID, sessionID)
+-}
+-
+-func samlRedirectLogoutRequest(w http.ResponseWriter, r *http.Request, sp crewjam_saml.ServiceProvider, slo, nameID, sessionID string) error {
+-	lr, err := sp.MakeLogoutRequest(slo, nameID)
++	lr, err := provider.LogoutRequest(r.Context(), nameID, sessionID)
+ 	if err != nil {
+ 		return err
+ 	}
+-	http.Redirect(w, r, lr.Redirect(sessionID).String(), http.StatusFound)
++	lr.Write(w)
+ 	return nil
+ }
+ 
+-var (
+-	samlSLOPostTemplate = template.Must(template.New("samlSLOPost").Parse(`<!DOCTYPE html><html><body>{{.Form}}</body></html>`))
+-)
+-
+-type samlSLOPostData struct {
+-	Form template.HTML
+-}
+-
+-func samlPostLogoutRequest(w http.ResponseWriter, sp crewjam_saml.ServiceProvider, slo, nameID, sessionID string) error {
+-	lr, err := sp.MakeLogoutRequest(slo, nameID)
+-	if err != nil {
+-		return err
+-	}
+-
+-	return samlSLOPostTemplate.Execute(w, &samlSLOPostData{Form: template.HTML(lr.Post(sessionID))})
+-}
+-
+ func (l *Login) externalUserID(ctx context.Context, userID, idpID string) (string, error) {
+ 	userIDQuery, err := query.NewIDPUserLinksUserIDSearchQuery(userID)
+ 	if err != nil {
+diff --git a/internal/command/idp_intent.go b/internal/command/idp_intent.go
+index 86080c4..f75147e 100644
+--- a/internal/command/idp_intent.go
++++ b/internal/command/idp_intent.go
+@@ -6,7 +6,6 @@ import (
+ 	"encoding/xml"
+ 	"net/url"
+ 
+-	"github.com/crewjam/saml/samlsp"
+ 	"github.com/zitadel/oidc/v3/pkg/oidc"
+ 
+ 	"github.com/zitadel/zitadel/internal/command/preparation"
+@@ -22,6 +21,7 @@ import (
+ 	"github.com/zitadel/zitadel/internal/idp/providers/oauth"
+ 	openid "github.com/zitadel/zitadel/internal/idp/providers/oidc"
+ 	"github.com/zitadel/zitadel/internal/idp/providers/saml"
++	"github.com/zitadel/zitadel/internal/idp/providers/saml/requesttracker"
+ 	"github.com/zitadel/zitadel/internal/repository/idpintent"
+ 	"github.com/zitadel/zitadel/internal/zerrors"
+ )
+@@ -100,12 +100,12 @@ func (c *Commands) GetProvider(ctx context.Context, idpID string, idpCallback st
+ 		samlRootURL,
+ 		c.idpConfigEncryption,
+ 		c.httpClient,
+-		func(ctx context.Context, intentID string) (*samlsp.TrackedRequest, error) {
++		func(ctx context.Context, intentID string) (*requesttracker.TrackedRequest, error) {
+ 			intent, err := c.GetActiveIntent(ctx, intentID)
+ 			if err != nil {
+ 				return nil, err
+ 			}
+-			return &samlsp.TrackedRequest{
++			return &requesttracker.TrackedRequest{
+ 				SAMLRequestID: intent.RequestID,
+ 				Index:         intentID,
+ 				URI:           intent.SuccessURL.String(),
+diff --git a/internal/idp/providers/saml/requesttracker/request_tracker.go b/internal/idp/providers/saml/requesttracker/request_tracker.go
+index 6c57386..a0b4e42 100644
+--- a/internal/idp/providers/saml/requesttracker/request_tracker.go
++++ b/internal/idp/providers/saml/requesttracker/request_tracker.go
+@@ -2,57 +2,38 @@ package requesttracker
+ 
+ import (
+ 	"context"
+-	"net/http"
+-
+-	"github.com/crewjam/saml/samlsp"
+ )
+ 
+-type GetRequest func(ctx context.Context, intentID string) (*samlsp.TrackedRequest, error)
++// TrackedRequest is a SAML AuthnRequest in progress, found by the RelayState (Index) it was sent with.
++type TrackedRequest struct {
++	Index         string
++	SAMLRequestID string
++	URI           string
++}
++
++type GetRequest func(ctx context.Context, intentID string) (*TrackedRequest, error)
+ type AddRequest func(ctx context.Context, intentID, requestID string) error
+ 
++// RequestTracker remembers the ID of each AuthnRequest in ZITADEL's own storage (the intent or the auth request),
++// under the RelayState it was sent with, so that the response can be checked against it.
+ type RequestTracker struct {
+ 	addRequest AddRequest
+ 	getRequest GetRequest
+ }
+ 
+-func New(addRequestF AddRequest, getRequestF GetRequest) samlsp.RequestTracker {
++func New(addRequestF AddRequest, getRequestF GetRequest) *RequestTracker {
+ 	return &RequestTracker{
+ 		addRequest: addRequestF,
+ 		getRequest: getRequestF,
+ 	}
+ }
+ 
+-func (rt *RequestTracker) TrackRequest(w http.ResponseWriter, r *http.Request, samlRequestID string) (index string, err error) {
+-	// intentID is stored in r.URL
+-	intentID := r.URL.String()
+-	if err := rt.addRequest(r.Context(), intentID, samlRequestID); err != nil {
+-		return "", err
+-	}
+-	return intentID, nil
+-}
+-
+-func (rt *RequestTracker) StopTrackingRequest(w http.ResponseWriter, r *http.Request, index string) error {
+-	// error is not handled in SP logic
+-	return nil
+-}
+-
+-func (rt *RequestTracker) GetTrackedRequests(r *http.Request) []samlsp.TrackedRequest {
+-	// RelayState is the context of the auth flow and as such contains the intentID
+-	intentID := r.FormValue("RelayState")
+-
+-	request, err := rt.getRequest(r.Context(), intentID)
+-	if err != nil {
+-		return nil
+-	}
+-	return []samlsp.TrackedRequest{
+-		{
+-			Index:         request.Index,
+-			SAMLRequestID: request.SAMLRequestID,
+-			URI:           request.URI,
+-		},
+-	}
++// TrackRequest stores samlRequestID for the auth flow identified by relayState (the intentID or authRequestID).
++func (rt *RequestTracker) TrackRequest(ctx context.Context, relayState, samlRequestID string) error {
++	return rt.addRequest(ctx, relayState, samlRequestID)
+ }
+ 
+-func (rt *RequestTracker) GetTrackedRequest(r *http.Request, index string) (*samlsp.TrackedRequest, error) {
+-	return rt.getRequest(r.Context(), index)
++// GetTrackedRequest returns the request stored for the auth flow identified by relayState.
++func (rt *RequestTracker) GetTrackedRequest(ctx context.Context, relayState string) (*TrackedRequest, error) {
++	return rt.getRequest(ctx, relayState)
+ }
+diff --git a/internal/idp/providers/saml/saml.go b/internal/idp/providers/saml/saml.go
+index 1c05277..4ee8951 100644
+--- a/internal/idp/providers/saml/saml.go
++++ b/internal/idp/providers/saml/saml.go
+@@ -13,24 +13,40 @@ import (
+ 	"time"
+ 
+ 	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlsp"
++	"github.com/crewjam/saml/x/samlsp/replay"
++	"github.com/crewjam/saml/x/samlsp/slo"
++	dsig "github.com/russellhaering/goxmldsig"
+ 	"golang.org/x/text/encoding/ianaindex"
+ 
+ 	"github.com/zitadel/zitadel/internal/domain"
+ 	"github.com/zitadel/zitadel/internal/idp"
++	"github.com/zitadel/zitadel/internal/idp/providers/saml/requesttracker"
+ 	"github.com/zitadel/zitadel/internal/zerrors"
+ )
+ 
+ var _ idp.Provider = (*Provider)(nil)
+ 
++// replayState records the assertions accepted by every SAML provider of this process, so that each is accepted only once.
++// A provider (and its [samlsp.Config]) is created per request, so they must share it.
++// The ReplayKey includes the IdP's entityID, so the providers of different IdPs cannot block each other.
++var replayState samlsp.ReplayState = replay.NewMemory()
++
+ // Provider is the [idp.Provider] implementation for a generic SAML provider
+ type Provider struct {
+ 	name string
+ 
+-	requestTracker samlsp.RequestTracker
++	requestTracker *requesttracker.RequestTracker
+ 	Certificate    []byte
+ 
+-	spOptions *samlsp.Options
++	rootURL     *url.URL
++	entityID    string
++	key         *rsa.PrivateKey
++	certificate *x509.Certificate
++	idpMetadata *saml.EntityDescriptor
++	httpClient  *http.Client
++	signRequest bool
++	replayState samlsp.ReplayState
+ 
+ 	binding                       string
+ 	signatureAlgorithm            string
+@@ -76,7 +92,7 @@ func WithAutoUpdate() ProviderOpts {
+ 
+ func WithSignedRequest() ProviderOpts {
+ 	return func(p *Provider) {
+-		p.spOptions.SignRequest = true
++		p.signRequest = true
+ 	}
+ }
+ 
+@@ -104,7 +120,7 @@ func WithTransientMappingAttributeName(attribute string) ProviderOpts {
+ 	}
+ }
+ 
+-func WithCustomRequestTracker(tracker samlsp.RequestTracker) ProviderOpts {
++func WithCustomRequestTracker(tracker *requesttracker.RequestTracker) ProviderOpts {
+ 	return func(p *Provider) {
+ 		p.requestTracker = tracker
+ 	}
+@@ -112,7 +128,7 @@ func WithCustomRequestTracker(tracker samlsp.RequestTracker) ProviderOpts {
+ 
+ func WithEntityID(entityID string) ProviderOpts {
+ 	return func(p *Provider) {
+-		p.spOptions.EntityID = entityID
++		p.entityID = entityID
+ 	}
+ }
+ 
+@@ -176,18 +192,19 @@ func New(
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	opts := samlsp.Options{
+-		URL:         *rootURL,
+-		Key:         keyPair.PrivateKey.(*rsa.PrivateKey),
+-		Certificate: keyPair.Leaf,
+-		IDPMetadata: entityDescriptor,
+-		SignRequest: false,
+-		HTTPClient:  httpClient,
++	rsaKey, ok := keyPair.PrivateKey.(*rsa.PrivateKey)
++	if !ok {
++		return nil, zerrors.ThrowInvalidArgument(nil, "SAML-Ohk3a", "Errors.Intent.IDPInvalid")
+ 	}
+ 	provider := &Provider{
+ 		name:        name,
+-		spOptions:   &opts,
+ 		Certificate: certificate,
++		rootURL:     rootURL,
++		key:         rsaKey,
++		certificate: keyPair.Leaf,
++		idpMetadata: entityDescriptor,
++		httpClient:  httpClient,
++		replayState: replayState,
+ 		// the library uses transient as default, which does not make sense for federating accounts
+ 		nameIDFormat: saml.PersistentNameIDFormat,
+ 	}
+@@ -217,23 +234,78 @@ func (p *Provider) IsAutoUpdate() bool {
+ 	return p.isAutoUpdate
+ }
+ 
+-func (p *Provider) GetSP() (*samlsp.Middleware, error) {
+-	sp, err := samlsp.New(*p.spOptions)
++// GetSP returns the SAML service provider that ZITADEL is for this IdP.
++// It serves its metadata at saml/metadata, its ACS at saml/acs and its SLO at saml/slo below the root URL,
++// unless the entityID is set with [WithEntityID].
++func (p *Provider) GetSP() (*samlsp.Config, error) {
++	entityID := p.entityID
++	if entityID == "" {
++		entityID = p.rootURL.ResolveReference(&url.URL{Path: "saml/metadata"}).String()
++	}
++	opts := []samlsp.Option{
++		samlsp.WithACSURL(p.rootURL.ResolveReference(&url.URL{Path: "saml/acs"}).String()),
++		slo.Endpoint(p.rootURL.ResolveReference(&url.URL{Path: "saml/slo"}).String()),
++		// the same key signs and decrypts, as it did with the samlsp middleware
++		samlsp.WithSigningKey(p.key, p.certificate),
++		samlsp.WithEncryptionKey(p.key, p.certificate),
++		samlsp.WithNameIDFormat(p.nameIDFormat),
++		samlsp.WithReplayState(p.replayState),
++		samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
++			sp.MetadataValidDuration = time.Until(p.certificate.NotAfter)
++			// The IdP metadata is stored when the IdP is configured and is never refreshed,
++			// so its validUntil must not stop the IdP from working.
++			sp.RejectExpiredIDPMetadata = false
++			// Keep accepting the IdPs that were accepted before: those that sign with SHA-1
++			// and those that encrypt with AES-CBC and sign only the assertion (e.g. Entra ID).
++			sp.RejectSHA1Signatures = false
++			sp.RequireSignedResponseForCBC = false
++		}),
++	}
++	if p.httpClient != nil {
++		opts = append(opts, samlsp.WithHTTPClient(p.httpClient))
++	}
++	if p.signRequest {
++		opts = append(opts, samlsp.SignAuthnRequests)
++		switch p.signatureAlgorithm {
++		case "", dsig.RSASHA1SignatureMethod:
++			// samlsp refuses SHA-1 in WithSignatureMethod, but it is the default and a configurable option for signed requests
++			opts = append(opts, samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
++				sp.SignatureMethod = dsig.RSASHA1SignatureMethod
++			}))
++		default:
++			opts = append(opts, samlsp.WithSignatureMethod(p.signatureAlgorithm))
++		}
++	}
++	sp, err := samlsp.New(entityID, samlsp.StaticMetadata(p.idpMetadata), opts...)
+ 	if err != nil {
+ 		return nil, zerrors.ThrowInternal(err, "SAML-qee09ffuq5", "Errors.Intent.IDPInvalid")
+ 	}
+-	sp.ServiceProvider.AuthnNameIDFormat = p.nameIDFormat
+-	if p.requestTracker != nil {
+-		sp.RequestTracker = p.requestTracker
++	return sp, nil
++}
++
++// LogoutRequest returns the LogoutRequest that ends the session of the user with the nameID at the IdP,
++// sent with HTTP-Redirect if the IdP supports it, and HTTP-POST otherwise.
++// The configured binding is ignored: for example, Azure documents that only redirect binding is possible
++// and also only provides a redirect SLO in the metadata.
++func (p *Provider) LogoutRequest(ctx context.Context, nameID, relayState string) (*samlsp.Message, error) {
++	sp, err := p.GetSP()
++	if err != nil {
++		return nil, err
+ 	}
+-	if p.binding != "" {
+-		sp.Binding = p.binding
++	logout, err := slo.New(sp)
++	if err != nil {
++		return nil, err
+ 	}
+-	if p.signatureAlgorithm != "" {
+-		sp.ServiceProvider.SignatureMethod = p.signatureAlgorithm
++	format := string(p.nameIDFormat)
++	if p.nameIDFormat == saml.UnspecifiedNameIDFormat {
++		format = ""
+ 	}
+-	sp.ServiceProvider.MetadataValidDuration = time.Until(sp.ServiceProvider.Certificate.NotAfter)
+-	return sp, nil
++	return logout.Request(ctx, saml.NameID{
++		Format:          format,
++		Value:           nameID,
++		NameQualifier:   p.idpMetadata.EntityID,
++		SPNameQualifier: sp.EntityID(),
++	}, relayState)
+ }
+ 
+ func (p *Provider) BeginAuth(ctx context.Context, state string, _ ...idp.Parameter) (idp.Session, error) {
+@@ -244,6 +316,7 @@ func (p *Provider) BeginAuth(ctx context.Context, state string, _ ...idp.Paramet
+ 
+ 	return &Session{
+ 		ServiceProvider: m,
++		provider:        p,
+ 		state:           state,
+ 	}, nil
+ }
+diff --git a/internal/idp/providers/saml/saml_test.go b/internal/idp/providers/saml/saml_test.go
+index 766f4ab..17f1086 100644
+--- a/internal/idp/providers/saml/saml_test.go
++++ b/internal/idp/providers/saml/saml_test.go
+@@ -1,15 +1,20 @@
+ package saml
+ 
+ import (
++	"bytes"
++	"compress/flate"
+ 	"context"
++	"encoding/base64"
+ 	"encoding/xml"
++	"io"
+ 	"net/http"
+ 	"net/url"
+ 	"testing"
+ 	"time"
+ 
++	"github.com/beevik/etree"
+ 	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
++	dsig "github.com/russellhaering/goxmldsig"
+ 	"github.com/stretchr/testify/assert"
+ 	"github.com/stretchr/testify/require"
+ 
+@@ -20,13 +25,15 @@ import (
+ )
+ 
+ func TestProvider_BeginAuth(t *testing.T) {
++	var trackedRequestID string
+ 	requestTracker := requesttracker.New(
+ 		func(ctx context.Context, authRequestID, samlRequestID string) error {
+ 			assert.Equal(t, "state", authRequestID)
++			trackedRequestID = samlRequestID
+ 			return nil
+ 		},
+-		func(ctx context.Context, authRequestID string) (*samlsp.TrackedRequest, error) {
+-			return &samlsp.TrackedRequest{
++		func(ctx context.Context, authRequestID string) (*requesttracker.TrackedRequest, error) {
++			return &requesttracker.TrackedRequest{
+ 				SAMLRequestID: "state",
+ 				Index:         authRequestID,
+ 			}, nil
+@@ -48,6 +55,8 @@ func TestProvider_BeginAuth(t *testing.T) {
+ 		authType   idp.Auth
+ 		ssoURL     string
+ 		relayState string
++		// sigAlg is the signature algorithm of a signed request, empty if it must not be signed
++		sigAlg string
+ 	}
+ 	tests := []struct {
+ 		name   string
+@@ -98,9 +107,39 @@ func TestProvider_BeginAuth(t *testing.T) {
+ 			},
+ 		},
+ 	}
++	// the IdP supports both bindings, and HTTP-POST is configured
++	configuredPost := tests[0]
++	configuredPost.name = "post binding configured, success"
++	configuredPost.fields.options = append(append([]ProviderOpts{}, configuredPost.fields.options...), WithBinding(saml.HTTPPostBinding))
++	configuredPost.want.authType = &idp.FormAuth{}
++	tests = append(tests, configuredPost)
++
++	// the same requests, signed
++	redirect, post := tests[0], tests[1]
++	for _, signed := range []struct {
++		name    string
++		options []ProviderOpts
++		sigAlg  string
++	}{
++		{"signed request, default algorithm", []ProviderOpts{WithSignedRequest()}, dsig.RSASHA1SignatureMethod},
++		{"signed request, rsa-sha256", []ProviderOpts{WithSignedRequest(), WithSignatureAlgorithm(dsig.RSASHA256SignatureMethod)}, dsig.RSASHA256SignatureMethod},
++	} {
++		for _, tc := range []struct {
++			name   string
++			fields fields
++			args   args
++			want   want
++		}{redirect, post, configuredPost} {
++			tc.name += ", " + signed.name
++			tc.fields.options = append(append([]ProviderOpts{}, tc.fields.options...), signed.options...)
++			tc.want.sigAlg = signed.sigAlg
++			tests = append(tests, tc)
++		}
++	}
+ 	for _, tt := range tests {
+ 		t.Run(tt.name, func(t *testing.T) {
+ 			a := assert.New(t)
++			trackedRequestID = ""
+ 
+ 			provider, err := New(
+ 				tt.fields.name,
+@@ -124,7 +163,8 @@ func TestProvider_BeginAuth(t *testing.T) {
+ 				a.NoError(gotErr)
+ 				a.IsType(tt.want.authType, gotAuth)
+ 
+-				var ssoURL, relayState, samlRequest string
++				var ssoURL, relayState, samlRequest, sigAlg string
++				var requestXML []byte
+ 				switch auth := gotAuth.(type) {
+ 				case *idp.RedirectAuth:
+ 					gotRedirect, err := url.Parse(auth.RedirectURL)
+@@ -134,14 +174,41 @@ func TestProvider_BeginAuth(t *testing.T) {
+ 					ssoURL = gotRedirect.Scheme + "://" + gotRedirect.Host + gotRedirect.Path
+ 					relayState = gotQuery.Get("RelayState")
+ 					samlRequest = gotQuery.Get("SAMLRequest")
++					// the HTTP-Redirect binding signs the query
++					sigAlg = gotQuery.Get("SigAlg")
++					if sigAlg != "" {
++						a.NotEmpty(gotQuery.Get("Signature"))
++					}
++					deflated, err := base64.StdEncoding.DecodeString(samlRequest)
++					require.NoError(t, err)
++					requestXML, err = io.ReadAll(flate.NewReader(bytes.NewReader(deflated)))
++					require.NoError(t, err)
+ 				case *idp.FormAuth:
+ 					ssoURL = auth.URL
+ 					relayState = auth.Fields["RelayState"]
+ 					samlRequest = auth.Fields["SAMLRequest"]
++					requestXML, err = base64.StdEncoding.DecodeString(samlRequest)
++					require.NoError(t, err)
++					// the HTTP-POST binding signs the request itself
++					doc := etree.NewDocument()
++					require.NoError(t, doc.ReadFromBytes(requestXML))
++					if method := doc.FindElement("//SignatureMethod"); method != nil {
++						sigAlg = method.SelectAttrValue("Algorithm", "")
++					}
+ 				}
+ 				a.Equal(tt.want.ssoURL, ssoURL)
+ 				a.Equal(tt.want.relayState, relayState)
+ 				a.NotEmpty(samlRequest)
++				a.Equal(tt.want.sigAlg, sigAlg)
++
++				// the ID of the request is tracked, to be checked against the response's InResponseTo
++				var authnRequest saml.AuthnRequest
++				require.NoError(t, xml.Unmarshal(requestXML, &authnRequest))
++				a.NotEmpty(authnRequest.ID)
++				a.Equal(authnRequest.ID, trackedRequestID)
++				a.Equal("https://localhost:8080/saml/acs", authnRequest.AssertionConsumerServiceURL)
++				a.Equal("https://localhost:8080/saml/metadata", authnRequest.Issuer.Value)
++				a.Equal(string(saml.PersistentNameIDFormat), *authnRequest.NameIDPolicy.Format)
+ 			}
+ 		})
+ 	}
+@@ -168,7 +235,7 @@ func TestProvider_Options(t *testing.T) {
+ 		transientMappingAttributeName string
+ 		withSignedRequest             bool
+ 		signatureAlgorithm            string
+-		requesttracker                samlsp.RequestTracker
++		requesttracker                *requesttracker.RequestTracker
+ 		entityID                      string
+ 	}
+ 	tests := []struct {
+@@ -301,10 +368,10 @@ func TestProvider_Options(t *testing.T) {
+ 				a.Equal(tt.want.binding, provider.binding)
+ 				a.Equal(tt.want.nameIDFormat, provider.nameIDFormat)
+ 				a.Equal(tt.want.transientMappingAttributeName, provider.transientMappingAttributeName)
+-				a.Equal(tt.want.withSignedRequest, provider.spOptions.SignRequest)
++				a.Equal(tt.want.withSignedRequest, provider.signRequest)
+ 				a.Equal(tt.want.signatureAlgorithm, provider.signatureAlgorithm)
+ 				a.Equal(tt.want.requesttracker, provider.requestTracker)
+-				a.Equal(tt.want.entityID, provider.spOptions.EntityID)
++				a.Equal(tt.want.entityID, provider.entityID)
+ 			}
+ 		})
+ 	}
+diff --git a/internal/idp/providers/saml/session.go b/internal/idp/providers/saml/session.go
+index f49f50f..8136d9d 100644
+--- a/internal/idp/providers/saml/session.go
++++ b/internal/idp/providers/saml/session.go
+@@ -2,16 +2,13 @@ package saml
+ 
+ import (
+ 	"context"
+-	"encoding/base64"
+ 	"errors"
+ 	"net/http"
+-	"net/url"
+ 	"strings"
+ 	"time"
+ 
+-	"github.com/beevik/etree"
+ 	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlsp"
+ 
+ 	"github.com/zitadel/zitadel/internal/idp"
+ 	"github.com/zitadel/zitadel/internal/zerrors"
+@@ -21,7 +18,8 @@ var _ idp.Session = (*Session)(nil)
+ 
+ // Session is the [idp.Session] implementation for the SAML provider.
+ type Session struct {
+-	ServiceProvider               *samlsp.Middleware
++	ServiceProvider               *samlsp.Config
++	provider                      *Provider
+ 	state                         string
+ 	TransientMappingAttributeName string
+ 
+@@ -38,6 +36,7 @@ func NewSession(provider *Provider, requestID string, request *http.Request) (*S
+ 	}
+ 	return &Session{
+ 		ServiceProvider:               sp,
++		provider:                      provider,
+ 		TransientMappingAttributeName: provider.TransientMappingAttributeName(),
+ 		RequestID:                     requestID,
+ 		Request:                       request,
+@@ -46,14 +45,7 @@ func NewSession(provider *Provider, requestID string, request *http.Request) (*S
+ 
+ // GetAuth implements the [idp.Session] interface.
+ func (s *Session) GetAuth(ctx context.Context) (idp.Auth, error) {
+-	url, err := url.Parse(s.state)
+-	if err != nil {
+-		return nil, err
+-	}
+-	request := &http.Request{
+-		URL: url,
+-	}
+-	return s.auth(request.WithContext(ctx))
++	return s.auth(ctx)
+ }
+ 
+ // PersistentParameters implements the [idp.Session] interface.
+@@ -67,7 +59,7 @@ func (s *Session) FetchUser(ctx context.Context) (user idp.User, err error) {
+ 		return nil, zerrors.ThrowInvalidArgument(nil, "SAML-d09hy0wkex", "Errors.Intent.ResponseInvalid")
+ 	}
+ 
+-	s.Assertion, err = s.ServiceProvider.ServiceProvider.ParseResponse(s.Request, []string{s.RequestID})
++	assertion, err := s.ServiceProvider.ParseResponse(ctx, s.Request, samlsp.WithRequestID(s.RequestID))
+ 	if err != nil {
+ 		invalidRespErr := new(saml.InvalidResponseError)
+ 		if errors.As(err, &invalidRespErr) {
+@@ -75,6 +67,7 @@ func (s *Session) FetchUser(ctx context.Context) (user idp.User, err error) {
+ 		}
+ 		return nil, zerrors.ThrowInvalidArgument(err, "SAML-nuo0vphhh9", "Errors.Intent.ResponseInvalid")
+ 	}
++	s.Assertion = assertion.Raw
+ 
+ 	userMapper := NewUser()
+ 	// nameID is required, but at least in ADFS it will not be sent unless explicitly configured
+@@ -135,57 +128,39 @@ func (s *Session) transientMappingID() (string, error) {
+ 	return "", zerrors.ThrowInvalidArgument(nil, "SAML-swwg2", "Errors.Intent.MissingSingleMappingAttribute")
+ }
+ 
+-// auth is a modified copy of the [samlsp.Middleware.HandleStartAuthFlow] method.
+-// Instead of writing the response to the http.ResponseWriter, it returns the auth request as an [idp.Auth].
+-// In case of an error, it returns the error directly and does not write to the response.
+-func (s *Session) auth(r *http.Request) (idp.Auth, error) {
+-	if r.URL.Path == s.ServiceProvider.ServiceProvider.AcsURL.Path {
+-		// should never occur, but was handled in the original method, so we keep it here
+-		return nil, zerrors.ThrowInvalidArgument(nil, "SAML-Eoi24", "don't wrap Middleware with RequireAccount")
+-	}
+-
+-	var binding, bindingLocation string
+-	if s.ServiceProvider.Binding != "" {
+-		binding = s.ServiceProvider.Binding
+-		bindingLocation = s.ServiceProvider.ServiceProvider.GetSSOBindingLocation(binding)
+-	} else {
+-		binding = saml.HTTPRedirectBinding
+-		bindingLocation = s.ServiceProvider.ServiceProvider.GetSSOBindingLocation(binding)
+-		if bindingLocation == "" {
+-			binding = saml.HTTPPostBinding
+-			bindingLocation = s.ServiceProvider.ServiceProvider.GetSSOBindingLocation(binding)
+-		}
++// auth creates the AuthnRequest and tracks its ID under the state (the RelayState).
++// Instead of writing the request to an http.ResponseWriter, it returns it as an [idp.Auth].
++// Without a configured binding, it uses HTTP-Redirect if the IdP supports it, and HTTP-POST otherwise.
++func (s *Session) auth(ctx context.Context) (idp.Auth, error) {
++	var opts []samlsp.AuthnOption
++	switch s.provider.binding {
++	case "":
++	case saml.HTTPRedirectBinding, saml.HTTPPostBinding:
++		opts = append(opts, samlsp.WithBinding(s.provider.binding))
++	default:
++		return nil, zerrors.ThrowInvalidArgument(nil, "SAML-Eoi24", "Errors.Intent.Invalid")
+ 	}
+-
+-	authReq, err := s.ServiceProvider.ServiceProvider.MakeAuthenticationRequest(bindingLocation, binding, s.ServiceProvider.ResponseBinding)
++	msg, err := s.ServiceProvider.AuthnRequest(ctx, s.state, opts...)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	relayState, err := s.ServiceProvider.RequestTracker.TrackRequest(nil, r, authReq.ID)
+-	if err != nil {
++	if err := s.trackRequest(ctx, msg); err != nil {
+ 		return nil, err
+ 	}
+-
+-	if binding == saml.HTTPRedirectBinding {
+-		redirectURL, err := authReq.Redirect(relayState, &s.ServiceProvider.ServiceProvider)
+-		if err != nil {
+-			return nil, err
+-		}
+-		return idp.Redirect(redirectURL.String())
++	if msg.Binding == saml.HTTPRedirectBinding {
++		return idp.Redirect(msg.RedirectURL().String())
+ 	}
+-	if binding == saml.HTTPPostBinding {
+-		doc := etree.NewDocument()
+-		doc.SetRoot(authReq.Element())
+-		reqBuf, err := doc.WriteToBytes()
+-		if err != nil {
+-			return nil, err
+-		}
+-		encodedReqBuf := base64.StdEncoding.EncodeToString(reqBuf)
+-		return idp.Form(authReq.Destination,
+-			map[string]string{
+-				"SAMLRequest": encodedReqBuf,
+-				"RelayState":  relayState,
+-			})
++	formFields := msg.FormFields()
++	fields := make(map[string]string, len(formFields))
++	for name := range formFields {
++		fields[name] = formFields.Get(name)
++	}
++	return idp.Form(msg.Destination, fields)
++}
++
++func (s *Session) trackRequest(ctx context.Context, msg *samlsp.Message) error {
++	if s.provider.requestTracker == nil {
++		return zerrors.ThrowInternal(nil, "SAML-Ahb5o", "Errors.Intent.IDPInvalid")
+ 	}
+-	return nil, zerrors.ThrowInvalidArgument(nil, "SAML-Eoi24", "Errors.Intent.Invalid")
++	return s.provider.requestTracker.TrackRequest(ctx, s.state, msg.ID)
+ }
+diff --git a/internal/idp/providers/saml/session_test.go b/internal/idp/providers/saml/session_test.go
+index 8756b3b..b3a4f50 100644
+--- a/internal/idp/providers/saml/session_test.go
++++ b/internal/idp/providers/saml/session_test.go
+@@ -10,6 +10,7 @@ import (
+ 	"time"
+ 
+ 	"github.com/crewjam/saml"
++	"github.com/crewjam/saml/x/samlsp/replay"
+ 	dsig "github.com/russellhaering/goxmldsig"
+ 	"github.com/stretchr/testify/assert"
+ 	"github.com/stretchr/testify/require"
+@@ -372,6 +373,8 @@ func TestSession_FetchUser(t *testing.T) {
+ 
+ 			provider, err := New(tt.fields.name, tt.fields.rootURL, tt.fields.metadata, tt.fields.certificate, tt.fields.key, http.DefaultClient, tt.fields.options...)
+ 			require.NoError(t, err)
++			// record the assertions of this test only, at the time of the response
++			provider.replayState = &replay.Memory{Clock: dsig.NewFakeClockAt(tt.fields.timeNow())}
+ 
+ 			session, err := NewSession(provider, tt.args.requestID, tt.args.request)
+ 			require.NoError(t, err)
+@@ -387,6 +390,12 @@ func TestSession_FetchUser(t *testing.T) {
+ 			if tt.want.err == nil {
+ 				a.NoError(err)
+ 				a.Equal(tt.want.id, user.GetID())
++
++				// the same response is accepted only once
++				replayed, err := NewSession(provider, tt.args.requestID, tt.args.request)
++				require.NoError(t, err)
++				_, err = replayed.FetchUser(context.Background())
++				a.ErrorIs(err, saml.ErrAssertionReplayed)
+ 			}
+ 		})
+ 	}
+diff --git a/internal/integration/saml.go b/internal/integration/saml.go
+index a932c0d..9e91764 100644
+--- a/internal/integration/saml.go
++++ b/internal/integration/saml.go
+@@ -11,10 +11,11 @@ import (
+ 	"net/http"
+ 	"net/url"
+ 	"strings"
++	"sync"
+ 	"time"
+ 
+ 	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlsp"
+ 	"github.com/zitadel/logging"
+ 	"github.com/zitadel/saml/pkg/provider"
+ 
+@@ -74,7 +75,35 @@ xtqmbthw2E9VjSk3zSYb4uFc6mv0C/kRPTDUFH+9CpQTBBx/O016hmcatxlBS6JL
+ VAV6oE8sEJYHtR6YdZiMWWo=
+ -----END PRIVATE KEY-----`
+ 
+-func CreateSAMLSP(root string, idpMetadata *saml.EntityDescriptor, binding string) (*samlsp.Middleware, error) {
++// SAMLSP is a SAML service provider that sends its requests to ZITADEL,
++// and asks for the responses with ResponseBinding.
++type SAMLSP struct {
++	*samlsp.Config
++	ResponseBinding string
++
++	mu         sync.Mutex
++	requestIDs []string
++}
++
++// ParsePostResponse verifies samlResponse, a response of ZITADEL to one of the requests sent by m,
++// as the ACS receives it with the HTTP-POST binding.
++func (m *SAMLSP) ParsePostResponse(ctx context.Context, samlResponse string) (*samlsp.Assertion, error) {
++	form := url.Values{"SAMLResponse": {samlResponse}}
++	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.ACSURL(), strings.NewReader(form.Encode()))
++	if err != nil {
++		return nil, err
++	}
++	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
++	m.mu.Lock()
++	opts := make([]samlsp.ResponseOption, 0, len(m.requestIDs))
++	for _, id := range m.requestIDs {
++		opts = append(opts, samlsp.WithRequestID(id))
++	}
++	m.mu.Unlock()
++	return m.ParseResponse(ctx, req, opts...)
++}
++
++func CreateSAMLSP(root string, idpMetadata *saml.EntityDescriptor, binding string) (*SAMLSP, error) {
+ 	rootURL, err := url.Parse(root)
+ 	if err != nil {
+ 		return nil, err
+@@ -87,24 +116,28 @@ func CreateSAMLSP(root string, idpMetadata *saml.EntityDescriptor, binding strin
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	key := keyPair.PrivateKey.(*rsa.PrivateKey)
+ 
+-	sp, err := samlsp.New(samlsp.Options{
+-		URL:                 *rootURL,
+-		Key:                 keyPair.PrivateKey.(*rsa.PrivateKey),
+-		Certificate:         keyPair.Leaf,
+-		IDPMetadata:         idpMetadata,
+-		UseArtifactResponse: false,
+-	})
++	sp, err := samlsp.New(
++		rootURL.ResolveReference(&url.URL{Path: "saml/metadata"}).String(),
++		samlsp.StaticMetadata(idpMetadata),
++		samlsp.WithACSURL(rootURL.ResolveReference(&url.URL{Path: "saml/acs"}).String()),
++		samlsp.WithSigningKey(key, keyPair.Leaf),
++		samlsp.WithEncryptionKey(key, keyPair.Leaf),
++		samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
++			// advertise the single logout service, as the samlsp middleware did
++			sp.SloURL = *rootURL.ResolveReference(&url.URL{Path: "saml/slo"})
++			sp.LogoutBindings = []string{saml.HTTPPostBinding}
++		}),
++	)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	sp.Binding = binding
+-	sp.ResponseBinding = binding
+-	return sp, nil
++	return &SAMLSP{Config: sp, ResponseBinding: binding}, nil
+ }
+ 
+-func (i *Instance) CreateSAMLClientLoginVersion(ctx context.Context, projectID string, m *samlsp.Middleware, loginVersion *app_pb.LoginVersion) (*management.AddSAMLAppResponse, error) {
+-	spMetadata, err := xml.MarshalIndent(m.ServiceProvider.Metadata(), "", "  ")
++func (i *Instance) CreateSAMLClientLoginVersion(ctx context.Context, projectID string, m *SAMLSP, loginVersion *app_pb.LoginVersion) (*management.AddSAMLAppResponse, error) {
++	spMetadata, err := m.MetadataXML(ctx)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -138,28 +171,38 @@ func (i *Instance) CreateSAMLClientLoginVersion(ctx context.Context, projectID s
+ 	})
+ }
+ 
+-func (i *Instance) CreateSAMLClient(ctx context.Context, projectID string, m *samlsp.Middleware) (*management.AddSAMLAppResponse, error) {
++func (i *Instance) CreateSAMLClient(ctx context.Context, projectID string, m *SAMLSP) (*management.AddSAMLAppResponse, error) {
+ 	return i.CreateSAMLClientLoginVersion(ctx, projectID, m, nil)
+ }
+ 
+-func (i *Instance) CreateSAMLAuthRequestWithoutLoginClientHeader(m *samlsp.Middleware, loginBaseURI string, acs saml.Endpoint, relayState, responseBinding string) (now time.Time, authRequestID string, err error) {
++func (i *Instance) CreateSAMLAuthRequestWithoutLoginClientHeader(m *SAMLSP, loginBaseURI string, acs saml.Endpoint, relayState, responseBinding string) (now time.Time, authRequestID string, err error) {
+ 	return i.createSAMLAuthRequest(m, "", loginBaseURI, acs, relayState, responseBinding)
+ }
+ 
+-func (i *Instance) CreateSAMLAuthRequest(m *samlsp.Middleware, loginClient string, acs saml.Endpoint, relayState, responseBinding string) (now time.Time, authRequestID string, err error) {
++func (i *Instance) CreateSAMLAuthRequest(m *SAMLSP, loginClient string, acs saml.Endpoint, relayState, responseBinding string) (now time.Time, authRequestID string, err error) {
+ 	return i.createSAMLAuthRequest(m, loginClient, "", acs, relayState, responseBinding)
+ }
+ 
+-func (i *Instance) createSAMLAuthRequest(m *samlsp.Middleware, loginClient, loginBaseURI string, acs saml.Endpoint, relayState, responseBinding string) (now time.Time, authRequestID string, err error) {
+-	authReq, err := m.ServiceProvider.MakeAuthenticationRequest(acs.Location, acs.Binding, responseBinding)
++func (i *Instance) createSAMLAuthRequest(m *SAMLSP, loginClient, loginBaseURI string, acs saml.Endpoint, relayState, responseBinding string) (now time.Time, authRequestID string, err error) {
++	authReq, err := m.AuthnRequest(context.Background(), relayState,
++		samlsp.WithBinding(saml.HTTPRedirectBinding),
++		// ZITADEL can also send its response with the HTTP-Redirect binding, which samlsp does not ask for
++		samlsp.WithAuthnRequest(func(req *saml.AuthnRequest) error {
++			req.ProtocolBinding = responseBinding
++			return nil
++		}),
++	)
+ 	if err != nil {
+ 		return now, "", err
+ 	}
+-
+-	redirectURL, err := authReq.Redirect(relayState, &m.ServiceProvider)
+-	if err != nil {
+-		return now, "", err
++	// the request is always sent with the HTTP-Redirect binding, to the SSO endpoint of the test
++	if authReq.Destination != acs.Location {
++		return now, "", fmt.Errorf("SSO location is %s, not %s", authReq.Destination, acs.Location)
+ 	}
++	m.mu.Lock()
++	m.requestIDs = append(m.requestIDs, authReq.ID)
++	m.mu.Unlock()
++	redirectURL := authReq.RedirectURL()
+ 
+ 	var headers map[string]string
+ 	if loginClient != "" {

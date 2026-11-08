@@ -388,3 +388,38 @@ func TestKeyCopied(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+func TestDeriveKey(t *testing.T) {
+	secret := []byte("an application secret of more than 32 bytes")
+	key, err := pending.DeriveKey(secret, "example saml pending login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(key) != 32 {
+		t.Fatalf("len = %d, want 32", len(key))
+	}
+	again, _ := pending.DeriveKey(secret, "example saml pending login")
+	if string(again) != string(key) {
+		t.Error("DeriveKey is not deterministic")
+	}
+	other, _ := pending.DeriveKey(secret, "another use")
+	if string(other) == string(key) {
+		t.Error("two labels give the same key")
+	}
+	if string(key) == string(secret[:32]) {
+		t.Error("the key is the secret")
+	}
+
+	// The key works with New.
+	cfg, _ := newConfig(t)
+	if _, err := pending.New(cfg, key); err != nil {
+		t.Errorf("New with a derived key: %v", err)
+	}
+
+	if _, err := pending.DeriveKey(secret[:31], "label"); err == nil {
+		t.Error("a short secret was accepted")
+	}
+	if _, err := pending.DeriveKey(secret, ""); err == nil {
+		t.Error("an empty label was accepted")
+	}
+}

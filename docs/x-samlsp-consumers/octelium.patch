@@ -1,0 +1,518 @@
+diff --git a/cluster/authserver/authserver/providers/saml/saml.go b/cluster/authserver/authserver/providers/saml/saml.go
+index 0ad3c75..aec3960 100644
+--- a/cluster/authserver/authserver/providers/saml/saml.go
++++ b/cluster/authserver/authserver/providers/saml/saml.go
+@@ -26,24 +26,30 @@ import (
+ 
+ 	"github.com/asaskevich/govalidator"
+ 	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlsp"
++	"github.com/crewjam/saml/x/samlsp/replay"
+ 	"github.com/octelium/octelium/apis/main/authv1"
+ 	"github.com/octelium/octelium/apis/main/corev1"
+ 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/utils"
+ 	"github.com/octelium/octelium/cluster/common/celengine"
+ 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+-	utils_types "github.com/octelium/octelium/pkg/utils/types"
+ 	"github.com/pkg/errors"
+ 	"go.uber.org/zap"
+ )
+ 
+ type Connector struct {
+-	c         *corev1.IdentityProvider
+-	cc        *corev1.ClusterConfig
+-	sp        *saml.ServiceProvider
+-	celEngine *celengine.CELEngine
++	c          *corev1.IdentityProvider
++	cc         *corev1.ClusterConfig
++	config     *samlsp.Config
++	forceAuthn bool
++	celEngine  *celengine.CELEngine
+ }
+ 
++// replayState records the assertions that every SAML Connector has accepted.
++// It is shared so that the record survives the Connectors being rebuilt
++// whenever the IdentityProvider list changes.
++var replayState = replay.NewMemory()
++
+ func NewConnector(ctx context.Context, opts *utils.ProviderOpts) (*Connector, error) {
+ 
+ 	if opts.Provider.Spec.GetSaml() == nil {
+@@ -51,22 +57,32 @@ func NewConnector(ctx context.Context, opts *utils.ProviderOpts) (*Connector, er
+ 	}
+ 	conf := opts.Provider.Spec.GetSaml()
+ 
+-	idpMetadata, err := func() (*saml.EntityDescriptor, error) {
++	idpMetadata, err := func() (samlsp.MetadataFunc, error) {
+ 
+ 		switch conf.MetadataType.(type) {
+ 		case *corev1.IdentityProvider_Spec_SAML_Metadata:
+-			return samlsp.ParseMetadata([]byte(conf.GetMetadata()))
++			md, err := samlsp.ParseMetadata([]byte(conf.GetMetadata()))
++			if err != nil {
++				return nil, err
++			}
++			return samlsp.StaticMetadata(md), nil
+ 		case *corev1.IdentityProvider_Spec_SAML_MetadataURL:
+ 			idpMetadataURL, err := url.Parse(conf.GetMetadataURL())
+ 			if err != nil {
+ 				return nil, err
+ 			}
+-			return samlsp.FetchMetadata(ctx, &http.Client{
++			ret := samlsp.RemoteMetadata(idpMetadataURL.String(), samlsp.WithHTTPClient(&http.Client{
+ 				Timeout: 10 * time.Second,
+ 				Transport: &http.Transport{
+ 					TLSHandshakeTimeout: 5 * time.Second,
+ 				},
+-			}, *idpMetadataURL)
++			}))
++			// Fetch now, so that an IdentityProvider whose metadata cannot be
++			// fetched is reported when it is added, as before.
++			if _, err := ret(ctx); err != nil {
++				return nil, err
++			}
++			return ret, nil
+ 		default:
+ 			return nil, errors.Errorf("Either metadata or metadataURL must be supplied")
+ 		}
+@@ -75,28 +91,24 @@ func NewConnector(ctx context.Context, opts *utils.ProviderOpts) (*Connector, er
+ 		return nil, err
+ 	}
+ 
++	entityID := conf.EntityID
++	if entityID == "" {
++		entityID = fmt.Sprintf("https://%s", opts.ClusterConfig.Status.Domain)
++	}
++
++	config, err := samlsp.New(entityID, idpMetadata,
++		samlsp.WithACSURL(utils.GetCallbackURL(opts.ClusterConfig.Status.Domain)),
++		samlsp.WithReplayState(replayState))
++	if err != nil {
++		return nil, err
++	}
++
+ 	ret := &Connector{
+-		c:         opts.Provider,
+-		cc:        opts.ClusterConfig,
+-		celEngine: opts.CELEngine,
+-		sp: &saml.ServiceProvider{
+-			EntityID: func() string {
+-				if conf.EntityID != "" {
+-					return conf.EntityID
+-				}
+-				return fmt.Sprintf("https://%s", opts.ClusterConfig.Status.Domain)
+-			}(),
+-			AcsURL: func() url.URL {
+-				ret, err := url.Parse(utils.GetCallbackURL(opts.ClusterConfig.Status.Domain))
+-				if err != nil {
+-					return url.URL{}
+-				}
+-				return *ret
+-			}(),
+-
+-			IDPMetadata: idpMetadata,
+-			ForceAuthn:  utils_types.BoolToPtr(conf.ForceAuthn),
+-		},
++		c:          opts.Provider,
++		cc:         opts.ClusterConfig,
++		celEngine:  opts.CELEngine,
++		config:     config,
++		forceAuthn: conf.ForceAuthn,
+ 	}
+ 
+ 	return ret, nil
+@@ -121,31 +133,33 @@ func (c *Connector) Type() string {
+ 
+ func (c *Connector) GetLogin(r *http.Request, state string) (*utils.GetLoginResponse, error) {
+ 
+-	ssoURL := c.sp.GetSSOBindingLocation(saml.HTTPRedirectBinding)
+-
+-	authenReq, err := c.sp.MakeAuthenticationRequest(ssoURL, saml.HTTPRedirectBinding, saml.HTTPPostBinding)
+-	if err != nil {
+-		return nil, err
++	opts := []samlsp.AuthnOption{
++		samlsp.WithBinding(saml.HTTPRedirectBinding),
++		samlsp.WithForceAuthn(c.forceAuthn),
+ 	}
+ 
+-	url, err := authenReq.Redirect(state, c.sp)
++	authnReq, err := c.config.AuthnRequest(r.Context(), state, opts...)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 
+ 	return &utils.GetLoginResponse{
+-		LoginURL: url.String(),
+-		ReqID:    authenReq.ID,
++		LoginURL: authnReq.RedirectURL().String(),
++		ReqID:    authnReq.ID,
+ 	}, nil
+ }
+ 
+ func (c *Connector) HandleCallback(r *http.Request, login *utils.GetLoginResponse) (*corev1.Session_Status_Authentication_Info, error) {
+ 
+ 	conf := c.c.Spec.GetSaml()
+-	reqID := login.ReqID
+-	assertion, err := c.sp.ParseResponse(r, []string{reqID})
++	if login == nil || login.ReqID == "" {
++		return nil, errors.Errorf("No SAML request ID")
++	}
++
++	assertion, err := c.config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ReqID))
+ 	if err != nil {
+-		if merr, ok := err.(*saml.InvalidResponseError); ok {
++		var merr *saml.InvalidResponseError
++		if errors.As(err, &merr) {
+ 			zap.L().Debug("Could not validate SAML responses",
+ 				zap.Error(merr), zap.Error(merr.PrivateErr))
+ 		} else {
+@@ -158,11 +172,11 @@ func (c *Connector) HandleCallback(r *http.Request, login *utils.GetLoginRespons
+ 	}
+ 
+ 	var assertionStr string
+-	if assertionBytes, err := xml.Marshal(assertion); err == nil {
++	if assertionBytes, err := xml.Marshal(assertion.Raw); err == nil {
+ 		assertionStr = string(assertionBytes)
+ 	}
+ 
+-	identifier := getValStr(assertion, getAttrIdentifier(conf))
++	identifier := assertion.Attributes.Get(getAttrIdentifier(conf))
+ 	if identifier == "" {
+ 		return nil, errors.Errorf("Could not get identifier")
+ 	}
+@@ -171,7 +185,7 @@ func (c *Connector) HandleCallback(r *http.Request, login *utils.GetLoginRespons
+ 	if govalidator.IsEmail(identifier) {
+ 		email = identifier
+ 	} else {
+-		email = getValStr(assertion, defaultEmailAttr)
++		email = assertion.Attributes.Get(defaultEmailAttr)
+ 	}
+ 
+ 	ret := &corev1.Session_Status_Authentication_Info{
+@@ -196,19 +210,6 @@ func (c *Connector) HandleCallback(r *http.Request, login *utils.GetLoginRespons
+ 
+ }
+ 
+-func getValStr(assertion *saml.Assertion, name string) string {
+-	for _, attrStatement := range assertion.AttributeStatements {
+-		for _, attr := range attrStatement.Attributes {
+-			if attr.Name == name {
+-				if len(attr.Values) > 0 {
+-					return attr.Values[0].Value
+-				}
+-			}
+-		}
+-	}
+-	return ""
+-}
+-
+ const defaultEmailAttr = "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"
+ 
+ func getAttrIdentifier(conf *corev1.IdentityProvider_Spec_SAML) string {
+diff --git a/cluster/authserver/authserver/providers/saml/saml_test.go b/cluster/authserver/authserver/providers/saml/saml_test.go
+index 14054f3..e20db56 100644
+--- a/cluster/authserver/authserver/providers/saml/saml_test.go
++++ b/cluster/authserver/authserver/providers/saml/saml_test.go
+@@ -18,11 +18,13 @@ package saml
+ 
+ import (
+ 	"bytes"
++	"compress/flate"
+ 	"context"
+ 	"crypto/rand"
+ 	"crypto/rsa"
+ 	"crypto/x509"
+ 	"crypto/x509/pkix"
++	"encoding/base64"
+ 	"encoding/json"
+ 	"encoding/xml"
+ 	"fmt"
+@@ -31,11 +33,13 @@ import (
+ 	"net/http"
+ 	"net/http/httptest"
+ 	"net/url"
++	"strings"
+ 	"testing"
+ 	"time"
+ 
+ 	"github.com/crewjam/saml"
+ 	"github.com/crewjam/saml/samlidp"
++	"github.com/crewjam/saml/x/samlsp"
+ 	"github.com/octelium/octelium/apis/main/corev1"
+ 	"github.com/octelium/octelium/apis/main/metav1"
+ 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
+@@ -153,10 +157,10 @@ func TestProvider(t *testing.T) {
+ 
+ 		samlSP := &samlidp.Service{
+ 			Name:     utilrand.GetRandomStringCanonical(8),
+-			Metadata: *provider.sp.Metadata(),
++			Metadata: *provider.config.Metadata(ctx),
+ 		}
+ 
+-		md, err := xml.Marshal(provider.sp.Metadata())
++		md, err := provider.config.MetadataXML(ctx)
+ 		assert.Nil(t, err)
+ 
+ 		req := httptest.NewRequest(http.MethodPut,
+@@ -185,7 +189,7 @@ func TestProvider(t *testing.T) {
+ 
+ 	myShortCut := &samlidp.Shortcut{
+ 		Name:              utilrand.GetRandomStringCanonical(8),
+-		ServiceProviderID: provider.sp.EntityID,
++		ServiceProviderID: provider.config.EntityID(),
+ 	}
+ 
+ 	{
+@@ -348,82 +352,181 @@ func TestGetAttrIdentifier(t *testing.T) {
+ 	}
+ }
+ 
+-func TestGetValStr(t *testing.T) {
++func TestIdentifierAttribute(t *testing.T) {
+ 
+-	newAssertion := func(statements ...saml.AttributeStatement) *saml.Assertion {
+-		return &saml.Assertion{
+-			AttributeStatements: statements,
++	newAttr := func(name string, values ...string) samlsp.Attribute {
++		return samlsp.Attribute{
++			Name:   name,
++			Values: values,
+ 		}
+ 	}
+ 
+-	newAttr := func(name string, values ...string) saml.Attribute {
+-		attr := saml.Attribute{
+-			Name: name,
+-		}
+-		for _, v := range values {
+-			attr.Values = append(attr.Values, saml.AttributeValue{
+-				Value: v,
+-			})
+-		}
+-		return attr
++	{
++		assert.Equal(t, "", samlsp.Attributes{}.Get("any"))
+ 	}
+ 
+ 	{
+-		assert.Equal(t, "", getValStr(newAssertion(), "any"))
++		attrs := samlsp.Attributes{newAttr("email", "usr@example.com")}
++		assert.Equal(t, "usr@example.com", attrs.Get("email"))
++		assert.Equal(t, "", attrs.Get("other"))
+ 	}
+ 
+ 	{
+-		assertion := newAssertion(saml.AttributeStatement{
+-			Attributes: []saml.Attribute{
+-				newAttr("email", "usr@example.com"),
+-			},
+-		})
+-		assert.Equal(t, "usr@example.com", getValStr(assertion, "email"))
+-		assert.Equal(t, "", getValStr(assertion, "other"))
++		attrs := samlsp.Attributes{newAttr("email")}
++		assert.Equal(t, "", attrs.Get("email"))
+ 	}
+ 
+ 	{
+-		assertion := newAssertion(saml.AttributeStatement{
+-			Attributes: []saml.Attribute{
+-				newAttr("email"),
+-			},
+-		})
+-		assert.Equal(t, "", getValStr(assertion, "email"))
++		attrs := samlsp.Attributes{newAttr("email", "first@example.com", "second@example.com")}
++		assert.Equal(t, "first@example.com", attrs.Get("email"))
+ 	}
+ 
+ 	{
+-		assertion := newAssertion(saml.AttributeStatement{
+-			Attributes: []saml.Attribute{
+-				newAttr("email", "first@example.com", "second@example.com"),
+-			},
+-		})
+-		assert.Equal(t, "first@example.com", getValStr(assertion, "email"))
++		attrs := samlsp.Attributes{
++			newAttr("name", "usr1"),
++			newAttr("email", "usr@example.com"),
++		}
++		assert.Equal(t, "usr@example.com", attrs.Get("email"))
++		assert.Equal(t, "usr1", attrs.Get("name"))
+ 	}
+ 
+ 	{
+-		assertion := newAssertion(
+-			saml.AttributeStatement{
+-				Attributes: []saml.Attribute{
+-					newAttr("name", "usr1"),
+-				},
++		attrs := samlsp.Attributes{newAttr(defaultEmailAttr, "usr@example.com")}
++		assert.Equal(t, "usr@example.com", attrs.Get(defaultEmailAttr))
++	}
++
++	{
++		// The identifier attribute is matched by Name, never by FriendlyName.
++		attrs := samlsp.Attributes{{
++			Name:         "urn:oid:0.9.2342.19200300.100.1.3",
++			FriendlyName: "email",
++			Values:       []string{"usr@example.com"},
++		}}
++		assert.Equal(t, "", attrs.Get("email"))
++		assert.Equal(t, "usr@example.com", attrs.Get("urn:oid:0.9.2342.19200300.100.1.3"))
++	}
++}
++
++func newTestConnector(t *testing.T, idp *corev1.IdentityProvider) *Connector {
++	c, err := NewConnector(context.Background(), &utils.ProviderOpts{
++		ClusterConfig: &corev1.ClusterConfig{
++			Status: &corev1.ClusterConfig_Status{
++				Domain: "example.com",
+ 			},
+-			saml.AttributeStatement{
+-				Attributes: []saml.Attribute{
+-					newAttr("email", "usr@example.com"),
++		},
++		Provider: idp,
++	})
++	assert.Nil(t, err, "%+v", err)
++	return c
++}
++
++func decodeAuthnRequest(t *testing.T, loginURL string) (*saml.AuthnRequest, url.Values) {
++	u, err := url.Parse(loginURL)
++	assert.Nil(t, err)
++
++	deflated, err := base64.StdEncoding.DecodeString(u.Query().Get("SAMLRequest"))
++	assert.Nil(t, err)
++
++	reqXML, err := io.ReadAll(flate.NewReader(bytes.NewReader(deflated)))
++	assert.Nil(t, err)
++
++	var req saml.AuthnRequest
++	assert.Nil(t, xml.Unmarshal(reqXML, &req))
++	return &req, u.Query()
++}
++
++func TestGetLogin(t *testing.T) {
++
++	metadata := newTestIDPMetadata(t)
++
++	for _, forceAuthn := range []bool{false, true} {
++		idp := newSAMLIDP(metadata, "", "")
++		idp.Spec.GetSaml().ForceAuthn = forceAuthn
++		c := newTestConnector(t, idp)
++
++		state := utilrand.GetRandomStringCanonical(36)
++		resp, err := c.GetLogin(httptest.NewRequest("GET", "/", nil), state)
++		assert.Nil(t, err)
++		assert.NotEmpty(t, resp.ReqID)
++
++		assert.True(t, strings.HasPrefix(resp.LoginURL, "https://idp.example.com/sso?"), resp.LoginURL)
++
++		req, query := decodeAuthnRequest(t, resp.LoginURL)
++		assert.Equal(t, state, query.Get("RelayState"))
++		assert.Equal(t, resp.ReqID, req.ID)
++		assert.Equal(t, "https://idp.example.com/sso", req.Destination)
++		assert.Equal(t, "https://example.com", req.Issuer.Value)
++		assert.Equal(t, "https://example.com/callback", req.AssertionConsumerServiceURL)
++		assert.Equal(t, saml.HTTPPostBinding, req.ProtocolBinding)
++		if forceAuthn {
++			assert.NotNil(t, req.ForceAuthn)
++			assert.True(t, *req.ForceAuthn)
++		} else {
++			assert.True(t, req.ForceAuthn == nil || !*req.ForceAuthn)
++		}
++	}
++}
++
++func TestHandleCallbackRequiresRequestID(t *testing.T) {
++
++	c := newTestConnector(t, newSAMLIDP(newTestIDPMetadata(t), "", ""))
++
++	req := httptest.NewRequest(http.MethodPost, "https://example.com/callback",
++		strings.NewReader("SAMLResponse=AAAA&RelayState=state"))
++	req.Header.Set("Content-type", "application/x-www-form-urlencoded")
++
++	_, err := c.HandleCallback(req, nil)
++	assert.NotNil(t, err)
++
++	_, err = c.HandleCallback(req, &utils.GetLoginResponse{})
++	assert.NotNil(t, err)
++}
++
++func TestNewConnectorMetadataURL(t *testing.T) {
++
++	metadata := newTestIDPMetadata(t)
++
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.URL.Path != "/metadata" {
++			http.NotFound(w, r)
++			return
++		}
++		w.Header().Set("Content-Type", "application/samlmetadata+xml")
++		w.Write([]byte(metadata))
++	}))
++	t.Cleanup(srv.Close)
++
++	newIDP := func(metadataURL string) *corev1.IdentityProvider {
++		idp := newSAMLIDP("", "", "")
++		idp.Spec.GetSaml().MetadataType = &corev1.IdentityProvider_Spec_SAML_MetadataURL{
++			MetadataURL: metadataURL,
++		}
++		return idp
++	}
++
++	opts := func(idp *corev1.IdentityProvider) *utils.ProviderOpts {
++		return &utils.ProviderOpts{
++			ClusterConfig: &corev1.ClusterConfig{
++				Status: &corev1.ClusterConfig_Status{
++					Domain: "example.com",
+ 				},
+ 			},
+-		)
+-		assert.Equal(t, "usr@example.com", getValStr(assertion, "email"))
+-		assert.Equal(t, "usr1", getValStr(assertion, "name"))
++			Provider: idp,
++		}
+ 	}
+ 
+ 	{
+-		assertion := newAssertion(saml.AttributeStatement{
+-			Attributes: []saml.Attribute{
+-				newAttr(defaultEmailAttr, "usr@example.com"),
+-			},
+-		})
+-		assert.Equal(t, "usr@example.com", getValStr(assertion, defaultEmailAttr))
++		c, err := NewConnector(context.Background(), opts(newIDP(srv.URL+"/metadata")))
++		assert.Nil(t, err, "%+v", err)
++
++		resp, err := c.GetLogin(httptest.NewRequest("GET", "/", nil), utilrand.GetRandomStringCanonical(36))
++		assert.Nil(t, err)
++		assert.True(t, strings.HasPrefix(resp.LoginURL, "https://idp.example.com/sso?"), resp.LoginURL)
++	}
++
++	{
++		_, err := NewConnector(context.Background(), opts(newIDP(srv.URL+"/missing")))
++		assert.NotNil(t, err)
+ 	}
+ }
+ 
+@@ -531,8 +634,8 @@ func TestNewConnectorEntityID(t *testing.T) {
+ 		})
+ 		assert.Nil(t, err, "%+v", err)
+ 
+-		assert.Equal(t, fmt.Sprintf("https://%s", cc.Status.Domain), c.sp.EntityID)
+-		assert.Equal(t, utils.GetCallbackURL(cc.Status.Domain), c.sp.AcsURL.String())
++		assert.Equal(t, fmt.Sprintf("https://%s", cc.Status.Domain), c.config.EntityID())
++		assert.Equal(t, utils.GetCallbackURL(cc.Status.Domain), c.config.ACSURL())
+ 
+ 		assert.Equal(t, idp.Metadata.Name, c.Name())
+ 		assert.Equal(t, "saml", c.Type())
+@@ -548,6 +651,6 @@ func TestNewConnectorEntityID(t *testing.T) {
+ 			Provider:      newSAMLIDP(metadata, entityID, ""),
+ 		})
+ 		assert.Nil(t, err, "%+v", err)
+-		assert.Equal(t, entityID, c.sp.EntityID)
++		assert.Equal(t, entityID, c.config.EntityID())
+ 	}
+ }

@@ -27,6 +27,7 @@ type Message struct {
 	RelayState string
 
 	redirectURL *url.URL
+	formFields  url.Values
 	form        []byte
 	scriptHash  string
 	write       func(http.ResponseWriter)
@@ -40,6 +41,21 @@ func (m *Message) RedirectURL() *url.URL {
 	}
 	u := *m.redirectURL
 	return &u
+}
+
+// FormFields returns the fields that a message with a POST binding
+// (saml.HTTPPostBinding or saml.HTTPPostSimpleSignBinding) posts to
+// Destination, RelayState included, for an application that builds the
+// form itself: for example, one that hands the message to an API client
+// rather than writing HTML. For any other message it returns nil.
+//
+// An application that builds the form must escape the fields, and should
+// keep what Write's page does: submit the form at once, and not cache it.
+func (m *Message) FormFields() url.Values {
+	if m.formFields == nil {
+		return nil
+	}
+	return cloneValues(m.formFields)
 }
 
 // Write sends the message to the browser. With the HTTP-Redirect binding,

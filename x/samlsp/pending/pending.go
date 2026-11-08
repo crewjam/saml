@@ -149,6 +149,34 @@ func WithPath(path string) Option { return func(t *Tracker) { t.path = path } }
 // useful in tests.
 func WithClock(clock *dsig.Clock) Option { return func(t *Tracker) { t.clock = clock } }
 
+// deriveKeyLabel separates keys derived by DeriveKey from other uses of
+// HMAC-SHA256 with the same secret.
+const deriveKeyLabel = "github.com/crewjam/saml/x/samlsp/pending key\x00"
+
+// DeriveKey returns a key for New derived from secret, a secret the
+// application already has: for example, the key that signs its sessions,
+// or the SP's private key, encoded with x509.MarshalPKCS8PrivateKey. label
+// names the use, such as "example.com saml pending login", so that the
+// key differs from any other derived from the same secret, and the secret
+// itself is never used as the key of a cookie.
+//
+// The key is as strong as secret, which must be random, kept secret and
+// the same on every server; changing it fails the logins in progress. It
+// returns an error if secret is shorter than MinKeyLength or label is
+// empty.
+func DeriveKey(secret []byte, label string) ([]byte, error) {
+	if len(secret) < MinKeyLength {
+		return nil, fmt.Errorf("pending: the secret must be at least %d bytes, not %d", MinKeyLength, len(secret))
+	}
+	if label == "" {
+		return nil, errors.New("pending: the label is empty")
+	}
+	h := hmac.New(sha256.New, secret)
+	h.Write([]byte(deriveKeyLabel))
+	h.Write([]byte(label))
+	return h.Sum(nil), nil
+}
+
 // New returns a Tracker for the logins of config, whose cookies are
 // authenticated with key. key must be at least MinKeyLength random bytes,
 // kept secret and shared by every server that serves the ACS. Changing it
