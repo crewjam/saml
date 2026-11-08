@@ -1,0 +1,22 @@
+{{define "content"}}{{with .Data}}
+<main class="narrow">
+  <p class="eyebrow"><span class="tag idp">{{.Name}}</span></p>
+  <h1 class="result-h1">{{if .Partial}}Partly logged out{{else}}Logged out{{end}}</h1>
+  <p class="verdict {{if .Partial}}warn{{else}}ok{{end}}-text">{{if .Partial}}!{{else}}✓{{end}} The IdP session{{if .Username}} of {{.Username}}{{end}} has ended. {{if .Results}}Logged out of {{oks .Results}} of {{len .Results}} service providers.{{else}}It had not been used to log in to any service provider.{{end}}</p>
+  {{if .Results}}
+  <section class="result-sec logout-results">
+    <div class="table-scroll">
+      <table class="tbl">
+        <thead><tr><th>Service provider</th><th>How</th><th>Result</th></tr></thead>
+        <tbody>
+        {{range .Results}}
+          <tr><td class="mono">{{.ServiceProvider}}</td><td>{{.How}}</td>
+            <td><span class="{{if .OK}}ok{{else}}bad{{end}}-text">{{if .OK}}✓ Logged out{{else}}✗ Failed{{end}}</span>{{with .Detail}}<br><span class="meta">{{.}}</span>{{end}}</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {{end}}
+</main>
+{{end}}{{end}}

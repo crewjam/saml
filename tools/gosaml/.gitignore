@@ -1,0 +1,4 @@
+# Built by deploy.sh.
+/build/
+/web/static/parser.wasm
+/web/static/wasm_exec.js

@@ -1,0 +1,8 @@
+{{define "content"}}{{with .Data}}
+<main class="narrow">
+  <h1 class="result-h1">Something went wrong</h1>
+  <p class="verdict bad-text error-msg">{{.Message}}</p>
+  {{with .Detail}}<section class="result-sec"><h2 class="sec-h2">Details</h2><pre class="pane entry-detail">{{.}}</pre></section>{{end}}
+  <nav class="actions result-links" aria-label="More"><a href="/">Home</a></nav>
+</main>
+{{end}}{{end}}

@@ -1,0 +1,77 @@
+{{define "header"}}
+<header class="top">
+  <div class="top-inner login">
+    <a class="wordmark" href="/">gosaml.dev</a>
+    <span class="top-note">Test users only. No passwords.</span>
+  </div>
+</header>
+{{end}}
+{{define "content"}}{{with .Data}}
+<main class="login">
+  <p class="eyebrow"><span class="tag idp">{{.Name}}</span></p>
+  <h1 class="login-h1">Log in to <span class="sp-text">{{.SPName}}</span></h1>
+
+  <section class="login-sec" aria-label="The AuthnRequest">
+    <div class="sec-head">
+      <h2 class="sec-h2">{{if .Request.ID}}AuthnRequest received{{else}}IdP-initiated login{{end}}</h2>
+      {{if eq .Signature "valid"}}<span class="ok-text sig-state">✓ Signature valid</span>{{else if eq .Signature "none"}}<span class="meta sig-state">Not signed</span>{{end}}
+    </div>
+    <dl class="dl bordered">
+      <dt>Service provider</dt><dd class="mono">{{.Request.ServiceProvider}}</dd>
+      <dt>Response goes to</dt><dd><span class="mono">{{.Request.ACSURL}}</span> <span class="meta">{{short .Request.ACSBinding}}</span></dd>
+      {{if .Request.ID}}<dt>Request ID</dt><dd class="mono">{{.Request.ID}}</dd>{{else}}<dt>Request</dt><dd>None: the IdP starts this login, so the Response is unsolicited.</dd>{{end}}
+      {{with .Request.RelayState}}<dt>RelayState</dt><dd class="mono">{{.}}</dd>{{end}}
+      {{with .Request.NameIDFormat}}<dt>Asks for NameID</dt><dd class="mono">{{.}}</dd>{{end}}
+      {{if .Request.AuthnContextClasses}}<dt>Asks for authentication</dt><dd>{{.Request.AuthnContextComparison}}: {{range .Request.AuthnContextClasses}}<span class="mono">{{short (print .)}}</span> {{end}}</dd>{{end}}
+      {{with .Request.Subject}}<dt>Asks for user</dt><dd class="mono">{{.Value}}</dd>{{end}}
+      {{if .Request.ForceAuthn}}<dt>ForceAuthn</dt><dd>Yes: the SP wants a fresh login.</dd>{{end}}
+    </dl>
+  </section>
+
+  <form hx-boost="false" method="post" action="/idp/{{.InstanceID}}/login" data-login-picker>
+    <input type="hidden" name="pending" value="{{.PendingID}}">
+    <fieldset class="pick-set">
+      <legend class="legend-h">Log in as</legend>
+      {{range $i, $u := .Users}}
+      <label class="pick"><input type="radio" name="user" value="{{$u.Username}}" {{if eq $i 0}}checked{{end}}>
+        <span><span class="pick-name">{{$u.Username}}</span><span class="pick-sub"><span class="mono">{{$u.NameID}}</span>, {{len $u.Attributes}} attribute{{if ne (len $u.Attributes) 1}}s{{end}}</span></span></label>
+      {{else}}<p class="empty">This IdP has no users. Add some on its management page.</p>{{end}}
+    </fieldset>
+
+    <details class="disclose">
+      <summary>Options</summary>
+      <p class="help">Override the NameID, authentication context or session length for this login.</p>
+      <div class="stack">
+        <label class="field">NameID format
+          <select name="nameid_format">
+            <option value="">As the SP asks{{if .Request.NameIDFormat}} ({{short (print .Request.NameIDFormat)}}){{end}}, else the user's own</option>
+            <option value="user">The user's own, even if the SP asks for another</option>
+            {{range .Formats}}<option value="{{.}}">{{.}}</option>{{end}}
+          </select>
+        </label>
+        <label class="field">Authentication context
+          <select name="authn_context">
+            {{range .Contexts}}<option value="{{.}}" {{if eq (print .) $.Data.SelectedCtx}}selected{{end}}>{{short (print .)}}</option>{{end}}
+          </select>
+        </label>
+        <label class="field">Session lifetime <span class="note">SessionNotOnOrAfter, in hours; empty for none</span><input type="number" name="session_hours" min="1" max="720"></label>
+      </div>
+    </details>
+
+    <div class="actions login-actions">
+      {{if .Users}}<button class="btn big" name="action" value="login" data-login-as>Log in as {{(index .Users 0).Username}}</button>{{end}}
+      <button type="button" class="btn danger big" data-open="error-answer">Answer with an error instead</button>
+    </div>
+    <details class="disclose" id="error-answer">
+      <summary>Error Response</summary>
+      <div class="stack">
+        <label class="field">Status
+          <select name="error_status">{{range .Errors}}<option>{{.}}</option>{{end}}</select>
+        </label>
+        <label class="field">StatusMessage <span class="note">optional</span><input name="status_message" maxlength="200"></label>
+        <div><button class="btn danger-fill" name="action" value="error">Send error Response</button></div>
+      </div>
+    </details>
+  </form>
+</main>
+{{end}}{{end}}

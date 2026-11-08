@@ -1,0 +1,44 @@
+{{define "content"}}{{with .Data}}
+<main>
+  <nav class="crumbs" aria-label="Breadcrumb">
+    <span class="tag {{.Kind}}">{{if eq (print .Kind) "idp"}}Identity provider{{else}}Service provider{{end}}</span>
+    <a href="/manage/{{.Secret}}">{{.InstanceName}}</a><span aria-hidden="true">/</span>
+    <a href="/manage/{{.Secret}}#log">Log</a><span aria-hidden="true">/</span>
+    <time class="muted time" datetime="{{iso .Event.At}}">{{clockTZ .Event.At}}</time>
+  </nav>
+  <div class="page-head entry-head">
+    <h1>{{.Row.Title}}</h1>
+    <div class="actions">
+      {{if .Older}}<a class="btn secondary" href="{{.Older}}">← Older</a>{{end}}
+      {{if .Newer}}<a class="btn secondary" href="{{.Newer}}">Newer →</a>{{end}}
+    </div>
+  </div>
+  <p class="entry-summary">{{.Verb}} at <time class="time" datetime="{{iso .Event.At}}">{{clockTZ .Event.At}} UTC</time> on {{eventDate .Event.At}}{{if .Binding}}, by {{.Binding}}{{end}}. {{.Outcome}}</p>
+
+  <section class="entry-sec">
+    <h2 class="sec-h2">{{if .RequestLine}}Request{{else}}Event{{end}}</h2>
+    <dl class="dl">
+      {{if .RequestLine}}<dt>Request</dt><dd class="mono">{{.RequestLine}}</dd>
+      <dt>Answered</dt><dd>{{.Answered}}{{with .RedirectTo}}, redirected to <span class="mono">{{.}}</span>{{end}}{{with .RedirectWith}} {{.}}{{end}}</dd>{{end}}
+      {{with .Checks}}<dt>Checks</dt><dd><ul class="checks">{{range .}}<li class="{{.Level}}">{{if eq .Level "ok"}}✓{{else if eq .Level "warn"}}!{{else}}✗{{end}} {{.Text}}</li>{{end}}</ul></dd>{{end}}
+      {{with .Event.Detail}}<dt>Detail</dt><dd><pre class="pane entry-detail">{{.}}</pre></dd>{{end}}
+    </dl>
+    {{if .HTTPRequest}}
+    <div class="http-grid">
+      <div class="minw0"><h3>HTTP request</h3><pre class="pane" id="raw-request">{{.HTTPRequest}}</pre></div>
+      <div class="minw0"><h3>HTTP response</h3><pre class="pane">{{.HTTPResponse}}</pre></div>
+    </div>
+    {{with .Params}}<div class="entry-params"><h3>{{$.Data.ParamsLabel}}</h3><pre class="pane">{{range .}}{{.K}}={{.V}}
+{{end}}</pre></div>{{end}}
+    {{end}}
+    <div class="actions entry-actions">
+      {{if .Curl}}<button type="button" class="btn secondary" data-copy="{{.Curl}}">Copy as cURL</button>{{end}}
+      {{if .HTTPRequest}}<button type="button" class="btn secondary" data-copy-target="raw-request">Copy raw request</button>{{end}}
+      {{if .InspectHref}}<a class="btn secondary" hx-boost="false" href="{{.InspectHref}}">Open in the inspector</a>{{end}}
+    </div>
+    {{if not .HTTPRequest}}<p class="help">No HTTP exchange was kept for this entry: it was recorded outside a request to one of this instance's endpoints.</p>{{end}}
+  </section>
+
+  {{range .Decoded}}{{if .}}{{template "decoded" .}}{{end}}{{end}}
+</main>
+{{end}}{{end}}

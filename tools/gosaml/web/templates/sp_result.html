@@ -1,0 +1,88 @@
+{{define "header"}}{{template "sp-top" .Data.ManageURL}}{{end}}
+{{define "content"}}{{with .Data}}
+<main class="narrow">
+  <p class="eyebrow"><span class="tag sp">{{.Name}}</span></p>
+  <div class="page-head result-head">
+    <div>
+      <h1 class="result-h1">{{if .Assertion}}Logged in as {{.Assertion.Subject}}{{else}}Login refused{{end}}</h1>
+      <p class="verdict {{.VerdictLevel}}-text">{{.Verdict}}</p>
+    </div>
+    <div class="actions">
+      {{if .SignedIn}}
+      <form hx-boost="false" method="post" action="/sp/{{.InstanceID}}/logout" class="inline"><button class="btn">Log out everywhere</button></form>
+      <form hx-boost="false" method="post" action="/sp/{{.InstanceID}}/logout" class="inline"><input type="hidden" name="mode" value="local"><button class="btn secondary">Log out of this SP only</button></form>
+      {{else if not .Assertion}}
+      <a class="btn" hx-boost="false" href="/sp/{{.InstanceID}}/login">Try again</a>
+      {{if .InspectHref}}<a class="btn secondary" hx-boost="false" href="{{.InspectHref}}">Open in the inspector</a>{{end}}
+      {{end}}
+    </div>
+  </div>
+
+  {{if not .Assertion}}
+  <section class="result-sec">
+    <h2 class="sec-h2">What the SP reported</h2>
+    <pre class="pane entry-detail">{{.Error}}</pre>
+    {{with .Hints}}<ul class="hints">{{range .}}<li>{{.}}</li>{{end}}</ul>{{end}}
+  </section>
+  {{end}}
+
+  {{if .Facts}}
+  <section class="result-sec">
+    <h2 class="sec-h2">Assertion{{if not .Assertion}} <span class="bad-text h2-note">not trusted</span>{{end}}</h2>
+    <dl class="facts">
+      {{range .Facts}}<div><dt>{{.K}}</dt>{{if not .At.IsZero}}<dd class="time"><time datetime="{{iso .At}}" title="{{rel .At}}">{{clock .At}}</time></dd>{{else}}<dd{{if .Mono}} class="mono"{{end}}>{{.V}}</dd>{{end}}</div>
+      {{end}}
+    </dl>
+    {{with .Validity}}
+    <div class="validity">
+      <div class="validity-head"><span>Validity window</span><span>{{.Len}}</span></div>
+      <div class="validity-track{{if .Late}} late{{end}}" aria-hidden="true">
+        {{if .Late}}<div class="validity-late"></div><div class="validity-mark late"></div>{{else}}<div class="validity-mark {{.Mark}}"></div>{{end}}
+      </div>
+      <div class="validity-labels">
+        <span>NotBefore <time datetime="{{iso .NotBefore}}" title="{{rel .NotBefore}}">{{clock .NotBefore}}</time></span>
+        <span>{{.Mid}}{{if not .Late}} <time datetime="{{iso .MarkAt}}" title="{{rel .MarkAt}}">{{clock .MarkAt}}</time>{{end}}</span>
+        <span>NotOnOrAfter <time datetime="{{iso .NotOnOrAfter}}" title="{{rel .NotOnOrAfter}}">{{clock .NotOnOrAfter}}</time></span>
+      </div>
+    </div>
+    {{end}}
+  </section>
+  {{else if not .Assertion}}
+  <p class="help result-sec">{{if not .ResponseXML}}No Response came with the request.{{else if .ManageURL}}The Response has no assertion this page can read.{{else}}The Response has no assertion this page can read: if it is encrypted, only the browser that created this SP is shown what it says.{{end}}</p>
+  {{end}}
+
+  {{with .Assertion}}
+  <section class="result-sec attrs-sec">
+    <h2 class="sec-h2">Attributes <span class="count">{{len .Attributes}}</span></h2>
+    {{if .Attributes}}
+    <div class="table-scroll">
+      <table class="tbl attrs">
+        <thead><tr><th>Name</th><th>Friendly name</th><th>Values</th></tr></thead>
+        <tbody>
+        {{range .Attributes}}
+          <tr><td class="mono">{{.Name}}{{if .NameFormat}}<br><span class="meta">{{short .NameFormat}}</span>{{end}}</td><td>{{.FriendlyName}}</td>
+            <td class="mono">{{range $i, $v := .Values}}{{if $i}}<br>{{end}}{{$v}}{{end}}</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}<p class="empty">The IdP sent no attributes.</p>{{end}}
+  </section>
+  {{end}}
+  {{if .RelayState}}<p class="meta relay">RelayState <span class="mono">{{.RelayState}}</span></p>{{end}}
+
+  <div class="disclosures">
+    {{if .AssertionXML}}<details><summary>Assertion XML <span class="meta">verified, and decrypted if it was encrypted</span></summary>
+      <div class="pane-head"><button type="button" class="btn secondary xs" data-copy-from="next-pre">Copy</button></div><pre class="pane xml">{{xml .AssertionXML}}</pre></details>{{end}}
+    {{if .ResponseXML}}<details{{if not .Assertion}} open{{end}}><summary>Response as received{{with .Received}} <span class="meta">{{.}}</span>{{end}}</summary>
+      <div class="pane-head"><button type="button" class="btn secondary xs" data-copy-from="next-pre">Copy</button></div><pre class="pane xml">{{xml .ResponseXML}}</pre></details>{{end}}
+  </div>
+
+  <nav class="actions result-links" aria-label="More">
+    <a hx-boost="false" href="/sp/{{.InstanceID}}/login">Log in again</a>
+    {{with .ManageURL}}<a href="{{.}}#log">See the log</a>
+    <a href="{{.}}">Manage this SP</a>{{end}}
+    {{if .SignedIn}}<a href="/sp/{{.InstanceID}}/">Session page</a>{{end}}
+  </nav>
+</main>
+{{end}}{{end}}

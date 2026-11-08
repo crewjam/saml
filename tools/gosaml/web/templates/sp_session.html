@@ -1,0 +1,52 @@
+{{define "header"}}{{template "sp-top" .Data.ManageURL}}{{end}}
+{{define "content"}}{{with .Data}}
+<main class="narrow">
+  <p class="eyebrow"><span class="tag sp">{{.Name}}</span></p>
+  {{with .Session}}
+  <div class="page-head result-head">
+    <div>
+      <h1 class="result-h1">Logged in as {{.Subject}}</h1>
+      <p class="meta">Session ends <time datetime="{{iso .ExpiresAt}}" title="{{rel .ExpiresAt}}">{{clock .ExpiresAt}}</time>.</p>
+    </div>
+    <div class="actions">
+      <form hx-boost="false" method="post" action="/sp/{{$.Data.InstanceID}}/logout" class="inline"><button class="btn">Log out everywhere</button></form>
+      <form hx-boost="false" method="post" action="/sp/{{$.Data.InstanceID}}/logout" class="inline"><input type="hidden" name="mode" value="local"><button class="btn secondary">Log out of this SP only</button></form>
+    </div>
+  </div>
+  <section class="result-sec">
+    <h2 class="sec-h2">Session</h2>
+    <dl class="facts">
+      <div><dt>NameID</dt><dd class="mono">{{.NameID.Value}}</dd></div>
+      {{with .NameID.Format}}<div><dt>NameID format</dt><dd class="mono">{{.}}</dd></div>{{end}}
+      <div><dt>Identity provider</dt><dd class="mono">{{.Issuer}}</dd></div>
+      <div><dt>Authenticated</dt><dd class="time"><time datetime="{{iso .AuthnInstant}}" title="{{rel .AuthnInstant}}">{{clock .AuthnInstant}}</time></dd></div>
+      {{if .SessionIndexes}}<div><dt>Session index</dt><dd class="mono">{{join .SessionIndexes ", "}}</dd></div>{{end}}
+    </dl>
+    <p class="help">"Everywhere" is single logout: the SP sends a LogoutRequest to the IdP, which ends its session and logs you out of the other service providers you used it for.</p>
+  </section>
+  <section class="result-sec">
+    <h2 class="sec-h2">Attributes <span class="count">{{len .Attributes}}</span></h2>
+    {{if .Attributes}}
+    <div class="table-scroll">
+      <table class="tbl attrs">
+        <thead><tr><th>Name</th><th>Friendly name</th><th>Values</th></tr></thead>
+        <tbody>
+        {{range .Attributes}}<tr><td class="mono">{{.Name}}</td><td>{{.FriendlyName}}</td><td class="mono">{{range $i, $v := .Values}}{{if $i}}<br>{{end}}{{$v}}{{end}}</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}<p class="empty">The IdP sent no attributes.</p>{{end}}
+  </section>
+  {{else}}
+  <div class="page-head result-head">
+    <div>
+      <h1 class="result-h1">Not logged in</h1>
+      <p class="meta">This browser has no session at this service provider.</p>
+    </div>
+    <div class="actions"><a class="btn" hx-boost="false" href="/sp/{{.InstanceID}}/login">Log in with the IdP</a></div>
+  </div>
+  {{end}}
+  {{with .ManageURL}}<nav class="actions result-links" aria-label="More"><a href="{{.}}#log">See the log</a><a href="{{.}}">Manage this SP</a></nav>{{end}}
+</main>
+{{end}}{{end}}
