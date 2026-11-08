@@ -110,6 +110,9 @@ func New(identityProvider MetadataFunc, entityID string, opts ...Option) (*Confi
 			return nil, err
 		}
 	}
+	if sp := c.spForMetadata(nil); sp.SignMetadata && signatureMethod(c.key) == "" {
+		return nil, errors.New("samlsp: SignMetadata needs an RSA or ECDSA key (see WithKey)")
+	}
 	if len(c.checks) > 0 {
 		sp := c.spForMetadata(nil)
 		for _, check := range c.checks {

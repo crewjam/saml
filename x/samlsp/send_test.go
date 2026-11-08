@@ -109,13 +109,13 @@ func TestWithCheckAndOptions(t *testing.T) {
 	var seen *saml.ServiceProvider
 	_, err := samlsp.New(staticIDP(ti), spEntityID,
 		samlsp.Options(
-			samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) { sp.SignMetadata = true }),
+			samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) { sp.AllowIDPInitiated = true }),
 			samlsp.WithCheck(func(sp *saml.ServiceProvider) error { seen = sp; return nil }),
 		))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if seen == nil || !seen.SignMetadata {
+	if seen == nil || !seen.AllowIDPInitiated {
 		t.Error("the check did not see the ServiceProviderOptions")
 	}
 	if _, err := samlsp.New(staticIDP(ti), spEntityID, samlsp.WithCheck(func(*saml.ServiceProvider) error { return refuse })); !errors.Is(err, refuse) {

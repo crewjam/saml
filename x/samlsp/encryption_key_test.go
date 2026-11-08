@@ -87,3 +87,49 @@ func TestWithEncryptionKeyErrors(t *testing.T) {
 		}
 	}
 }
+
+// TestDecryptionKeysForRotation: the IdP still has the SP's old encryption
+// certificate while the SP has moved to a new one; WithDecryptionKeys keeps
+// the old key to decrypt with.
+func TestDecryptionKeysForRotation(t *testing.T) {
+	ti := newTestIDP(t)
+	oldKey, oldCert := newKeyPair(t, "old encryption")
+	newKey, newCert := newKeyPair(t, "new encryption")
+
+	// The SP as registered with the IdP: encrypting to the old key.
+	newTestConfig(t, ti, samlsp.WithEncryptionKey(oldKey, oldCert))
+	registered := ti.spMeta
+
+	login := func(cfg *samlsp.Config) error {
+		ti.spMeta = registered
+		msg, err := cfg.AuthnRequest(t.Context(), "s")
+		if err != nil {
+			t.Fatal(err)
+		}
+		acs := login(t, ti, msg)
+		if !strings.Contains(decodedResponse(t, acs), "EncryptedAssertion") {
+			t.Fatal("the IdP did not encrypt the assertion")
+		}
+		_, err = cfg.ParseResponse(t.Context(), acs, samlsp.WithRequestID(msg.ID))
+		return err
+	}
+
+	sigKey, sigCert := newKeyPair(t, "signing")
+	rotated, err := samlsp.New(staticIDP(ti), spEntityID, samlsp.WithKey(sigKey, sigCert),
+		samlsp.WithEncryptionKey(newKey, newCert), samlsp.WithDecryptionKeys(oldKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := login(rotated); err != nil {
+		t.Errorf("with the old key kept: %v (%v)", err, errors.Unwrap(err))
+	}
+
+	forgot, err := samlsp.New(staticIDP(ti), spEntityID, samlsp.WithKey(sigKey, sigCert),
+		samlsp.WithEncryptionKey(newKey, newCert))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := login(forgot); err == nil {
+		t.Error("an assertion encrypted to a key the SP does not have was decrypted")
+	}
+}

@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	dsig "github.com/russellhaering/goxmldsig"
+
 	"github.com/crewjam/saml"
 )
 
@@ -272,3 +274,85 @@ var (
 	_ Option         = WithHTTPClient(nil)
 	_ MetadataOption = WithHTTPClient(nil)
 )
+
+func TestNextRefresh(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	r := &remoteMetadata{opts: newMetadataOptions([]MetadataOption{WithRefreshInterval(time.Hour)})}
+	for _, tt := range []struct {
+		name string
+		md   saml.EntityDescriptor
+		want time.Time
+	}{
+		{"interval", saml.EntityDescriptor{}, now.Add(time.Hour)},
+		{"shorter cacheDuration", saml.EntityDescriptor{CacheDuration: 10 * time.Minute}, now.Add(10 * time.Minute)},
+		{"longer cacheDuration", saml.EntityDescriptor{CacheDuration: 3 * time.Hour}, now.Add(time.Hour)},
+		{"earlier validUntil", saml.EntityDescriptor{ValidUntil: now.Add(5 * time.Minute)}, now.Add(5 * time.Minute)},
+		{"later validUntil", saml.EntityDescriptor{ValidUntil: now.Add(5 * time.Hour)}, now.Add(time.Hour)},
+		{"both", saml.EntityDescriptor{CacheDuration: 10 * time.Minute, ValidUntil: now.Add(5 * time.Minute)}, now.Add(5 * time.Minute)},
+	} {
+		if got := r.nextRefresh(&tt.md, now); !got.Equal(tt.want) {
+			t.Errorf("%s: %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+// TestRemoteMetadataClock checks that WithClock decides when metadata is due
+// for a refresh: metadata valid until 2001 is still fresh at a clock set to
+// 2000, and due at once by the real clock.
+func TestRemoteMetadataClock(t *testing.T) {
+	var hits atomic.Int32
+	md := testIDPMetadata(0)
+	md.ValidUntil = time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
+	buf, err := xml.Marshal(md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write(buf)
+	}))
+	t.Cleanup(srv.Close)
+
+	in2000 := RemoteMetadata(srv.URL, WithHTTPClient(srv.Client()),
+		WithClock(dsig.NewFakeClockAt(time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC))))
+	for range 2 {
+		if _, err := in2000(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := hits.Load(); n != 1 {
+		t.Errorf("with the clock in 2000: %d fetches, want 1", n)
+	}
+
+	hits.Store(0)
+	now := RemoteMetadata(srv.URL, WithHTTPClient(srv.Client()))
+	if _, err := now(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	// Expired by the real clock: the next call fetches again, and waits for
+	// it, as there is no valid metadata to give meanwhile.
+	if _, err := now(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if n := hits.Load(); n != 2 {
+		t.Errorf("with the real clock: %d fetches, want 2", n)
+	}
+}
+
+func TestRemoteMetadataFetchErrors(t *testing.T) {
+	if _, err := RemoteMetadata("://bad url")(t.Context()); err == nil {
+		t.Error("an invalid URL was fetched")
+	}
+
+	// Metadata that describes no IdP.
+	sp := &saml.EntityDescriptor{EntityID: "https://sp.example.com", SPSSODescriptors: []saml.SPSSODescriptor{{}}}
+	buf, err := xml.Marshal(sp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(buf) }))
+	t.Cleanup(srv.Close)
+	if _, err := RemoteMetadata(srv.URL, WithHTTPClient(srv.Client()))(t.Context()); err == nil {
+		t.Error("metadata without an IDPSSODescriptor was accepted")
+	}
+}
