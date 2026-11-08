@@ -198,7 +198,8 @@ func TestEndToEnd(t *testing.T) {
 
 	// The logs recorded the messages, decoded.
 	_, body = h.do(http.MethodGet, "/manage/"+idpSecret, nil)
-	mustContain(t, body, "AuthnRequest from", "Response to", "samlp:AuthnRequest")
+	mustContain(t, body, "AuthnRequest from", "Response to")
+	mustContain(t, h.logEntries(idpSecret), "samlp:AuthnRequest", "HTTP request", "GET /idp/"+idpID+"/sso?SAMLRequest=")
 	_, body = h.do(http.MethodGet, "/manage/"+spSecret, nil)
 	mustContain(t, body, "AuthnRequest to", "Logged in alice@example.com", "Response refused")
 

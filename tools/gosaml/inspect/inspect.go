@@ -94,6 +94,9 @@ type Message struct {
 	// Error, if not empty, says why the message could not be read fully.
 	Error string `json:"error,omitempty"`
 
+	// View is the message as the pages show it.
+	View *View `json:"view,omitempty"`
+
 	// raw is the message as received, for checking its signatures.
 	raw []byte
 }
@@ -115,6 +118,13 @@ var httpRequestLine = regexp.MustCompile(`^(GET|POST|PUT) (\S+) HTTP/\d(\.\d)?$`
 // Parse decodes the SAML message(s) in input. now is used to say whether
 // times in the message have passed.
 func Parse(input string, now time.Time) *Result {
+	res := parse(input, now)
+	verify(res, nil, false)
+	addViews(res)
+	return res
+}
+
+func parse(input string, now time.Time) *Result {
 	input = strings.TrimSpace(strings.TrimPrefix(input, "\ufeff"))
 	res := &Result{Messages: []*Message{}}
 	if input == "" {

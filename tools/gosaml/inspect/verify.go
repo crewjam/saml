@@ -57,7 +57,7 @@ var detachedAlgorithms = map[string]x509.SignatureAlgorithm{
 // certificate in its own KeyInfo, if it has one, which shows whether the
 // message is intact but not who signed it.
 func ParseWithKeys(input, keys string, now time.Time) *Result {
-	res := Parse(input, now)
+	res := parse(input, now)
 	var certs []*x509.Certificate
 	if strings.TrimSpace(keys) != "" {
 		var err error
@@ -72,6 +72,7 @@ func ParseWithKeys(input, keys string, now time.Time) *Result {
 		}
 	}
 	verify(res, certs, strings.TrimSpace(keys) != "")
+	addViews(res)
 	return res
 }
 

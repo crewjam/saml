@@ -67,6 +67,20 @@ type Event struct {
 	Detail    string
 	XML       string
 	OK        bool
+
+	// ExchangeID is the HTTP exchange in which the event happened (see
+	// Exchange), or 0.
+	ExchangeID int64
+}
+
+// Exchange is an HTTP request an instance received, and its response,
+// as text: the start line, headers and body of each, with secrets such as
+// cookie values shortened. It is kept for the events that happened in it.
+type Exchange struct {
+	ID         int64
+	InstanceID string
+	Request    string
+	Response   string
 }
 
 // Store is the database.
@@ -96,9 +110,17 @@ CREATE TABLE IF NOT EXISTS events (
 	title       TEXT NOT NULL,
 	detail      TEXT NOT NULL,
 	xml         TEXT NOT NULL,
-	ok          INTEGER NOT NULL
+	ok          INTEGER NOT NULL,
+	exchange_id INTEGER
 );
 CREATE INDEX IF NOT EXISTS events_instance ON events(instance_id, id);
+
+CREATE TABLE IF NOT EXISTS exchanges (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	instance_id TEXT NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+	request     TEXT NOT NULL,
+	response    TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS pending (
 	id          TEXT PRIMARY KEY,
@@ -255,7 +277,116 @@ func (s *Store) AddEvent(ctx context.Context, e *Event) error {
 		e.InstanceID, e.InstanceID, MaxEventsPerInstance); err != nil {
 		return err
 	}
+	if err := deleteOrphanExchanges(ctx, tx, e.InstanceID); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+// deleteOrphanExchanges deletes an instance's exchanges that no event
+// refers to any more.
+func deleteOrphanExchanges(ctx context.Context, tx *sql.Tx, instanceID string) error {
+	_, err := tx.ExecContext(ctx, `DELETE FROM exchanges WHERE instance_id = ? AND id NOT IN
+		(SELECT exchange_id FROM events WHERE instance_id = ? AND exchange_id IS NOT NULL)`, instanceID, instanceID)
+	return err
+}
+
+// AddExchange stores an exchange, and links the events eventIDs of its
+// instance to it.
+func (s *Store) AddExchange(ctx context.Context, x *Exchange, eventIDs []int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // a no-op after Commit
+	res, err := tx.ExecContext(ctx, `INSERT INTO exchanges (instance_id, request, response) VALUES (?, ?, ?)`,
+		x.InstanceID, x.Request, x.Response)
+	if err != nil {
+		return err
+	}
+	if x.ID, err = res.LastInsertId(); err != nil {
+		return err
+	}
+	for _, id := range eventIDs {
+		if _, err := tx.ExecContext(ctx, `UPDATE events SET exchange_id = ? WHERE id = ? AND instance_id = ?`,
+			x.ID, id, x.InstanceID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// GetExchange returns an exchange of an instance.
+func (s *Store) GetExchange(ctx context.Context, instanceID string, id int64) (*Exchange, error) {
+	x := Exchange{ID: id, InstanceID: instanceID}
+	err := s.db.QueryRowContext(ctx, `SELECT request, response FROM exchanges WHERE id = ? AND instance_id = ?`,
+		id, instanceID).Scan(&x.Request, &x.Response)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &x, err
+}
+
+const eventColumns = `id, instance_id, at, direction, title, detail, xml, ok, COALESCE(exchange_id, 0)`
+
+func scanEvent(scan func(...any) error) (Event, error) {
+	var e Event
+	var at int64
+	var ok int
+	err := scan(&e.ID, &e.InstanceID, &at, &e.Direction, &e.Title, &e.Detail, &e.XML, &ok, &e.ExchangeID)
+	e.At = time.UnixMilli(at)
+	e.OK = ok != 0
+	return e, err
+}
+
+// GetEvent returns an event of an instance.
+func (s *Store) GetEvent(ctx context.Context, instanceID string, id int64) (*Event, error) {
+	e, err := scanEvent(s.db.QueryRowContext(ctx, `SELECT `+eventColumns+` FROM events WHERE id = ? AND instance_id = ?`,
+		id, instanceID).Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &e, err
+}
+
+// AdjacentEvents returns the IDs of the events of an instance just before
+// and just after id, or 0 where there is none.
+func (s *Store) AdjacentEvents(ctx context.Context, instanceID string, id int64) (older, newer int64, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT
+		COALESCE((SELECT MAX(id) FROM events WHERE instance_id = ? AND id < ?), 0),
+		COALESCE((SELECT MIN(id) FROM events WHERE instance_id = ? AND id > ?), 0)`,
+		instanceID, id, instanceID, id).Scan(&older, &newer)
+	return older, newer, err
+}
+
+// RecentEvents returns the newest events of any of the instances, newest
+// first, at most limit.
+func (s *Store) RecentEvents(ctx context.Context, instanceIDs []string, limit int) ([]Event, error) {
+	if len(instanceIDs) == 0 {
+		return nil, nil
+	}
+	args := make([]any, 0, len(instanceIDs)+1)
+	marks := make([]string, len(instanceIDs))
+	for i, id := range instanceIDs {
+		marks[i] = "?"
+		args = append(args, id)
+	}
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+eventColumns+` FROM events
+		WHERE instance_id IN (`+strings.Join(marks, ",")+`) ORDER BY id DESC LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck // read-only
+	var out []Event
+	for rows.Next() {
+		e, err := scanEvent(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }
 
 // Events returns an instance's events, newest first.
@@ -266,7 +397,7 @@ func (s *Store) Events(ctx context.Context, instanceID string) ([]Event, error) 
 // EventsAfter returns an instance's events whose ID is greater than
 // after, newest first.
 func (s *Store) EventsAfter(ctx context.Context, instanceID string, after int64) ([]Event, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, at, direction, title, detail, xml, ok FROM events
+	rows, err := s.db.QueryContext(ctx, `SELECT `+eventColumns+` FROM events
 		WHERE instance_id = ? AND id > ? ORDER BY id DESC`, instanceID, after)
 	if err != nil {
 		return nil, err
@@ -274,22 +405,21 @@ func (s *Store) EventsAfter(ctx context.Context, instanceID string, after int64)
 	defer rows.Close() //nolint:errcheck // read-only
 	var out []Event
 	for rows.Next() {
-		e := Event{InstanceID: instanceID}
-		var at int64
-		var ok int
-		if err := rows.Scan(&e.ID, &at, &e.Direction, &e.Title, &e.Detail, &e.XML, &ok); err != nil {
+		e, err := scanEvent(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
-		e.At = time.UnixMilli(at)
-		e.OK = ok != 0
 		out = append(out, e)
 	}
 	return out, rows.Err()
 }
 
-// ClearEvents deletes all of an instance's events.
+// ClearEvents deletes all of an instance's events, and their exchanges.
 func (s *Store) ClearEvents(ctx context.Context, instanceID string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM events WHERE instance_id = ?`, instanceID)
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM events WHERE instance_id = ?`, instanceID); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM exchanges WHERE instance_id = ?`, instanceID)
 	return err
 }
 

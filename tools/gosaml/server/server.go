@@ -98,6 +98,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /manage/{secret}", s.manage)
 	m.HandleFunc("POST /manage/{secret}/{action}", s.manageAction)
 	m.HandleFunc("GET /manage/{secret}/live", s.liveLog)
+	m.HandleFunc("GET /manage/{secret}/log/{id}", s.logEntry)
 
 	m.HandleFunc("GET /idp/{id}/metadata", s.idpMetadata)
 	m.HandleFunc("GET /idp/{id}/sso", s.idpSSO)
@@ -138,8 +139,9 @@ func nonce(r *http.Request) string {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	n := rand.Text()
 	h := w.Header()
-	h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'nonce-"+n+"' 'wasm-unsafe-eval'; "+
-		"style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+	h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'nonce-"+n+"' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; "+
+		"style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; "+
+		"img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 	h.Set("X-Content-Type-Options", "nosniff")
 	// The management pages' URLs are their only credential: never send
 	// them to another site.
@@ -148,7 +150,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.Set("Cache-Control", "no-store")
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
-	s.mux.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), nonceKey, n)))
+	r = r.WithContext(context.WithValue(r.Context(), nonceKey, n))
+	if protocolPath.MatchString(r.URL.Path) {
+		s.recordExchange(w, r, s.mux)
+		return
+	}
+	s.mux.ServeHTTP(w, r)
 }
 
 // page is what every template is given.
@@ -158,6 +165,20 @@ type page struct {
 	TTL     time.Duration
 	Title   string
 	Data    any
+
+	// Nav is the current item of the header's navigation, and NavIdP and
+	// NavSP where its IdP and SP items go: the newest instance of that
+	// kind made in this browser, or the create blocks of the home page.
+	Nav    string
+	NavIdP string
+	NavSP  string
+}
+
+// navItems maps a template to the navigation item it is under.
+var navItems = map[string]string{
+	"home": "home", "inspect": "inspect", "about": "about",
+	"idp_manage": "idp", "idp_session": "idp", "idp_logout": "idp",
+	"sp_manage": "sp", "sp_session": "sp", "sp_logout": "sp",
 }
 
 var funcs = template.FuncMap{
@@ -241,9 +262,24 @@ func (s *Server) renderStatus(w http.ResponseWriter, r *http.Request, status int
 		return
 	}
 	var buf bytes.Buffer
-	if err := t.ExecuteTemplate(&buf, "layout.html", page{
+	p := page{
 		Nonce: nonce(r), BaseURL: s.BaseURL, TTL: s.TTL, Title: title, Data: data,
-	}); err != nil {
+		Nav: navItems[name], NavIdP: "/#create", NavSP: "/#create",
+	}
+	if name == "logentry" {
+		if le, ok := data.(*logEntryPage); ok {
+			p.Nav = string(le.Kind)
+		}
+	}
+	for _, m := range s.myInstances(r) { // newest first
+		if m.Kind == store.KindIdP && p.NavIdP == "/#create" {
+			p.NavIdP = "/manage/" + m.Secret
+		}
+		if m.Kind == store.KindSP && p.NavSP == "/#create" {
+			p.NavSP = "/manage/" + m.Secret
+		}
+	}
+	if err := t.ExecuteTemplate(&buf, "layout.html", p); err != nil {
 		s.Logger.Error("template", "name", name, "err", err)
 		http.Error(w, "cannot render the page", http.StatusInternalServerError)
 		return
@@ -512,6 +548,7 @@ func (s *Server) logEvent(ctx context.Context, e *store.Event) {
 		s.Logger.Error("cannot record event", "instance", e.InstanceID, "err", err)
 		return
 	}
+	noteEvent(ctx, e)
 	s.hub.publish(*e)
 }
 

@@ -2,11 +2,12 @@ package server
 
 import (
 	"bytes"
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -92,10 +93,11 @@ func (h *hub) close() { h.once.Do(func() { close(h.done) }) }
 // http.Server.Shutdown waiting. Register it with RegisterOnShutdown.
 func (s *Server) CloseLive() { s.hub.close() }
 
-// liveLog streams an instance's new log events as Server-Sent Events.
-// Each "log" event's data is JSON: the event's ID and its rendered
-// list item. A "clear" event says the log was cleared, and "gone" that
-// the instance no longer exists.
+// liveLog streams an instance's new log events as Server-Sent Events, for
+// htmx's SSE extension (see the "log" template): each "log" event's data
+// is the event's rendered list item, which htmx adds to the top of the
+// Log. A "clear" event carries an empty list that replaces the Log's
+// (an out-of-band swap), and "gone" says the instance no longer exists.
 func (s *Server) liveLog(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	in, err := s.Store.InstanceBySecret(ctx, r.PathValue("secret"))
@@ -124,7 +126,13 @@ func (s *Server) liveLog(w http.ResponseWriter, r *http.Request) {
 		if id != "" {
 			fmt.Fprintf(&b, "id: %s\n", id)
 		}
-		fmt.Fprintf(&b, "event: %s\ndata: %s\n\n", event, data)
+		fmt.Fprintf(&b, "event: %s\n", event)
+		// Each line of the data is a "data:" field; the browser joins them
+		// with newlines.
+		for _, line := range strings.Split(data, "\n") {
+			fmt.Fprintf(&b, "data: %s\n", line)
+		}
+		b.WriteString("\n")
 		if _, err := w.Write(b.Bytes()); err != nil {
 			return false
 		}
@@ -146,7 +154,7 @@ func (s *Server) liveLog(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for i := len(missed) - 1; i >= 0; i-- {
-			if !s.sendEvent(send, missed[i]) {
+			if !s.sendEvent(ctx, in, send, missed[i]) {
 				return
 			}
 			last = missed[i].ID
@@ -176,7 +184,7 @@ func (s *Server) liveLog(w http.ResponseWriter, r *http.Request) {
 			}
 		case e := <-events:
 			if e.ID == clearedEvent {
-				if !send("clear", "", "{}") {
+				if !send("clear", "", clearedLogList) {
 					return
 				}
 				continue
@@ -184,7 +192,7 @@ func (s *Server) liveLog(w http.ResponseWriter, r *http.Request) {
 			if e.ID <= last {
 				continue // already sent while catching up
 			}
-			if !s.sendEvent(send, e) {
+			if !s.sendEvent(ctx, in, send, e) {
 				return
 			}
 			last = e.ID
@@ -192,15 +200,15 @@ func (s *Server) liveLog(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) sendEvent(send func(event, id, data string) bool, e store.Event) bool {
+func (s *Server) sendEvent(ctx context.Context, in *store.Instance, send func(event, id, data string) bool, e store.Event) bool {
 	var html bytes.Buffer
-	if err := s.pages["home"].ExecuteTemplate(&html, "event", e); err != nil {
+	if err := s.pages["home"].ExecuteTemplate(&html, "logrow", s.names(ctx).row(in, e)); err != nil {
 		s.Logger.Error("cannot render a log event", "err", err)
 		return true
 	}
-	data, _ := json.Marshal(struct {
-		ID   int64  `json:"id"`
-		HTML string `json:"html"`
-	}{e.ID, html.String()})
-	return send("log", strconv.FormatInt(e.ID, 10), string(data))
+	return send("log", strconv.FormatInt(e.ID, 10), strings.TrimSpace(html.String()))
 }
+
+// clearedLogList replaces the Log's list when the log is cleared: an
+// out-of-band swap that keeps the list's own htmx attributes.
+const clearedLogList = `<ol id="log-list" class="log-list" sse-swap="log" hx-swap="afterbegin" hx-swap-oob="true"></ol>`

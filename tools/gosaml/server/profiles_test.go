@@ -47,7 +47,7 @@ func TestProfiles(t *testing.T) {
 			resp, body := h.do(http.MethodPost, "/new/idp", url.Values{"profile": {tc.profile}})
 			idpSecret := strings.TrimPrefix(resp.Request.URL.Path, "/manage/")
 			idpID := regexp.MustCompile(`/idp/([a-z0-9-]+)/metadata`).FindStringSubmatch(body)[1]
-			mustContain(t, body, "Profile: ")
+			mustContain(t, body, `role="radiogroup"`, `aria-checked="true">`+map[string]string{"okta": "Okta", "entra": "Entra ID", "shibboleth": "Shibboleth"}[tc.profile]+`<`)
 			if !tc.issuer.MatchString(body) {
 				t.Fatalf("no entity ID like %s on the manage page", tc.issuer)
 			}

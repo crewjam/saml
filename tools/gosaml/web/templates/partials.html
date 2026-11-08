@@ -1,40 +1,59 @@
-{{define "copy"}}<div class="field"><span class="label">{{.K}}</span><div class="copy"><code>{{.V}}</code><button type="button" class="small" data-copy="{{.V}}">Copy</button></div></div>{{end}}
+{{/* Shared pieces of the pages. */}}
 
-{{define "flash"}}{{if .}}<div class="flash" role="status">{{.}}</div>{{end}}{{end}}
+{{define "ep"}}<div class="ep">
+  <span class="ep-label">{{.Label}}{{if .Binding}}<span class="ep-binding{{if .Plain}} plain{{end}}">{{.Binding}}</span>{{end}}</span>
+  <div class="ep-value"><code>{{.URL}}</code><button type="button" class="btn secondary sm" data-copy="{{.URL}}">Copy</button></div>
+</div>{{end}}
+
+{{define "flash"}}{{if .}}<p class="flash" role="status">{{.}}</p>{{end}}{{end}}
 
 {{define "expiry"}}<p class="meta">Created {{since .CreatedAt}}. Deleted in {{until .ExpiresAt}}, or when the server restarts.</p>{{end}}
 
-{{define "events"}}
-<section id="log" class="card" data-live="/manage/{{.Secret}}/live" data-after="{{with .Events}}{{(index . 0).ID}}{{end}}" data-max="{{.Max}}">
-  <div class="card-head">
-    <h2>Log <span id="live" class="live" hidden></span></h2>
-    <form method="post" action="/manage/{{.Secret}}/clear-events"><button class="small secondary">Clear</button></form>
+{{define "notice"}}<div class="notice">
+  <span>This page's URL is the only key to this {{.}}. Bookmark it, and share it only with people who should change it.</span>
+  <button type="button" class="btn secondary sm" data-copy-page>Copy page link</button>
+</div>{{end}}
+
+{{/* The Log of an instance: .Secret, .Rows, .Max. Rows link to their log
+     entries; new ones arrive by Server-Sent Events (app.js). */}}
+{{define "log"}}
+<aside id="log" class="log-col" aria-label="Log" hx-ext="sse" sse-connect="/manage/{{.Secret}}/live{{with .Rows}}?after={{(index . 0).ID}}{{end}}" sse-close="gone" data-max="{{.Max}}">
+  <div class="sec-head">
+    <h2>Log<span id="live" class="live" hidden>● Live</span></h2>
+    <form method="post" action="/manage/{{.Secret}}/clear-events" class="inline" hx-post="/manage/{{.Secret}}/clear-events" hx-swap="none"><button class="btn secondary sm">Clear</button></form>
   </div>
-  <p class="hint">Messages this instance sent and received, newest first, as they happen. The last {{.Max}} are kept.</p>
-  <p class="empty" {{if .Events}}hidden{{end}}>Nothing yet.</p>
-  <ol class="events">
-  {{range .Events}}{{template "event" .}}{{end}}
+  <p class="log-note">Newest first. The last {{.Max}} are kept.</p>
+  <ol id="log-list" class="log-list" sse-swap="log" hx-swap="afterbegin">
+  {{range .Rows}}{{template "logrow" .}}{{end}}
   </ol>
-</section>
+  <p class="empty log-empty">Nothing yet.</p>
+  <div sse-swap="clear" hx-swap="none" hidden></div>
+</aside>
 {{end}}
 
-{{define "event"}}<li class="{{if .OK}}ok{{else}}bad{{end}}" data-id="{{.ID}}">
-  <details>
-    <summary>
-      <span class="dir">{{if eq .Direction "in"}}⇠ in{{else if eq .Direction "out"}}⇢ out{{else}}•{{end}}</span>
-      <span class="title">{{.Title}}</span>
-      <time datetime="{{.At.UTC.Format "2006-01-02T15:04:05.000Z07:00"}}" title="{{clock .At}}">{{clock .At}}</time>
-    </summary>
-    {{if .Detail}}<pre class="detail">{{.Detail}}</pre>{{end}}
-    {{if .XML}}<div class="xml-head"><span>XML</span><button type="button" class="small secondary" data-copy-from="next">Copy</button></div><pre class="xml">{{.XML}}</pre>{{end}}
-  </details>
-</li>
+{{define "logrow"}}<li data-id="{{.ID}}"><a href="{{.Href}}">
+  <time class="log-time" datetime="{{iso .At}}">{{clockTZ .At}}</time>
+  <span class="log-title">{{.Title}}<span class="log-detail"><span class="dir {{.DirClass}}">{{.Dir}}</span>{{range .Parts}}<span> · </span>{{if .Mono}}<span class="mono">{{.Text}}</span>{{else}}<span>{{.Text}}</span>{{end}}{{end}}</span></span>
+  <span class="log-arrow" aria-hidden="true">→</span>
+</a></li>
 {{end}}
 
-{{define "participants"}}
-{{if .}}
-<ul class="participants">
-{{range .}}<li><code class="wrap">{{.ServiceProviderID}}</code><br><span class="meta">NameID {{.NameID.Value}}{{if .SessionIndex}} · SessionIndex {{.SessionIndex}}{{end}}</span></li>{{end}}
-</ul>
-{{else}}<p class="empty">None yet.</p>{{end}}
-{{end}}
+{{define "participants"}}{{range .}}<div class="row"><span class="row-main"><span class="mono">{{.ServiceProviderID}}</span><span class="row-sub">NameID <span class="mono">{{.NameID.Value}}</span>{{if .SessionIndex}} · session index <span class="mono">{{.SessionIndex}}</span>{{end}}</span></span></div>{{else}}<p class="empty">None yet.</p>{{end}}{{end}}
+
+{{/* A decoded message (inspect.View), as on the Inspector. */}}
+{{define "decoded"}}<section class="decoded" aria-label="Decoded message">
+  <div class="decoded-head">
+    <h2>{{.Title}} <span class="decoded-sub">{{.Sub}}</span></h2>
+    {{with .Checks}}<ul class="checks">{{range .}}<li class="{{.Level}}">{{if eq .Level "ok"}}✓{{else if eq .Level "warn"}}!{{else}}✗{{end}} {{.Text}}</li>{{end}}</ul>{{end}}
+  </div>
+  <div class="decoded-grid">
+    <div class="groups">
+      {{range .Groups}}<div><h3>{{.Title}}</h3><dl>{{range .Rows}}<dt>{{.K}}</dt><dd class="{{if .Mono}}mono{{else if .Time}}time{{end}}">{{.V}}</dd>{{end}}</dl></div>{{end}}
+      {{range .Notes}}<p class="explain">{{.}}</p>{{end}}
+    </div>
+    {{if .XML}}<div class="minw0">
+      <div class="pane-head"><h3>XML</h3><button type="button" class="btn secondary sm" data-copy-from="next-pre">Copy</button></div>
+      <pre class="xml">{{xmlTokens .XML}}</pre>
+    </div>{{end}}
+  </div>
+</section>{{end}}

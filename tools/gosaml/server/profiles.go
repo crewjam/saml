@@ -23,8 +23,10 @@ import (
 // The profiles imitate what these products send by default, as seen in
 // their responses; gosaml.dev is not affiliated with their makers.
 type idpProfile struct {
-	Key         string
-	Name        string
+	Key  string
+	Name string
+	// Label is the name of the profile in the "Behave like" choice.
+	Label       string
 	Description string
 
 	// Signing is the IdPConfig.ResponseSigning the profile sets.
@@ -50,22 +52,13 @@ type idpProfile struct {
 
 var idpProfiles = []idpProfile{
 	{
-		Key: "generic", Name: "Generic",
+		Key: "generic", Name: "Generic", Label: "gosaml default",
 		Description: "This library's own defaults: the entity ID is the metadata URL, attributes have both URN and simple names, and both the Response and the assertion are signed.",
 		Encryption:  "auto",
 		Signing:     "both",
 	},
 	{
-		Key: "okta", Name: "Okta-like",
-		Description:     `Okta's shape: an entity ID like http://www.okta.com/exk…, IDs like id8495…, attributes named email, firstName, lastName and groups with the unspecified name format, an unspecified NameID holding the email address, both the Response and the assertion signed, and AES-256-CBC encryption.`,
-		Encryption:      "cbc256",
-		Signing:         "both",
-		NewID:           func() string { return "id" + randomDigits(26) },
-		NewSessionIndex: func() string { return "id" + randomDigits(26) + "_" + randomDigits(8) },
-		NotBefore:       -5 * time.Minute, NotOnOrAfter: 5 * time.Minute,
-	},
-	{
-		Key: "entra", Name: "Entra ID-like",
+		Key: "entra", Name: "Entra ID-like", Label: "Entra ID",
 		Description:               `Microsoft Entra ID's shape: an entity ID like https://sts.windows.net/{tenant}/, assertion IDs that are _ and a GUID, each the session index of its assertion, claims named by schemas.xmlsoap.org and schemas.microsoft.com URIs with no name format, an emailAddress NameID, a validity of 70 minutes, only the assertion signed (not the Response), and AES-256-CBC encryption. That last pair is what SPs that refuse AES-CBC in an unsigned Response trip on.`,
 		Encryption:                "cbc256",
 		Signing:                   "assertion",
@@ -75,7 +68,16 @@ var idpProfiles = []idpProfile{
 		NotBefore:                 -5 * time.Minute, NotOnOrAfter: 70 * time.Minute,
 	},
 	{
-		Key: "shibboleth", Name: "Shibboleth-like",
+		Key: "okta", Name: "Okta-like", Label: "Okta",
+		Description:     `Okta's shape: an entity ID like http://www.okta.com/exk…, IDs like id8495…, attributes named email, firstName, lastName and groups with the unspecified name format, an unspecified NameID holding the email address, both the Response and the assertion signed, and AES-256-CBC encryption.`,
+		Encryption:      "cbc256",
+		Signing:         "both",
+		NewID:           func() string { return "id" + randomDigits(26) },
+		NewSessionIndex: func() string { return "id" + randomDigits(26) + "_" + randomDigits(8) },
+		NotBefore:       -5 * time.Minute, NotOnOrAfter: 5 * time.Minute,
+	},
+	{
+		Key: "shibboleth", Name: "Shibboleth-like", Label: "Shibboleth",
 		Description:     `Shibboleth IdP's shape: an entity ID ending in /idp/shibboleth, transient NameIDs, eduPerson and inetOrgPerson attributes named by urn:oid with the URI name format and friendly names, scoped eduPersonPrincipalName and pairwise-id (different for each SP), a shibmd:Scope in the metadata, only the Response signed (not the assertion), and AES-128-GCM encryption.`,
 		Encryption:      "gcm128",
 		Signing:         "response",

@@ -188,3 +188,50 @@ func TestDecodeBase64Message(t *testing.T) {
 		}
 	}
 }
+
+func TestView(t *testing.T) {
+	m := only(t, Parse(testdata(t, "TestSPCanHandleOneloginResponse_response"), now))
+	v := m.View
+	if v == nil || v.Title != "Response" || !strings.Contains(v.Sub, "base64") || !strings.HasSuffix(v.Sub, "KB") {
+		t.Fatalf("%+v", v)
+	}
+	var texts []string
+	for _, c := range v.Checks {
+		texts = append(texts, c.Level+":"+c.Text)
+	}
+	if !strings.Contains(strings.Join(texts, ","), "ok:Status Success") {
+		t.Errorf("checks %v", texts)
+	}
+	var sawTime, sawMono bool
+	for _, g := range v.Groups {
+		for _, r := range g.Rows {
+			sawTime = sawTime || (r.K == "IssueInstant" && r.Time && !r.Mono)
+			sawMono = sawMono || (r.K == "Issuer" && r.Mono)
+		}
+	}
+	if !sawTime || !sawMono {
+		t.Errorf("time %v mono %v", sawTime, sawMono)
+	}
+	// The tokens add up to the XML.
+	var b strings.Builder
+	kinds := map[string]bool{}
+	for _, tok := range v.XML {
+		b.WriteString(tok.Text)
+		kinds[tok.Kind] = true
+	}
+	if b.String() != m.XML || !kinds["tag"] || !kinds["attr"] || !kinds["val"] {
+		t.Errorf("tokens do not add up (%v)", kinds)
+	}
+}
+
+func TestHighlightXMLMalformed(t *testing.T) {
+	for _, in := range []string{"<a b='>' c=\"d\">x</a>", "<unclosed", "text only", "<!-- c --><x/>", "<a\nb=\"1\"/>"} {
+		var b strings.Builder
+		for _, tok := range HighlightXML(in) {
+			b.WriteString(tok.Text)
+		}
+		if b.String() != in {
+			t.Errorf("%q -> %q", in, b.String())
+		}
+	}
+}

@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -51,11 +52,11 @@ func TestSingleLogout(t *testing.T) {
 	_, body := h.do(http.MethodGet, "/sp/"+spIDs[1]+"/", nil)
 	mustContain(t, body, "alice@example.com", "Log out everywhere")
 	_, body = h.do(http.MethodGet, "/manage/"+idpSecret, nil)
-	mustContain(t, body, "/sp/"+spIDs[0]+"/metadata", "/sp/"+spIDs[1]+"/metadata", "IdP-initiated logout",
-		"This browser is logged in to this IdP as <strong>alice</strong>", "Log out everywhere")
+	mustContain(t, body, "/sp/"+spIDs[0]+"/metadata", "/sp/"+spIDs[1]+"/metadata", "session-logout",
+		"This browser is logged in as <strong>alice</strong>", "Log out everywhere")
 	// The SP's management page offers logout next to login.
 	_, body = h.do(http.MethodGet, "/manage/"+spSecrets[0], nil)
-	mustContain(t, body, "This browser is logged in to this SP as", "Log out everywhere", "Log out of this SP only")
+	mustContain(t, body, "This browser is logged in as", "Log out everywhere", "This SP only")
 
 	// SP-initiated: SP 0 → IdP → SP 1 → IdP → SP 0, all through the browser.
 	_, body = h.do(http.MethodPost, "/sp/"+spIDs[0]+"/logout", nil)
@@ -66,9 +67,11 @@ func TestSingleLogout(t *testing.T) {
 		mustContain(t, body, "Not logged in")
 	}
 	_, body = h.do(http.MethodGet, "/manage/"+idpSecret, nil)
-	mustContain(t, body, "No sessions", "LogoutRequest from", "LogoutResponse from", "samlp:LogoutRequest")
+	mustContain(t, body, "No sessions", "LogoutRequest from", "LogoutResponse from")
+	mustContain(t, h.logEntries(idpSecret), "samlp:LogoutRequest")
 	_, body = h.do(http.MethodGet, "/manage/"+spSecrets[1], nil)
-	mustContain(t, body, "LogoutRequest from the IdP", "Ended")
+	mustContain(t, body, "LogoutRequest from the IdP")
+	mustContain(t, h.logEntries(spSecrets[1]), "Ended")
 
 	// The next login asks again.
 	_, body = h.do(http.MethodPost, "/sp/"+spIDs[0]+"/login", nil)
@@ -125,7 +128,8 @@ func TestArtifactBinding(t *testing.T) {
 	}
 	mustContain(t, body, "Logged in as", "alice@example.com")
 	_, body = h.do(http.MethodGet, "/manage/"+idpSecret, nil)
-	mustContain(t, body, "Message kept for artifact resolution", "ArtifactResolve (SOAP)", "samlp:ArtifactResponse")
+	mustContain(t, body, "Message kept for artifact resolution", "ArtifactResolve (SOAP)")
+	mustContain(t, h.logEntries(idpSecret), "samlp:ArtifactResponse", "by SOAP")
 	_, body = h.do(http.MethodGet, "/manage/"+spSecret, nil)
 	mustContain(t, body, "Resolved artifact")
 
@@ -141,4 +145,56 @@ func TestArtifactBinding(t *testing.T) {
 	// its metadata, which the test IdPs do not.
 	_, body = h.do(http.MethodPost, "/sp/"+spID+"/login", url.Values{"binding": {"artifact"}, "force_authn": {"on"}})
 	mustContain(t, body, "no endpoint for the binding", "HTTP-Artifact")
+}
+
+// logEntries returns the log entry pages of an instance, one after the
+// other.
+func (h *harness) logEntries(secret string) string {
+	h.t.Helper()
+	_, body := h.do(http.MethodGet, "/manage/"+secret, nil)
+	var all strings.Builder
+	for _, m := range regexp.MustCompile(`href="(/manage/`+regexp.QuoteMeta(secret)+`/log/\d+)"`).FindAllStringSubmatch(body, -1) {
+		resp, page := h.do(http.MethodGet, m[1], nil)
+		if resp.StatusCode != http.StatusOK {
+			h.t.Fatalf("%s: %d", m[1], resp.StatusCode)
+		}
+		all.WriteString(page)
+	}
+	return all.String()
+}
+
+// The log entry page shows the HTTP exchange of an event, with cookie
+// values shortened, its parameters decoded, and the message.
+func TestLogEntry(t *testing.T) {
+	h := newHarness(t)
+	_, idpID, spSecrets, spIDs := pair(h, 1)
+	h.loginAs(idpID, spIDs[0], "alice")
+
+	_, body := h.do(http.MethodGet, "/manage/"+spSecrets[0], nil)
+	m := regexp.MustCompile(`href="(/manage/[^"]+/log/(\d+))">\s*<time[^>]*>[^<]*</time>\s*<span class="log-title">Logged in alice@example.com`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("no log row for the login:\n%s", body)
+	}
+	_, page := h.do(http.MethodGet, m[1], nil)
+	mustContain(t, page,
+		"<h1>Logged in alice@example.com</h1>",
+		"Received at", "by HTTP-POST", "It was accepted.",
+		"POST "+h.base+"/sp/"+spIDs[0]+"/acs", // the request line
+		"HTTP/1.1 200 OK", // the answer
+		"Form parameters, decoded", "SAMLResponse=", "RelayState=",
+		"Copy as cURL", "Open in the inspector",
+		"✓ Accepted", "Response <span class=\"decoded-sub\">")
+	// The browser sent the pending-login cookie; its value is shortened.
+	if c := regexp.MustCompile(`Cookie: ([^\n]*)`).FindStringSubmatch(page); c == nil || !strings.Contains(c[1], "…") {
+		t.Errorf("cookie not redacted: %v", c)
+	}
+	// Older and newer entries link to each other.
+	if !strings.Contains(page, "← Older") {
+		t.Error("no link to the older entry")
+	}
+	// Another instance's secret cannot read it.
+	other := regexp.MustCompile(`/manage/[^/]+/log/`).ReplaceAllString(m[1], "/manage/nope/log/")
+	if resp, _ := h.do(http.MethodGet, other, nil); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("other secret: %d", resp.StatusCode)
+	}
 }

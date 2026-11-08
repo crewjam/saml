@@ -368,6 +368,7 @@ func hints(err error, cfg *SPConfig, unsolicited bool) []string {
 
 // spManagePage is the data of an SP's management page.
 type spManagePage struct {
+	CertInfo    string
 	Secret      string
 	Max         int
 	Instance    *store.Instance
@@ -381,7 +382,8 @@ type spManagePage struct {
 	ArtifactURL string
 	SessionURL  string
 	Sessions    []spSessionView
-	Events      []store.Event
+	Log         []logRow
+	IdPName     string
 	Flash       string
 	Formats     []saml.NameIDFormat
 	Contexts    []saml.AuthnContextClass
@@ -402,7 +404,7 @@ func (s *Server) manageSP(w http.ResponseWriter, r *http.Request, in *store.Inst
 		return
 	}
 	p := spManagePage{
-		Secret: in.Secret, Max: store.MaxEventsPerInstance,
+		Secret: in.Secret, Max: store.MaxEventsPerInstance, CertInfo: certInfo(in.CertPEM),
 		Instance: in, Config: cfg, EntityID: s.spEntityID(in.ID),
 		ACSURL:      s.BaseURL + "/sp/" + in.ID + "/acs",
 		MetadataURL: s.spEntityID(in.ID),
@@ -411,9 +413,12 @@ func (s *Server) manageSP(w http.ResponseWriter, r *http.Request, in *store.Inst
 		SLOURL:      s.BaseURL + "/sp/" + in.ID + "/slo",
 		ArtifactURL: s.BaseURL + "/sp/" + in.ID + "/artifact",
 		SessionURL:  s.BaseURL + "/sp/" + in.ID + "/",
-		Events:      events, Flash: flashMessage(r), Formats: nameIDFormats, Contexts: authnContexts,
+		Log:         s.logRows(r.Context(), in, events), Flash: flashMessage(r), Formats: nameIDFormats, Contexts: authnContexts,
 	}
 	p.Current = s.spSessionFromCookie(r, in)
+	if cfg.IdPEntityID != "" {
+		p.IdPName = s.names(r.Context()).title(cfg.IdPEntityID)
+	}
 	p.Sessions, err = s.spSessionViews(r.Context(), in)
 	if err != nil {
 		s.fail(w, r, http.StatusInternalServerError, "Cannot read the sessions.", err)

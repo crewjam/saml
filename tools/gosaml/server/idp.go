@@ -453,6 +453,8 @@ func (s *Server) sendIdPMessage(w http.ResponseWriter, r *http.Request, in *stor
 
 // idpManagePage is the data of an IdP's management page.
 type idpManagePage struct {
+	MaxUsers    int
+	CertInfo    string
 	Secret      string
 	Max         int
 	Instance    *store.Instance
@@ -466,7 +468,7 @@ type idpManagePage struct {
 	Profile     idpProfile
 	Profiles    []idpProfile
 	Sessions    []idpSessionView
-	Events      []store.Event
+	Log         []logRow
 	Flash       string
 	Formats     []saml.NameIDFormat
 	Others      []myInstance
@@ -486,7 +488,7 @@ func (s *Server) manageIdP(w http.ResponseWriter, r *http.Request, in *store.Ins
 		return
 	}
 	p := idpManagePage{
-		Secret: in.Secret, Max: store.MaxEventsPerInstance,
+		Secret: in.Secret, Max: store.MaxEventsPerInstance, CertInfo: certInfo(in.CertPEM), MaxUsers: maxUsers,
 		Instance: in, Config: cfg, EntityID: s.idpEntityIDFor(in.ID, cfg),
 		Profile: profileByKey(cfg.Profile), Profiles: idpProfiles,
 		SSOURL:      s.BaseURL + "/idp/" + in.ID + "/sso",
@@ -494,7 +496,7 @@ func (s *Server) manageIdP(w http.ResponseWriter, r *http.Request, in *store.Ins
 		CertURL:     s.BaseURL + "/idp/" + in.ID + "/certificate.pem",
 		SLOURL:      s.BaseURL + "/idp/" + in.ID + "/slo",
 		ArtifactURL: s.BaseURL + "/idp/" + in.ID + "/artifact",
-		Events:      events, Flash: flashMessage(r), Formats: nameIDFormats,
+		Log:         s.logRows(r.Context(), in, events), Flash: flashMessage(r), Formats: nameIDFormats,
 	}
 	if run, err := s.idpRun(r.Context(), in.ID); err == nil {
 		p.Current, _ = s.idpSessionFromCookie(r, run)

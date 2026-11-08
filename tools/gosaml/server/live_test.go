@@ -3,10 +3,8 @@ package server
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -36,7 +34,11 @@ func readSSE(t *testing.T, resp *http.Response) <-chan sseEvent {
 			case strings.HasPrefix(line, "id: "):
 				ev.id = strings.TrimPrefix(line, "id: ")
 			case strings.HasPrefix(line, "data: "):
-				ev.data = strings.TrimPrefix(line, "data: ")
+				// Data lines join with newlines, as browsers join them.
+				if ev.data != "" {
+					ev.data += "\n"
+				}
+				ev.data += strings.TrimPrefix(line, "data: ")
 			}
 		}
 	}()
@@ -89,17 +91,11 @@ func TestLiveLog(t *testing.T) {
 
 	// A login logs its AuthnRequest, which the page sees as it happens.
 	h.do(http.MethodPost, "/sp/"+id+"/login", nil)
+	// Its data is the row, as HTML, for htmx to add to the Log.
 	ev := next(t, events, "log")
-	var payload struct {
-		ID   int64  `json:"id"`
-		HTML string `json:"html"`
-	}
-	if err := json.Unmarshal([]byte(ev.data), &payload); err != nil {
-		t.Fatal(err)
-	}
-	if strconv.FormatInt(payload.ID, 10) != ev.id || !strings.Contains(payload.HTML, "AuthnRequest to") ||
-		!strings.Contains(payload.HTML, "samlp:AuthnRequest") || !strings.HasPrefix(strings.TrimSpace(payload.HTML), "<li") {
-		t.Fatalf("event: id %s, %+v", ev.id, payload)
+	if ev.id == "" || !strings.HasPrefix(ev.data, `<li data-id="`+ev.id+`">`) ||
+		!strings.Contains(ev.data, "AuthnRequest to") || !strings.Contains(ev.data, "/manage/"+secret+"/log/"+ev.id) {
+		t.Fatalf("event: id %s, data %s", ev.id, ev.data)
 	}
 
 	// A page that reconnects gets what it missed after its Last-Event-ID.
@@ -113,7 +109,9 @@ func TestLiveLog(t *testing.T) {
 
 	// Clearing the log tells the page.
 	h.do(http.MethodPost, "/manage/"+secret+"/clear-events", url.Values{})
-	next(t, events, "clear")
+	if ev := next(t, events, "clear"); !strings.Contains(ev.data, `hx-swap-oob="true"`) || !strings.Contains(ev.data, `id="log-list"`) {
+		t.Errorf("clear: %s", ev.data)
+	}
 
 	// An unknown secret has no stream.
 	if resp, _ := h.do(http.MethodGet, "/manage/nope/live", nil); resp.StatusCode != http.StatusNotFound {

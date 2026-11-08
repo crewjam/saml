@@ -1,163 +1,198 @@
 {{define "content"}}{{with .Data}}
-<div class="page-head">
-  <div>
-    <p class="eyebrow"><span class="badge sp">SP</span> Test service provider</p>
-    <h1>{{.Config.Name}}</h1>
-    {{template "expiry" .Instance}}
-  </div>
-  <form method="post" action="/manage/{{.Secret}}/delete" data-confirm="Delete this SP now?">
-    <button class="danger secondary">Delete</button>
-  </form>
-</div>
-{{template "flash" .Flash}}
-<p class="notice">This page's URL is the only key to this SP. Bookmark it, and share it only with people who should change it.</p>
-
-<section class="card" id="connect">
-  <h2>Give these to your identity provider</h2>
-  <p class="hint">Most IdPs can read the metadata URL. Others ask for the entity ID (audience) and ACS URL separately.</p>
-  {{template "copy" (kv "Metadata URL" .MetadataURL)}}
-  {{template "copy" (kv "Entity ID (Audience)" .EntityID)}}
-  {{template "copy" (kv "ACS URL (HTTP-POST and HTTP-Artifact)" .ACSURL)}}
-  {{template "copy" (kv "Single logout URL (HTTP-Redirect and HTTP-POST)" .SLOURL)}}
-  {{template "copy" (kv "Artifact resolution URL (SOAP, index 1)" .ArtifactURL)}}
-  <div class="field"><span class="label">Signing and encryption certificate</span><a href="{{.CertURL}}">Download PEM</a></div>
-</section>
-
-<section class="card" id="idp">
-  <h2>Identity provider</h2>
-  {{if .Config.IdPEntityID}}
-  <table class="kv">
-    <tr><th>Entity ID</th><td><code class="wrap">{{.Config.IdPEntityID}}</code></td></tr>
-    <tr><th>Metadata</th><td>{{if .Config.IdPMetadataSource}}from <code class="wrap">{{.Config.IdPMetadataSource}}</code>{{else}}pasted{{end}}
-      <details><summary>XML</summary><pre class="xml">{{.Config.IdPMetadata}}</pre></details></td></tr>
-  </table>
-  {{if .Config.IdPMetadataSource}}<form method="post" action="/manage/{{.Secret}}/idp-refresh"><button class="small secondary">Refresh metadata</button></form>{{end}}
-  {{else}}<p class="empty">No identity provider yet. Add its metadata to log in.</p>{{end}}
-
-  {{if .Others}}
-  <div class="pair">
-    <span class="label">Your test IdPs</span>
-    {{range .Others}}
-    <form method="post" action="/manage/{{$.Data.Secret}}/idp-set"><input type="hidden" name="metadata_url" value="{{.MetadataURL}}"><button class="small secondary">Use {{.Name}}</button></form>
-    {{end}}
-  </div>
-  {{end}}
-
-  <form method="post" action="/manage/{{.Secret}}/idp-set" class="stack">
-    <h3>{{if .Config.IdPEntityID}}Replace{{else}}Set{{end}} the identity provider</h3>
-    <label>Metadata URL <input type="url" name="metadata_url" placeholder="https://idp.example.com/metadata"></label>
-    <label>or metadata XML <textarea name="metadata_xml" rows="5" placeholder="&lt;EntityDescriptor …"></textarea></label>
-    <div><button>Save</button></div>
-  </form>
-</section>
-
-<section class="card" id="login">
-  <h2>{{if .Current}}Logged in{{else}}Log in{{end}}</h2>
-  {{with .Current}}
-  <div class="current">
-    <p>This browser is logged in to this SP as <strong>{{.Subject}}</strong> <span class="meta">since {{since .CreatedAt}} · <a href="/sp/{{$.Data.Instance.ID}}/">session page</a></span></p>
-    <div class="row">
-      <form method="post" action="/sp/{{$.Data.Instance.ID}}/logout"><button>Log out everywhere</button></form>
-      <form method="post" action="/sp/{{$.Data.Instance.ID}}/logout"><input type="hidden" name="mode" value="local"><button class="secondary">Log out of this SP only</button></form>
+<main>
+  <div class="page-head">
+    <div>
+      <p class="eyebrow"><span class="tag sp">Service provider</span></p>
+      <h1>{{.Config.Name}}</h1>
+      {{template "expiry" .Instance}}
     </div>
-    <p class="hint">"Everywhere" is SP-initiated single logout: a LogoutRequest to the IdP, which logs you out of its other SPs too.</p>
-  </div>
-  {{end}}
-  {{if .Config.IdPEntityID}}
-  <form method="post" action="/sp/{{.Instance.ID}}/login" class="stack">
-    <div class="checks">
-      <label class="check"><input type="checkbox" name="force_authn"> ForceAuthn</label>
-      <label class="check"><input type="checkbox" name="is_passive"> IsPassive</label>
-    </div>
-    <details>
-      <summary>Options</summary>
-      <div class="stack">
-        <label>Binding
-          <select name="binding">
-            <option value="">As in settings</option>
-            <option value="redirect">HTTP-Redirect</option>
-            <option value="post">HTTP-POST</option>
-            <option value="simplesign">HTTP-POST-SimpleSign</option>
-            <option value="artifact">HTTP-Artifact (the IdP must resolve it)</option>
-          </select>
-        </label>
-        <label>Ask for the Response by
-          <select name="response_binding">
-            <option value="">As in settings</option>
-            <option value="post">HTTP-POST</option>
-            <option value="artifact">HTTP-Artifact: the SP fetches it from the IdP, server to server</option>
-          </select>
-        </label>
-        <label>Requested authentication context <span class="meta">exact; the assertion must match it</span>
-          <select name="authn_context">
-            <option value="">None</option>
-            {{range .Contexts}}<option value="{{.}}">{{short (print .)}}</option>{{end}}
-          </select>
-        </label>
-        <label>RelayState <span class="meta">optional, up to 80 bytes</span><input name="relay_state" maxlength="80"></label>
-      </div>
-    </details>
-    <div><button {{if .Current}}class="secondary"{{end}}>{{if .Current}}Log in again{{else}}Log in with the IdP{{end}}</button></div>
-  </form>
-  <p class="hint">Anyone can start a login with this SP's settings from this link, and see their session at the second:</p>
-  {{template "copy" (kv "Login URL" .LoginURL)}}
-  {{template "copy" (kv "Session page" .SessionURL)}}
-  {{else}}<p class="empty">Set the identity provider first.</p>{{end}}
-</section>
-
-<section class="card" id="sessions">
-  <h2>Sessions</h2>
-  <p class="hint">Each successful login starts a session at this SP. Single logout ends it, whether started here or by the IdP.</p>
-  {{range .Sessions}}
-  <div class="session">
-    <strong>{{.Subject}}</strong> <span class="meta">from {{.Issuer}} · logged in {{since .CreatedAt}} · ends in {{until .ExpiresAt}}{{if .SessionIndexes}} · SessionIndex {{join .SessionIndexes ", "}}{{end}}</span>
-    <div class="row">
-      <form method="post" action="/manage/{{$.Data.Secret}}/session-logout"><input type="hidden" name="session_id" value="{{.ID}}"><button class="small">Single logout</button></form>
-      <form method="post" action="/manage/{{$.Data.Secret}}/session-local-logout"><input type="hidden" name="session_id" value="{{.ID}}"><button class="small secondary">End locally</button></form>
+    <div class="actions">
+      {{if .Config.IdPEntityID}}<a class="btn" href="/sp/{{.Instance.ID}}/login">Log in with the IdP</a>{{end}}
+      <form method="post" action="/manage/{{.Secret}}/delete" class="inline" data-confirm="Delete this SP for everyone, now?"><button class="btn danger">Delete SP</button></form>
     </div>
   </div>
-  {{else}}<p class="empty">No sessions.</p>{{end}}
-</section>
+  {{template "notice" "SP"}}
+  {{template "flash" .Flash}}
 
-<section class="card" id="settings">
-  <h2>Settings</h2>
-  <form method="post" action="/manage/{{.Secret}}/settings" class="stack">
-    <label>Name <input name="name" value="{{.Config.Name}}" maxlength="100"></label>
-    <label class="check"><input type="checkbox" name="sign_requests" {{if .Config.SignAuthnRequests}}checked{{end}}> Sign AuthnRequests</label>
-    <label class="check"><input type="checkbox" name="encryption_key" {{if .Config.PublishEncryptionKey}}checked{{end}}> Publish an encryption certificate, so the IdP encrypts assertions</label>
-    <label class="check"><input type="checkbox" name="allow_unsolicited" {{if .Config.AllowUnsolicited}}checked{{end}}> Accept IdP-initiated logins</label>
-    <label>Default binding
-      <select name="binding">
-        <option value="" {{if eq .Config.Binding ""}}selected{{end}}>Automatic: HTTP-Redirect if the IdP supports it</option>
-        <option value="redirect" {{if eq .Config.Binding "redirect"}}selected{{end}}>HTTP-Redirect</option>
-        <option value="post" {{if eq .Config.Binding "post"}}selected{{end}}>HTTP-POST</option>
-        <option value="simplesign" {{if eq .Config.Binding "simplesign"}}selected{{end}}>HTTP-POST-SimpleSign</option>
-        <option value="artifact" {{if eq .Config.Binding "artifact"}}selected{{end}}>HTTP-Artifact (the IdP must resolve it)</option>
-      </select>
-    </label>
-    <label>Ask for the Response by
-      <select name="response_binding">
-        <option value="" {{if eq .Config.ResponseBinding ""}}selected{{end}}>HTTP-POST</option>
-        <option value="artifact" {{if eq .Config.ResponseBinding "artifact"}}selected{{end}}>HTTP-Artifact</option>
-      </select>
-    </label>
-    <label class="check"><input type="checkbox" name="back_channel" {{if .Config.BackChannelLogout}}checked{{end}}> Back-channel logout: offer a SOAP single logout service</label>
-    <label class="check"><input type="checkbox" name="artifact_form" {{if .Config.ArtifactForm}}checked{{end}}> Send artifacts with a form the browser posts, instead of a redirect</label>
-    <label>NameID format to ask for
-      <select name="nameid_format">
-        <option value="" {{if eq .Config.NameIDFormat ""}}selected{{end}}>Unspecified: let the IdP choose</option>
-        {{range .Formats}}{{if ne (print .) "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"}}<option value="{{.}}" {{if eq (print .) $.Data.Config.NameIDFormat}}selected{{end}}>{{.}}</option>{{end}}{{end}}
-      </select>
-    </label>
-    <fieldset>
-      <legend>Relax checks</legend>
-      <p class="hint">The SP makes the checks of crewjam/saml's x/samlsp package, which are stricter than many IdPs expect. Relax them to see whether they are why a login fails.</p>
-      <label class="check"><input type="checkbox" name="allow_sha1" {{if .Config.AllowSHA1}}checked{{end}}> Accept SHA-1 signatures</label>
-      <label class="check"><input type="checkbox" name="allow_unsigned_cbc" {{if .Config.AllowUnsignedCBC}}checked{{end}}> Accept AES-CBC encrypted assertions in unsigned Responses</label>
-    </fieldset>
-    <div><button>Save settings</button></div>
-  </form>
-</section>
+  <div class="mgmt">
+    <div class="col">
 
-{{template "events" .}}
+      <section id="idp">
+        <div class="sec-head">
+          <h2>Identity provider</h2>
+          {{if .Config.IdPEntityID}}<span class="loaded">✓ Metadata loaded</span>{{end}}
+        </div>
+        {{if .Config.IdPEntityID}}
+        <div class="row">
+          <span class="row-main"><span class="sq idp" aria-hidden="true"></span> <strong>{{.IdPName}}</strong>
+            <span class="row-sub mono wrap-anywhere">{{if .Config.IdPMetadataSource}}{{.Config.IdPMetadataSource}}{{else}}{{.Config.IdPEntityID}}{{end}}</span></span>
+          <div class="actions">
+            {{if .Config.IdPMetadataSource}}<form method="post" action="/manage/{{.Secret}}/idp-refresh" class="inline"><button class="btn secondary sm">Refresh</button></form>{{end}}
+          </div>
+        </div>
+        <details class="disclose"><summary>View XML <span class="muted">{{if .Config.IdPMetadataSource}}as fetched{{else}}as pasted{{end}}</span></summary><pre class="xml">{{xml .Config.IdPMetadata}}</pre></details>
+        {{else}}
+        <p class="help">No identity provider yet. Give this SP the IdP's metadata to log in.</p>
+        {{end}}
+        <details class="disclose" {{if not .Config.IdPEntityID}}open{{end}}>
+          <summary>{{if .Config.IdPEntityID}}Replace the identity provider{{else}}Set the identity provider{{end}}</summary>
+          {{if .Others}}<div class="actions">
+            {{range .Others}}<form method="post" action="/manage/{{$.Data.Secret}}/idp-set" class="inline"><input type="hidden" name="metadata_url" value="{{.MetadataURL}}"><button class="btn secondary sm">Use {{.Name}}</button></form>{{end}}
+          </div>{{end}}
+          <form method="post" action="/manage/{{.Secret}}/idp-set" class="stack">
+            <div class="tabs" role="tablist" aria-label="Metadata source">
+              <button type="button" class="tab" role="tab" aria-selected="true" aria-controls="idp-url">Metadata URL</button>
+              <button type="button" class="tab" role="tab" aria-selected="false" aria-controls="idp-xml">Paste XML</button>
+            </div>
+            <div id="idp-url" role="tabpanel" class="input-row">
+              <label for="idp-url-in" class="sr-only">Metadata URL</label>
+              <input id="idp-url-in" type="url" name="metadata_url" class="mono-in" placeholder="https://idp.example.com/metadata">
+              <button class="btn">Load</button>
+            </div>
+            <div id="idp-xml" role="tabpanel" class="stack" hidden>
+              <label for="idp-xml-in" class="sr-only">Metadata XML</label>
+              <textarea id="idp-xml-in" name="metadata_xml" rows="6" placeholder="&lt;EntityDescriptor …" disabled></textarea>
+              <div><button class="btn">Load</button></div>
+            </div>
+          </form>
+        </details>
+      </section>
+
+      <section id="connect">
+        <h2 class="sec-h2">Give these to your identity provider</h2>
+        <p class="help">Most IdPs can read the metadata URL. Others ask for the entity ID (audience) and ACS URL separately.</p>
+        {{template "ep" (ep "Metadata URL" "GET" .MetadataURL)}}
+        {{template "ep" (ep "Entity ID (Audience)" "same as metadata URL" .EntityID)}}
+        {{template "ep" (ep "ACS URL" "HTTP-POST, HTTP-Artifact" .ACSURL)}}
+        {{template "ep" (ep "Single logout URL" (print "HTTP-Redirect, HTTP-POST" (or (and .Config.BackChannelLogout ", SOAP") "")) .SLOURL)}}
+        {{template "ep" (ep "Artifact resolution URL" "SOAP, index 1" .ArtifactURL)}}
+        <div class="ep">
+          <span class="ep-label">Signing and encryption certificate<span class="ep-binding plain">{{.CertInfo}}</span></span>
+          <div class="ep-value"><a class="grow" href="{{.CertURL}}">Download PEM</a><button type="button" class="btn secondary sm" data-copy="{{.Instance.CertPEM}}">Copy</button></div>
+        </div>
+      </section>
+
+      <section id="login">
+        <h2 class="sec-h2">Log in</h2>
+        {{with .Current}}
+        <div class="row">
+          <span class="row-main">This browser is logged in as <span class="mono">{{.Subject}}</span><span class="row-sub">Since <time datetime="{{iso .CreatedAt}}">{{clock .CreatedAt}}</time>. <a href="/sp/{{$.Data.Instance.ID}}/">Session page</a></span></span>
+          <div class="actions">
+            <form method="post" action="/sp/{{$.Data.Instance.ID}}/logout" class="inline"><button class="btn sm">Log out everywhere</button></form>
+            <form method="post" action="/sp/{{$.Data.Instance.ID}}/logout" class="inline"><input type="hidden" name="mode" value="local"><button class="btn secondary sm">This SP only</button></form>
+          </div>
+        </div>
+        {{end}}
+        {{if .Config.IdPEntityID}}
+        <p class="help">Anyone can start a login with this SP's settings from the login URL, and see their session at the session page.</p>
+        <form method="post" action="/sp/{{.Instance.ID}}/login">
+          <div class="actions">
+            <label class="check mono-label"><input type="checkbox" name="force_authn">ForceAuthn</label>
+            <label class="check mono-label"><input type="checkbox" name="is_passive">IsPassive</label>
+            <button class="btn">{{if .Current}}Log in again{{else}}Log in with the IdP{{end}}</button>
+          </div>
+          <details class="disclose">
+            <summary>Options for this login</summary>
+            <div class="stack">
+              <label class="field">Binding of the AuthnRequest
+                <select name="binding">
+                  <option value="">As in settings</option>
+                  <option value="redirect">HTTP-Redirect</option>
+                  <option value="post">HTTP-POST</option>
+                  <option value="simplesign">HTTP-POST-SimpleSign</option>
+                  <option value="artifact">HTTP-Artifact (the IdP must resolve it)</option>
+                </select>
+              </label>
+              <label class="field">Ask for the Response by
+                <select name="response_binding">
+                  <option value="">As in settings</option>
+                  <option value="post">HTTP-POST</option>
+                  <option value="artifact">HTTP-Artifact</option>
+                </select>
+              </label>
+              <label class="field">Requested authentication context <span class="note">Exact; the assertion must match it.</span>
+                <select name="authn_context" class="mono-in">
+                  <option value="">None</option>
+                  {{range .Contexts}}<option value="{{.}}">{{short (print .)}}</option>{{end}}
+                </select>
+              </label>
+              <label class="field">RelayState <span class="note">Optional, up to 80 bytes.</span><input name="relay_state" maxlength="80" class="mono-in"></label>
+            </div>
+          </details>
+        </form>
+        <dl class="dl bordered">
+          <dt>Login URL</dt><dd class="mono">{{.LoginURL}}</dd>
+          <dt>Session page</dt><dd class="mono">{{.SessionURL}}</dd>
+        </dl>
+        {{else}}
+        <p class="empty">Set the identity provider first.</p>
+        {{end}}
+      </section>
+
+      <section id="sessions">
+        <h2 class="sec-h2">Sessions <span class="count">{{len .Sessions}}</span></h2>
+        <p class="help">Single logout ends a session, whether it was started here or by the IdP.</p>
+        {{range .Sessions}}
+        <div class="row">
+          <span class="row-main"><span class="mono">{{.Subject}}</span><span class="row-sub">From {{$.Data.IdPName}}, <time datetime="{{iso .CreatedAt}}">{{since .CreatedAt}}</time>.{{with .SessionIndexes}} Session index <span class="mono">{{join . ", "}}</span>{{end}}</span></span>
+          <div class="actions">
+            <form method="post" action="/manage/{{$.Data.Secret}}/session-logout" class="inline"><input type="hidden" name="session_id" value="{{.ID}}"><button class="btn secondary sm">Log out everywhere</button></form>
+            <form method="post" action="/manage/{{$.Data.Secret}}/session-local-logout" class="inline"><input type="hidden" name="session_id" value="{{.ID}}"><button class="btn secondary sm">End here only</button></form>
+          </div>
+        </div>
+        {{else}}<p class="empty">No sessions.</p>{{end}}
+      </section>
+
+      <section id="settings">
+        <h2 class="sec-h2">Settings</h2>
+        <form method="post" action="/manage/{{.Secret}}/settings">
+          <label class="field settings-name">Name <input name="name" value="{{.Config.Name}}" maxlength="100"></label>
+          <div class="settings-grid">
+            <fieldset class="stack">
+              <legend>Requests</legend>
+              <label class="field">Default binding
+                <select name="binding">
+                  <option value="" {{if eq .Config.Binding ""}}selected{{end}}>Automatic: HTTP-Redirect if the IdP supports it</option>
+                  <option value="redirect" {{if eq .Config.Binding "redirect"}}selected{{end}}>HTTP-Redirect</option>
+                  <option value="post" {{if eq .Config.Binding "post"}}selected{{end}}>HTTP-POST</option>
+                  <option value="simplesign" {{if eq .Config.Binding "simplesign"}}selected{{end}}>HTTP-POST-SimpleSign</option>
+                  <option value="artifact" {{if eq .Config.Binding "artifact"}}selected{{end}}>HTTP-Artifact (the IdP must resolve it)</option>
+                </select>
+              </label>
+              <label class="field">Ask for the Response by
+                <select name="response_binding">
+                  <option value="" {{if eq .Config.ResponseBinding ""}}selected{{end}}>HTTP-POST</option>
+                  <option value="artifact" {{if eq .Config.ResponseBinding "artifact"}}selected{{end}}>HTTP-Artifact</option>
+                </select>
+              </label>
+              <label class="field">NameID format to ask for
+                <select name="nameid_format" class="mono-in">
+                  <option value="" {{if eq .Config.NameIDFormat ""}}selected{{end}}>Unspecified: let the IdP choose</option>
+                  {{range .Formats}}{{if ne (print .) "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"}}<option value="{{.}}" {{if eq (print .) $.Data.Config.NameIDFormat}}selected{{end}}>{{.}}</option>{{end}}{{end}}
+                </select>
+              </label>
+            </fieldset>
+            <fieldset>
+              <legend>Signing, encryption, logout</legend>
+              <label class="check"><input type="checkbox" name="sign_requests" {{if .Config.SignAuthnRequests}}checked{{end}}><span>Sign AuthnRequests</span></label>
+              <label class="check"><input type="checkbox" name="encryption_key" {{if .Config.PublishEncryptionKey}}checked{{end}}><span>Publish an encryption certificate, so the IdP encrypts assertions</span></label>
+              <label class="check"><input type="checkbox" name="allow_unsolicited" {{if .Config.AllowUnsolicited}}checked{{end}}><span>Accept IdP-initiated logins</span></label>
+              <label class="check"><input type="checkbox" name="back_channel" {{if .Config.BackChannelLogout}}checked{{end}}><span>Back-channel logout: offer a SOAP single logout service</span></label>
+              <label class="check"><input type="checkbox" name="artifact_form" {{if .Config.ArtifactForm}}checked{{end}}><span>Send artifacts with a form the browser posts, instead of a redirect</span></label>
+            </fieldset>
+          </div>
+          <fieldset class="relax">
+            <legend>Relax checks</legend>
+            <p class="help">This SP makes the checks of crewjam/saml's <code>x/samlsp</code> package, which are stricter than many IdPs expect. Relax one to see whether it is why a login fails.</p>
+            <label class="check"><input type="checkbox" class="relax" name="allow_sha1" {{if .Config.AllowSHA1}}checked{{end}}><span>Accept SHA-1 signatures</span></label>
+            <label class="check"><input type="checkbox" class="relax" name="allow_unsigned_cbc" {{if .Config.AllowUnsignedCBC}}checked{{end}}><span>Accept AES-CBC encrypted assertions in unsigned Responses</span></label>
+          </fieldset>
+          <div class="save-row"><button class="btn">Save settings</button></div>
+        </form>
+      </section>
+    </div>
+
+    {{template "log" (logData .Secret .Log .Max)}}
+  </div>
+</main>
 {{end}}{{end}}
