@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"html"
 	"math/big"
 	"net/http"
@@ -87,8 +88,14 @@ func (idp *fakeIDP) metadata() *saml.EntityDescriptor {
 // signed with key (unsigned if key is nil), and returns the SP's answer.
 func (idp *fakeIDP) resolve(t *testing.T, b http.Handler, art, issuer string, key *rsa.PrivateKey, cert *x509.Certificate) *httptest.ResponseRecorder {
 	t.Helper()
+	return idp.resolveAt(t, b, art, issuer, key, cert, time.Now().UTC())
+}
+
+// resolveAt is resolve with an ArtifactResolve issued at issueInstant.
+func (idp *fakeIDP) resolveAt(t *testing.T, b http.Handler, art, issuer string, key *rsa.PrivateKey, cert *x509.Certificate, issueInstant time.Time) *httptest.ResponseRecorder {
+	t.Helper()
 	req := &saml.ArtifactResolve{
-		ID: "id-resolve-1", Version: "2.0", IssueInstant: time.Now().UTC(),
+		ID: "id-resolve-1", Version: "2.0", IssueInstant: issueInstant,
 		Issuer: &saml.Issuer{Value: issuer}, Artifact: art,
 	}
 	el := req.Element()
@@ -112,11 +119,96 @@ func (idp *fakeIDP) resolve(t *testing.T, b http.Handler, art, issuer string, ke
 	if err != nil {
 		t.Fatal(err)
 	}
+	return postSOAP(b, body)
+}
+
+// postSOAP posts body to b as a SOAP request.
+func postSOAP(b http.Handler, body string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(http.MethodPost, arsURL, strings.NewReader(body))
 	r.Header.Set("Content-Type", "text/xml")
 	w := httptest.NewRecorder()
 	b.ServeHTTP(w, r)
 	return w
+}
+
+// signedElement returns el signed with key, as XML.
+func signedElement(t *testing.T, el *etree.Element, key *rsa.PrivateKey, cert *x509.Certificate) string {
+	t.Helper()
+	signer := dsig.NewDefaultSigningContext(dsig.TLSCertKeyStore{PrivateKey: key, Certificate: [][]byte{cert.Raw}})
+	signer.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList("")
+	signed, err := signer.SignEnveloped(el)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := etree.NewDocument()
+	doc.SetRoot(signed)
+	out, err := doc.WriteToString()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+const (
+	soapStart = `<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body>`
+	soapEnd   = `</soapenv:Body></soapenv:Envelope>`
+)
+
+func TestResolveRefusesBadRequests(t *testing.T) {
+	idp, cfg, b, store, spCert := setup(t)
+	msg, err := cfg.AuthnRequest(t.Context(), "r", samlsp.WithCustomBinding(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	art := msg.RedirectURL().Query().Get("SAMLart")
+	isFault := func(w *httptest.ResponseRecorder) bool {
+		return w.Code == http.StatusInternalServerError && strings.Contains(w.Body.String(), "Fault")
+	}
+
+	// Issued too long ago, or too far in the future: the IdP's request is
+	// not fresh.
+	if w := idp.resolveAt(t, b, art, idpEntityID, idp.key, idp.cert, time.Now().UTC().Add(-saml.MaxIssueDelay-time.Minute)); !isFault(w) {
+		t.Errorf("stale request: %d", w.Code)
+	}
+	if w := idp.resolveAt(t, b, art, idpEntityID, idp.key, idp.cert, time.Now().UTC().Add(saml.MaxClockSkew+time.Minute)); !isFault(w) {
+		t.Errorf("request from the future: %d", w.Code)
+	}
+
+	// Not XML, too large, or not an ArtifactResolve.
+	if w := postSOAP(b, soapStart+"<oops"); !isFault(w) {
+		t.Errorf("malformed XML: %d", w.Code)
+	}
+	if w := postSOAP(b, soapStart+strings.Repeat(" ", 64<<10)+soapEnd); !isFault(w) {
+		t.Errorf("oversized request: %d", w.Code)
+	}
+	logoutReq := (&saml.LogoutRequest{ID: "id-x", Version: "2.0", IssueInstant: time.Now().UTC(),
+		Issuer: &saml.Issuer{Value: idpEntityID}, NameID: &saml.NameID{Value: "alice"}}).Element()
+	if w := postSOAP(b, soapStart+signedElement(t, logoutReq, idp.key, idp.cert)+soapEnd); !isFault(w) {
+		t.Errorf("a LogoutRequest instead: %d", w.Code)
+	}
+	// An ArtifactResolve in the wrong namespace.
+	wrongNS := etree.NewElement("ArtifactResolve")
+	wrongNS.CreateAttr("xmlns", "urn:example:not-saml")
+	wrongNS.CreateAttr("ID", "id-y")
+	if w := postSOAP(b, soapStart+signedElement(t, wrongNS, idp.key, idp.cert)+soapEnd); !isFault(w) {
+		t.Errorf("wrong namespace: %d", w.Code)
+	}
+	// No ID.
+	noID := (&saml.ArtifactResolve{Version: "2.0", IssueInstant: time.Now().UTC(),
+		Issuer: &saml.Issuer{Value: idpEntityID}, Artifact: art}).Element()
+	noID.RemoveAttr("ID")
+	noID.CreateAttr("ID", "")
+	if w := postSOAP(b, soapStart+signedElement(t, noID, idp.key, idp.cert)+soapEnd); !isFault(w) {
+		t.Errorf("no ID: %d", w.Code)
+	}
+
+	// None of these used up the artifact.
+	if store.Len() != 1 {
+		t.Fatalf("%d messages stored, want 1", store.Len())
+	}
+	if got := artifactResponse(t, idp.resolve(t, b, art, idpEntityID, idp.key, idp.cert), spCert); got == nil {
+		t.Error("the refused requests used up the artifact")
+	}
 }
 
 // artifactResponse checks the SP's answer, signed with spCert, and returns
@@ -379,5 +471,59 @@ func TestAuthnRequestByArtifactForm(t *testing.T) {
 	got := artifactResponse(t, idp.resolve(t, b, fields["SAMLart"], idpEntityID, idp.key, idp.cert), spCert)
 	if got == nil || got.SelectAttrValue("ID", "") != msg.ID {
 		t.Fatalf("resolved %v", got)
+	}
+}
+
+// brokenStore is a Store whose Take fails, or returns a corrupt message.
+type brokenStore struct {
+	artifact.Store
+	takeErr error
+	corrupt bool
+}
+
+func (s brokenStore) Take(ctx context.Context, art string) (*artifact.StoredMessage, error) {
+	if s.takeErr != nil {
+		return nil, s.takeErr
+	}
+	m, err := s.Store.Take(ctx, art)
+	if m != nil && s.corrupt {
+		m.XML = []byte("<not xml")
+	}
+	return m, err
+}
+
+func TestResolveFailures(t *testing.T) {
+	isFault := func(w *httptest.ResponseRecorder) bool {
+		return w.Code == http.StatusInternalServerError && strings.Contains(w.Body.String(), "Fault")
+	}
+	for name, store := range map[string]artifact.Store{
+		"store fails":     brokenStore{Store: artifact.NewMemoryStore(), takeErr: errors.New("database down")},
+		"corrupt message": brokenStore{Store: artifact.NewMemoryStore(), corrupt: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			idp, cfg, _, _, _ := setup(t)
+			b := artifact.New(cfg, store, 3)
+			msg, err := cfg.AuthnRequest(t.Context(), "r", samlsp.WithCustomBinding(b))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if w := idp.resolve(t, b, msg.RedirectURL().Query().Get("SAMLart"), idpEntityID, idp.key, idp.cert); !isFault(w) {
+				t.Errorf("%d %s", w.Code, w.Body.String())
+			}
+		})
+	}
+
+	// The IdP's metadata cannot be had when the request comes.
+	idp, _, _, _, _ := setup(t)
+	spKey, spCert := keyPair(t)
+	down, err := samlsp.New(func(context.Context) (*saml.EntityDescriptor, error) {
+		return nil, errors.New("metadata unavailable")
+	}, spEntityID, samlsp.WithKey(spKey, spCert))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := artifact.New(down, artifact.NewMemoryStore(), 3)
+	if w := idp.resolve(t, b, "AAQAAA==", idpEntityID, idp.key, idp.cert); !isFault(w) {
+		t.Errorf("metadata unavailable: %d", w.Code)
 	}
 }
