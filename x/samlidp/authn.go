@@ -142,7 +142,9 @@ type parseOptions struct {
 func (c *Config) ParseAuthnRequest(ctx context.Context, r *http.Request, opts ...ParseOption) (*AuthnRequest, error) {
 	var o parseOptions
 	for _, opt := range opts {
-		opt.applyParse(&o)
+		if opt != nil {
+			opt.applyParse(&o)
+		}
 	}
 	idp := c.identityProvider(o.idp)
 
@@ -238,7 +240,9 @@ func (c *Config) ParseAuthnRequest(ctx context.Context, r *http.Request, opts ..
 func (c *Config) IDPInitiated(ctx context.Context, serviceProvider, relayState string, opts ...ParseOption) (*AuthnRequest, error) {
 	var o parseOptions
 	for _, opt := range opts {
-		opt.applyParse(&o)
+		if opt != nil {
+			opt.applyParse(&o)
+		}
 	}
 	idp := c.identityProvider(o.idp)
 	r, err := http.NewRequestWithContext(ctx, http.MethodGet, c.ssoURL.String(), http.NoBody)

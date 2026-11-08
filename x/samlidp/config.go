@@ -15,6 +15,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 
 	"github.com/beevik/etree"
@@ -412,7 +413,9 @@ func checkSignatureMethod(method string, key crypto.Signer) error {
 }
 
 // identityProvider returns a new saml.IdentityProvider configured from c,
-// with the IdentityProviderOptions passed to New and then opts applied.
+// with the IdentityProviderOptions passed to New and then opts applied. It
+// shares no slice with c, so that the options and the caller may change
+// it while other calls use c.
 func (c *Config) identityProvider(opts []IdentityProviderOption) *saml.IdentityProvider {
 	method := c.signatureMethod
 	if method == "" {
@@ -421,12 +424,12 @@ func (c *Config) identityProvider(opts []IdentityProviderOption) *saml.IdentityP
 	idp := &saml.IdentityProvider{
 		Signer:                  c.key,
 		Certificate:             c.certificate,
-		Intermediates:           c.intermediates,
-		ExtraCertificates:       c.extraCerts,
+		Intermediates:           slices.Clone(c.intermediates),
+		ExtraCertificates:       slices.Clone(c.extraCerts),
 		MetadataURL:             c.entityURL,
 		SSOURL:                  c.ssoURL,
 		SignatureMethod:         method,
-		NameIDFormats:           c.nameIDFormats,
+		NameIDFormats:           slices.Clone(c.nameIDFormats),
 		Clock:                   c.clock,
 		ServiceProviderProvider: serviceProviderProvider(c.serviceProviders),
 		// Package saml logs what it refuses and ignores; this package
