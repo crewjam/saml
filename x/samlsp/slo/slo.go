@@ -311,13 +311,29 @@ type Request struct {
 
 	// Raw is the request as package saml returned it.
 	Raw *saml.LogoutRequest
+
+	// spEntityID is the entity ID of this SP, which an omitted
+	// SPNameQualifier stands for.
+	spEntityID string
 }
 
 // Matches reports whether a session of the user nameID of the IdP issuer,
 // with sessionIndexes (as samlsp.Assertion gave them at login), is one the
-// request names: issuer must be the request's Issuer, nameID's value must
-// be that of the request's NameID, and if the request names
-// SessionIndexes, one of sessionIndexes must be among them.
+// request names: issuer must be the request's Issuer, nameID must be the
+// request's NameID, and if the request names SessionIndexes, one of
+// sessionIndexes must be among them.
+//
+// Two NameIDs are the same if their values, Formats, NameQualifiers and
+// SPNameQualifiers are (saml-core §2.2.2, §8.3), where an omitted value
+// stands for its default: an omitted Format for
+// urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified, an omitted
+// NameQualifier for the IdP, issuer, and an omitted SPNameQualifier for
+// this SP, whose entity ID ParseRequest records (in a Request made
+// otherwise, an omitted SPNameQualifier matches only an omitted one). So
+// a NameID that one side qualified with the IdP's entity ID matches one
+// the other side left unqualified, but a value issued in another
+// namespace, such as for an affiliation (samlsp.WithSPNameQualifier), or
+// in another format, does not match.
 //
 // Use it before ending the session of the browser that delivered the
 // request. Anyone can make a browser deliver one: a user who starts a
@@ -327,6 +343,18 @@ type Request struct {
 // log the victim out.
 func (req *Request) Matches(issuer string, nameID saml.NameID, sessionIndexes []string) bool {
 	if req.Issuer == "" || issuer != req.Issuer || req.NameID.Value == "" || nameID.Value != req.NameID.Value {
+		return false
+	}
+	orDefault := func(v, def string) string {
+		if v == "" {
+			return def
+		}
+		return v
+	}
+	unspecified := string(saml.UnspecifiedNameIDFormat)
+	if orDefault(nameID.Format, unspecified) != orDefault(req.NameID.Format, unspecified) ||
+		orDefault(nameID.NameQualifier, issuer) != orDefault(req.NameID.NameQualifier, issuer) ||
+		orDefault(nameID.SPNameQualifier, req.spEntityID) != orDefault(req.NameID.SPNameQualifier, req.spEntityID) {
 		return false
 	}
 	if len(req.SessionIndexes) == 0 {
@@ -424,6 +452,7 @@ func (s *Service) ParseRequest(ctx context.Context, r *http.Request, opts ...sam
 	}
 	out.ID = req.ID
 	out.Issuer = sp.IDPMetadata.EntityID
+	out.spEntityID = sp.EntityID
 	out.Raw = req
 	if req.NameID != nil {
 		out.NameID = *req.NameID
