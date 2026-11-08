@@ -63,9 +63,13 @@ var ErrNoEndpoint = errors.New("idpslo: the service provider has no single logou
 // ID.
 var ErrNoRequestID = errors.New("idpslo: no request ID to match InResponseTo against")
 
-// logoutRequestReplayPrefix keeps the replay keys of LogoutRequests apart
-// from those of other messages.
-const logoutRequestReplayPrefix = "LogoutRequest:"
+// logoutRequestReplayPrefix and logoutResponseReplayPrefix keep the replay
+// keys of LogoutRequests and LogoutResponses apart from those of other
+// messages.
+const (
+	logoutRequestReplayPrefix  = "LogoutRequest:"
+	logoutResponseReplayPrefix = "LogoutResponse:"
+)
 
 // EndpointOption configures Endpoint.
 type EndpointOption func(*endpointOptions)
@@ -250,7 +254,10 @@ type Request struct {
 	Reason string
 
 	// RelayState is the RelayState that came with the request. Response
-	// sends it back.
+	// sends it back unchanged, as the bindings require (saml-bindings
+	// §3.4.3 and §3.5.3), even if the SP sent more than the 80 bytes they
+	// allow, as samlidp.Response does with the RelayState of an
+	// AuthnRequest.
 	RelayState string
 
 	// Binding is the binding the request came with: saml.HTTPRedirectBinding,
@@ -470,7 +477,7 @@ func hasEndpoint(md *saml.EntityDescriptor, binding, location string) bool {
 	return false
 }
 
-// RequestOption customizes Request.
+// RequestOption customizes Request and SendRequest.
 type RequestOption func(*requestOptions)
 
 type requestOptions struct {
@@ -478,11 +485,18 @@ type requestOptions struct {
 	reason       string
 	notOnOrAfter *time.Time
 	nonce        string
+	idp          []samlidp.IdentityProviderOption
+}
+
+// modify sets the Reason and NotOnOrAfter of the options on req.
+func (o *requestOptions) modify(req *saml.LogoutRequest) {
+	req.Reason = o.reason
+	req.NotOnOrAfter = o.notOnOrAfter
 }
 
 // WithBinding sends the LogoutRequest with binding: saml.HTTPRedirectBinding
 // or saml.HTTPPostBinding. By default HTTP-Redirect is used when the SP
-// supports it, and HTTP-POST otherwise.
+// supports it, and HTTP-POST otherwise. SendRequest ignores it.
 func WithBinding(binding string) RequestOption {
 	return func(o *requestOptions) { o.binding = binding }
 }
@@ -501,9 +515,16 @@ func WithNotOnOrAfter(t time.Time) RequestOption {
 }
 
 // WithScriptNonce sets the nonce attribute of the script of the HTTP-POST
-// form of the request (see samlidp.WithScriptNonce).
+// form of the request (see samlidp.WithScriptNonce). SendRequest ignores
+// it.
 func WithScriptNonce(nonce string) RequestOption {
 	return func(o *requestOptions) { o.nonce = nonce }
+}
+
+// WithIdentityProviderOptions applies opts to the saml.IdentityProvider
+// that makes and sends the request, after those passed to samlidp.New.
+func WithIdentityProviderOptions(opts ...samlidp.IdentityProviderOption) RequestOption {
+	return func(o *requestOptions) { o.idp = append(o.idp, opts...) }
 }
 
 // Request returns a signed LogoutRequest that logs the user out of p, a
@@ -511,7 +532,9 @@ func WithScriptNonce(nonce string) RequestOption {
 // send the browser to the SP with Message.Write, and keep Message.ID and
 // p.ServiceProviderID to pass to ParseResponse when the SP sends the
 // browser back to the SLO URL with its answer. relayState comes back with
-// it, to find where the logout was.
+// it, to find where the logout was: it must be at most 80 bytes
+// (saml-bindings §3.4.3 and §3.5.3), or the error matches
+// saml.ErrRelayStateTooLong.
 //
 // If the SP's metadata lists no HTTP-Redirect or HTTP-POST
 // SingleLogoutService (or none for WithBinding), the error matches
@@ -522,6 +545,10 @@ func (s *Service) Request(ctx context.Context, p saml.SessionParticipant, relayS
 	for _, opt := range opts {
 		opt(&o)
 	}
+	if len(relayState) > saml.MaxRelayStateLength {
+		return nil, fmt.Errorf("idpslo: the RelayState is %d bytes, longer than the %d the SAML bindings allow: %w",
+			len(relayState), saml.MaxRelayStateLength, saml.ErrRelayStateTooLong)
+	}
 	md, err := s.config.ServiceProvider(ctx, p.ServiceProviderID)
 	if err != nil {
 		return nil, err
@@ -530,13 +557,12 @@ func (s *Service) Request(ctx context.Context, p saml.SessionParticipant, relayS
 	if err != nil {
 		return nil, err
 	}
-	idp := s.config.IdentityProvider()
+	idp := s.config.IdentityProvider(o.idp...)
 	req, err := idp.MakeLogoutRequest(md, p, ep.Location)
 	if err != nil {
 		return nil, err
 	}
-	req.Reason = o.reason
-	req.NotOnOrAfter = o.notOnOrAfter
+	o.modify(req)
 	return s.config.Send(samlidp.OutgoingMessage{
 		Element:     req.Element(),
 		Destination: ep.Location,
@@ -544,7 +570,7 @@ func (s *Service) Request(ctx context.Context, p saml.SessionParticipant, relayS
 		Param:       "SAMLRequest",
 		RelayState:  relayState,
 		ScriptNonce: o.nonce,
-	})
+	}, o.idp...)
 }
 
 // requestEndpoint returns the SingleLogoutService of md to send a
@@ -580,7 +606,10 @@ func requestEndpoint(md *saml.EntityDescriptor, binding string) (*saml.Endpoint,
 // ParseResponse verifies the LogoutResponse that the service provider
 // serviceProvider sent to the SLO URL in answer to a LogoutRequest sent by
 // Request. requestIDs are the Message.IDs of the logout requests to that
-// SP that are still pending; the response must answer one of them.
+// SP that are still pending; the response must answer one of them. Each
+// response is accepted only once (see samlidp.WithReplayState), but the
+// application should still remove the request it answers, its
+// InResponseTo, from those pending.
 //
 // It returns the response, and an error matching saml.ErrBadStatus if the
 // SP could not log the user out. A response whose status is success with
@@ -597,6 +626,12 @@ func (s *Service) ParseResponse(ctx context.Context, r *http.Request, servicePro
 	if err != nil {
 		return nil, err
 	}
+	if resp.ID == "" {
+		return nil, fmt.Errorf("idpslo: the logout response from %s has no ID", serviceProvider)
+	}
+	if err := s.config.Consume(ctx, serviceProvider, logoutResponseReplayPrefix+resp.ID, resp.IssueInstant.Add(saml.MaxIssueDelay)); err != nil {
+		return nil, fmt.Errorf("idpslo: logout response %q from %s: %w", resp.ID, serviceProvider, err)
+	}
 	if code := resp.Status.StatusCode.Value; code != saml.StatusSuccess {
 		return resp, fmt.Errorf("idpslo: logout response from %s: %w", serviceProvider, saml.ErrBadStatus{Status: code})
 	}
@@ -606,14 +641,19 @@ func (s *Service) ParseResponse(ctx context.Context, r *http.Request, servicePro
 // SendRequest logs the user out of p, a participant of their IdP session,
 // with a signed LogoutRequest sent directly to the SP with the SOAP
 // binding, without the browser. It needs BackChannel, and returns the SP's
-// verified LogoutResponse.
+// verified LogoutResponse. opts are WithReason, WithNotOnOrAfter and
+// WithIdentityProviderOptions.
 //
 // It returns an error matching ErrNoEndpoint if the SP's metadata lists no
 // SOAP SingleLogoutService (or only ones that are not https), and one
 // matching saml.ErrBadStatus if the SP could not log the user out. The
 // request is sent with the HTTP client of WithHTTPClient.
-func (s *Service) SendRequest(ctx context.Context, p saml.SessionParticipant, opts ...samlidp.IdentityProviderOption) (*saml.LogoutResponse, error) {
-	idp := s.config.IdentityProvider(opts...)
+func (s *Service) SendRequest(ctx context.Context, p saml.SessionParticipant, opts ...RequestOption) (*saml.LogoutResponse, error) {
+	var o requestOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	idp := s.config.IdentityProvider(o.idp...)
 	if !hasSOAP(idp.LogoutBindings) {
 		return nil, errors.New("idpslo: SendRequest needs BackChannel")
 	}
@@ -621,7 +661,7 @@ func (s *Service) SendRequest(ctx context.Context, p saml.SessionParticipant, op
 	if err != nil {
 		return nil, err
 	}
-	resp, err := idp.SendSOAPLogoutRequest(ctx, md, p)
+	resp, err := idp.SendSOAPLogoutRequest(ctx, md, p, o.modify)
 	if errors.Is(err, saml.ErrNoSOAPLogoutEndpoint) {
 		return nil, fmt.Errorf("%w %s", ErrNoEndpoint, saml.SOAPBinding)
 	}
