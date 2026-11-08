@@ -127,6 +127,8 @@ func (d *describer) section(title string, rows []KV) {
 }
 
 // describe adds the sections of el, whose titles start with prefix.
+//
+//nolint:gocyclo // one case per element type
 func (d *describer) describe(el *etree.Element, prefix string) {
 	ns := el.NamespaceURI()
 	switch {
@@ -679,7 +681,7 @@ func (d *describer) entityDescriptor(v *saml.EntityDescriptor, prefix string) {
 			rows = append(rows, KV{"Attribute", attributeLabel(a)})
 		}
 		d.section(title, rows)
-		d.roleWarnings(idp.SSODescriptor.RoleDescriptor, "IDPSSODescriptor")
+		d.roleWarnings(idp.RoleDescriptor, "IDPSSODescriptor")
 		if len(idp.SingleSignOnServices) == 0 {
 			d.warn("the IDPSSODescriptor has no SingleSignOnService")
 		}
@@ -712,13 +714,13 @@ func (d *describer) entityDescriptor(v *saml.EntityDescriptor, prefix string) {
 			}
 		}
 		d.section(title, rows)
-		d.roleWarnings(sp.SSODescriptor.RoleDescriptor, "SPSSODescriptor")
+		d.roleWarnings(sp.RoleDescriptor, "SPSSODescriptor")
 		if len(sp.AssertionConsumerServices) == 0 {
 			d.warn("the SPSSODescriptor has no AssertionConsumerService")
 		}
 	}
 	if o := v.Organization; o != nil {
-		var rows []KV
+		rows := make([]KV, 0, len(o.OrganizationDisplayNames)+len(o.OrganizationNames)+len(o.OrganizationURLs))
 		for _, n := range o.OrganizationDisplayNames {
 			rows = append(rows, KV{"DisplayName", n.Value})
 		}
@@ -730,7 +732,7 @@ func (d *describer) entityDescriptor(v *saml.EntityDescriptor, prefix string) {
 		}
 		d.section(prefix+"Organization", rows)
 	}
-	var contacts []KV
+	contacts := make([]KV, 0, len(v.ContactPersons))
 	for _, c := range v.ContactPersons {
 		who := strings.TrimSpace(strings.Join([]string{c.GivenName, c.SurName, strings.Join(c.EmailAddresses, ", ")}, " "))
 		contacts = append(contacts, KV{c.ContactType, who})
@@ -850,8 +852,9 @@ func (d *describer) signature(parent, sig *etree.Element) {
 			if m := ref.FindElement("./DigestMethod"); m != nil {
 				s.DigestMethod = algorithmName(m.SelectAttrValue("Algorithm", ""))
 			}
-			var transforms []string
-			for _, t := range ref.FindElements("./Transforms/Transform") {
+			tf := ref.FindElements("./Transforms/Transform")
+			transforms := make([]string, 0, len(tf))
+			for _, t := range tf {
 				transforms = append(transforms, algorithmName(t.SelectAttrValue("Algorithm", "")))
 			}
 			s.Transforms = strings.Join(transforms, ", ")

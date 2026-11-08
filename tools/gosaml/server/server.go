@@ -99,7 +99,7 @@ func (s *Server) routes() {
 		}{maxUsers, maxSPs, store.MaxEventsPerInstance, roundDuration(s.TTL)})
 	})
 
-	m.HandleFunc("POST /new/idp", s.newIdP)
+	m.HandleFunc("POST /new/idp", s.newIDP)
 	m.HandleFunc("POST /new/sp", s.newSP)
 	m.HandleFunc("GET /manage/{secret}", s.manage)
 	m.HandleFunc("POST /manage/{secret}/{action}", s.manageAction)
@@ -110,7 +110,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /idp/{id}/sso", s.idpSSO)
 	m.HandleFunc("POST /idp/{id}/sso", s.idpSSO)
 	m.HandleFunc("POST /idp/{id}/login", s.idpLogin)
-	m.HandleFunc("GET /idp/{id}/certificate.pem", s.certificate(store.KindIdP))
+	m.HandleFunc("GET /idp/{id}/certificate.pem", s.certificate(store.KindIDP))
 	m.HandleFunc("GET /idp/{id}/slo", s.idpSLO)
 	m.HandleFunc("POST /idp/{id}/slo", s.idpSLO)
 	m.HandleFunc("POST /idp/{id}/artifact", s.idpArtifact)
@@ -178,11 +178,11 @@ type page struct {
 	Title   string
 	Data    any
 
-	// Nav is the current item of the header's navigation, and NavIdP and
+	// Nav is the current item of the header's navigation, and NavIDP and
 	// NavSP where its IdP and SP items go: the newest instance of that
 	// kind made in this browser, or the create blocks of the home page.
 	Nav    string
-	NavIdP string
+	NavIDP string
 	NavSP  string
 }
 
@@ -283,7 +283,7 @@ func (s *Server) renderStatus(w http.ResponseWriter, r *http.Request, status int
 	var buf bytes.Buffer
 	p := page{
 		Nonce: nonce(r), BaseURL: s.BaseURL, TTL: s.TTL, Title: title, Data: data,
-		Nav: navItems[name], NavIdP: "/#create", NavSP: "/#create",
+		Nav: navItems[name], NavIDP: "/#create", NavSP: "/#create",
 	}
 	if name == "logentry" {
 		if le, ok := data.(*logEntryPage); ok {
@@ -291,8 +291,8 @@ func (s *Server) renderStatus(w http.ResponseWriter, r *http.Request, status int
 		}
 	}
 	for _, m := range s.myInstances(r) { // newest first
-		if m.Kind == store.KindIdP && p.NavIdP == "/#create" {
-			p.NavIdP = "/manage/" + m.Secret
+		if m.Kind == store.KindIDP && p.NavIDP == "/#create" {
+			p.NavIDP = "/manage/" + m.Secret
 		}
 		if m.Kind == store.KindSP && p.NavSP == "/#create" {
 			p.NavSP = "/manage/" + m.Secret
@@ -364,7 +364,7 @@ func (s *Server) setMine(w http.ResponseWriter, secrets []string) {
 	if len(secrets) > maxMine {
 		secrets = secrets[len(secrets)-maxMine:]
 	}
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: Secure is set when served over https
 		Name: mineCookie, Value: strings.Join(secrets, "."), Path: "/",
 		MaxAge: int(s.TTL.Seconds()), HttpOnly: true, SameSite: http.SameSiteLaxMode,
 		Secure: strings.HasPrefix(s.BaseURL, "https://"),
@@ -390,8 +390,8 @@ func (s *Server) myInstances(r *http.Request) []myInstance {
 		}
 		mi := myInstance{Kind: in.Kind, Secret: secret, ExpiresAt: in.ExpiresAt}
 		switch in.Kind {
-		case store.KindIdP:
-			if cfg, err := decodeIdPConfig(in.Config); err == nil {
+		case store.KindIDP:
+			if cfg, err := decodeIDPConfig(in.Config); err == nil {
 				mi.Name = cfg.Name
 			}
 			mi.MetadataURL = s.idpEntityID(in.ID)
@@ -514,8 +514,8 @@ func (s *Server) manage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch in.Kind {
-	case store.KindIdP:
-		s.manageIdP(w, r, in)
+	case store.KindIDP:
+		s.manageIDP(w, r, in)
 	case store.KindSP:
 		s.manageSP(w, r, in)
 	}
@@ -564,7 +564,7 @@ func (s *Server) manageAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch in.Kind {
-	case store.KindIdP:
+	case store.KindIDP:
 		s.idpAction(w, r, in, action)
 	case store.KindSP:
 		s.spAction(w, r, in, action)
@@ -594,7 +594,7 @@ func seeOther(w http.ResponseWriter, r *http.Request, target string) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	http.Redirect(w, r, target, http.StatusSeeOther)
+	http.Redirect(w, r, target, http.StatusSeeOther) //nolint:gosec // G710: targets are paths this server builds
 }
 
 func flashMessage(r *http.Request) string {
@@ -614,7 +614,7 @@ func (s *Server) certificate(kind store.Kind) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/x-pem-file")
 		w.Header().Set("Content-Disposition", `attachment; filename="`+string(kind)+"-"+in.ID+`.pem"`)
-		_, _ = w.Write([]byte(in.CertPEM))
+		_, _ = w.Write([]byte(in.CertPEM)) //nolint:gosec // G705: a PEM certificate served as a download, not HTML
 	}
 }
 
@@ -665,7 +665,7 @@ func (sf *staticFiles) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(sf.gzipped(name, b))
 		return
 	}
-	_, _ = w.Write(b)
+	_, _ = w.Write(b) //nolint:gosec // G705: embedded static files
 }
 
 func (sf *staticFiles) gzipped(name string, b []byte) []byte {

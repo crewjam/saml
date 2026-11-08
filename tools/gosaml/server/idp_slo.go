@@ -38,12 +38,13 @@ func (sess *idpSession) addParticipant(p saml.SessionParticipant) {
 			kept = append(kept, q)
 		}
 	}
-	sess.Participants = append(kept, p)
+	kept = append(kept, p)
+	sess.Participants = kept
 }
 
 func idpCookieName(in *store.Instance) string { return "gosaml_idp_" + in.ID }
 
-func (s *Server) setIdPSessionCookie(w http.ResponseWriter, in *store.Instance, id string) {
+func (s *Server) setIDPSessionCookie(w http.ResponseWriter, in *store.Instance, id string) {
 	c := &http.Cookie{
 		Name: idpCookieName(in), Value: id, Path: "/",
 		MaxAge: int(idpSessionLifetime.Seconds()), HttpOnly: true, SameSite: http.SameSiteLaxMode,
@@ -56,14 +57,14 @@ func (s *Server) setIdPSessionCookie(w http.ResponseWriter, in *store.Instance, 
 	http.SetCookie(w, c)
 }
 
-func (s *Server) clearIdPSessionCookie(w http.ResponseWriter, in *store.Instance) {
-	http.SetCookie(w, &http.Cookie{
-		Name: idpCookieName(in), Path: "/", MaxAge: -1, HttpOnly: true,
+func (s *Server) clearIDPSessionCookie(w http.ResponseWriter, in *store.Instance) {
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: Secure is set when served over https
+		Name: idpCookieName(in), Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode,
 		Secure: strings.HasPrefix(s.BaseURL, "https://"),
 	})
 }
 
-func (s *Server) saveIdPSession(ctx context.Context, in *store.Instance, id string, sess *idpSession) error {
+func (s *Server) saveIDPSession(ctx context.Context, in *store.Instance, id string, sess *idpSession) error {
 	b, err := json.Marshal(sess)
 	if err != nil {
 		return err
@@ -75,7 +76,7 @@ func (s *Server) saveIdPSession(ctx context.Context, in *store.Instance, id stri
 	return s.Store.PutSession(ctx, &store.Session{ID: id, InstanceID: in.ID, Data: b, ExpiresAt: expires})
 }
 
-func (s *Server) loadIdPSession(ctx context.Context, in *store.Instance, id string) (*idpSession, error) {
+func (s *Server) loadIDPSession(ctx context.Context, in *store.Instance, id string) (*idpSession, error) {
 	row, err := s.Store.GetSession(ctx, id, in.ID)
 	if err != nil {
 		return nil, err
@@ -94,7 +95,7 @@ func (s *Server) idpSessionFromCookie(r *http.Request, run *idpRun) (*idpSession
 	if err != nil {
 		return nil, ""
 	}
-	sess, err := s.loadIdPSession(r.Context(), run.in, c.Value)
+	sess, err := s.loadIDPSession(r.Context(), run.in, c.Value)
 	if err != nil {
 		return nil, ""
 	}
@@ -127,7 +128,7 @@ func (s *Server) idpSessionViews(ctx context.Context, in *store.Instance) ([]idp
 // idpSessionPage shows the browser its session at the IdP, as an IdP's
 // own "my account" page would, with a button to log out everywhere.
 func (s *Server) idpSessionPage(w http.ResponseWriter, r *http.Request) {
-	run := s.loadIdPRun(w, r)
+	run := s.loadIDPRun(w, r)
 	if run == nil {
 		return
 	}
@@ -142,7 +143,7 @@ func (s *Server) idpSessionPage(w http.ResponseWriter, r *http.Request) {
 
 // idpLogoutButton starts IdP-initiated logout of the browser's session.
 func (s *Server) idpLogoutButton(w http.ResponseWriter, r *http.Request) {
-	run := s.loadIdPRun(w, r)
+	run := s.loadIDPRun(w, r)
 	if run == nil {
 		return
 	}
@@ -151,7 +152,7 @@ func (s *Server) idpLogoutButton(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, http.StatusBadRequest, "This browser has no session at this IdP.", nil)
 		return
 	}
-	s.startIdPLogout(w, r, run, id)
+	s.startIDPLogout(w, r, run, id)
 }
 
 // logoutState is a single logout in progress at an IdP: it logs the user
@@ -178,11 +179,11 @@ type logoutResult struct {
 	Detail          string
 }
 
-// startIdPLogout ends the IdP session id and logs its user out of every
+// startIDPLogout ends the IdP session id and logs its user out of every
 // SP it was used for.
-func (s *Server) startIdPLogout(w http.ResponseWriter, r *http.Request, run *idpRun, id string) {
+func (s *Server) startIDPLogout(w http.ResponseWriter, r *http.Request, run *idpRun, id string) {
 	ctx := r.Context()
-	sess, err := s.loadIdPSession(ctx, run.in, id)
+	sess, err := s.loadIDPSession(ctx, run.in, id)
 	if err != nil {
 		s.fail(w, r, http.StatusNotFound, "That session has ended.", nil)
 		return
@@ -192,7 +193,7 @@ func (s *Server) startIdPLogout(w http.ResponseWriter, r *http.Request, run *idp
 		return
 	}
 	if c, err := r.Cookie(idpCookieName(run.in)); err == nil && c.Value == id {
-		s.clearIdPSessionCookie(w, run.in)
+		s.clearIDPSessionCookie(w, run.in)
 	}
 	s.logEvent(ctx, &store.Event{InstanceID: run.in.ID, OK: true, Title: "IdP-initiated logout of " + sess.Username,
 		Detail: participantList(sess.Participants)})
@@ -291,7 +292,7 @@ func (s *Server) idpSLORequest(w http.ResponseWriter, r *http.Request, run *idpR
 		_ = s.Store.DeleteSession(ctx, row.ID, run.in.ID)
 	}
 	if !soap {
-		s.clearIdPSessionCookie(w, run.in)
+		s.clearIDPSessionCookie(w, run.in)
 	}
 	detail := "Ended no IdP session: none was used for this SP with that NameID and SessionIndex."
 	if ended > 0 {

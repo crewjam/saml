@@ -7,7 +7,7 @@
       {{template "expiry" .Instance}}
     </div>
     <div class="actions">
-      {{if .Config.IdPEntityID}}<a class="btn" hx-boost="false" href="/sp/{{.Instance.ID}}/login">Log in with the IdP</a>{{end}}
+      {{if .Config.IDPEntityID}}<a class="btn" hx-boost="false" href="/sp/{{.Instance.ID}}/login">Log in with the IdP</a>{{end}}
       <form method="post" action="/manage/{{.Secret}}/delete" class="inline" data-confirm="Delete this SP for everyone, now?"><button class="btn danger">Delete SP</button></form>
     </div>
   </div>
@@ -20,22 +20,22 @@
       <section id="idp">
         <div class="sec-head">
           <h2>Identity provider</h2>
-          {{if .Config.IdPEntityID}}<span class="loaded">✓ Metadata loaded</span>{{end}}
+          {{if .Config.IDPEntityID}}<span class="loaded">✓ Metadata loaded</span>{{end}}
         </div>
-        {{if .Config.IdPEntityID}}
+        {{if .Config.IDPEntityID}}
         <div class="row">
-          <span class="row-main"><span class="sq idp" aria-hidden="true"></span> <strong>{{.IdPName}}</strong>
-            <span class="row-sub mono wrap-anywhere">{{if .Config.IdPMetadataSource}}{{.Config.IdPMetadataSource}}{{else}}{{.Config.IdPEntityID}}{{end}}</span></span>
+          <span class="row-main"><span class="sq idp" aria-hidden="true"></span> <strong>{{.IDPName}}</strong>
+            <span class="row-sub mono wrap-anywhere">{{if .Config.IDPMetadataSource}}{{.Config.IDPMetadataSource}}{{else}}{{.Config.IDPEntityID}}{{end}}</span></span>
           <div class="actions">
-            {{if .Config.IdPMetadataSource}}<form method="post" action="/manage/{{.Secret}}/idp-refresh" class="inline"><button class="btn secondary sm">Refresh</button></form>{{end}}
+            {{if .Config.IDPMetadataSource}}<form method="post" action="/manage/{{.Secret}}/idp-refresh" class="inline"><button class="btn secondary sm">Refresh</button></form>{{end}}
           </div>
         </div>
-        <details class="disclose"><summary>View XML <span class="muted">{{if .Config.IdPMetadataSource}}as fetched{{else}}as pasted{{end}}</span></summary><pre class="xml">{{xml .Config.IdPMetadata}}</pre></details>
+        <details class="disclose"><summary>View XML <span class="muted">{{if .Config.IDPMetadataSource}}as fetched{{else}}as pasted{{end}}</span></summary><pre class="xml">{{xml .Config.IDPMetadata}}</pre></details>
         {{else}}
         <p class="help">No identity provider yet. Give this SP the IdP's metadata to log in.</p>
         {{end}}
-        <details class="disclose" {{if not .Config.IdPEntityID}}open{{end}}>
-          <summary>{{if .Config.IdPEntityID}}Replace the identity provider{{else}}Set the identity provider{{end}}</summary>
+        <details class="disclose" {{if not .Config.IDPEntityID}}open{{end}}>
+          <summary>{{if .Config.IDPEntityID}}Replace the identity provider{{else}}Set the identity provider{{end}}</summary>
           {{if .Others}}<div class="actions">
             {{range .Others}}<form method="post" action="/manage/{{$.Data.Secret}}/idp-set" class="inline"><input type="hidden" name="metadata_url" value="{{.MetadataURL}}"><button class="btn secondary sm">Use {{.Name}}</button></form>{{end}}
           </div>{{end}}
@@ -83,7 +83,7 @@
           </div>
         </div>
         {{end}}
-        {{if .Config.IdPEntityID}}
+        {{if .Config.IDPEntityID}}
         <p class="help">Anyone can start a login with this SP's settings from the login URL, and see their session at the session page.</p>
         <form hx-boost="false" method="post" action="/sp/{{.Instance.ID}}/login">
           <div class="actions">
@@ -134,7 +134,7 @@
         <p class="help">Single logout ends a session, whether it was started here or by the IdP.</p>
         {{range .Sessions}}
         <div class="row">
-          <span class="row-main"><span class="mono">{{.Subject}}</span><span class="row-sub">From {{$.Data.IdPName}}, <time datetime="{{iso .CreatedAt}}">{{since .CreatedAt}}</time>.{{with .SessionIndexes}} Session index <span class="mono">{{join . ", "}}</span>{{end}}</span></span>
+          <span class="row-main"><span class="mono">{{.Subject}}</span><span class="row-sub">From {{$.Data.IDPName}}, <time datetime="{{iso .CreatedAt}}">{{since .CreatedAt}}</time>.{{with .SessionIndexes}} Session index <span class="mono">{{join . ", "}}</span>{{end}}</span></span>
           <div class="actions">
             <form hx-boost="false" method="post" action="/manage/{{$.Data.Secret}}/session-logout" class="inline"><input type="hidden" name="session_id" value="{{.ID}}"><button class="btn secondary sm">Log out everywhere</button></form>
             <form method="post" action="/manage/{{$.Data.Secret}}/session-local-logout" class="inline"><input type="hidden" name="session_id" value="{{.ID}}"><button class="btn secondary sm">End here only</button></form>

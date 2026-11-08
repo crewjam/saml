@@ -29,14 +29,14 @@ type idpProfile struct {
 	Label       string
 	Description string
 
-	// Signing is the IdPConfig.ResponseSigning the profile sets.
+	// Signing is the IDPConfig.ResponseSigning the profile sets.
 	Signing string
 
 	// SessionIndexIsAssertionID makes each assertion's SessionIndex its
 	// own ID, as Entra ID does.
 	SessionIndexIsAssertionID bool
 
-	// Encryption is the IdPConfig.Encryption the profile sets.
+	// Encryption is the IDPConfig.Encryption the profile sets.
 	Encryption string
 
 	// NewID makes the IDs of assertions, and NewSessionIndex the session
@@ -98,7 +98,7 @@ func profileByKey(key string) idpProfile {
 
 // idpEntityIDFor returns the entity ID (Issuer) of an IdP: the metadata
 // URL, or one shaped like the profile's product.
-func (s *Server) idpEntityIDFor(id string, cfg *IdPConfig) string {
+func (s *Server) idpEntityIDFor(id string, cfg *IDPConfig) string {
 	switch cfg.Profile {
 	case "okta":
 		return "http://www.okta.com/exk" + cfg.ProfileKey
@@ -143,7 +143,7 @@ func (p idpProfile) assertionOption() samlidp.ResponseOption {
 }
 
 // profileUsers returns the default users of an IdP with the profile.
-func profileUsers(profile string, cfg *IdPConfig, id string) []User {
+func profileUsers(profile string, cfg *IDPConfig, id string) []User {
 	type person struct {
 		username, given, family string
 		groups                  []string
@@ -197,7 +197,7 @@ func profileUsers(profile string, cfg *IdPConfig, id string) []User {
 			if len(p.groups) == 0 {
 				affiliation = []string{"member", "student"}
 			}
-			var scoped []string
+			scoped := make([]string, 0, len(affiliation))
 			for _, a := range affiliation {
 				scoped = append(scoped, a+"@"+scope)
 			}
@@ -229,7 +229,7 @@ func unspecifiedAttr(name, value string) samlidp.Attribute {
 }
 
 // applyProfile resets an IdP's settings and users to the profile's.
-func applyProfile(cfg *IdPConfig, id, profile string) {
+func applyProfile(cfg *IDPConfig, id, profile string) {
 	p := profileByKey(profile)
 	cfg.Profile = p.Key
 	switch p.Key {
@@ -250,7 +250,7 @@ func randomDigits(n int) string {
 	var b strings.Builder
 	for range n {
 		d, _ := rand.Int(rand.Reader, big.NewInt(10))
-		b.WriteByte(byte('0' + d.Int64()))
+		b.WriteString(d.String())
 	}
 	return b.String()
 }

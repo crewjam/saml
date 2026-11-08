@@ -70,7 +70,7 @@ func (h *harness) stream(path string, lastEventID string) (<-chan sseEvent, func
 	if lastEventID != "" {
 		req.Header.Set("Last-Event-ID", lastEventID)
 	}
-	resp, err := h.client.Do(req)
+	resp, err := h.client.Do(req) //nolint:bodyclose // closed by the returned stop func
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestLiveLog(t *testing.T) {
 	next(t, events, "ready")
 
 	// A login logs its AuthnRequest, which the page sees as it happens.
-	h.do(http.MethodPost, "/sp/"+id+"/login", nil)
+	h.do(http.MethodPost, "/sp/"+id+"/login", nil) //nolint:bodyclose // do closes it
 	// Its data is the row, as HTML, for htmx to add to the Log.
 	ev := next(t, events, "log")
 	if ev.id == "" || !strings.HasPrefix(ev.data, `<li data-id="`+ev.id+`">`) ||
@@ -99,7 +99,7 @@ func TestLiveLog(t *testing.T) {
 	}
 
 	// A page that reconnects gets what it missed after its Last-Event-ID.
-	h.do(http.MethodPost, "/sp/"+id+"/login", nil)
+	h.do(http.MethodPost, "/sp/"+id+"/login", nil) //nolint:bodyclose // do closes it
 	missed, stop2 := h.stream("/manage/"+secret+"/live", ev.id)
 	defer stop2()
 	if got := next(t, missed, "log"); got.id == ev.id || got.id == "" {
@@ -108,7 +108,7 @@ func TestLiveLog(t *testing.T) {
 	next(t, missed, "ready")
 
 	// Clearing the log tells the page.
-	h.do(http.MethodPost, "/manage/"+secret+"/clear-events", url.Values{})
+	h.do(http.MethodPost, "/manage/"+secret+"/clear-events", url.Values{}) //nolint:bodyclose // do closes it
 	if ev := next(t, events, "clear"); !strings.Contains(ev.data, `hx-swap-oob="true"`) || !strings.Contains(ev.data, `id="log-list"`) || !strings.Contains(ev.data, `hx-disinherit="*"`) {
 		t.Errorf("clear: %s", ev.data)
 	}
@@ -121,7 +121,7 @@ func TestLiveLog(t *testing.T) {
 
 func TestHubLimits(t *testing.T) {
 	h := newHub()
-	var stops []func()
+	stops := make([]func(), 0, maxSubscribersPerInstance)
 	for range maxSubscribersPerInstance {
 		_, stop, err := h.subscribe("a")
 		if err != nil {

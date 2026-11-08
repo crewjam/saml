@@ -21,7 +21,7 @@ import (
 // configuration, and the x/samlidp objects built from them.
 type idpRun struct {
 	in        *store.Instance
-	cfg       *IdPConfig
+	cfg       *IDPConfig
 	c         *samlidp.Config
 	artifacts *idpartifact.Binding
 	slo       *idpslo.Service
@@ -35,11 +35,11 @@ func (run *idpRun) binding() samlidp.CustomBindingOption {
 }
 
 func (s *Server) idpRun(ctx context.Context, id string) (*idpRun, error) {
-	in, cfg, err := s.loadIdP(ctx, id)
+	in, cfg, err := s.loadIDP(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	c, err := s.samlIdP(in, cfg)
+	c, err := s.samlIDP(in, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -55,9 +55,9 @@ func (s *Server) idpRun(ctx context.Context, id string) (*idpRun, error) {
 	return &idpRun{in: in, cfg: cfg, c: c, artifacts: b, slo: logout}, nil
 }
 
-// loadIdPRun is idpRun for a handler: it answers the request itself if
+// loadIDPRun is idpRun for a handler: it answers the request itself if
 // the IdP cannot be loaded.
-func (s *Server) loadIdPRun(w http.ResponseWriter, r *http.Request) *idpRun {
+func (s *Server) loadIDPRun(w http.ResponseWriter, r *http.Request) *idpRun {
 	run, err := s.idpRun(r.Context(), r.PathValue("id"))
 	switch {
 	case errors.Is(err, store.ErrNotFound):
@@ -72,7 +72,7 @@ func (s *Server) loadIdPRun(w http.ResponseWriter, r *http.Request) *idpRun {
 
 func (s *Server) idpSSO(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	run := s.loadIdPRun(w, r)
+	run := s.loadIDPRun(w, r)
 	if run == nil {
 		return
 	}
@@ -89,7 +89,7 @@ func (s *Server) idpSSO(w http.ResponseWriter, r *http.Request) {
 		s.logEvent(ctx, &store.Event{InstanceID: in.ID, Direction: "in", Title: "AuthnRequest from " + req.ServiceProvider + " refused with a SAML error",
 			Detail: errorChain(err), XML: reqXML})
 		msg, err := run.c.ErrorResponse(ctx, req, status, samlidp.WithScriptNonce(nonce(r)), run.binding())
-		s.sendIdPMessage(w, r, in, msg, err)
+		s.sendIDPMessage(w, r, in, msg, err)
 		return
 	}
 	if err != nil {
@@ -120,13 +120,13 @@ func (s *Server) idpSSO(w http.ResponseWriter, r *http.Request) {
 		// No session to answer from, and the user may not be asked.
 		msg, err := run.c.ErrorResponse(ctx, req, &saml.StatusError{TopLevel: saml.StatusResponder, SecondLevel: saml.StatusNoPassive},
 			samlidp.WithScriptNonce(nonce(r)), run.binding())
-		s.sendIdPMessage(w, r, in, msg, err)
+		s.sendIDPMessage(w, r, in, msg, err)
 		return
 	}
 	s.showLogin(w, r, in, run.cfg, req)
 }
 
-func (c *IdPConfig) user(username string) *User {
+func (c *IDPConfig) user(username string) *User {
 	for i := range c.Users {
 		if c.Users[i].Username == username {
 			return &c.Users[i]
@@ -139,7 +139,7 @@ func (c *IdPConfig) user(username string) *User {
 // in as a user, or with a SAML error.
 func (s *Server) idpLogin(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	run := s.loadIdPRun(w, r)
+	run := s.loadIDPRun(w, r)
 	if run == nil {
 		return
 	}
@@ -158,7 +158,7 @@ func (s *Server) idpLogin(w http.ResponseWriter, r *http.Request) {
 				_ = s.Store.DeletePending(ctx, pid)
 				msg, err := run.c.ErrorResponse(ctx, &req, &saml.StatusError{TopLevel: e.Top, SecondLevel: e.Second,
 					Message: strings.TrimSpace(r.FormValue("status_message"))}, samlidp.WithScriptNonce(nonce(r)), run.binding())
-				s.sendIdPMessage(w, r, in, msg, err)
+				s.sendIDPMessage(w, r, in, msg, err)
 				return
 			}
 		}
@@ -244,13 +244,13 @@ func (s *Server) respond(w http.ResponseWriter, r *http.Request, run *idpRun, re
 	}
 	if err == nil && msg.Participant != nil && run.cfg.RememberSessions {
 		sess.addParticipant(*msg.Participant)
-		if err := s.saveIdPSession(ctx, run.in, sessID, sess); err != nil {
+		if err := s.saveIDPSession(ctx, run.in, sessID, sess); err != nil {
 			s.Logger.Error("cannot save the IdP session", "err", err)
 		} else {
-			s.setIdPSessionCookie(w, run.in, sessID)
+			s.setIDPSessionCookie(w, run.in, sessID)
 		}
 	}
-	s.sendIdPMessage(w, r, run.in, msg, err)
+	s.sendIDPMessage(w, r, run.in, msg, err)
 }
 
 // idpArtifact serves the IdP's ArtifactResolutionService, where SPs fetch

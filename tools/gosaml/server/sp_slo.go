@@ -66,7 +66,7 @@ func (s *Server) startSPSession(w http.ResponseWriter, r *http.Request, in *stor
 	if c, err := r.Cookie(spCookieName(in)); err == nil {
 		_ = s.Store.DeleteSession(r.Context(), c.Value, in.ID)
 	}
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: Secure is set when served over https
 		Name: spCookieName(in), Value: id, Path: "/", Expires: expires,
 		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: strings.HasPrefix(s.BaseURL, "https://"),
 	})
@@ -74,8 +74,8 @@ func (s *Server) startSPSession(w http.ResponseWriter, r *http.Request, in *stor
 }
 
 func (s *Server) clearSPSessionCookie(w http.ResponseWriter, in *store.Instance) {
-	http.SetCookie(w, &http.Cookie{
-		Name: spCookieName(in), Path: "/", MaxAge: -1, HttpOnly: true,
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: Secure is set when served over https
+		Name: spCookieName(in), Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode,
 		Secure: strings.HasPrefix(s.BaseURL, "https://"),
 	})
 }

@@ -13,7 +13,7 @@ import (
 
 func testdata(t *testing.T, name string) string {
 	t.Helper()
-	b, err := os.ReadFile("../../../testdata/" + name)
+	b, err := os.ReadFile("../../../testdata/" + name) //nolint:gosec // test fixtures
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestView(t *testing.T) {
 	if v == nil || v.Title != "Response" || !strings.Contains(v.Sub, "base64") || !strings.HasSuffix(v.Sub, "KB") {
 		t.Fatalf("%+v", v)
 	}
-	var texts []string
+	texts := make([]string, 0, len(v.Checks))
 	for _, c := range v.Checks {
 		texts = append(texts, c.Level+":"+c.Text)
 	}
