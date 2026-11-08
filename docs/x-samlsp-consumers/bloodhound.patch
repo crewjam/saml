@@ -1,5 +1,5 @@
 diff --git a/cmd/api/src/api/v2/auth/saml.go b/cmd/api/src/api/v2/auth/saml.go
-index 7d87c7c..63b7e7f 100644
+index 7d87c7c..95ae85b 100644
 --- a/cmd/api/src/api/v2/auth/saml.go
 +++ b/cmd/api/src/api/v2/auth/saml.go
 @@ -18,7 +18,10 @@ package auth
@@ -55,7 +55,7 @@ index 7d87c7c..63b7e7f 100644
  
  var ErrSAMLProviderMissing = errors.New("saml provider missing")
  
-@@ -343,29 +338,39 @@ func (s ManagementResource) ServeMetadata(response http.ResponseWriter, request
+@@ -343,31 +338,51 @@ func (s ManagementResource) ServeMetadata(response http.ResponseWriter, request
  		api.HandleDatabaseError(request, response, err)
  	} else if ssoProvider.SAMLProvider == nil {
  		api.WriteErrorResponse(request.Context(), api.BuildErrorResponse(http.StatusNotFound, api.ErrorResponseDetailsResourceNotFound, request), response)
@@ -84,9 +84,9 @@ index 7d87c7c..63b7e7f 100644
 -		}
 +		// Note: This is the SP metadata tied to authenticate flow and will not be the same as the XML metadata used to import the SAML provider initially
 +		samlConfig.ServeMetadata(response, request)
-+	}
-+}
-+
+ 	}
+ }
+ 
 +// samlConfig returns the SAML service provider for ssoProvider.
 +func (s ManagementResource) samlConfig(request *http.Request, ssoProvider model.SSOProvider) (*samlsp.Config, error) {
 +	var issuer string
@@ -108,14 +108,26 @@ index 7d87c7c..63b7e7f 100644
 +
 +func (c consumedAssertions) Consume(ctx context.Context, key []byte, expiresAt time.Time) error {
 +	err := c.db.ConsumeSAMLAssertionID(ctx, c.ssoProviderID, c.issuer, hex.EncodeToString(key), expiresAt)
-+	if errors.Is(err, database.ErrSAMLIdentifierAlreadyConsumed) {
++	switch {
++	case err == nil:
++		return nil
++	case errors.Is(err, database.ErrSAMLIdentifierAlreadyConsumed):
 +		return saml.ErrAssertionReplayed
- 	}
-+	return err
- }
- 
++	default:
++		return fmt.Errorf("%w: %w", ErrSAMLAssertionNotRecorded, err)
++	}
++}
++
++// ErrSAMLAssertionNotRecorded marks a failure to record a verified
++// assertion in saml_consumed_identifiers, as opposed to a SAML response
++// that does not verify. SAMLCallbackHandler reports it as a technical
++// failure.
++var ErrSAMLAssertionNotRecorded = errors.New("cannot record the SAML assertion")
++
  // Provide the saml provider certificate
-@@ -391,12 +396,12 @@ func (s ManagementResource) ServeSigningCertificate(response http.ResponseWriter
+ func (s ManagementResource) ServeSigningCertificate(response http.ResponseWriter, request *http.Request) {
+ 	rawProviderID := mux.Vars(request)[api.URIPathVariableSSOProviderID]
+@@ -391,12 +406,12 @@ func (s ManagementResource) ServeSigningCertificate(response http.ResponseWriter
  	}
  }
  
@@ -130,7 +142,7 @@ index 7d87c7c..63b7e7f 100644
  		slog.WarnContext(
  			request.Context(),
  			"[SAML] Service provider creation failed",
-@@ -404,68 +409,35 @@ func (s ManagementResource) SAMLLoginHandler(response http.ResponseWriter, reque
+@@ -404,68 +419,35 @@ func (s ManagementResource) SAMLLoginHandler(response http.ResponseWriter, reque
  		)
  		// Technical issues scenario
  		api.RedirectToLoginURL(response, request, "Your SSO connection failed due to misconfiguration, please contact your Administrator")
@@ -227,7 +239,7 @@ index 7d87c7c..63b7e7f 100644
  	}
  }
  
-@@ -474,72 +446,36 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
+@@ -474,72 +456,51 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
  	if ssoProvider.SAMLProvider == nil {
  		// SAML misconfiguration
  		api.RedirectToLoginURL(response, request, "Your SSO connection failed due to misconfiguration, please contact your Administrator")
@@ -288,27 +300,39 @@ index 7d87c7c..63b7e7f 100644
  			)
  			// Replay detected, cannot safely create a session
  			api.RedirectToLoginURL(response, request, "Invalid SSO response")
- 		default:
--			slog.ErrorContext(
-+			slog.WarnContext(
+-		default:
++		case errors.Is(err, ErrSAMLAssertionNotRecorded):
+ 			slog.ErrorContext(
  				request.Context(),
 -				"[SAML] Failed to add SAMLResponse and/or assertion IDs to DB",
--				slog.String("provider_name", ssoProvider.Name),
-+				"[SAML] Failed to parse ACS response for provider",
++				"[SAML] Failed to add SAML assertion ID to DB",
+ 				slog.String("provider_name", ssoProvider.Name),
  				slog.String("issuer_uri", ssoProvider.SAMLProvider.IssuerURI),
  				attr.Error(err),
  			)
--			// Technical issues scenario: DB write failed
--			api.RedirectToLoginURL(response, request, "Your SSO connection failed, please try again")
+ 			// Technical issues scenario: DB write failed
+ 			api.RedirectToLoginURL(response, request, "Your SSO connection failed, please try again")
++		default:
++			logged := err
++			var typedErr *saml.InvalidResponseError
++			if errors.As(err, &typedErr) {
++				logged = typedErr.PrivateErr
++			}
++			slog.WarnContext(
++				request.Context(),
++				"[SAML] Failed to parse ACS response for provider",
++				slog.String("issuer_uri", ssoProvider.SAMLProvider.IssuerURI),
++				attr.Error(logged),
++			)
 +			// SAML credentials issue scenario (authentication failed)
-+			api.RedirectToLoginURL(response, request, "Invalid SSO response: Failed to parse ACS response")
++			api.RedirectToLoginURL(response, request, fmt.Sprintf("Invalid SSO response: Failed to parse ACS response %s", err.Error()))
  		}
 -	} else if principalName, err := ssoProvider.SAMLProvider.GetSAMLUserPrincipalNameFromAssertion(validatedResponse.Assertion); err != nil {
 +	} else if principalName, err := ssoProvider.SAMLProvider.GetSAMLUserPrincipalNameFromAssertion(validatedResponse.Raw); err != nil {
  		slog.WarnContext(
  			request.Context(),
  			"[SAML] Failed to lookup user for SAML provider",
-@@ -550,7 +486,7 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
+@@ -550,7 +511,7 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
  		api.RedirectToLoginURL(response, request, "Invalid assertion: no valid email address found")
  	} else {
  		if ssoProvider.Config.AutoProvision.Enabled {
@@ -317,7 +341,7 @@ index 7d87c7c..63b7e7f 100644
  				// It is safe to let this request drop into the CreateSSOSession function below to ensure proper audit logging
  				slog.WarnContext(
  					request.Context(),
-@@ -564,6 +500,35 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
+@@ -564,6 +525,35 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
  	}
  }
  
@@ -353,8 +377,1109 @@ index 7d87c7c..63b7e7f 100644
  func jitSAMLUserUpsert(ctx context.Context, ssoProvider model.SSOProvider, principalName string, assertion *saml.Assertion, u jitUserUpserter, dogTagsService dogtags.Service) error {
  	if roles, err := SanitizeAndGetRoles(ctx, ssoProvider.Config.AutoProvision, ssoProvider.SAMLProvider.GetSAMLUserRolesFromAssertion(assertion), u); err != nil {
  		return fmt.Errorf("sanitize roles: %v", err)
+diff --git a/cmd/api/src/api/v2/auth/saml_internal_test.go b/cmd/api/src/api/v2/auth/saml_internal_test.go
+index 45b4ccd..577866f 100644
+--- a/cmd/api/src/api/v2/auth/saml_internal_test.go
++++ b/cmd/api/src/api/v2/auth/saml_internal_test.go
+@@ -18,6 +18,7 @@ package auth
+ 
+ import (
+ 	"context"
++	"errors"
+ 	"net/http"
+ 	"net/http/httptest"
+ 	"net/url"
+@@ -201,3 +202,40 @@ func TestAuth_CreateSSOSession(t *testing.T) {
+ 		require.ErrorIs(t, err, model.ErrSAMLAssertion)
+ 	})
+ }
++
++// TestConsumedAssertions checks how the replay record that x/samlsp
++// consults maps the database's answers: a new assertion is recorded under
++// its hex-encoded replay key, one already recorded is a replay, and any
++// other failure is ErrSAMLAssertionNotRecorded, which the callback handler
++// reports as a technical failure rather than as an invalid response.
++func TestConsumedAssertions(t *testing.T) {
++	key := []byte{0xde, 0xad, 0xbe, 0xef}
++	expiresAt := time.Now().Add(time.Minute)
++
++	for _, tc := range []struct {
++		name    string
++		dbErr   error
++		wantErr error
++	}{
++		{"recorded", nil, nil},
++		{"already consumed", database.ErrSAMLIdentifierAlreadyConsumed, saml.ErrAssertionReplayed},
++		{"database failure", errors.New("connection refused"), ErrSAMLAssertionNotRecorded},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			ctrl := gomock.NewController(t)
++			db := dbmocks.NewMockDatabase(ctrl)
++			ctx := context.WithValue(context.Background(), struct{ name string }{"request"}, "r1")
++			db.EXPECT().ConsumeSAMLAssertionID(ctx, int32(7), "https://idp.example/saml", "deadbeef", expiresAt).Return(tc.dbErr)
++
++			err := consumedAssertions{db: db, ssoProviderID: 7, issuer: "https://idp.example/saml"}.Consume(ctx, key, expiresAt)
++			if tc.wantErr == nil {
++				require.NoError(t, err)
++				return
++			}
++			require.ErrorIs(t, err, tc.wantErr)
++			if tc.dbErr != nil && !errors.Is(tc.dbErr, database.ErrSAMLIdentifierAlreadyConsumed) {
++				require.ErrorIs(t, err, tc.dbErr, "the database error is kept for the log")
++			}
++		})
++	}
++}
+diff --git a/cmd/api/src/api/v2/auth/saml_test.go b/cmd/api/src/api/v2/auth/saml_test.go
+index 5e220e4..eb48e31 100644
+--- a/cmd/api/src/api/v2/auth/saml_test.go
++++ b/cmd/api/src/api/v2/auth/saml_test.go
+@@ -20,6 +20,7 @@ import (
+ 	"bytes"
+ 	"context"
+ 	"database/sql"
++	"encoding/xml"
+ 	"fmt"
+ 	"io"
+ 	"mime/multipart"
+@@ -27,9 +28,12 @@ import (
+ 	"net/http/httptest"
+ 	"net/url"
+ 	"regexp"
++	"strings"
+ 	"testing"
+ 
+ 	"github.com/crewjam/saml"
++	"github.com/crewjam/saml/x/samlsp"
++	"github.com/crewjam/saml/x/samlsp/pending"
+ 	"github.com/gorilla/mux"
+ 	"github.com/pkg/errors"
+ 	"github.com/specterops/bloodhound/cmd/api/src/auth"
+@@ -54,6 +58,35 @@ import (
+ 	"go.uber.org/mock/gomock"
+ )
+ 
++// samlTestHost is the host the SAML handlers are served at, as the bhctx
++// middleware sets it: an absolute URL, which x/samlsp needs for the SP's
++// URLs. It is http, so that cookies are not Secure, as in the other tests.
++func samlTestHost() *url.URL {
++	return &url.URL{Scheme: "http", Host: "bloodhound.example"}
++}
++
++// assertSAMLPostForm checks a login answered with the HTTP-POST binding: a
++// page whose form posts itself to the IdP, with a Content-Security-Policy
++// that allows only its script, and the pending-login cookie.
++func assertSAMLPostForm(t *testing.T, header http.Header) {
++	t.Helper()
++	assert.Equal(t, "text/html; charset=utf-8", header.Get("Content-Type"))
++	assert.Contains(t, header.Get("Content-Security-Policy"), "script-src 'sha256-")
++	assertPendingLoginCookie(t, header)
++}
++
++// assertPendingLoginCookie checks that the login set the cookie that ties
++// the IdP's answer to this browser (x/samlsp/pending), scoped to the ACS.
++func assertPendingLoginCookie(t *testing.T, header http.Header) {
++	t.Helper()
++	cookies := (&http.Response{Header: header}).Cookies()
++	require.Len(t, cookies, 1)
++	assert.True(t, strings.HasPrefix(cookies[0].Name, pending.DefaultCookiePrefix), cookies[0].Name)
++	assert.True(t, cookies[0].HttpOnly)
++	assert.NotEmpty(t, cookies[0].Value)
++	assert.Positive(t, cookies[0].MaxAge)
++}
++
+ var validMetadataXML = `<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://okta.com/saml">
+ 		<IDPSSODescriptor WantAuthnRequestsSigned="false" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+ 			<SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://okta.com/sso"/>
+@@ -1957,6 +1990,8 @@ func TestManagementResource_ServeMetadata(t *testing.T) {
+ 		responseCode   int
+ 		responseHeader http.Header
+ 		responseBody   string
++		// validate checks a successful response's body.
++		validate func(t *testing.T, body string)
+ 	}
+ 	type testData struct {
+ 		name         string
+@@ -2010,7 +2045,7 @@ func TestManagementResource_ServeMetadata(t *testing.T) {
+ 			},
+ 		},
+ 		{
+-			name: "Error: NewServiceProvider Unable to parse SAML cert and provider key - Internal Server Error",
++			name: "Error: NewSAMLConfig unable to parse the IdP metadata - Internal Server Error",
+ 			buildRequest: func() *http.Request {
+ 				request := &http.Request{
+ 					URL: &url.URL{
+@@ -2040,7 +2075,7 @@ func TestManagementResource_ServeMetadata(t *testing.T) {
+ 			expected: expected{
+ 				responseCode:   http.StatusInternalServerError,
+ 				responseHeader: http.Header{"Content-Type": []string{"application/json"}},
+-				responseBody:   `{"http_status":500,"timestamp":"0001-01-01T00:00:00Z","request_id":"","errors":[{"context":"","message":"failed to parse metadata XML for service provider Okta Provider: EOF"}]}`,
++				responseBody:   `{"http_status":500,"timestamp":"0001-01-01T00:00:00Z","request_id":"","errors":[{"context":"","message":"failed to parse metadata XML for service provider Okta Provider: samlsp: invalid identity provider metadata: EOF"}]}`,
+ 			},
+ 		},
+ 		{
+@@ -2054,7 +2089,7 @@ func TestManagementResource_ServeMetadata(t *testing.T) {
+ 				}
+ 
+ 				bhContext := &bhctx.Context{
+-					Host: request.URL,
++					Host: samlTestHost(),
+ 				}
+ 				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
+ 			},
+@@ -2069,13 +2104,32 @@ func TestManagementResource_ServeMetadata(t *testing.T) {
+ 						IssuerURI:       "https://okta.com/saml",
+ 						SingleSignOnURI: "https://okta.com/sso",
+ 						MetadataXML:     []byte(validMetadataXML),
++						RootURIVersion:  model.SAMLRootURIVersion2,
+ 					},
+ 				}, nil)
+ 			},
+ 			expected: expected{
+ 				responseCode:   http.StatusOK,
+ 				responseHeader: http.Header{"Content-Type": []string{"application/samlmetadata+xml"}},
+-				responseBody:   string("<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"XXX\" entityID=\"Okta%20Provider\">\n  <SPSSODescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"XXX\" protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\" AuthnRequestsSigned=\"true\" WantAssertionsSigned=\"true\">\n    <KeyDescriptor use=\"encryption\">\n      <KeyInfo xmlns=\"http://www.w3.org/2000/09/xmldsig#\">\n        <X509Data xmlns=\"http://www.w3.org/2000/09/xmldsig#\">\n          <X509Certificate xmlns=\"http://www.w3.org/2000/09/xmldsig#\">MIIDrzCCApegAwIBAgIUG+lLMPpkTfwVe5fVbBhWe/cIxrgwDQYJKoZIhvcNAQELBQAwfzELMAkGA1UEBhMCVVMxEzARBgNVBAgMCldhc2hpbmd0b24xEDAOBgNVBAcMB1NlYXR0bGUxGjAYBgNVBAoMEVNwZWN0ZXIgT3BzLCBJbmMuMQwwCgYDVQQDDANCb2IxHzAdBgkqhkiG9w0BCQEWEHNwYW1AZXhhbXBsZS5jb20wIBcNMjUwNjAyMTY1ODMzWhgPMzAyNDEwMDMxNjU4MzNaMH8xCzAJBgNVBAYTAlVTMRMwEQYDVQQIDApXYXNoaW5ndG9uMRAwDgYDVQQHDAdTZWF0dGxlMRowGAYDVQQKDBFTcGVjdGVyIE9wcywgSW5jLjEMMAoGA1UEAwwDQm9iMR8wHQYJKoZIhvcNAQkBFhBzcGFtQGV4YW1wbGUuY29tMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5KMZPTuMDMIS3N24Y2l6FLkbSZnG/Xa16MiSRtuvK6qExkVZ0Jr/7kDJ0F9eOWe6SgRx7/o/olnKC3vs5HwduSoQzLiFH7T8FRGEOlmXbCtfFeWQzL0PwvoX7YQDP4d1IlEdznMWieXM73hKL/UonrydrsJt6zeyhS0suAZz+UMpocsc9xtFtdaZBVSnSjqrK+PoT2V2WYUUdnrBh9xnJ1aIX78PUoU8fF8YviJ9Anqe+sAsLX0nOVclj4LNGX+LhFoQcR4DkxolCNmLozD091Xvodhrst0kYKtgpJl8wFJ1ULeyvCvXKR3fNKseM7DkTBd5c3fZORZpKRrs8UNc1wIDAQABoyEwHzAdBgNVHQ4EFgQUlFcqpLK4byN5z7dGyNpLjV+/sMIwDQYJKoZIhvcNAQELBQADggEBALRZSG5BlQcMZN9kZCBVqUunCQ96cgCZUp77b0QEPXsSn+KEj+br224DLmKiZ1z7wHNQefjEtAxcajS5ZTapOAekMo9Tnc5MUvAGh4cFImcn1b17u2IcMHAXOQNi6exBWToDKVAYwCpxQ2x9ELHs0mU1HC/HrkqLIAbQjoBL0ZK55euoLJQ35s7M9uNLv4sBmXLKdScZiDsQgvTwSyFGVDrzOnkq7IsAfHZ23vwndY11/x7dQIqcdNmN/rTSlx0Gz0SArtOvIjIeMtvmv8KAPCjU+AvTGmNXZWbvr5lFJOf46ORopwpJtTijhzvihLvBrLm6UdrLuosbvXuJGqk2EEM=</X509Certificate>\n        </X509Data>\n      </KeyInfo>\n      <EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes128-cbc\"></EncryptionMethod>\n      <EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes192-cbc\"></EncryptionMethod>\n      <EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#aes256-cbc\"></EncryptionMethod>\n      <EncryptionMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p\"></EncryptionMethod>\n    </KeyDescriptor>\n    <KeyDescriptor use=\"signing\">\n      <KeyInfo xmlns=\"http://www.w3.org/2000/09/xmldsig#\">\n        <X509Data xmlns=\"http://www.w3.org/2000/09/xmldsig#\">\n          <X509Certificate xmlns=\"http://www.w3.org/2000/09/xmldsig#\">MIIDrzCCApegAwIBAgIUG+lLMPpkTfwVe5fVbBhWe/cIxrgwDQYJKoZIhvcNAQELBQAwfzELMAkGA1UEBhMCVVMxEzARBgNVBAgMCldhc2hpbmd0b24xEDAOBgNVBAcMB1NlYXR0bGUxGjAYBgNVBAoMEVNwZWN0ZXIgT3BzLCBJbmMuMQwwCgYDVQQDDANCb2IxHzAdBgkqhkiG9w0BCQEWEHNwYW1AZXhhbXBsZS5jb20wIBcNMjUwNjAyMTY1ODMzWhgPMzAyNDEwMDMxNjU4MzNaMH8xCzAJBgNVBAYTAlVTMRMwEQYDVQQIDApXYXNoaW5ndG9uMRAwDgYDVQQHDAdTZWF0dGxlMRowGAYDVQQKDBFTcGVjdGVyIE9wcywgSW5jLjEMMAoGA1UEAwwDQm9iMR8wHQYJKoZIhvcNAQkBFhBzcGFtQGV4YW1wbGUuY29tMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5KMZPTuMDMIS3N24Y2l6FLkbSZnG/Xa16MiSRtuvK6qExkVZ0Jr/7kDJ0F9eOWe6SgRx7/o/olnKC3vs5HwduSoQzLiFH7T8FRGEOlmXbCtfFeWQzL0PwvoX7YQDP4d1IlEdznMWieXM73hKL/UonrydrsJt6zeyhS0suAZz+UMpocsc9xtFtdaZBVSnSjqrK+PoT2V2WYUUdnrBh9xnJ1aIX78PUoU8fF8YviJ9Anqe+sAsLX0nOVclj4LNGX+LhFoQcR4DkxolCNmLozD091Xvodhrst0kYKtgpJl8wFJ1ULeyvCvXKR3fNKseM7DkTBd5c3fZORZpKRrs8UNc1wIDAQABoyEwHzAdBgNVHQ4EFgQUlFcqpLK4byN5z7dGyNpLjV+/sMIwDQYJKoZIhvcNAQELBQADggEBALRZSG5BlQcMZN9kZCBVqUunCQ96cgCZUp77b0QEPXsSn+KEj+br224DLmKiZ1z7wHNQefjEtAxcajS5ZTapOAekMo9Tnc5MUvAGh4cFImcn1b17u2IcMHAXOQNi6exBWToDKVAYwCpxQ2x9ELHs0mU1HC/HrkqLIAbQjoBL0ZK55euoLJQ35s7M9uNLv4sBmXLKdScZiDsQgvTwSyFGVDrzOnkq7IsAfHZ23vwndY11/x7dQIqcdNmN/rTSlx0Gz0SArtOvIjIeMtvmv8KAPCjU+AvTGmNXZWbvr5lFJOf46ORopwpJtTijhzvihLvBrLm6UdrLuosbvXuJGqk2EEM=</X509Certificate>\n        </X509Data>\n      </KeyInfo>\n    </KeyDescriptor>\n    <NameIDFormat>urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress</NameIDFormat>\n    <AssertionConsumerService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Location=\"\" index=\"1\"></AssertionConsumerService>\n    <AssertionConsumerService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Artifact\" Location=\"\" index=\"2\"></AssertionConsumerService>\n  </SPSSODescriptor>\n</EntityDescriptor>"),
++				validate: func(t *testing.T, body string) {
++					var md saml.EntityDescriptor
++					require.NoError(t, xml.Unmarshal([]byte(body), &md))
++					assert.Equal(t, "http://bloodhound.example/api/v2/sso/Okta%20Provider", md.EntityID)
++					require.Len(t, md.SPSSODescriptors, 1)
++					spsso := md.SPSSODescriptors[0]
++					require.NotNil(t, spsso.AuthnRequestsSigned)
++					assert.True(t, *spsso.AuthnRequestsSigned)
++					require.NotEmpty(t, spsso.AssertionConsumerServices)
++					assert.Equal(t, "http://bloodhound.example/api/v2/sso/Okta%20Provider/callback", spsso.AssertionConsumerServices[0].Location)
++					uses := map[string]bool{}
++					for _, kd := range spsso.KeyDescriptors {
++						uses[kd.Use] = true
++					}
++					assert.True(t, uses["signing"], "no signing key")
++					assert.True(t, uses["encryption"], "no encryption key")
++					require.NotEmpty(t, spsso.NameIDFormats)
++					assert.Equal(t, saml.EmailAddressNameIDFormat, spsso.NameIDFormats[0])
++				},
+ 			},
+ 		},
+ 	}
+@@ -2114,14 +2168,7 @@ func TestManagementResource_ServeMetadata(t *testing.T) {
+ 			if status != http.StatusOK {
+ 				assert.JSONEq(t, testCase.expected.responseBody, body)
+ 			} else {
+-
+-				// find all validUntil fields and replace the time.Time value with
+-				// a persistent value.
+-				// matches 'validUntil=' followed by non-space/non-semicolon chars
+-				regex := regexp.MustCompile(`validUntil=[^ ;]*`)
+-				body := regex.ReplaceAllString(body, "validUntil=\"XXX\"")
+-
+-				assert.Equal(t, testCase.expected.responseBody, body)
++				testCase.expected.validate(t, body)
+ 			}
+ 		})
+ 	}
+@@ -2303,7 +2350,7 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+ 				}
+ 
+ 				bhContext := &bhctx.Context{
+-					Host: request.URL,
++					Host: samlTestHost(),
+ 				}
+ 				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
+ 			},
+@@ -2317,11 +2364,11 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+ 			},
+ 			expected: expected{
+ 				responseCode:   http.StatusFound,
+-				responseHeader: http.Header{"Location": []string{"/api/v2/sso/slug/login/ui/login?error=Your+SSO+connection+failed+due+to+misconfiguration%2C+please+contact+your+Administrator"}},
++				responseHeader: http.Header{"Location": []string{"http://bloodhound.example/ui/login?error=Your+SSO+connection+failed+due+to+misconfiguration%2C+please+contact+your+Administrator"}},
+ 			},
+ 		},
+ 		{
+-			name: "Error: auth.NewServiceProvider error, Redirect to Login with Error Message - Found",
++			name: "Error: auth.NewSAMLConfig error (no IdP metadata), Redirect to Login with Error Message - Found",
+ 			buildRequest: func() *http.Request {
+ 				request := http.Request{
+ 					URL: &url.URL{
+@@ -2331,7 +2378,7 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+ 				}
+ 
+ 				bhContext := &bhctx.Context{
+-					Host: request.URL,
++					Host: samlTestHost(),
+ 				}
+ 				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
+ 			},
+@@ -2347,11 +2394,11 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+ 			},
+ 			expected: expected{
+ 				responseCode:   http.StatusFound,
+-				responseHeader: http.Header{"Location": []string{"/api/v2/sso/slug/login/ui/login?error=Your+SSO+connection+failed+due+to+misconfiguration%2C+please+contact+your+Administrator"}},
++				responseHeader: http.Header{"Location": []string{"http://bloodhound.example/ui/login?error=Your+SSO+connection+failed+due+to+misconfiguration%2C+please+contact+your+Administrator"}},
+ 			},
+ 		},
+ 		{
+-			name: "Error: SAML.MakeAuthenticationRequest, redirect error - Found",
++			name: "Error: SAML.AuthnRequest error - Found",
+ 			buildRequest: func() *http.Request {
+ 				request := http.Request{
+ 					URL: &url.URL{
+@@ -2361,7 +2408,7 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+ 				}
+ 
+ 				bhContext := &bhctx.Context{
+-					Host: request.URL,
++					Host: samlTestHost(),
+ 				}
+ 				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
+ 			},
+@@ -2375,15 +2422,15 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+ 						MetadataXML: []byte(validMetadataXML),
+ 					},
+ 				}, nil)
+-				mock.mockSAML.EXPECT().MakeAuthenticationRequest(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&saml.AuthnRequest{}, errors.New("error"))
++				mock.mockSAML.EXPECT().AuthnRequest(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("error"))
+ 			},
+ 			expected: expected{
+ 				responseCode:   http.StatusFound,
+-				responseHeader: http.Header{"Location": []string{"/api/v2/sso/slug/login/ui/login?error=Your+SSO+connection+failed+due+to+misconfiguration%2C+please+contact+your+Administrator"}},
++				responseHeader: http.Header{"Location": []string{"http://bloodhound.example/ui/login?error=Your+SSO+connection+failed+due+to+misconfiguration%2C+please+contact+your+Administrator"}},
+ 			},
+ 		},
+ 		{
+-			name: "Error: saml.HTTPRedirectBinding, redirect error - Found",
++			name: "Success: HTTP-Redirect binding, signed AuthnRequest - Found",
+ 			buildRequest: func() *http.Request {
+ 				request := http.Request{
+ 					URL: &url.URL{
+@@ -2393,7 +2440,7 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+ 				}
+ 
+ 				bhContext := &bhctx.Context{
+-					Host: request.URL,
++					Host: samlTestHost(),
+ 				}
+ 				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
+ 			},
+@@ -2411,7 +2458,7 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+ 	</EntityDescriptor>`),
+ 					},
+ 				}, nil)
+-				mock.mockSAML.EXPECT().MakeAuthenticationRequest(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&saml.AuthnRequest{}, nil)
++				mock.mockSAML.EXPECT().AuthnRequest(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn((&bhceSAML.Client{}).AuthnRequest)
+ 			},
+ 			expected: expected{
+ 				responseCode: http.StatusFound,
+@@ -2421,16 +2468,19 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+ 
+ 					locationURL, err := url.Parse(location)
+ 					require.Nil(t, err)
++					assert.Equal(t, "okta.com", locationURL.Host)
+ 
+ 					query := locationURL.Query()
+ 					assert.NotEmpty(t, query.Get("SAMLRequest"))
++					assert.NotEmpty(t, query.Get("RelayState"))
+ 					assert.Equal(t, "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256", query.Get("SigAlg"))
+ 					assert.NotEmpty(t, query.Get("Signature"))
++					assertPendingLoginCookie(t, header)
+ 				},
+ 			},
+ 		},
+ 		{
+-			name: "Success: saml.HTTPPostBinding, OK",
++			name: "Success: HTTP-POST binding, OK",
+ 			buildRequest: func() *http.Request {
+ 				request := http.Request{
+ 					URL: &url.URL{
+@@ -2440,7 +2490,7 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+ 				}
+ 
+ 				bhContext := &bhctx.Context{
+-					Host: request.URL,
++					Host: samlTestHost(),
+ 				}
+ 				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
+ 			},
+@@ -2454,11 +2504,11 @@ func TestManagementResource_SAMLLoginHandler(t *testing.T) {
+ 						MetadataXML: []byte(validMetadataXML),
+ 					},
+ 				}, nil)
+-				mock.mockSAML.EXPECT().MakeAuthenticationRequest(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&saml.AuthnRequest{}, nil)
++				mock.mockSAML.EXPECT().AuthnRequest(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn((&bhceSAML.Client{}).AuthnRequest)
+ 			},
+ 			expected: expected{
+-				responseCode:   http.StatusOK,
+-				responseHeader: http.Header{"Content-Security-Policy": []string{"default-src; script-src 'sha256-AjPdJSbZmeWHnEc5ykvJFay8FTWeTeRbs9dutfZ0HqE='; reflected-xss block; referrer no-referrer;"}, "Content-Type": []string{"text/html"}},
++				responseCode:     http.StatusOK,
++				validateResponse: assertSAMLPostForm,
+ 			},
+ 		},
+ 	}
+@@ -2533,7 +2583,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 				}
+ 
+ 				bhContext := &bhctx.Context{
+-					Host: request.URL,
++					Host: samlTestHost(),
+ 				}
+ 				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
+ 			},
+@@ -2547,11 +2597,11 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 			},
+ 			expected: expected{
+ 				responseCode:   http.StatusFound,
+-				responseHeader: http.Header{"Location": []string{"/api/v2/sso/slug/callback/ui/login?error=Your+SSO+connection+failed+due+to+misconfiguration%2C+please+contact+your+Administrator"}},
++				responseHeader: http.Header{"Location": []string{"http://bloodhound.example/ui/login?error=Your+SSO+connection+failed+due+to+misconfiguration%2C+please+contact+your+Administrator"}},
+ 			},
+ 		},
+ 		{
+-			name: "Error: auth.NewServiceProvider error, Redirect to Login with Error Message - Found",
++			name: "Error: auth.NewSAMLConfig error (no IdP metadata), Redirect to Login with Error Message - Found",
+ 			buildRequest: func() *http.Request {
+ 				request := &http.Request{
+ 					URL: &url.URL{
+@@ -2561,7 +2611,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 				}
+ 
+ 				bhContext := &bhctx.Context{
+-					Host: request.URL,
++					Host: samlTestHost(),
+ 				}
+ 				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
+ 			},
+@@ -2577,7 +2627,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 			},
+ 			expected: expected{
+ 				responseCode:   http.StatusFound,
+-				responseHeader: http.Header{"Location": []string{"/api/v2/sso/slug/callback/ui/login?error=Your+SSO+connection+failed+due+to+misconfiguration%2C+please+contact+your+Administrator"}},
++				responseHeader: http.Header{"Location": []string{"http://bloodhound.example/ui/login?error=Your+SSO+connection+failed+due+to+misconfiguration%2C+please+contact+your+Administrator"}},
+ 			},
+ 		},
+ 		{
+@@ -2591,7 +2641,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 				}
+ 
+ 				bhContext := &bhctx.Context{
+-					Host: request.URL,
++					Host: samlTestHost(),
+ 				}
+ 				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
+ 			},
+@@ -2612,13 +2662,13 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 					</EntityDescriptor>`),
+ 					},
+ 				}, nil)
+-				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), nil).Return(&bhceSAML.ValidatedResponse{}, &saml.InvalidResponseError{
++				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, &saml.InvalidResponseError{
+ 					PrivateErr: errors.New("error"),
+ 				})
+ 			},
+ 			expected: expected{
+ 				responseCode:   http.StatusFound,
+-				responseHeader: http.Header{"Location": []string{"/api/v2/sso/slug/callback/ui/login?error=Invalid+SSO+response%3A+Failed+to+parse+ACS+response+Authentication+failed"}},
++				responseHeader: http.Header{"Location": []string{"http://bloodhound.example/ui/login?error=Invalid+SSO+response%3A+Failed+to+parse+ACS+response+Authentication+failed"}},
+ 			},
+ 		},
+ 		{
+@@ -2632,7 +2682,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 				}
+ 
+ 				bhContext := &bhctx.Context{
+-					Host: request.URL,
++					Host: samlTestHost(),
+ 				}
+ 				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
+ 			},
+@@ -2653,11 +2703,11 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 					</EntityDescriptor>`),
+ 					},
+ 				}, nil)
+-				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), nil).Return(&bhceSAML.ValidatedResponse{}, errors.New("error"))
++				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("error"))
+ 			},
+ 			expected: expected{
+ 				responseCode:   http.StatusFound,
+-				responseHeader: http.Header{"Location": []string{"/api/v2/sso/slug/callback/ui/login?error=Invalid+SSO+response%3A+Failed+to+parse+ACS+response+error"}},
++				responseHeader: http.Header{"Location": []string{"http://bloodhound.example/ui/login?error=Invalid+SSO+response%3A+Failed+to+parse+ACS+response+error"}},
+ 			},
+ 		},
+ 		{
+@@ -2671,7 +2721,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 				}
+ 
+ 				bhContext := &bhctx.Context{
+-					Host: request.URL,
++					Host: samlTestHost(),
+ 				}
+ 				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
+ 			},
+@@ -2692,14 +2742,11 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 					</EntityDescriptor>`),
+ 					},
+ 				}, nil)
+-				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), nil).Return(&bhceSAML.ValidatedResponse{
+-					Assertion: &saml.Assertion{}}, nil)
+-				mock.mockDatabase.EXPECT().CreateSAMLConsumedIdentifiers(gomock.Any(), gomock.Any(), gomock.Any(),
+-					gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
++				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&samlsp.Assertion{Raw: &saml.Assertion{}}, nil)
+ 			},
+ 			expected: expected{
+ 				responseCode:   http.StatusFound,
+-				responseHeader: http.Header{"Location": []string{"/api/v2/sso/slug/callback/ui/login?error=Invalid+assertion%3A+no+valid+email+address+found"}},
++				responseHeader: http.Header{"Location": []string{"http://bloodhound.example/ui/login?error=Invalid+assertion%3A+no+valid+email+address+found"}},
+ 			},
+ 		},
+ 		{
+@@ -2713,7 +2760,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 				}
+ 
+ 				bhContext := &bhctx.Context{
+-					Host: request.URL,
++					Host: samlTestHost(),
+ 				}
+ 				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
+ 			},
+@@ -2734,28 +2781,25 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 					</EntityDescriptor>`),
+ 					},
+ 				}, nil)
+-				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), nil).Return(&bhceSAML.ValidatedResponse{
+-					Assertion: &saml.Assertion{
+-						AttributeStatements: []saml.AttributeStatement{{
+-							Attributes: []saml.Attribute{{
+-								FriendlyName: "uid",
+-								Name:         model.XMLSOAPClaimsEmailAddress,
+-								NameFormat:   model.ObjectIDAttributeNameFormat,
+-								Values: []saml.AttributeValue{{
+-									Type:  model.XMLTypeString,
+-									Value: "username",
+-								}},
++				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&samlsp.Assertion{Raw: &saml.Assertion{
++					AttributeStatements: []saml.AttributeStatement{{
++						Attributes: []saml.Attribute{{
++							FriendlyName: "uid",
++							Name:         model.XMLSOAPClaimsEmailAddress,
++							NameFormat:   model.ObjectIDAttributeNameFormat,
++							Values: []saml.AttributeValue{{
++								Type:  model.XMLTypeString,
++								Value: "username",
+ 							}},
+ 						}},
+-					}}, nil)
+-				mock.mockDatabase.EXPECT().CreateSAMLConsumedIdentifiers(gomock.Any(), gomock.Any(), gomock.Any(),
+-					gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
++					}},
++				}}, nil)
+ 				mock.mockDatabase.EXPECT().CreateAuditLog(gomock.Any(), gomock.Any()).Times(2)
+ 				mock.mockDatabase.EXPECT().LookupUser(gomock.Any(), "username").Return(model.User{}, nil)
+ 			},
+ 			expected: expected{
+ 				responseCode:   http.StatusFound,
+-				responseHeader: http.Header{"Location": []string{"/api/v2/sso/slug/callback/ui/login?error=Your+user+is+not+allowed%2C+please+contact+your+Administrator"}},
++				responseHeader: http.Header{"Location": []string{"http://bloodhound.example/ui/login?error=Your+user+is+not+allowed%2C+please+contact+your+Administrator"}},
+ 			},
+ 		},
+ 		{
+@@ -2769,7 +2813,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 				}
+ 
+ 				bhContext := &bhctx.Context{
+-					Host: request.URL,
++					Host: samlTestHost(),
+ 				}
+ 				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
+ 			},
+@@ -2794,22 +2838,19 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 						ID: int32(1),
+ 					},
+ 				}, nil)
+-				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), nil).Return(&bhceSAML.ValidatedResponse{
+-					Assertion: &saml.Assertion{
+-						AttributeStatements: []saml.AttributeStatement{{
+-							Attributes: []saml.Attribute{{
+-								FriendlyName: "uid",
+-								Name:         model.XMLSOAPClaimsEmailAddress,
+-								NameFormat:   model.ObjectIDAttributeNameFormat,
+-								Values: []saml.AttributeValue{{
+-									Type:  model.XMLTypeString,
+-									Value: "username",
+-								}},
++				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&samlsp.Assertion{Raw: &saml.Assertion{
++					AttributeStatements: []saml.AttributeStatement{{
++						Attributes: []saml.Attribute{{
++							FriendlyName: "uid",
++							Name:         model.XMLSOAPClaimsEmailAddress,
++							NameFormat:   model.ObjectIDAttributeNameFormat,
++							Values: []saml.AttributeValue{{
++								Type:  model.XMLTypeString,
++								Value: "username",
+ 							}},
+ 						}},
+-					}}, nil)
+-				mock.mockDatabase.EXPECT().CreateSAMLConsumedIdentifiers(gomock.Any(), gomock.Any(), gomock.Any(),
+-					gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
++					}},
++				}}, nil)
+ 				mock.mockDatabase.EXPECT().CreateAuditLog(gomock.Any(), gomock.Any()).Times(2)
+ 				mock.mockDatabase.EXPECT().LookupUser(gomock.Any(), "username").Return(model.User{
+ 					SSOProviderID: null.Int32{
+@@ -2832,7 +2873,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 			},
+ 			expected: expected{
+ 				responseCode:   http.StatusFound,
+-				responseHeader: http.Header{"Location": []string{"/api/v2/sso/slug/callback/ui/login?error=We%E2%80%99re+having+trouble+connecting.+Please+check+your+internet+and+try+again."}},
++				responseHeader: http.Header{"Location": []string{"http://bloodhound.example/ui/login?error=We%E2%80%99re+having+trouble+connecting.+Please+check+your+internet+and+try+again."}},
+ 			},
+ 		},
+ 		{
+@@ -2846,7 +2887,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 				}
+ 
+ 				bhContext := &bhctx.Context{
+-					Host: request.URL,
++					Host: samlTestHost(),
+ 				}
+ 				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
+ 			},
+@@ -2878,23 +2919,19 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 						},
+ 					},
+ 				}, nil)
+-				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), nil).Return(&bhceSAML.ValidatedResponse{
+-					Assertion: &saml.Assertion{
+-						AttributeStatements: []saml.AttributeStatement{{
+-							Attributes: []saml.Attribute{{
+-								FriendlyName: "uid",
+-								Name:         model.XMLSOAPClaimsEmailAddress,
+-								NameFormat:   model.ObjectIDAttributeNameFormat,
+-								Values: []saml.AttributeValue{{
+-									Type:  model.XMLTypeString,
+-									Value: "username",
+-								}},
++				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&samlsp.Assertion{Raw: &saml.Assertion{
++					AttributeStatements: []saml.AttributeStatement{{
++						Attributes: []saml.Attribute{{
++							FriendlyName: "uid",
++							Name:         model.XMLSOAPClaimsEmailAddress,
++							NameFormat:   model.ObjectIDAttributeNameFormat,
++							Values: []saml.AttributeValue{{
++								Type:  model.XMLTypeString,
++								Value: "username",
+ 							}},
+ 						}},
+-					}}, nil)
+-				mock.mockDatabase.EXPECT().CreateSAMLConsumedIdentifiers(
+-					gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(),
+-				).Return(nil)
++					}},
++				}}, nil)
+ 				mock.mockDatabase.EXPECT().GetAllRoles(gomock.Any(), gomock.Any(), gomock.Any()).Return(model.Roles{
+ 					{
+ 						Permissions: model.Permissions{model.NewPermission("auth", "ManageUsers")},
+@@ -2924,7 +2961,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 			},
+ 			expected: expected{
+ 				responseCode:   http.StatusFound,
+-				responseHeader: http.Header{"Location": []string{"/api/v2/sso/slug/callback/ui"}, "Set-Cookie": []string{"token=token; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT"}},
++				responseHeader: http.Header{"Location": []string{"http://bloodhound.example/ui"}, "Set-Cookie": []string{"token=token; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT"}},
+ 			},
+ 		},
+ 		{
+@@ -2938,7 +2975,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 				}
+ 
+ 				bhContext := &bhctx.Context{
+-					Host: request.URL,
++					Host: samlTestHost(),
+ 				}
+ 				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
+ 			},
+@@ -2970,22 +3007,19 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 						},
+ 					},
+ 				}, nil)
+-				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), nil).Return(&bhceSAML.ValidatedResponse{
+-					Assertion: &saml.Assertion{
+-						AttributeStatements: []saml.AttributeStatement{{
+-							Attributes: []saml.Attribute{{
+-								FriendlyName: "uid",
+-								Name:         model.XMLSOAPClaimsEmailAddress,
+-								NameFormat:   model.ObjectIDAttributeNameFormat,
+-								Values: []saml.AttributeValue{{
+-									Type:  model.XMLTypeString,
+-									Value: "username",
+-								}},
++				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&samlsp.Assertion{Raw: &saml.Assertion{
++					AttributeStatements: []saml.AttributeStatement{{
++						Attributes: []saml.Attribute{{
++							FriendlyName: "uid",
++							Name:         model.XMLSOAPClaimsEmailAddress,
++							NameFormat:   model.ObjectIDAttributeNameFormat,
++							Values: []saml.AttributeValue{{
++								Type:  model.XMLTypeString,
++								Value: "username",
+ 							}},
+ 						}},
+-					}}, nil)
+-				mock.mockDatabase.EXPECT().CreateSAMLConsumedIdentifiers(gomock.Any(), gomock.Any(), gomock.Any(),
+-					gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
++					}},
++				}}, nil)
+ 				mock.mockDatabase.EXPECT().GetAllRoles(gomock.Any(), gomock.Any(), gomock.Any()).Return(model.Roles{
+ 					{
+ 						Permissions: model.Permissions{model.NewPermission("auth", "ManageUsers")},
+@@ -3015,7 +3049,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 			},
+ 			expected: expected{
+ 				responseCode:   http.StatusFound,
+-				responseHeader: http.Header{"Location": []string{"/api/v2/sso/slug/callback/ui"}, "Set-Cookie": []string{"token=token; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT"}},
++				responseHeader: http.Header{"Location": []string{"http://bloodhound.example/ui"}, "Set-Cookie": []string{"token=token; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT"}},
+ 			},
+ 		},
+ 		{
+@@ -3029,7 +3063,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 				}
+ 
+ 				bhContext := &bhctx.Context{
+-					Host: request.URL,
++					Host: samlTestHost(),
+ 				}
+ 				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
+ 			},
+@@ -3054,22 +3088,19 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 						ID: int32(1),
+ 					},
+ 				}, nil)
+-				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), nil).Return(&bhceSAML.ValidatedResponse{
+-					Assertion: &saml.Assertion{
+-						AttributeStatements: []saml.AttributeStatement{{
+-							Attributes: []saml.Attribute{{
+-								FriendlyName: "uid",
+-								Name:         model.XMLSOAPClaimsEmailAddress,
+-								NameFormat:   model.ObjectIDAttributeNameFormat,
+-								Values: []saml.AttributeValue{{
+-									Type:  model.XMLTypeString,
+-									Value: "username",
+-								}},
++				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&samlsp.Assertion{Raw: &saml.Assertion{
++					AttributeStatements: []saml.AttributeStatement{{
++						Attributes: []saml.Attribute{{
++							FriendlyName: "uid",
++							Name:         model.XMLSOAPClaimsEmailAddress,
++							NameFormat:   model.ObjectIDAttributeNameFormat,
++							Values: []saml.AttributeValue{{
++								Type:  model.XMLTypeString,
++								Value: "username",
+ 							}},
+ 						}},
+-					}}, nil)
+-				mock.mockDatabase.EXPECT().CreateSAMLConsumedIdentifiers(gomock.Any(), gomock.Any(), gomock.Any(),
+-					gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
++					}},
++				}}, nil)
+ 				mock.mockDatabase.EXPECT().CreateAuditLog(gomock.Any(), gomock.Any()).Times(2)
+ 				mock.mockDatabase.EXPECT().LookupUser(gomock.Any(), "username").Return(model.User{
+ 					SSOProviderID: null.Int32{
+@@ -3092,7 +3123,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 			},
+ 			expected: expected{
+ 				responseCode:   http.StatusFound,
+-				responseHeader: http.Header{"Location": []string{"/api/v2/sso/slug/callback/ui"}, "Set-Cookie": []string{"token=token; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT"}},
++				responseHeader: http.Header{"Location": []string{"http://bloodhound.example/ui"}, "Set-Cookie": []string{"token=token; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT"}},
+ 			},
+ 		},
+ 		{
+@@ -3106,7 +3137,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 				}
+ 
+ 				bhContext := &bhctx.Context{
+-					Host: request.URL,
++					Host: samlTestHost(),
+ 				}
+ 				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
+ 			},
+@@ -3166,38 +3197,35 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 					SSOProviderID: null.Int32From(1),
+ 					Roles:         model.Roles{model.Role{Name: auth.RoleAdministrator}},
+ 				}, nil)
+-				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), nil).Return(&bhceSAML.ValidatedResponse{
+-					Assertion: &saml.Assertion{
+-						AttributeStatements: []saml.AttributeStatement{{
+-							Attributes: []saml.Attribute{{
+-								FriendlyName: "uid",
+-								Name:         model.XMLSOAPClaimsEmailAddress,
++				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&samlsp.Assertion{Raw: &saml.Assertion{
++					AttributeStatements: []saml.AttributeStatement{{
++						Attributes: []saml.Attribute{{
++							FriendlyName: "uid",
++							Name:         model.XMLSOAPClaimsEmailAddress,
++							NameFormat:   model.ObjectIDAttributeNameFormat,
++							Values: []saml.AttributeValue{{
++								Type:  model.XMLTypeString,
++								Value: "username",
++							}},
++						},
++							{
++								FriendlyName: "role",
++								Name:         model.MicrosoftClaimsRole,
+ 								NameFormat:   model.ObjectIDAttributeNameFormat,
+ 								Values: []saml.AttributeValue{{
+ 									Type:  model.XMLTypeString,
+-									Value: "username",
++									Value: auth.RoleAdministrator,
+ 								}},
+ 							},
+-								{
+-									FriendlyName: "role",
+-									Name:         model.MicrosoftClaimsRole,
+-									NameFormat:   model.ObjectIDAttributeNameFormat,
+-									Values: []saml.AttributeValue{{
+-										Type:  model.XMLTypeString,
+-										Value: auth.RoleAdministrator,
+-									}},
+-								},
+-							},
+-						}},
+-					}}, nil)
+-				mock.mockDatabase.EXPECT().CreateSAMLConsumedIdentifiers(gomock.Any(), gomock.Any(), gomock.Any(),
+-					gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
++						},
++					}},
++				}}, nil)
+ 				mock.mockDatabase.EXPECT().CreateAuditLog(gomock.Any(), gomock.Any()).Times(2)
+ 				mock.mockDatabase.EXPECT().CreateUserSession(gomock.Any(), gomock.Any()).Return(model.UserSession{}, nil)
+ 			},
+ 			expected: expected{
+ 				responseCode:   http.StatusFound,
+-				responseHeader: http.Header{"Location": []string{"/api/v2/sso/slug/callback/ui"}, "Set-Cookie": []string{"token=token; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT"}},
++				responseHeader: http.Header{"Location": []string{"http://bloodhound.example/ui"}, "Set-Cookie": []string{"token=token; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT"}},
+ 			},
+ 		},
+ 		{
+@@ -3211,7 +3239,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 				}
+ 
+ 				bhContext := &bhctx.Context{
+-					Host: request.URL,
++					Host: samlTestHost(),
+ 				}
+ 				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
+ 			},
+@@ -3271,42 +3299,39 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 					SSOProviderID: null.Int32From(1),
+ 					Roles:         model.Roles{model.Role{Name: auth.RoleUser}},
+ 				}, nil)
+-				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), nil).Return(&bhceSAML.ValidatedResponse{
+-					Assertion: &saml.Assertion{
+-						AttributeStatements: []saml.AttributeStatement{{
+-							Attributes: []saml.Attribute{{
+-								FriendlyName: "uid",
+-								Name:         model.XMLSOAPClaimsEmailAddress,
++				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&samlsp.Assertion{Raw: &saml.Assertion{
++					AttributeStatements: []saml.AttributeStatement{{
++						Attributes: []saml.Attribute{{
++							FriendlyName: "uid",
++							Name:         model.XMLSOAPClaimsEmailAddress,
++							NameFormat:   model.ObjectIDAttributeNameFormat,
++							Values: []saml.AttributeValue{{
++								Type:  model.XMLTypeString,
++								Value: "username",
++							}},
++						},
++							{
++								FriendlyName: "role",
++								Name:         model.MicrosoftClaimsRole,
+ 								NameFormat:   model.ObjectIDAttributeNameFormat,
+ 								Values: []saml.AttributeValue{{
+ 									Type:  model.XMLTypeString,
+-									Value: "username",
++									Value: auth.RoleUser,
+ 								}},
+ 							},
+-								{
+-									FriendlyName: "role",
+-									Name:         model.MicrosoftClaimsRole,
+-									NameFormat:   model.ObjectIDAttributeNameFormat,
+-									Values: []saml.AttributeValue{{
+-										Type:  model.XMLTypeString,
+-										Value: auth.RoleUser,
+-									}},
+-								},
+-							},
+-						}},
+-					}}, nil)
+-				mock.mockDatabase.EXPECT().CreateSAMLConsumedIdentifiers(gomock.Any(), gomock.Any(), gomock.Any(),
+-					gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
++						},
++					}},
++				}}, nil)
+ 				mock.mockDatabase.EXPECT().CreateAuditLog(gomock.Any(), gomock.Any()).Times(2)
+ 				mock.mockDatabase.EXPECT().CreateUserSession(gomock.Any(), gomock.Any()).Return(model.UserSession{}, nil)
+ 			},
+ 			expected: expected{
+ 				responseCode:   http.StatusFound,
+-				responseHeader: http.Header{"Location": []string{"/api/v2/sso/slug/callback/ui"}, "Set-Cookie": []string{"token=token; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT"}},
++				responseHeader: http.Header{"Location": []string{"http://bloodhound.example/ui"}, "Set-Cookie": []string{"token=token; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT"}},
+ 			},
+ 		},
+ 		{
+-			name: "Error: CreateSAMLConsumedIdentifiers replay detected - Redirect to Login with Error Message",
++			name: "Error: replayed assertion, refused by the replay record - Redirect to Login with Error Message",
+ 			buildRequest: func() *http.Request {
+ 				request := &http.Request{
+ 					URL: &url.URL{
+@@ -3316,7 +3341,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 				}
+ 
+ 				bhContext := &bhctx.Context{
+-					Host: request.URL,
++					Host: samlTestHost(),
+ 				}
+ 				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
+ 			},
+@@ -3337,18 +3362,19 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 					</EntityDescriptor>`),
+ 					},
+ 				}, nil)
+-				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), nil).Return(&bhceSAML.ValidatedResponse{
+-					Assertion: &saml.Assertion{}}, nil)
+-				mock.mockDatabase.EXPECT().CreateSAMLConsumedIdentifiers(gomock.Any(), gomock.Any(), gomock.Any(),
+-					gomock.Any(), gomock.Any(), gomock.Any()).Return(database.ErrSAMLIdentifierAlreadyConsumed)
++				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, &saml.InvalidResponseError{
++					// What ParseResponse returns when ConsumeSAMLAssertionID reports
++					// ErrSAMLIdentifierAlreadyConsumed.
++					PrivateErr: fmt.Errorf("assertion %q: %w", "id-1", saml.ErrAssertionReplayed),
++				})
+ 			},
+ 			expected: expected{
+ 				responseCode:   http.StatusFound,
+-				responseHeader: http.Header{"Location": []string{"/api/v2/sso/slug/callback/ui/login?error=Invalid+SSO+response"}},
++				responseHeader: http.Header{"Location": []string{"http://bloodhound.example/ui/login?error=Invalid+SSO+response"}},
+ 			},
+ 		},
+ 		{
+-			name: "Error: CreateSAMLConsumedIdentifiers DB failure - Redirect to Login with Error Message",
++			name: "Error: recording the assertion fails - Redirect to Login with Error Message",
+ 			buildRequest: func() *http.Request {
+ 				request := &http.Request{
+ 					URL: &url.URL{
+@@ -3358,7 +3384,7 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 				}
+ 
+ 				bhContext := &bhctx.Context{
+-					Host: request.URL,
++					Host: samlTestHost(),
+ 				}
+ 				return request.WithContext(context.WithValue(context.Background(), bhctx.ValueKey, bhContext))
+ 			},
+@@ -3379,14 +3405,15 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 					</EntityDescriptor>`),
+ 					},
+ 				}, nil)
+-				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), nil).Return(&bhceSAML.ValidatedResponse{
+-					Assertion: &saml.Assertion{}}, nil)
+-				mock.mockDatabase.EXPECT().CreateSAMLConsumedIdentifiers(gomock.Any(), gomock.Any(), gomock.Any(),
+-					gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("error"))
++				mock.mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, &saml.InvalidResponseError{
++					// What ParseResponse returns when ConsumeSAMLAssertionID fails.
++					PrivateErr: fmt.Errorf("assertion %q: %w", "id-1",
++						fmt.Errorf("%w: %w", v2auth.ErrSAMLAssertionNotRecorded, errors.New("error"))),
++				})
+ 			},
+ 			expected: expected{
+ 				responseCode:   http.StatusFound,
+-				responseHeader: http.Header{"Location": []string{"/api/v2/sso/slug/callback/ui/login?error=Your+SSO+connection+failed%2C+please+try+again"}},
++				responseHeader: http.Header{"Location": []string{"http://bloodhound.example/ui/login?error=Your+SSO+connection+failed%2C+please+try+again"}},
+ 			},
+ 		},
+ 	}
+@@ -3429,3 +3456,112 @@ func TestManagementResource_SAMLCallbackHandler(t *testing.T) {
+ 		})
+ 	}
+ }
++
++// TestManagementResource_SAMLPendingLogin checks that a login remembers its
++// AuthnRequest in this browser (BED-5071): the callback passes the
++// request's ID to ParseResponse, which then accepts only the IdP's answer
++// to that request, and accepts an IdP-initiated response otherwise.
++func TestManagementResource_SAMLPendingLogin(t *testing.T) {
++	t.Parallel()
++
++	provider := model.SSOProvider{
++		Name: "Okta",
++		Slug: "slug",
++		Type: model.SessionAuthProviderSAML,
++		SAMLProvider: &model.SAMLProvider{
++			Name:           "okta",
++			MetadataXML:    []byte(validMetadataXML),
++			RootURIVersion: model.SAMLRootURIVersion2,
++		},
++	}
++	relayStateInput := regexp.MustCompile(`name="RelayState" value="([^"]*)"`)
++
++	for _, tc := range []struct {
++		name string
++		// callback returns the callback request, from the login's
++		// response and RelayState.
++		callback func(login *httptest.ResponseRecorder, relayState string) *http.Request
++		// wantOptions is how many ResponseOptions ParseResponse gets:
++		// AllowUnsolicited, and WithRequestID for a login in progress.
++		wantOptions int
++	}{
++		{
++			name: "the browser that started the login",
++			callback: func(login *httptest.ResponseRecorder, relayState string) *http.Request {
++				r := samlCallbackRequest(relayState)
++				for _, c := range login.Result().Cookies() {
++					r.AddCookie(c)
++				}
++				return r
++			},
++			wantOptions: 2,
++		},
++		{
++			name: "another browser",
++			callback: func(_ *httptest.ResponseRecorder, relayState string) *http.Request {
++				return samlCallbackRequest(relayState)
++			},
++			wantOptions: 1,
++		},
++		{
++			name: "the cookie of another login",
++			callback: func(login *httptest.ResponseRecorder, _ string) *http.Request {
++				r := samlCallbackRequest("another-relay-state")
++				for _, c := range login.Result().Cookies() {
++					r.AddCookie(c)
++				}
++				return r
++			},
++			wantOptions: 1,
++		},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			t.Parallel()
++			ctrl := gomock.NewController(t)
++			mockDatabase := mocks.NewMockDatabase(ctrl)
++			mockSAML := samlmocks.NewMockService(ctrl)
++
++			mockDatabase.EXPECT().GetSSOProviderBySlug(gomock.Any(), "slug").Return(provider, nil).Times(2)
++			mockSAML.EXPECT().AuthnRequest(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn((&bhceSAML.Client{}).AuthnRequest)
++			gotOptions := -1
++			mockSAML.EXPECT().ParseResponse(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
++				DoAndReturn(func(_ context.Context, _ *samlsp.Config, _ *http.Request, opts ...samlsp.ResponseOption) (*samlsp.Assertion, error) {
++					gotOptions = len(opts)
++					return nil, errors.New("stop here")
++				})
++
++			resources := v2auth.NewManagementResource(config.Configuration{
++				SAML: config.SAMLConfiguration{
++					ServiceProviderCertificate: ValidCert,
++					ServiceProviderKey:         ValidKey,
++				},
++			}, mockDatabase, auth.NewAuthorizer(mockDatabase), api.NewAuthenticator(config.Configuration{}, mockDatabase, nil), nil, nil, nil)
++			resources.SAML = mockSAML
++			router := mux.NewRouter()
++			router.HandleFunc(fmt.Sprintf("/api/v2/sso/{%s}/login", api.URIPathVariableSSOProviderSlug), resources.SSOLoginHandler).Methods(http.MethodGet)
++			router.HandleFunc(fmt.Sprintf("/api/v2/sso/{%s}/callback", api.URIPathVariableSSOProviderSlug), resources.SSOCallbackHandler).Methods(http.MethodPost)
++
++			login := httptest.NewRecorder()
++			loginRequest := httptest.NewRequest(http.MethodGet, "http://bloodhound.example/api/v2/sso/slug/login", nil)
++			router.ServeHTTP(login, loginRequest.WithContext(context.WithValue(loginRequest.Context(), bhctx.ValueKey, &bhctx.Context{Host: samlTestHost()})))
++			require.Equal(t, http.StatusOK, login.Code, login.Body.String())
++			m := relayStateInput.FindStringSubmatch(login.Body.String())
++			require.NotNil(t, m, "no RelayState in the login page")
++
++			callback := httptest.NewRecorder()
++			router.ServeHTTP(callback, tc.callback(login, m[1]))
++
++			assert.Equal(t, tc.wantOptions, gotOptions)
++			assert.Equal(t, http.StatusFound, callback.Code)
++		})
++	}
++}
++
++// samlCallbackRequest returns the IdP's POST to the callback, with
++// relayState and a stand-in SAMLResponse, which the mock does not read.
++func samlCallbackRequest(relayState string) *http.Request {
++	form := url.Values{"SAMLResponse": {"response"}, "RelayState": {relayState}}
++	r := httptest.NewRequest(http.MethodPost, "http://bloodhound.example/api/v2/sso/slug/callback", strings.NewReader(form.Encode()))
++	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
++	return r.WithContext(context.WithValue(r.Context(), bhctx.ValueKey, &bhctx.Context{Host: samlTestHost()}))
++}
+diff --git a/cmd/api/src/api/v2/auth/sso_test.go b/cmd/api/src/api/v2/auth/sso_test.go
+index 73f3024..089562a 100644
+--- a/cmd/api/src/api/v2/auth/sso_test.go
++++ b/cmd/api/src/api/v2/auth/sso_test.go
+@@ -25,7 +25,6 @@ import (
+ 	"regexp"
+ 	"testing"
+ 
+-	"github.com/crewjam/saml"
+ 	"github.com/gorilla/mux"
+ 	"github.com/stretchr/testify/assert"
+ 
+@@ -36,6 +35,7 @@ import (
+ 	bhceauth "github.com/specterops/bloodhound/cmd/api/src/auth"
+ 	"github.com/specterops/bloodhound/cmd/api/src/config"
+ 	"github.com/specterops/bloodhound/cmd/api/src/database/mocks"
++	bhceSAML "github.com/specterops/bloodhound/cmd/api/src/services/saml"
+ 	samlmocks "github.com/specterops/bloodhound/cmd/api/src/services/saml/mocks"
+ 
+ 	"github.com/specterops/bloodhound/cmd/api/src/bhctx"
+@@ -373,6 +373,9 @@ func TestManagementResource_SSOLoginHandler(t *testing.T) {
+ 		responseBody   string
+ 		responseCode   int
+ 		responseHeader http.Header
++		// validate, if set, checks a response whose headers and body vary,
++		// in place of responseHeader and responseBody.
++		validate func(t *testing.T, header http.Header, body string)
+ 	}
+ 	type testData struct {
+ 		name         string
+@@ -459,7 +462,7 @@ func TestManagementResource_SSOLoginHandler(t *testing.T) {
+ 				}
+ 				req = mux.SetURLVars(req, vars)
+ 
+-				req = req.WithContext(bhctx.Set(req.Context(), &bhctx.Context{Host: &url.URL{Host: "loremipsum"}}))
++				req = req.WithContext(bhctx.Set(req.Context(), &bhctx.Context{Host: &url.URL{Scheme: "http", Host: "loremipsum"}}))
+ 
+ 				return req
+ 			},
+@@ -476,12 +479,18 @@ func TestManagementResource_SSOLoginHandler(t *testing.T) {
+ 				}
+ 
+ 				mocks.mockDatabase.EXPECT().GetSSOProviderBySlug(gomock.Any(), gomock.Any()).Return(ssoProvider, nil)
+-				mocks.mockSAML.EXPECT().MakeAuthenticationRequest(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&saml.AuthnRequest{}, nil)
++				mocks.mockSAML.EXPECT().AuthnRequest(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn((&bhceSAML.Client{}).AuthnRequest)
+ 			},
+ 			expected: expected{
+-				responseCode:   http.StatusOK,
+-				responseBody:   "<!DOCTYPE html>\n<html>\n<body>\n<form method=\"post\" action=\"\" id=\"SAMLRequestForm\"><input type=\"hidden\" name=\"SAMLRequest\" value=\"value\" /><input type=\"hidden\" name=\"RelayState\" value=\"\" /><input id=\"SAMLSubmitButton\" type=\"submit\" value=\"Submit\" /></form><script>document.getElementById('SAMLSubmitButton').style.visibility=\"hidden\";document.getElementById('SAMLRequestForm').submit();</script>\n</body>\n</html>\n",
+-				responseHeader: http.Header{"Content-Security-Policy": []string{"default-src; script-src 'sha256-AjPdJSbZmeWHnEc5ykvJFay8FTWeTeRbs9dutfZ0HqE='; reflected-xss block; referrer no-referrer;"}, "Content-Type": []string{"text/html"}},
++				responseCode: http.StatusOK,
++				// The IdP has only an HTTP-POST endpoint: a page whose form
++				// posts the AuthnRequest there.
++				validate: func(t *testing.T, header http.Header, body string) {
++					assertSAMLPostForm(t, header)
++					assert.Contains(t, body, `action="https://okta.com/sso"`)
++					assert.Contains(t, body, `name="SAMLRequest"`)
++					assert.Contains(t, body, `name="RelayState"`)
++				},
+ 			},
+ 		},
+ 	}
+@@ -516,6 +525,10 @@ func TestManagementResource_SSOLoginHandler(t *testing.T) {
+ 			status, header, body := test.ProcessResponse(t, response)
+ 
+ 			assert.Equal(t, testCase.expected.responseCode, status)
++			if testCase.expected.validate != nil {
++				testCase.expected.validate(t, header, body)
++				return
++			}
+ 			assert.Equal(t, testCase.expected.responseHeader, header)
+ 			if status != http.StatusOK {
+ 				assert.JSONEq(t, testCase.expected.responseBody, body)
 diff --git a/cmd/api/src/auth/saml.go b/cmd/api/src/auth/saml.go
-index 2a8c361..000f5b4 100644
+index 2a8c361..eafcc09 100644
 --- a/cmd/api/src/auth/saml.go
 +++ b/cmd/api/src/auth/saml.go
 @@ -21,17 +21,13 @@ import (
@@ -376,7 +1501,7 @@ index 2a8c361..000f5b4 100644
  func getIDPSingleSignOnDescriptor(metadata *saml.EntityDescriptor, bindingType string) (saml.IDPSSODescriptor, error) {
  	for _, idpSSODescriptor := range metadata.IDPSSODescriptors {
  		for _, singleSignOnService := range idpSSODescriptor.SingleSignOnServices {
-@@ -70,24 +66,31 @@ func GetAssertionConsumerServiceURL(metadata *saml.EntityDescriptor, bindingType
+@@ -70,24 +66,38 @@ func GetAssertionConsumerServiceURL(metadata *saml.EntityDescriptor, bindingType
  	return "", fmt.Errorf("no SAML ascertion consumer service url defined in metadata xml")
  }
  
@@ -404,8 +1529,10 @@ index 2a8c361..000f5b4 100644
 +// records the IDs of the assertions it accepts, so that each is accepted
 +// once; it must be shared by every BloodHound instance.
 +//
-+// It signs with RSA-SHA256 and refuses what the library's hardening
-+// refuses, such as SHA-1 signatures and expired IdP metadata.
++// It signs AuthnRequests with RSA-SHA256, and refuses what the library's
++// hardening refuses, such as SHA-1 signatures and expired IdP metadata.
++// Metadata that does not describe an IdP fails here, as before, rather
++// than at the first message.
 +func NewSAMLConfig(hostUrl url.URL, cfg config.Configuration, replayState samlsp.ReplayState, ssoProvider model.SSOProvider) (*samlsp.Config, error) {
 +	if ssoProvider.SAMLProvider == nil {
 +		return nil, fmt.Errorf("SSO provider %s is not a SAML provider", ssoProvider.Name)
@@ -415,14 +1542,19 @@ index 2a8c361..000f5b4 100644
 +	if err != nil {
 +		return nil, fmt.Errorf("failed to parse service provider %s's cert pair: %w", samlProvider.Name, err)
  	}
++	idpMetadata, err := samlsp.ParseMetadata(samlProvider.MetadataXML)
++	if err != nil {
++		return nil, fmt.Errorf("failed to parse metadata XML for service provider %s: %w", samlProvider.Name, err)
++	}
 +	samlProvider.FormatSAMLProviderURLs(hostUrl)
 +
 +	return samlsp.New(
 +		samlProvider.ServiceProviderIssuerURI.String(),
-+		samlsp.StaticMetadataBytes(samlProvider.MetadataXML),
++		samlsp.StaticMetadata(idpMetadata),
 +		samlsp.WithACSURL(samlProvider.ServiceProviderACSURI.String()),
 +		samlsp.WithSigningKey(spKey, spCert),
 +		samlsp.WithEncryptionKey(spKey, spCert), // as before, the IdP may encrypt to the SP key
++		samlsp.SignAuthnRequests,                // as before, AuthnRequests are signed
 +		samlsp.WithNameIDFormat(saml.EmailAddressNameIDFormat),
 +		samlsp.WithReplayState(replayState),
 +	)
@@ -499,6 +1631,87 @@ index cbd1c82..3ab6cfc 100644
  // SweepSAMLConsumedIdentifiers deletes all SAMLResponse and assertion identifiers that have expired
  func (s *BloodhoundDB) SweepSAMLConsumedIdentifiers(ctx context.Context) error {
  	result := s.db.WithContext(ctx).Exec(fmt.Sprintf(`DELETE FROM %s WHERE expires_at < NOW()`,
+diff --git a/cmd/api/src/database/samlconsumedidentifiers_integration_test.go b/cmd/api/src/database/samlconsumedidentifiers_integration_test.go
+index fe77cb2..cc284ec 100644
+--- a/cmd/api/src/database/samlconsumedidentifiers_integration_test.go
++++ b/cmd/api/src/database/samlconsumedidentifiers_integration_test.go
+@@ -116,6 +116,76 @@ func TestDatabase_CreateSAMLConsumedIdentifiers(t *testing.T) {
+ 	}
+ }
+ 
++func TestDatabase_ConsumeSAMLAssertionID(t *testing.T) {
++	const (
++		idpIssuer = "https://idp.example.com/12345678-90ab-cdef-1234-567890abcdef"
++		// a replay key as x/samlsp passes it, hex-encoded
++		replayKey = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
++	)
++
++	tests := []struct {
++		name string
++		test func(t *testing.T, testSuite IntegrationTestSuite)
++	}{
++		{
++			name: "Success: records an assertion on first login",
++			test: func(t *testing.T, testSuite IntegrationTestSuite) {
++				ssoProviderID := registerAndGetSSOProvider(t, testSuite, "provider-consume-first")
++
++				err := testSuite.BHDatabase.ConsumeSAMLAssertionID(testSuite.Context, ssoProviderID, idpIssuer, replayKey, time.Now().Add(time.Hour))
++				require.NoError(t, err)
++			},
++		},
++		{
++			name: "Error: rejects a replayed assertion",
++			test: func(t *testing.T, testSuite IntegrationTestSuite) {
++				ssoProviderID := registerAndGetSSOProvider(t, testSuite, "provider-consume-replay")
++				expiresAt := time.Now().Add(time.Hour)
++
++				err := testSuite.BHDatabase.ConsumeSAMLAssertionID(testSuite.Context, ssoProviderID, idpIssuer, replayKey, expiresAt)
++				require.NoError(t, err)
++
++				err = testSuite.BHDatabase.ConsumeSAMLAssertionID(testSuite.Context, ssoProviderID, idpIssuer, replayKey, expiresAt)
++				assert.ErrorIs(t, err, database.ErrSAMLIdentifierAlreadyConsumed)
++			},
++		},
++		{
++			name: "Success: the same key is allowed for a different sso provider",
++			test: func(t *testing.T, testSuite IntegrationTestSuite) {
++				firstProviderID := registerAndGetSSOProvider(t, testSuite, "provider-consume-scope-first")
++				secondProviderID := registerAndGetSSOProvider(t, testSuite, "provider-consume-scope-second")
++				expiresAt := time.Now().Add(time.Hour)
++
++				err := testSuite.BHDatabase.ConsumeSAMLAssertionID(testSuite.Context, firstProviderID, idpIssuer, replayKey, expiresAt)
++				require.NoError(t, err)
++
++				err = testSuite.BHDatabase.ConsumeSAMLAssertionID(testSuite.Context, secondProviderID, idpIssuer, replayKey, expiresAt)
++				require.NoError(t, err)
++			},
++		},
++		{
++			name: "Error: rejects an assertion for a non-existent sso provider",
++			test: func(t *testing.T, testSuite IntegrationTestSuite) {
++				const nonExistentSSOProviderID = int32(999999)
++
++				err := testSuite.BHDatabase.ConsumeSAMLAssertionID(testSuite.Context, nonExistentSSOProviderID, idpIssuer, replayKey, time.Now().Add(time.Hour))
++				require.Error(t, err)
++				// assert this failed on the foreign key, not as a replay rejection
++				assert.NotErrorIs(t, err, database.ErrSAMLIdentifierAlreadyConsumed)
++			},
++		},
++	}
++
++	for _, testCase := range tests {
++		t.Run(testCase.name, func(t *testing.T) {
++			testSuite := setupIntegrationTestSuite(t)
++			defer teardownIntegrationTestSuite(t, &testSuite)
++
++			testCase.test(t, testSuite)
++		})
++	}
++}
++
+ func TestDatabase_SweepSAMLConsumedIdentifiers(t *testing.T) {
+ 	const idpIssuer = "https://idp.example.com/12345678-90ab-cdef-1234-567890abcdef"
+ 
 diff --git a/cmd/api/src/services/saml/mocks/saml.go b/cmd/api/src/services/saml/mocks/saml.go
 index f11e9f7..9f830d4 100644
 --- a/cmd/api/src/services/saml/mocks/saml.go
@@ -714,6 +1927,206 @@ index aaac075..852498e 100644
 -	return latest
 +	return config.ParseResponse(ctx, req, opts...)
  }
+diff --git a/cmd/api/src/services/saml/saml_integration_test.go b/cmd/api/src/services/saml/saml_integration_test.go
+index 141a73d..1586f57 100644
+--- a/cmd/api/src/services/saml/saml_integration_test.go
++++ b/cmd/api/src/services/saml/saml_integration_test.go
+@@ -33,19 +33,18 @@ import (
+ 
+ 	"github.com/beevik/etree"
+ 	"github.com/crewjam/saml"
++	"github.com/crewjam/saml/x/samlsp"
+ 	bhceSAML "github.com/specterops/bloodhound/cmd/api/src/services/saml"
+ 	"github.com/stretchr/testify/assert"
+ 	"github.com/stretchr/testify/require"
+ )
+ 
+-// TestParseResponse verifies how a real crewjam ServiceProvider validates all SAMLResponse/assertion signing
+-// combinations before ParseResponse's validations take over
++// TestParseResponse verifies how x/samlsp validates all SAMLResponse/assertion signing combinations.
+ func TestParseResponse(t *testing.T) {
+ 	tests := []struct {
+ 		name         string
+ 		buildRequest func(t *testing.T, idp testIdP) *http.Request
+ 		wantAccepted bool
+-		errContains  string
+ 	}{
+ 		{
+ 			name: "unsigned Response, unsigned assertion is rejected",
+@@ -54,7 +53,6 @@ func TestParseResponse(t *testing.T) {
+ 					assertionSpec{id: "_assertion_id_a", signed: false})
+ 				return newSAMLRequest(t, encoded)
+ 			},
+-			// crewjam returns an 'Authentication failed' error, so verify only that it is rejected
+ 			wantAccepted: false,
+ 		},
+ 		{
+@@ -86,7 +84,7 @@ func TestParseResponse(t *testing.T) {
+ 			var (
+ 				idp            = newTestIdP(t)
+ 				req            = testCase.buildRequest(t, idp)
+-				validated, err = (&bhceSAML.Client{}).ParseResponse(idp.newServiceProvider(), req, nil)
++				validated, err = (&bhceSAML.Client{}).ParseResponse(t.Context(), idp.newConfig(t), req, samlsp.AllowUnsolicited)
+ 			)
+ 
+ 			if testCase.wantAccepted {
+@@ -95,16 +93,13 @@ func TestParseResponse(t *testing.T) {
+ 			} else {
+ 				require.Error(t, err)
+ 				assert.Nil(t, validated)
+-				if testCase.errContains != "" {
+-					assert.Contains(t, err.Error(), testCase.errContains)
+-				}
+ 			}
+ 		})
+ 	}
+ }
+ 
+-// TestParseResponse_MultipleAssertions verifies the multiple-assertion rejection: the assertions pass crewjam's own validation,
+-// but a SAMLResponse carrying more than one is still rejected (regardless of signing).
++// TestParseResponse_MultipleAssertions verifies that an unsigned SAMLResponse carrying more than one assertion is
++// rejected, whatever the assertions' signatures: x/samlsp validates only one, so the others could be replayed.
+ func TestParseResponse_MultipleAssertions(t *testing.T) {
+ 	tests := []struct {
+ 		name       string
+@@ -134,85 +129,79 @@ func TestParseResponse_MultipleAssertions(t *testing.T) {
+ 				req        = newSAMLRequest(t, encoded)
+ 			)
+ 
+-			validated, err := (&bhceSAML.Client{}).ParseResponse(idp.newServiceProvider(), req, nil)
++			validated, err := (&bhceSAML.Client{}).ParseResponse(t.Context(), idp.newConfig(t), req, samlsp.AllowUnsolicited)
+ 
+-			require.Error(t, err)
++			require.ErrorIs(t, err, saml.ErrMalformedMessage)
+ 			assert.Nil(t, validated)
+-			assert.Contains(t, err.Error(), "multiple assertions")
++			var invalid *saml.InvalidResponseError
++			require.ErrorAs(t, err, &invalid)
++			assert.Contains(t, invalid.PrivateErr.Error(), "exactly one Assertion")
+ 		})
+ 	}
+ }
+ 
+-// TestParseResponse_EmptyIdentifiers verifies ParseResponse's checks for an empty Response ID and empty assertion ID"
+-func TestParseResponse_EmptyIdentifiers(t *testing.T) {
+-	t.Run("empty Response ID is rejected", func(t *testing.T) {
+-		var (
+-			idp = newTestIdP(t)
+-			// setting up an unsigned SAMLResponse (thus its Response ID is never checked by crewjam),
+-			// so it reaches ParseResponse's empty Response ID guard
+-			encoded, _ = idp.buildUnsignedSAMLResponse(t, "",
+-				assertionSpec{id: "_assertion_id_a", signed: true})
+-			req = newSAMLRequest(t, encoded)
+-		)
+-
+-		validated, err := (&bhceSAML.Client{}).ParseResponse(idp.newServiceProvider(), req, nil)
+-
+-		require.Error(t, err)
+-		assert.Nil(t, validated)
+-		assert.Contains(t, err.Error(), "SAMLResponse ID is empty")
+-	})
+-
+-	t.Run("empty assertion ID is rejected", func(t *testing.T) {
+-		var (
+-			idp = newTestIdP(t)
+-			// setting up a signed SAMLResponse containing an unsigned assertion whose ID is empty
+-			// (assertion ID not checked by crewjam), so it reaches ParseResponse's empty assertion ID guard
+-			req = newSAMLRequest(t, idp.buildSignedSAMLResponse(t, "", false))
+-		)
+-
+-		validated, err := (&bhceSAML.Client{}).ParseResponse(idp.newServiceProvider(), req, nil)
+-
+-		require.Error(t, err)
+-		assert.Nil(t, validated)
+-		assert.Contains(t, err.Error(), "assertion ID is empty")
+-	})
++// TestParseResponse_EmptyAssertionID verifies that an assertion without an ID is rejected: it could not be recorded
++// to refuse its replay.
++func TestParseResponse_EmptyAssertionID(t *testing.T) {
++	var (
++		idp = newTestIdP(t)
++		// a signed SAMLResponse containing an unsigned assertion whose ID is empty
++		req = newSAMLRequest(t, idp.buildSignedSAMLResponse(t, "", false))
++	)
++
++	validated, err := (&bhceSAML.Client{}).ParseResponse(t.Context(), idp.newConfig(t), req, samlsp.AllowUnsolicited)
++
++	require.Error(t, err)
++	assert.Nil(t, validated)
++}
++
++// TestParseResponse_Replay verifies that the same SAMLResponse is accepted once: the second time, the config's replay
++// state refuses its assertion.
++func TestParseResponse_Replay(t *testing.T) {
++	var (
++		idp        = newTestIdP(t)
++		config     = idp.newConfig(t)
++		encoded, _ = idp.buildUnsignedSAMLResponse(t, defaultResponseID)
++	)
++
++	_, err := (&bhceSAML.Client{}).ParseResponse(t.Context(), config, newSAMLRequest(t, encoded), samlsp.AllowUnsolicited)
++	require.NoError(t, err)
++
++	validated, err := (&bhceSAML.Client{}).ParseResponse(t.Context(), config, newSAMLRequest(t, encoded), samlsp.AllowUnsolicited)
++	require.ErrorIs(t, err, saml.ErrAssertionReplayed)
++	assert.Nil(t, validated)
+ }
+ 
+-// TestParseResponse_ResponseFields verifies the SAMLResponse fields ParseResponse extracts again from the request/raw XML, which
+-// crewjam validates but discards.
+-func TestParseResponse_ResponseFields(t *testing.T) {
++// TestParseResponse_AssertionFields verifies the verified assertion that ParseResponse returns.
++func TestParseResponse_AssertionFields(t *testing.T) {
+ 	var (
+-		idp                   = newTestIdP(t)
+-		encoded, issueInstant = idp.buildUnsignedSAMLResponse(t, defaultResponseID)
+-		req                   = newSAMLRequest(t, encoded)
++		idp        = newTestIdP(t)
++		encoded, _ = idp.buildUnsignedSAMLResponse(t, defaultResponseID)
++		req        = newSAMLRequest(t, encoded)
+ 	)
+ 
+-	validated, err := (&bhceSAML.Client{}).ParseResponse(idp.newServiceProvider(), req, nil)
++	validated, err := (&bhceSAML.Client{}).ParseResponse(t.Context(), idp.newConfig(t), req, samlsp.AllowUnsolicited)
+ 
+ 	require.NoError(t, err)
+ 	require.NotNil(t, validated)
+-	// check that og Response ID matches extracted
+-	assert.Equal(t, defaultResponseID, validated.ResponseID)
+-	// rounded to the millisecond so IssueInstant matches exactly after crewjam's round trip
+-	assert.True(t, issueInstant.Equal(validated.ResponseIssueInstant),
+-		"expected ResponseIssueInstant %s to equal %s", validated.ResponseIssueInstant, issueInstant)
++	assert.Equal(t, "_assertion_id_a", validated.ID)
++	assert.Equal(t, idp.entityID, validated.Issuer)
++	assert.Equal(t, "user@sp.test", validated.Subject)
++	require.NotNil(t, validated.Raw)
+ }
+ 
+ // --- TEST SETUP ---
+ 
+ const defaultResponseID = "_response_id"
+ 
+-// newServiceProvider builds a SP that trusts the IdP's signing certificate and accepts IdP-initiated
+-// responses, so it will validate the signed assertions.
+-func (s testIdP) newServiceProvider() saml.ServiceProvider {
+-	var acsURL, _ = url.Parse(s.acsURL)
++// newConfig builds the SP that BloodHound would, trusting the IdP's signing certificate, so that it validates the
++// assertions the IdP signs.
++func (s testIdP) newConfig(t *testing.T) *samlsp.Config {
++	t.Helper()
+ 
+-	return saml.ServiceProvider{
+-		EntityID:          s.spEntityID,
+-		AcsURL:            *acsURL,
+-		IDPMetadata:       s.idp.Metadata(),
+-		AllowIDPInitiated: true,
+-	}
++	config, err := samlsp.New(s.spEntityID, samlsp.StaticMetadata(s.idp.Metadata()), samlsp.WithACSURL(s.acsURL))
++	require.NoError(t, err)
++	return config
+ }
+ 
+ // newSAMLRequest wraps a base64 SAMLResponse in an *http.Request (via PostForm), the way ParseResponse expects it
 diff --git a/cmd/api/src/services/saml/saml_test.go b/cmd/api/src/services/saml/saml_test.go
 index 0990048..fb0b1b7 100644
 --- a/cmd/api/src/services/saml/saml_test.go
