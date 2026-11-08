@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
+	"fmt"
 	"html"
 	"math/big"
 	"net/http"
@@ -329,6 +330,69 @@ func TestExpiry(t *testing.T) {
 	// does not rely on that.
 	if _, err := at(5*time.Minute).Take(httptest.NewRecorder(), r()); !errors.Is(err, pending.ErrNotFound) {
 		t.Errorf("expired: err = %v, want ErrNotFound", err)
+	}
+}
+
+// Take clears the cookies of all but the MaxPending most recent other
+// logins in progress, and of expired or invalid ones.
+func TestTakePrunes(t *testing.T) {
+	cfg, _ := newConfig(t)
+	start := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	browser := httptest.NewRecorder()
+	extra := 3
+	names := make([]string, 0, pending.MaxPending+extra)
+	for i := range pending.MaxPending + extra {
+		tr := newTracker(t, cfg, pending.WithClock(dsig.NewFakeClockAt(start.Add(time.Duration(i)*time.Second))))
+		msg, err := cfg.AuthnRequest(t.Context(), fmt.Sprintf("s%d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := httptest.NewRecorder()
+		if err := tr.Remember(w, msg, ""); err != nil {
+			t.Fatal(err)
+		}
+		c := onlyCookie(t, w)
+		names = append(names, c.Name)
+		http.SetCookie(browser, c)
+	}
+	// The newest login is taken; an invalid cookie and one of another
+	// prefix are in the request too.
+	r := acsRequest(url.Values{"RelayState": {fmt.Sprintf("s%d", pending.MaxPending+extra-1)}}, browser)
+	r.AddCookie(&http.Cookie{Name: pending.DefaultCookiePrefix + "bogus", Value: "x.y"}) //nolint:gosec // G124: a request cookie carries no attributes
+	r.AddCookie(&http.Cookie{Name: "session", Value: "keep"})                            //nolint:gosec // G124: a request cookie carries no attributes
+	w := httptest.NewRecorder()
+	tr := newTracker(t, cfg, pending.WithClock(dsig.NewFakeClockAt(start.Add(time.Minute))))
+	if _, err := tr.Take(w, r); err != nil {
+		t.Fatal(err)
+	}
+	cleared := map[string]bool{}
+	for _, c := range w.Result().Cookies() {
+		if c.MaxAge < 0 {
+			cleared[c.Name] = true
+		}
+	}
+	// The taken one, the invalid one, and the oldest beyond MaxPending.
+	want := map[string]bool{names[len(names)-1]: true, pending.DefaultCookiePrefix + "bogus": true}
+	for _, name := range names[:extra-1] {
+		want[name] = true
+	}
+	if len(cleared) != len(want) {
+		t.Errorf("cleared %v, want %v", cleared, want)
+	}
+	for name := range want {
+		if !cleared[name] {
+			t.Errorf("%s not cleared; cleared %v", name, cleared)
+		}
+	}
+
+	// Expired logins are cleared too.
+	w = httptest.NewRecorder()
+	late := newTracker(t, cfg, pending.WithClock(dsig.NewFakeClockAt(start.Add(pending.DefaultMaxAge+time.Hour))))
+	if _, err := late.Take(w, acsRequest(url.Values{"RelayState": {"s0"}}, browser)); !errors.Is(err, pending.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+	if n := len(w.Result().Cookies()); n != len(names) {
+		t.Errorf("cleared %d cookies of expired logins, want %d", n, len(names))
 	}
 }
 
