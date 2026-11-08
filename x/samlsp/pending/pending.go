@@ -8,8 +8,7 @@
 // samlsp.WithRequestID. The application must keep the request's ID until
 // the Response arrives, and keep it in this browser, so that a Response
 // obtained in one browser is not accepted in another. A Tracker keeps it in
-// a cookie named after the request's RelayState, so logins in several tabs
-// do not disturb each other:
+// one of a fixed set of cookies, its slots:
 //
 //	tracker, err := pending.New(config, cookieKey)
 //
@@ -30,9 +29,10 @@
 //	}
 //
 // The cookie is authenticated with an HMAC key, so the browser cannot
-// change the request ID, the RelayState it belongs to, its expiry or the
-// application's data. It is not encrypted: do not put secrets in the data.
-// Every server that serves the ACS must use the same key.
+// change the request ID, the RelayState it belongs to, its expiry, the
+// application's data or the slot it is in. It is not encrypted: do not put
+// secrets in the data. Every server that serves the ACS must use the same
+// key.
 //
 // The cookie's path is that of the ACS URL, so the browser sends it there
 // only. Since the IdP sends its Response with a cross-site POST, which
@@ -42,15 +42,34 @@
 // and is not Secure, and whether browsers send it with a cross-site POST
 // depends on the browser.
 //
-// Each login in progress has its own cookie, until Take finds it or it
-// expires. A browser sends them all to the ACS, so logins that are started
-// and abandoned add to the size of its requests. Take therefore clears all
-// but the MaxPending most recent of the others. The browser does not send
-// them to the handler that calls Remember, which is usually at another
-// path, so Remember cannot; a browser that starts and abandons many logins
-// within MaxAge without finishing one may make requests to the ACS larger
-// than a proxy in front of it allows (often 8 KB of headers), until the
-// cookies expire. Use WithMaxAge to keep logins in progress for less time.
+// # Slots
+//
+// There are DefaultSlots slot cookies, or as many as WithSlots says, named
+// the cookie prefix followed by the slot's number. Remember picks the slot
+// from a hash of the RelayState and sets that cookie only: it does not
+// read or rewrite the others, which the browser sends to the ACS only.
+// Take finds the login whose RelayState is that of the Response among the
+// slots, and clears its slot.
+//
+// However many logins a browser starts and abandons, it sends the ACS at
+// most one cookie per slot: with a 26-character RelayState, such as
+// rand.Text, and a 20-byte return path as data, a slot cookie takes about
+// 210 bytes of the Cookie header, so all 16 default slots take about
+// 3.3 KB, well within the 8 KB of headers that proxies often allow.
+// Larger data makes each slot larger.
+//
+// Logins started in several tabs of one browser do not disturb each other
+// unless their RelayStates fall in the same slot. The later login then
+// replaces the earlier one, which fails with ErrNotFound when its Response
+// arrives, and the user must start it again. With 16 slots, this happens
+// to one of two logins in progress at the same time with probability 1/16
+// (6%), and to some login among three or four with probability 18% or
+// 33%; logins that were abandoned or finished take no part. A single
+// cookie holding every login in progress would fare worse: Remember would
+// have to read it, add to it and write it back, but the browser does not
+// send it there, and of two logins started at once the last Set-Cookie
+// would drop the other every time. More slots make collisions rarer and
+// the header larger.
 //
 // # Security
 //
@@ -77,16 +96,17 @@
 package pending
 
 import (
-	"cmp"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
-	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -100,16 +120,19 @@ import (
 // including with a second factor.
 const DefaultMaxAge = 10 * time.Minute
 
-// DefaultCookiePrefix begins the name of each pending login's cookie,
-// unless WithCookiePrefix says otherwise.
+// DefaultCookiePrefix begins the name of each slot cookie, unless
+// WithCookiePrefix says otherwise.
 const DefaultCookiePrefix = "saml_pending_"
 
 // MinKeyLength is the shortest HMAC key that New accepts, in bytes.
 const MinKeyLength = 32
 
-// MaxPending is how many other logins in progress Take keeps the cookies
-// of, the most recent ones; it clears the others.
-const MaxPending = 10
+// DefaultSlots is how many slot cookies keep logins in progress, unless
+// WithSlots says otherwise.
+const DefaultSlots = 16
+
+// MaxSlots is the most slot cookies WithSlots accepts.
+const MaxSlots = 64
 
 // maxCookieSize is the largest cookie value Remember writes. Browsers keep
 // cookies of at least 4096 bytes, name and attributes included.
@@ -118,13 +141,14 @@ const maxCookieSize = 3800
 // ErrNotFound is returned by Take when the request carries no cookie for
 // its RelayState, or when the cookie has expired: no login is in progress
 // in this browser for the Response. This is the case of an IdP-initiated
-// login, of a Response sent twice, and of a user who took longer than
-// MaxAge.
+// login, of a Response sent twice, of a user who took longer than MaxAge,
+// and of a login replaced by a later one in the same slot.
 var ErrNotFound = errors.New("pending: no login in progress for this RelayState")
 
-// ErrInvalid is returned by Take when the cookie for the RelayState was
-// not made by Remember with this Tracker's key: it was changed, made
-// with another key, or made for another RelayState.
+// ErrInvalid is returned by Take when no slot holds a login for the
+// RelayState and the cookie of the RelayState's slot was not made by
+// Remember with this Tracker's key: it was changed, made with another key,
+// or made for another slot.
 var ErrInvalid = errors.New("pending: the login cookie is not valid")
 
 // Login is a login in progress that Take found.
@@ -155,6 +179,7 @@ type Tracker struct {
 	path   string
 	domain string
 	secure bool
+	slots  int
 	maxAge time.Duration
 	clock  *dsig.Clock
 }
@@ -166,8 +191,13 @@ type Option func(*Tracker)
 // DefaultMaxAge.
 func WithMaxAge(d time.Duration) Option { return func(t *Tracker) { t.maxAge = d } }
 
-// WithCookiePrefix sets what the name of each cookie begins with. The
-// default is DefaultCookiePrefix.
+// WithSlots sets how many slot cookies keep logins in progress, from 1 to
+// MaxSlots. The default is DefaultSlots. Changing it moves RelayStates to
+// other slots, but Take still finds the logins in progress.
+func WithSlots(n int) Option { return func(t *Tracker) { t.slots = n } }
+
+// WithCookiePrefix sets what the name of each slot cookie begins with,
+// before the slot's number. The default is DefaultCookiePrefix.
 func WithCookiePrefix(prefix string) Option { return func(t *Tracker) { t.prefix = prefix } }
 
 // WithDomain sets the Domain attribute of the cookies, so that hosts below
@@ -231,6 +261,7 @@ func New(config *samlsp.Config, key []byte, opts ...Option) (*Tracker, error) {
 		prefix: DefaultCookiePrefix,
 		path:   acs.Path,
 		secure: acs.Scheme == "https",
+		slots:  DefaultSlots,
 		maxAge: DefaultMaxAge,
 	}
 	if t.path == "" {
@@ -243,6 +274,9 @@ func New(config *samlsp.Config, key []byte, opts ...Option) (*Tracker, error) {
 	}
 	if t.maxAge <= 0 {
 		return nil, errors.New("pending: the max age must be positive")
+	}
+	if t.slots < 1 || t.slots > MaxSlots {
+		return nil, fmt.Errorf("pending: the number of slots must be from 1 to %d, not %d", MaxSlots, t.slots)
 	}
 	if t.prefix == "" || strings.ContainsAny(t.prefix, "()<>@,;:\\\"/[]?={} \t") {
 		return nil, fmt.Errorf("pending: invalid cookie prefix %q", t.prefix)
@@ -258,9 +292,11 @@ type payload struct {
 	Data       string `json:"d,omitempty"`
 }
 
-// Remember sets the cookie that remembers msg, an AuthnRequest made by
-// Config.AuthnRequest, until Take finds it, with data for the application,
-// such as where to send the user after login. Call it before msg.Write.
+// Remember sets the slot cookie that remembers msg, an AuthnRequest made
+// by Config.AuthnRequest, until Take finds it, with data for the
+// application, such as where to send the user after login. Call it before
+// msg.Write. It replaces the login in progress in the same slot, if any,
+// and leaves the other slots alone.
 //
 // It returns an error if msg has no ID, or if data is too large for a
 // cookie.
@@ -278,7 +314,7 @@ func (t *Tracker) Remember(w http.ResponseWriter, msg *samlsp.Message, data stri
 	if err != nil {
 		return err
 	}
-	name := t.cookieName(msg.RelayState)
+	name := t.cookieName(t.slot(msg.RelayState))
 	value := base64.RawURLEncoding.EncodeToString(body) + "." + base64.RawURLEncoding.EncodeToString(t.mac(name, body))
 	if len(name)+len(value) > maxCookieSize {
 		return fmt.Errorf("pending: the login cookie would be %d bytes, more than %d", len(name)+len(value), maxCookieSize)
@@ -288,39 +324,63 @@ func (t *Tracker) Remember(w http.ResponseWriter, msg *samlsp.Message, data stri
 }
 
 // Take returns the login in progress that the Response in r answers, found
-// by the Response's RelayState, and clears its cookie. Call it in the ACS
-// handler, before Config.ParseResponse. It also clears the cookies of
-// expired or invalid logins, and of all but the MaxPending most recent
-// other logins in progress.
+// by the Response's RelayState among the slots, and clears its slot. Call
+// it in the ACS handler, before Config.ParseResponse. It also clears the
+// slots that hold expired or invalid logins, but not those of other logins
+// in progress.
 //
 // A browser that ignores the clearing can present the cookie again until
 // it expires, so a login may be found more than once; ParseResponse still
 // accepts each assertion only once (see samlsp.WithReplayState).
 //
 // It returns ErrNotFound if there is no login in progress for the
-// RelayState in this browser, and ErrInvalid if its cookie is not valid. An
-// ACS that also accepts IdP-initiated logins with samlsp.AllowUnsolicited
-// passes samlsp.WithRequestID only when Take succeeds.
+// RelayState in this browser, and ErrInvalid if there is none and the
+// cookie of the RelayState's slot is not valid. An ACS that also accepts
+// IdP-initiated logins with samlsp.AllowUnsolicited passes
+// samlsp.WithRequestID only when Take succeeds.
 func (t *Tracker) Take(w http.ResponseWriter, r *http.Request) (*Login, error) {
 	relayState := r.FormValue("RelayState")
-	name := t.cookieName(relayState)
-	c, err := r.Cookie(name)
-	if err != nil {
-		return nil, ErrNotFound
+	own := t.cookieName(t.slot(relayState))
+	now := t.clock.Now().Unix()
+	var (
+		login            *Login
+		expired, invalid bool
+		cleared          = map[string]bool{}
+	)
+	drop := func(name string) {
+		if !cleared[name] {
+			cleared[name] = true
+			http.SetCookie(w, t.cookie(name, "", -1))
+		}
 	}
-	http.SetCookie(w, t.cookie(name, "", -1))
-	now := t.clock.Now()
-	t.prune(w, r, name, now)
-
-	p, ok := t.open(name, c.Value)
-	if !ok || p.RelayState != relayState {
+	for _, c := range r.Cookies() {
+		if !t.isSlot(c.Name) {
+			continue
+		}
+		p, ok := t.open(c.Name, c.Value)
+		switch {
+		case !ok:
+			invalid = invalid || c.Name == own
+			drop(c.Name)
+		case subtle.ConstantTimeCompare([]byte(p.RelayState), []byte(relayState)) == 1:
+			drop(c.Name)
+			if now >= p.Expires {
+				expired = true
+			} else if login == nil {
+				login = &Login{ID: p.ID, RelayState: p.RelayState, Data: p.Data, Expires: time.Unix(p.Expires, 0)}
+			}
+		case now >= p.Expires:
+			drop(c.Name)
+		}
+	}
+	switch {
+	case login != nil:
+		return login, nil
+	case invalid && !expired:
 		return nil, ErrInvalid
-	}
-	expires := time.Unix(p.Expires, 0)
-	if !now.Before(expires) {
+	default:
 		return nil, ErrNotFound
 	}
-	return &Login{ID: p.ID, RelayState: p.RelayState, Data: p.Data, Expires: expires}, nil
 }
 
 // open returns the payload of the cookie named name whose value is value,
@@ -339,61 +399,46 @@ func (t *Tracker) open(name, value string) (payload, bool) {
 	if err != nil || !hmac.Equal(mac, t.mac(name, body)) {
 		return p, false
 	}
-	if err := json.Unmarshal(body, &p); err != nil || p.ID == "" || t.cookieName(p.RelayState) != name {
+	if err := json.Unmarshal(body, &p); err != nil || p.ID == "" {
 		return p, false
 	}
 	return p, true
 }
 
-// prune clears the cookies of r for logins other than the one named
-// taken: those that have expired at now or are not valid, and all but the
-// MaxPending that expire last.
-func (t *Tracker) prune(w http.ResponseWriter, r *http.Request, taken string, now time.Time) {
-	type pendingCookie struct {
-		name    string
-		expires int64
-	}
-	cookies := r.Cookies()
-	live := make([]pendingCookie, 0, len(cookies))
-	seen := map[string]bool{taken: true}
-	for _, c := range cookies {
-		if !strings.HasPrefix(c.Name, t.prefix) || seen[c.Name] {
-			continue
-		}
-		seen[c.Name] = true
-		p, ok := t.open(c.Name, c.Value)
-		if !ok || now.Unix() >= p.Expires {
-			http.SetCookie(w, t.cookie(c.Name, "", -1))
-			continue
-		}
-		live = append(live, pendingCookie{c.Name, p.Expires})
-	}
-	if len(live) <= MaxPending {
-		return
-	}
-	slices.SortFunc(live, func(a, b pendingCookie) int {
-		return cmp.Or(cmp.Compare(b.expires, a.expires), strings.Compare(a.name, b.name))
-	})
-	for _, c := range live[MaxPending:] {
-		http.SetCookie(w, t.cookie(c.name, "", -1))
-	}
+// slot returns the slot of relayState.
+func (t *Tracker) slot(relayState string) int {
+	sum := sha256.Sum256([]byte(relayState))
+	return int(binary.BigEndian.Uint64(sum[:]) % uint64(t.slots)) //nolint:gosec // G115: less than MaxSlots
 }
 
-// cookieName returns the name of the cookie for relayState. The RelayState
-// is hashed, since it may hold characters that a cookie name cannot.
-func (t *Tracker) cookieName(relayState string) string {
-	sum := sha256.Sum256([]byte(relayState))
-	return t.prefix + base64.RawURLEncoding.EncodeToString(sum[:16])
+// cookieName returns the name of the cookie of slot.
+func (t *Tracker) cookieName(slot int) string {
+	return t.prefix + strconv.Itoa(slot)
 }
+
+// isSlot reports whether name is that of a slot cookie, of this Tracker or
+// of one with other WithSlots, up to MaxSlots.
+func (t *Tracker) isSlot(name string) bool {
+	n, ok := strings.CutPrefix(name, t.prefix)
+	if !ok {
+		return false
+	}
+	i, err := strconv.Atoi(n)
+	return err == nil && i >= 0 && i < MaxSlots && t.cookieName(i) == name
+}
+
+// macSize is the length of a cookie's MAC: HMAC-SHA256 truncated to 128
+// bits, which keeps slot cookies small and forgeries out of reach.
+const macSize = 16
 
 // mac authenticates body as the content of the cookie named name.
 func (t *Tracker) mac(name string, body []byte) []byte {
 	h := hmac.New(sha256.New, t.key)
-	h.Write([]byte("crewjam/saml/x/samlsp/pending v1\x00"))
+	h.Write([]byte("crewjam/saml/x/samlsp/pending v2\x00"))
 	h.Write([]byte(name))
 	h.Write([]byte{0})
 	h.Write(body)
-	return h.Sum(nil)
+	return h.Sum(nil)[:macSize]
 }
 
 func (t *Tracker) cookie(name, value string, maxAge int) *http.Cookie {

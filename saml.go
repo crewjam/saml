@@ -117,7 +117,7 @@
 //		fmt.Fprintf(w, "Hello, %s!\n", assertion.Subject)
 //	}
 //
-// Login has two steps. /login sends the browser to the IDP with an AuthnRequest, and x/samlsp/pending remembers the request's ID in a cookie named after the RelayState. The ACS checks that the Response answers that request, so a Response is accepted only in the browser that asked for it. The cookie is authenticated with SAML_COOKIE_KEY, and over https it is Secure and SameSite=None, since the IDP's POST to the ACS is a cross-site request. example/trivial is a complete version of this program, with sessions and single logout.
+// Login has two steps. /login sends the browser to the IDP with an AuthnRequest, and x/samlsp/pending remembers the request's ID in a cookie, found again by the RelayState. The ACS checks that the Response answers that request, so a Response is accepted only in the browser that asked for it. The cookie is authenticated with SAML_COOKIE_KEY, and over https it is Secure and SameSite=None, since the IDP's POST to the ACS is a cross-site request. example/trivial is a complete version of this program, with sessions and single logout.
 //
 // Next we'll have to register our service provider with the identity provider to establish trust from the service provider to the IDP. samltest.dev doesn't take an uploaded metadata file. Instead, set the app's SP ACS URL and SP Entity ID, either under "SAML SP Settings" on https://www.samltest.dev/apps/<APP_ID> or with the API:
 //

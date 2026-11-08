@@ -223,11 +223,11 @@ func TestCookieAttributes(t *testing.T) {
 	})
 }
 
-// TestRelayStates checks that logins with different RelayStates, as in
-// several tabs, have their own cookies, and that any RelayState works.
+// TestRelayStates checks that any RelayState works, with enough slots that
+// these do not share one.
 func TestRelayStates(t *testing.T) {
 	cfg, _ := newConfig(t)
-	tr := newTracker(t, cfg)
+	tr := newTracker(t, cfg, pending.WithSlots(pending.MaxSlots))
 	states := []string{"", "a", "https://sp.example.com/next?x=1&y=2", "with space; and=equals"}
 	browser := httptest.NewRecorder()
 	ids := map[string]string{}
@@ -333,66 +333,216 @@ func TestExpiry(t *testing.T) {
 	}
 }
 
-// Take clears the cookies of all but the MaxPending most recent other
-// logins in progress, and of expired or invalid ones.
-func TestTakePrunes(t *testing.T) {
+// jar is a browser's cookies for the ACS, by name.
+type jar map[string]*http.Cookie
+
+// set stores the cookies that w sets, and drops those it clears.
+func (j jar) set(w *httptest.ResponseRecorder) {
+	for _, c := range w.Result().Cookies() {
+		if c.MaxAge < 0 {
+			delete(j, c.Name)
+		} else {
+			j[c.Name] = c
+		}
+	}
+}
+
+// request returns the POST to the ACS with relayState that carries the
+// cookies of j.
+func (j jar) request(relayState string) *http.Request {
+	r := acsRequest(url.Values{"RelayState": {relayState}}, httptest.NewRecorder())
+	for _, c := range j {
+		r.AddCookie(&http.Cookie{Name: c.Name, Value: c.Value}) //nolint:gosec // G124: a request cookie carries no attributes
+	}
+	return r
+}
+
+// slotName returns the name of the slot cookie of relayState.
+func slotName(t *testing.T, cfg *samlsp.Config, tr *pending.Tracker, relayState string) string {
+	t.Helper()
+	_, w := remember(t, cfg, tr, relayState, "")
+	return onlyCookie(t, w).Name
+}
+
+// relayStates returns two RelayStates whose slots are the same, or differ.
+func relayStates(t *testing.T, cfg *samlsp.Config, tr *pending.Tracker, same bool) (string, string) {
+	t.Helper()
+	first := slotName(t, cfg, tr, "tab-0")
+	for i := 1; i < 1000; i++ {
+		s := fmt.Sprintf("tab-%d", i)
+		if (slotName(t, cfg, tr, s) == first) == same {
+			return "tab-0", s
+		}
+	}
+	t.Fatal("no such RelayStates")
+	return "", ""
+}
+
+// TestCookieSize measures the slot cookie of a typical login, as the
+// browser sends it in the Cookie header, for the figures in the package
+// documentation.
+func TestCookieSize(t *testing.T) {
+	cfg, _ := newConfig(t)
+	_, w := remember(t, cfg, newTracker(t, cfg), rand.Text(), "/reports/2026?id=123")
+	c := onlyCookie(t, w)
+	size := len(c.Name) + len("=") + len(c.Value) + len("; ")
+	t.Logf("slot cookie: %d bytes; %d slots: %d bytes", size, pending.DefaultSlots, pending.DefaultSlots*size)
+	if total := pending.DefaultSlots * size; total > 3500 {
+		t.Errorf("%d slots of %d bytes take %d bytes, more than 3500", pending.DefaultSlots, size, total)
+	}
+}
+
+// TestConcurrentLogins starts logins in two tabs, in different slots, and
+// finishes them in either order.
+func TestConcurrentLogins(t *testing.T) {
+	cfg, _ := newConfig(t)
+	tr := newTracker(t, cfg)
+	a, b := relayStates(t, cfg, tr, false)
+	for _, order := range [][2]string{{a, b}, {b, a}} {
+		browser := jar{}
+		ids := map[string]string{}
+		for _, s := range []string{a, b} {
+			msg, w := remember(t, cfg, tr, s, "/"+s)
+			browser.set(w)
+			ids[s] = msg.ID
+		}
+		for _, s := range order {
+			w := httptest.NewRecorder()
+			login, err := tr.Take(w, browser.request(s))
+			if err != nil {
+				t.Fatalf("%s: %v", s, err)
+			}
+			if login.ID != ids[s] || login.Data != "/"+s {
+				t.Errorf("%s: Take = %+v, want ID %q", s, login, ids[s])
+			}
+			// Take clears its own slot only.
+			if c := onlyCookie(t, w); c.MaxAge >= 0 {
+				t.Errorf("%s: Take set %+v", s, c)
+			}
+			browser.set(w)
+		}
+		if len(browser) != 0 {
+			t.Errorf("cookies left: %v", browser)
+		}
+	}
+}
+
+// TestSameSlot starts two logins whose RelayStates share a slot: the later
+// one replaces the earlier one.
+func TestSameSlot(t *testing.T) {
+	cfg, _ := newConfig(t)
+	tr := newTracker(t, cfg)
+	a, b := relayStates(t, cfg, tr, true)
+	browser := jar{}
+	_, w := remember(t, cfg, tr, a, "")
+	browser.set(w)
+	msg, w := remember(t, cfg, tr, b, "")
+	browser.set(w)
+	if len(browser) != 1 {
+		t.Fatalf("got %d cookies, want 1", len(browser))
+	}
+
+	w = httptest.NewRecorder()
+	if _, err := tr.Take(w, browser.request(a)); !errors.Is(err, pending.ErrNotFound) {
+		t.Errorf("replaced login: err = %v, want ErrNotFound", err)
+	}
+	if n := len(w.Result().Cookies()); n != 0 {
+		t.Errorf("Take of the replaced login set %d cookies, want 0", n)
+	}
+	login, err := tr.Take(httptest.NewRecorder(), browser.request(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if login.ID != msg.ID {
+		t.Errorf("ID = %q, want %q", login.ID, msg.ID)
+	}
+}
+
+// TestManyAbandoned checks that however many logins a browser starts and
+// abandons, it keeps at most one cookie per slot.
+func TestManyAbandoned(t *testing.T) {
+	cfg, _ := newConfig(t)
+	for _, slots := range []int{1, 4, pending.DefaultSlots, pending.MaxSlots} {
+		tr := newTracker(t, cfg, pending.WithSlots(slots))
+		browser := jar{}
+		var last *samlsp.Message
+		for i := range 1000 {
+			last = &samlsp.Message{ID: fmt.Sprintf("id-%d", i), RelayState: fmt.Sprintf("s%d", i)}
+			w := httptest.NewRecorder()
+			if err := tr.Remember(w, last, "/somewhere"); err != nil {
+				t.Fatal(err)
+			}
+			browser.set(w)
+		}
+		if len(browser) > slots {
+			t.Errorf("%d slots: %d cookies", slots, len(browser))
+		}
+		login, err := tr.Take(httptest.NewRecorder(), browser.request(last.RelayState))
+		if err != nil || login.ID != last.ID {
+			t.Errorf("%d slots: Take = %+v, %v; want ID %q", slots, login, err, last.ID)
+		}
+	}
+}
+
+// TestTakeClears checks that Take clears the slots of expired and invalid
+// logins, but not those of other logins in progress or other cookies.
+func TestTakeClears(t *testing.T) {
 	cfg, _ := newConfig(t)
 	start := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	browser := httptest.NewRecorder()
-	extra := 3
-	names := make([]string, 0, pending.MaxPending+extra)
-	for i := range pending.MaxPending + extra {
-		tr := newTracker(t, cfg, pending.WithClock(dsig.NewFakeClockAt(start.Add(time.Duration(i)*time.Second))))
-		msg, err := cfg.AuthnRequest(t.Context(), fmt.Sprintf("s%d", i))
-		if err != nil {
-			t.Fatal(err)
-		}
-		w := httptest.NewRecorder()
-		if err := tr.Remember(w, msg, ""); err != nil {
-			t.Fatal(err)
-		}
-		c := onlyCookie(t, w)
-		names = append(names, c.Name)
-		http.SetCookie(browser, c)
+	at := func(d time.Duration) *pending.Tracker {
+		return newTracker(t, cfg, pending.WithClock(dsig.NewFakeClockAt(start.Add(d))))
 	}
-	// The newest login is taken; an invalid cookie and one of another
-	// prefix are in the request too.
-	r := acsRequest(url.Values{"RelayState": {fmt.Sprintf("s%d", pending.MaxPending+extra-1)}}, browser)
-	r.AddCookie(&http.Cookie{Name: pending.DefaultCookiePrefix + "bogus", Value: "x.y"}) //nolint:gosec // G124: a request cookie carries no attributes
-	r.AddCookie(&http.Cookie{Name: "session", Value: "keep"})                            //nolint:gosec // G124: a request cookie carries no attributes
+	browser := jar{}
+	names := map[string]string{}
+	for i, s := range []string{"old", "live", "taken"} {
+		// "live" is remembered after "old" has expired, "taken" last,
+		// each at a RelayState of its own slot.
+		tr := at([]time.Duration{0, pending.DefaultMaxAge + time.Minute, 2 * pending.DefaultMaxAge}[i])
+		for n := 0; ; n++ {
+			rs := fmt.Sprintf("%s-%d", s, n)
+			if _, used := names[slotName(t, cfg, tr, rs)]; used {
+				continue
+			}
+			_, w := remember(t, cfg, tr, rs, "")
+			browser.set(w)
+			names[onlyCookie(t, w).Name] = s
+			names[s] = rs
+			break
+		}
+	}
+	invalid := pending.DefaultCookiePrefix + "63"
+	names[invalid] = "invalid"
+	browser[invalid] = &http.Cookie{Name: invalid, Value: "x.y"}                                                           //nolint:gosec // G124: a request cookie carries no attributes
+	browser[pending.DefaultCookiePrefix+"other"] = &http.Cookie{Name: pending.DefaultCookiePrefix + "other", Value: "x.y"} //nolint:gosec // G124: a request cookie carries no attributes
+	browser["session"] = &http.Cookie{Name: "session", Value: "keep"}                                                      //nolint:gosec // G124: a request cookie carries no attributes
+
+	// "old" has expired when "taken" is taken; "live" has not.
 	w := httptest.NewRecorder()
-	tr := newTracker(t, cfg, pending.WithClock(dsig.NewFakeClockAt(start.Add(time.Minute))))
-	if _, err := tr.Take(w, r); err != nil {
+	if _, err := at(2*pending.DefaultMaxAge).Take(w, browser.request(names["taken"])); err != nil {
 		t.Fatal(err)
 	}
 	cleared := map[string]bool{}
 	for _, c := range w.Result().Cookies() {
-		if c.MaxAge < 0 {
-			cleared[c.Name] = true
+		if c.MaxAge >= 0 {
+			t.Errorf("Take set %+v", c)
 		}
+		cleared[names[c.Name]] = true
 	}
-	// The taken one, the invalid one, and the oldest beyond MaxPending.
-	want := map[string]bool{names[len(names)-1]: true, pending.DefaultCookiePrefix + "bogus": true}
-	for _, name := range names[:extra-1] {
-		want[name] = true
+	if len(cleared) != 3 || !cleared["old"] || !cleared["taken"] || !cleared["invalid"] {
+		t.Errorf("cleared %v, want old, taken and invalid", cleared)
 	}
-	if len(cleared) != len(want) {
-		t.Errorf("cleared %v, want %v", cleared, want)
-	}
-	for name := range want {
-		if !cleared[name] {
-			t.Errorf("%s not cleared; cleared %v", name, cleared)
-		}
-	}
+}
 
-	// Expired logins are cleared too.
-	w = httptest.NewRecorder()
-	late := newTracker(t, cfg, pending.WithClock(dsig.NewFakeClockAt(start.Add(pending.DefaultMaxAge+time.Hour))))
-	if _, err := late.Take(w, acsRequest(url.Values{"RelayState": {"s0"}}, browser)); !errors.Is(err, pending.ErrNotFound) {
-		t.Fatalf("err = %v, want ErrNotFound", err)
-	}
-	if n := len(w.Result().Cookies()); n != len(names) {
-		t.Errorf("cleared %d cookies of expired logins, want %d", n, len(names))
+// TestChangeSlots checks that a login remembered before a change of
+// WithSlots is still found.
+func TestChangeSlots(t *testing.T) {
+	cfg, _ := newConfig(t)
+	msg, w := remember(t, cfg, newTracker(t, cfg, pending.WithSlots(pending.MaxSlots)), "s", "")
+	browser := jar{}
+	browser.set(w)
+	login, err := newTracker(t, cfg, pending.WithSlots(1)).Take(httptest.NewRecorder(), browser.request("s"))
+	if err != nil || login.ID != msg.ID {
+		t.Errorf("Take = %+v, %v; want ID %q", login, err, msg.ID)
 	}
 }
 
@@ -429,6 +579,10 @@ func TestNewErrors(t *testing.T) {
 		},
 		"bad prefix": func() (*pending.Tracker, error) {
 			return pending.New(cfg, testKey, pending.WithCookiePrefix("a;b"))
+		},
+		"no slots": func() (*pending.Tracker, error) { return pending.New(cfg, testKey, pending.WithSlots(0)) },
+		"too many slots": func() (*pending.Tracker, error) {
+			return pending.New(cfg, testKey, pending.WithSlots(pending.MaxSlots+1))
 		},
 	} {
 		if _, err := f(); err == nil {
