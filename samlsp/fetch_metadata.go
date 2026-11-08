@@ -89,13 +89,20 @@ func ParseSignedMetadataByEntityID(data []byte, entityID string, certs []*x509.C
 
 // FetchMetadata returns metadata from an IDP metadata URL.
 //
-// If httpClient is nil, a client with a two-minute timeout is used. Only a
-// 2xx response is accepted.
+// If httpClient is nil, a client with a two-minute timeout that connects
+// only to public addresses is used: pass a client of your own to fetch
+// metadata from your own network, such as from localhost. Only a 2xx
+// response is accepted.
 //
 // The metadata names the certificates the service provider trusts to sign
 // assertions, so whoever controls the response controls who can log in. It
 // is not authenticated beyond what httpClient does: use an https URL, and
 // prefer FetchSignedMetadata, or metadata kept with the application.
+//
+// If the URL comes from someone you do not fully trust and you pass an
+// httpClient, guard its dialer against reaching your own network
+// (server-side request forgery), as the default client does, such as with
+// code.dny.dev/ssrf.
 func FetchMetadata(ctx context.Context, httpClient *http.Client, metadataURL url.URL) (*saml.EntityDescriptor, error) {
 	data, err := fetchMetadataBytes(ctx, httpClient, metadataURL)
 	if err != nil {

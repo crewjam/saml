@@ -404,9 +404,12 @@ func TestIDPAcceptsSOAPLogoutResponses(t *testing.T) {
 // not follow redirects.
 func TestIDPSOAPLogoutHTTPClient(t *testing.T) {
 	t.Run("redirect not followed", func(t *testing.T) {
-		// Plain http servers, so that the default client is used.
+		// Plain http servers, and the default client's settings with a
+		// transport that may reach them on loopback (the default
+		// transport refuses to: see "default client refuses loopback").
 		pt := newPropagationTest(t)
 		pt.idp.AllowInsecureSOAPEndpoints = true
+		pt.idp.HTTPClient = defaultClientOnLoopback()
 		target := pt.addHTTPSOAPParticipant(t)
 		redirecting := pt.addHTTPSOAPParticipant(t)
 		redirecting.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -417,6 +420,19 @@ func TestIDPSOAPLogoutHTTPClient(t *testing.T) {
 		w := pt.startLogout("")
 		assert.Check(t, is.Contains(w.Body.String(), redirecting.sp.MetadataURL.String()))
 		assert.Check(t, is.Len(target.requests(), 0))
+	})
+	t.Run("default client refuses loopback", func(t *testing.T) {
+		// The default client connects only to public addresses, so that
+		// a SingleLogoutService in an SP's metadata cannot point the IdP
+		// at its own network.
+		pt := newPropagationTest(t)
+		pt.idp.AllowInsecureSOAPEndpoints = true
+		soapSP := pt.addHTTPSOAPParticipant(t)
+		pt.login(t, soapSP.sp)
+
+		w := pt.startLogout("")
+		assert.Check(t, is.Len(soapSP.requests(), 0))
+		assert.Check(t, is.Contains(w.Body.String(), soapSP.sp.MetadataURL.String()))
 	})
 	t.Run("custom client", func(t *testing.T) {
 		pt := newPropagationTest(t)
@@ -497,6 +513,7 @@ func TestIDPIgnoresInsecureSOAPLogoutEndpoint(t *testing.T) {
 	t.Run("allowed", func(t *testing.T) {
 		pt := newPropagationTest(t)
 		pt.idp.AllowInsecureSOAPEndpoints = true
+		pt.idp.HTTPClient = defaultClientOnLoopback()
 		soapSP := pt.addHTTPSOAPParticipant(t, HTTPRedirectBinding)
 		pt.login(t, soapSP.sp)
 
@@ -529,4 +546,13 @@ func TestCheckSOAPEndpoint(t *testing.T) {
 		}
 	}
 	assert.Check(t, is.ErrorContains(checkSOAPEndpoint("http://[::1", true), "invalid SOAP endpoint"))
+}
+
+// defaultClientOnLoopback is the default SOAP client, with its timeout and
+// redirect policy, but with a transport that may reach the test servers
+// on loopback, which the default transport refuses.
+func defaultClientOnLoopback() *http.Client {
+	c := *defaultSOAPHTTPClient
+	c.Transport = http.DefaultTransport
+	return &c
 }

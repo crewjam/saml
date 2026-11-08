@@ -235,7 +235,8 @@ func newWorld(t *testing.T) *world {
 	w.cert = cert
 	// The metadata is served over plain http, so it is trusted for its
 	// signature.
-	w.sp = newTestSP(t, samlsp.RemoteMetadata(server.URL+"/metadata", samlsp.WithMetadataSigners(cert)))
+	// The IdP is on loopback, which the library's default client refuses.
+	w.sp = newTestSP(t, samlsp.RemoteMetadata(server.URL+"/metadata", samlsp.WithMetadataSigners(cert), samlsp.WithHTTPClient(server.Client())))
 	sps := newRemoteServiceProviders([]string{w.sp.config.EntityID()}, nil)
 	if w.idp, err = newIdentityProvider(server.URL, key, cert, sps, exampleUsers()); err != nil {
 		t.Fatal(err)
@@ -322,7 +323,7 @@ func TestLoginCSRF(t *testing.T) {
 
 func TestUntrustedSP(t *testing.T) {
 	w := newWorld(t)
-	other := newTestSP(t, samlsp.RemoteMetadata(w.url+"/metadata", samlsp.WithMetadataSigners(w.cert)))
+	other := newTestSP(t, samlsp.RemoteMetadata(w.url+"/metadata", samlsp.WithMetadataSigners(w.cert), samlsp.WithHTTPClient(http.DefaultClient)))
 	b := newBrowser(t)
 	if p := b.get(other.server.URL + "/login"); p.status != http.StatusBadRequest {
 		t.Fatalf("got %d", p.status)

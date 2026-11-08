@@ -16,6 +16,7 @@ import (
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/internal/idpmetadata"
+	"github.com/crewjam/saml/internal/safehttp"
 )
 
 // MetadataFunc returns the metadata of the identity provider (IdP) that a
@@ -86,12 +87,28 @@ type HTTPClientOption struct{ client *http.Client }
 // New, it is used to resolve HTTP-Artifact responses, for back-channel
 // logout and for attribute queries; passed to RemoteMetadata or
 // MDQMetadata, to fetch metadata. Use it for timeouts, proxies, a TLS
-// client certificate, or a Transport whose DialContext limits the
-// addresses requests may reach.
+// client certificate, or to limit the addresses requests may reach.
 //
 // Without it, New uses a client that times out after 10 seconds and
 // follows no redirects (see saml.ServiceProvider.HTTPClient), and
 // RemoteMetadata and MDQMetadata one that times out after two minutes.
+// Both connect only to public addresses: the requests go to the URLs in
+// the IdP metadata, and to the metadata URL itself, and if either comes
+// from someone you do not fully trust, such as a tenant's administrator,
+// they could otherwise point them at services on your own network
+// (server-side request forgery). Give a client of your own to reach an
+// IdP on your own network, such as on localhost during development.
+//
+// A client you give is used as it is. If it may be sent to URLs from
+// others, guard its dialer, which checks the address actually connected
+// to after DNS resolution, as the default clients do with
+// code.dny.dev/ssrf:
+//
+//	guard := ssrf.New()
+//	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{
+//		DialContext: (&net.Dialer{Control: guard.Safe}).DialContext,
+//	}}
+//
 // Whichever client is used, a redirect is not followed to a URL that the
 // request could not have been sent to in the first place: one that is not
 // https, unless that is allowed.
@@ -271,7 +288,7 @@ func fetchMetadata(ctx context.Context, metadataURL url.URL, o metadataOptions) 
 // that, a redirect from https to http would let anyone on the network path
 // supply the metadata.
 func metadataHTTPClient(o metadataOptions) *http.Client {
-	c := http.Client{Timeout: metadataFetchTimeout}
+	c := *safehttp.Client(metadataFetchTimeout, nil)
 	if o.client != nil {
 		c = *o.client
 	}
@@ -327,9 +344,9 @@ func metadataHTTPClient(o metadataOptions) *http.Client {
 // from an untrusted party, such as the administrator of a tenant, only
 // with WithMetadataSigners, or for that party's own IdP. Fetching such a
 // URL is also a request from your server to wherever it points, internal
-// services included (server-side request forgery): limit where it may go
-// with WithHTTPClient, for example with an http.Transport whose
-// DialContext refuses private and loopback addresses.
+// services included (server-side request forgery). The default client
+// connects only to public addresses; a client given with WithHTTPClient
+// is used as it is.
 //
 // To report a bad URL when the IdP is configured, rather than at the first
 // login, call the returned MetadataFunc once and check its error: the

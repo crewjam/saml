@@ -127,9 +127,14 @@ type ServiceProvider struct {
 
 	// HTTPClient to use for SOAP exchanges with the IdP: SAML artifact
 	// resolution, attribute queries (QueryAttributes) and SOAP single logout.
-	// If nil, a client with a 10 second timeout that follows no redirects is
-	// used. Whichever client is used, a redirect to a location that is not
-	// https (or http, with AllowInsecureSOAPEndpoints) is not followed.
+	// If nil, a client with a 10 second timeout that follows no redirects,
+	// and connects only to public addresses, is used: the endpoints come
+	// from the IdP metadata, which could otherwise point them at services
+	// on your own network. Set a client to reach an IdP on your own
+	// network; it is used as it is, so guard its dialer (such as with
+	// code.dny.dev/ssrf) if the metadata is not fully trusted. Whichever
+	// client is used, a redirect to a location that is not https (or
+	// http, with AllowInsecureSOAPEndpoints) is not followed.
 	HTTPClient *http.Client
 
 	// AllowInsecureSOAPEndpoints lets the service provider send SOAP

@@ -221,6 +221,28 @@
 //
 // Messages on the SOAP back channel (attribute queries, artifact resolution and SOAP single logout, at both the service provider and the IDP) are sent only to https endpoints: an http endpoint in the peer's metadata is refused with an error matching saml.ErrInsecureSOAPEndpoint (the IDP instead treats it as missing and logs the participant out through the browser if it can). Set AllowInsecureSOAPEndpoints on the ServiceProvider or IdentityProvider to allow plain http, for tests and development only.
 //
+// # Limiting where the service provider connects
+//
+// The service provider makes HTTP requests to URLs it is given: the metadata URL of RemoteMetadata, MDQMetadata and samlsp.FetchMetadata, and the SOAP endpoints named in the IDP metadata, for artifact resolution, attribute queries and back-channel logout. When the metadata or its URL comes from someone you do not fully trust, such as the administrator of a tenant who registers their own IDP, those requests go wherever they say, including to services on your own network and to your cloud provider's metadata endpoint (server-side request forgery).
+//
+// So the HTTP clients the package uses when you give none connect only to public addresses. Each address is checked as it is connected to, after DNS resolution, with [code.dny.dev/ssrf]: private, loopback, link-local and the other IANA special-purpose ranges are refused, as are the IPv6 prefixes that embed an IPv4 address, whatever the URL's host name says and wherever a redirect leads. The proxy of the environment (HTTPS_PROXY) is still used.
+//
+// To reach an IDP on your own network, such as one on localhost during development, give your own client with samlsp.WithHTTPClient (or the HTTPClient field of ServiceProvider and IdentityProvider, or the argument of samlsp.FetchMetadata). A client you give is used as it is, so if it may be sent to URLs from others, guard its dialer the same way:
+//
+//	guard := ssrf.New() // public unicast addresses, on ports 80 and 443
+//	client := &http.Client{
+//		Timeout: 10 * time.Second,
+//		Transport: &http.Transport{
+//			DialContext: (&net.Dialer{Control: guard.Safe}).DialContext,
+//		},
+//	}
+//
+//	idp := samlsp.RemoteMetadata(tenantMetadataURL, samlsp.WithHTTPClient(client))
+//	config, err := samlsp.New(entityID, idp, samlsp.WithSigningKey(key, cert),
+//		samlsp.WithHTTPClient(client)) // artifact resolution, attribute queries, SOAP logout
+//
+// An identity provider's back-channel requests, to the SOAP endpoints in service providers' metadata, are guarded the same way unless you give idpslo.WithHTTPClient or IdentityProvider.HTTPClient.
+//
 // # Hardening
 //
 // The saml.ServiceProvider that x/samlsp builds turns on checks that the core package leaves off for compatibility. It validates the authentication context, and refuses unknown conditions, AES-CBC encrypted assertions in unsigned Responses, SHA-1 signatures, expired IDP metadata, non-standard artifacts, and requests whose RelayState is longer than the 80 bytes the bindings allow.
@@ -271,6 +293,8 @@
 // If the SessionProvider also implements SessionParticipantTracker, which records the service providers each session logged in to, ServeSLO sends a LogoutRequest to each of the session's other service providers before it answers, and IdentityProvider.StartLogout starts IdP-initiated logout of a session. Set EncryptLogoutNameID to send those requests an EncryptedID instead of a NameID, encrypted to each service provider's encryption certificate. A service provider whose metadata publishes none gets the NameID in the clear.
 //
 // Without a SessionParticipantTracker, the IdP cannot contact the session's other service providers, yet answers a plain Success. SAML Core (§3.7.3.2) requires it to add the second-level status PartialLogout then; set ReportPartialLogoutWithoutTracker to do so. It is off by default, as a service provider might handle a second-level status poorly.
+//
+// With idpslo.BackChannel, the IdP sends LogoutRequests to the SOAP endpoints in the service providers' metadata. Its default client connects only to public addresses; a client given with idpslo.WithHTTPClient is used as it is (see Limiting where the service provider connects).
 //
 // # Support
 //
@@ -324,6 +348,7 @@
 //
 // [samltest.dev]: https://www.samltest.dev/
 // [API]: https://www.samltest.dev/#api
+// [code.dny.dev/ssrf]: https://pkg.go.dev/code.dny.dev/ssrf
 // [package documentation]: https://pkg.go.dev/github.com/crewjam/saml/x/samlsp
 // [interoperable SAML]: https://kantarainitiative.github.io/SAMLprofiles/saml2int.html
 // [sstc-saml-binding-simplesign-cs-01]: https://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-binding-simplesign-cs-01.pdf
