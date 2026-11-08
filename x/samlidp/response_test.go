@@ -1,10 +1,14 @@
 package samlidp_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/gob"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -126,6 +130,64 @@ func TestSPNameQualifier(t *testing.T) {
 	p = newPair(t, []samlidp.Option{samlidp.WithAffiliation(func(context.Context, string, string) (bool, error) { return false, boom })}, nil)
 	if _, req, err = p.parse(t, spNameQualifier(affiliation)); !errors.Is(err, boom) || req != nil {
 		t.Fatalf("got %+v, %v", req, err)
+	}
+}
+
+// TestRequestFields checks that the protocol fields of the request reach
+// the AuthnRequest, and survive being kept with encoding/json and
+// encoding/gob.
+func TestRequestFields(t *testing.T) {
+	p := newPair(t, nil, nil)
+	proxyCount := 2
+	_, req, err := p.parse(t, samlsp.WithAuthnRequest(func(req *saml.AuthnRequest) error {
+		req.Consent = "urn:oasis:names:tc:SAML:2.0:consent:obtained"
+		req.AttributeConsumingServiceIndex = "3"
+		req.Scoping = &saml.Scoping{
+			ProxyCount: &proxyCount,
+			IDPList: &saml.IDPList{IDPEntries: []saml.IDPEntry{
+				{ProviderID: idpEntityID, Name: "Example", Loc: "https://idp.example.com/saml/sso"},
+			}},
+			RequesterIDs: []string{"https://app.example.com"},
+		}
+		return nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Consent != "urn:oasis:names:tc:SAML:2.0:consent:obtained" || req.AttributeConsumingServiceIndex != "3" {
+		t.Fatalf("got %+v", req)
+	}
+	s := req.Scoping
+	if s == nil || s.ProxyCount == nil || *s.ProxyCount != 2 || s.IDPList == nil || len(s.IDPList.IDPEntries) != 1 ||
+		s.IDPList.IDPEntries[0].ProviderID != idpEntityID || s.IDPList.IDPEntries[0].Loc != "https://idp.example.com/saml/sso" ||
+		len(s.RequesterIDs) != 1 || s.RequesterIDs[0] != "https://app.example.com" {
+		t.Fatalf("Scoping = %+v", s)
+	}
+
+	buf, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fromJSON samlidp.AuthnRequest
+	if err := json.Unmarshal(buf, &fromJSON); err != nil {
+		t.Fatal(err)
+	}
+	var b bytes.Buffer
+	if err := gob.NewEncoder(&b).Encode(req); err != nil {
+		t.Fatal(err)
+	}
+	var fromGob samlidp.AuthnRequest
+	if err := gob.NewDecoder(&b).Decode(&fromGob); err != nil {
+		t.Fatal(err)
+	}
+	for name, kept := range map[string]*samlidp.AuthnRequest{"json": &fromJSON, "gob": &fromGob} {
+		if !reflect.DeepEqual(kept.Scoping, req.Scoping) || kept.Consent != req.Consent ||
+			kept.AttributeConsumingServiceIndex != req.AttributeConsumingServiceIndex || !kept.IssueInstant.Equal(req.IssueInstant) {
+			t.Errorf("%s: kept %+v, want %+v", name, kept, req)
+		}
+		if _, err := p.idp.Response(context.Background(), kept, testSubject); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }
 

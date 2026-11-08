@@ -57,9 +57,11 @@
 //		continueLogin(w, r, req)
 //	}
 //
-// The AuthnRequest is plain data. If the user must log in, or consent,
-// first, keep it, such as in a server-side session, until they have:
-// unlike the request it came in, it does not expire during a slow login.
+// The AuthnRequest is plain data: what of the request bears on the
+// answer. If the user must log in, or consent, first, keep it, such as in
+// a server-side session, until they have: unlike the request it came in,
+// it does not expire during a slow login. Delete it once it is answered:
+// Response does not stop it from being answered again.
 // Second, once the user is authenticated, answer it:
 //
 //	func continueLogin(w http.ResponseWriter, r *http.Request, req *samlidp.AuthnRequest) {

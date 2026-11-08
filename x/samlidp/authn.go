@@ -23,7 +23,9 @@ const bearerMethod = "urn:oasis:names:tc:SAML:2.0:cm:bearer" //nolint:gosec // a
 // It is plain data, so that the application can keep it while the user
 // logs in, such as in a server-side session or with encoding/json. Keep it
 // where the user cannot change it: its fields are trusted when the
-// Response is made. Response checks again that the SP is known and that
+// Response is made. It holds what bears on the answer, not the whole
+// request: the request's Conditions and Extensions, for example, are not
+// kept. Response checks again that the SP is known and that
 // ACSURL is one of its assertion consumer services, so a changed
 // AuthnRequest cannot send an assertion anywhere else.
 type AuthnRequest struct {
@@ -51,6 +53,24 @@ type AuthnRequest struct {
 	// ProviderName is a human-readable name of the SP that it sent with
 	// the request, if any.
 	ProviderName string
+
+	// Consent, if not empty, is the SP's claim of the user's consent to
+	// the request: a URI such as "urn:oasis:names:tc:SAML:2.0:consent:obtained"
+	// (saml-core §3.2.1, §8.4).
+	Consent string
+
+	// AttributeConsumingServiceIndex, if not empty, is the index of the
+	// AttributeConsumingService of the SP's metadata that lists the
+	// attributes it asks for (saml-core §3.4.1). Which attributes to send
+	// is the application's to decide.
+	AttributeConsumingServiceIndex string
+
+	// Scoping, if not nil, is the Scoping of the request (saml-core
+	// §3.4.1.2): the IdPs the SP trusts (IDPList), the SPs on whose
+	// behalf it asks (RequesterIDs), and how many times the request may
+	// be proxied to another IdP (ProxyCount). An IdP that proxies requests
+	// must honour it; one that does not may ignore it.
+	Scoping *saml.Scoping
 
 	// ForceAuthn asks the IdP to authenticate the user again, even if it
 	// has a session for them (saml-core §3.4.1). The Subject's
@@ -296,8 +316,12 @@ func newAuthnRequest(ireq *saml.IdpAuthnRequest) *AuthnRequest {
 		ACSURL:       ireq.ACSEndpoint.Location,
 		ACSBinding:   ireq.ACSEndpoint.Binding,
 		ProviderName: q.ProviderName,
+		Consent:      q.Consent,
 		ForceAuthn:   q.ForceAuthn != nil && *q.ForceAuthn,
 		IsPassive:    q.IsPassive != nil && *q.IsPassive,
+
+		AttributeConsumingServiceIndex: q.AttributeConsumingServiceIndex,
+		Scoping:                        q.Scoping,
 	}
 	if ireq.ServiceProviderMetadata != nil {
 		req.ServiceProvider = ireq.ServiceProviderMetadata.EntityID
@@ -335,6 +359,16 @@ func (req *AuthnRequest) samlRequest() saml.AuthnRequest {
 		AssertionConsumerServiceURL: req.ACSURL,
 		ProtocolBinding:             req.ACSBinding,
 		ProviderName:                req.ProviderName,
+		Consent:                     req.Consent,
+		Scoping:                     req.Scoping,
+
+		AttributeConsumingServiceIndex: req.AttributeConsumingServiceIndex,
+	}
+	if req.ForceAuthn {
+		q.ForceAuthn = &req.ForceAuthn
+	}
+	if req.IsPassive {
+		q.IsPassive = &req.IsPassive
 	}
 	if req.NameIDFormat != "" || req.SPNameQualifier != "" || req.AllowCreate {
 		p := &saml.NameIDPolicy{}
