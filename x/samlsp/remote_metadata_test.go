@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -53,7 +54,7 @@ func testIDPMetadata(version int) *saml.EntityDescriptor {
 		IDPSSODescriptors: []saml.IDPSSODescriptor{{
 			SingleSignOnServices: []saml.Endpoint{{
 				Binding:  saml.HTTPRedirectBinding,
-				Location: "https://idp.example.com/sso/" + string(rune('0'+version)),
+				Location: "https://idp.example.com/sso/" + strconv.Itoa(version),
 			}},
 		}},
 	}
