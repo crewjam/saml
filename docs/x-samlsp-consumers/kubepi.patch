@@ -164,7 +164,7 @@ index 2ce7841..5942422 100644
 +			ctx.Values().Set("message", "SAML2 login failed")
 +			return
 +		}
-+		assertion, err := sp.config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
++		assertion, err := sp.config.ParseResponse(r.Context(), r, login.ResponseOption())
 +		if err != nil {
 +			server.Logger().Errorf("SAML2 login failed: %s", err)
 +			ctx.StatusCode(iris.StatusForbidden)

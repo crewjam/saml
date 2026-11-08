@@ -95,7 +95,7 @@ index 9dcfd13..0bdc2d2 100644
 +		http.Error(w, err.Error(), http.StatusForbidden)
 +		return
 +	}
-+	assertion, err := s.config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
++	assertion, err := s.config.ParseResponse(r.Context(), r, login.ResponseOption())
 +	if err != nil {
 +		http.Error(w, err.Error(), http.StatusForbidden)
 +		return

@@ -114,7 +114,7 @@ func acs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no login in progress", http.StatusForbidden)
 		return
 	}
-	assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
+	assertion, err := config.ParseResponse(r.Context(), r, login.ResponseOption())
 	if err != nil {
 		http.Error(w, "login failed", http.StatusForbidden)
 		return

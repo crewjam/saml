@@ -48,7 +48,7 @@ func Example() {
 			http.Error(w, "no login in progress; please sign in again", http.StatusBadRequest)
 			return
 		}
-		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
+		assertion, err := config.ParseResponse(r.Context(), r, login.ResponseOption())
 		if err != nil {
 			// The login stays in progress, for the real Response.
 			http.Error(w, "login failed", http.StatusForbidden)
@@ -76,7 +76,7 @@ func ExampleTracker_Find_unsolicited() {
 		login, err := tracker.Find(w, r)
 		switch {
 		case err == nil:
-			opts = append(opts, samlsp.WithRequestID(login.ID))
+			opts = append(opts, login.ResponseOption())
 		case errors.Is(err, pending.ErrNotFound):
 			// IdP-initiated, or the login took too long.
 		default:

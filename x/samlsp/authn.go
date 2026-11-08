@@ -80,11 +80,15 @@ func WithForceAuthn(force bool) AuthnOption {
 // (saml-core §3.3.2.2.1): without one, AuthnRequest and ParseResponse
 // return an error.
 //
-// The IdP may answer with another class: the class is enforced only if the
-// same option is passed to ParseResponse too, which then refuses an
-// assertion whose AuthnContextClassRef does not satisfy it, with an error
-// matching saml.ErrAuthnContextMismatch, even if a ServiceProviderOption
-// turned the saml.ServiceProvider's ValidateAuthnContextClassRef off.
+// The IdP may answer with another class, so ParseResponse must be told
+// what was requested to enforce it: pass it the request with WithRequest,
+// with the Message's ID and RequestedAuthnContext, as
+// x/samlsp/pending.Login.ResponseOption does, or pass it the same option.
+// ParseResponse then refuses an assertion whose AuthnContextClassRef does
+// not satisfy it, with an error matching saml.ErrAuthnContextMismatch,
+// even if a ServiceProviderOption turned the saml.ServiceProvider's
+// ValidateAuthnContextClassRef off. WithRequestID alone does not carry the
+// class, and does not enforce it.
 // A comparison other than saml.AuthnContextComparisonExact
 // needs WithAuthnContextComparator, since the order of the classes is
 // up to each deployment; without it, ParseResponse refuses every
@@ -294,8 +298,10 @@ func chooseBinding(preferred string, locate func(string) string) (string, string
 // browser to the identity provider with, by calling Message.Write.
 //
 // relayState comes back with the response. Use it to find the pending
-// login, which must hold the returned Message.ID until ParseResponse is called.
-// It should be unpredictable and at most 80 bytes long.
+// login, which must hold the returned Message.ID, and the
+// Message.RequestedAuthnContext, until ParseResponse is called with
+// WithRequest. x/samlsp/pending keeps both in a cookie. relayState should
+// be unpredictable and at most 80 bytes long.
 func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...AuthnOption) (*Message, error) {
 	o := authnOptions{responseBinding: saml.HTTPPostBinding}
 	for _, opt := range opts {
@@ -312,7 +318,7 @@ func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...Au
 		return nil, err
 	}
 	ctx = IdentityProviderContext(ctx, o.idp)
-	return c.send(ctx, OutgoingMessage{
+	msg, err := c.send(ctx, OutgoingMessage{
 		Service:    SingleSignOnService,
 		Param:      "SAMLRequest",
 		RelayState: relayState,
@@ -364,6 +370,11 @@ func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...Au
 			return req.Element(), nil
 		},
 	}, o.messageOptions)
+	if err != nil {
+		return nil, err
+	}
+	msg.authnContext = cloneRequestedAuthnContext(o.authnContext)
+	return msg, nil
 }
 
 // ResponseOption customizes ParseResponse.
@@ -378,7 +389,18 @@ type responseOptions struct {
 	authnContext *saml.RequestedAuthnContext
 	sp           []ServiceProviderOption
 	idp          MetadataFunc
+
+	// requested is the authentication context that each request of
+	// WithRequest asked for, by ID; nil for one that asked for none.
+	requested map[string]*saml.RequestedAuthnContext
 }
+
+// ErrConflictingAuthnContexts is returned by ParseResponse when it is
+// given several requests, with WithRequest and WithRequestID, that asked
+// for different authentication contexts: a single check cannot enforce
+// each request's own. Parse a Response with the one request it may
+// answer, as x/samlsp/pending finds it by the RelayState.
+var ErrConflictingAuthnContexts = errors.New("samlsp: the requests asked for different authentication contexts")
 
 type responseOptionFunc func(*responseOptions)
 
@@ -387,12 +409,75 @@ func (f responseOptionFunc) applyResponse(o *responseOptions) { f(o) }
 // WithRequestID accepts a response to the AuthnRequest with this ID (the
 // Message.ID returned by AuthnRequest). It can be passed more than once,
 // for example when a user has several logins pending in different tabs.
+//
+// It does not carry the authentication context the request asked for
+// with WithAuthnContext, so it does not enforce it: for a request that
+// asked for one, use WithRequest.
 func WithRequestID(id string) ResponseOption {
+	return WithRequest(id, nil)
+}
+
+// WithRequest accepts a response to the AuthnRequest with this ID, as
+// WithRequestID does, and enforces requested, the authentication context
+// the request asked for (Message.RequestedAuthnContext), as the
+// AuthnContextOption of WithAuthnContext passed to ParseResponse would:
+// the assertion's AuthnContextClassRef must satisfy it. A nil requested
+// enforces none. x/samlsp/pending.Login.ResponseOption returns this
+// option for the login it found.
+//
+// It can be passed more than once, but ParseResponse returns
+// ErrConflictingAuthnContexts if the requests asked for different
+// contexts (a request of WithRequestID asked for none). An
+// AuthnContextOption passed to ParseResponse takes precedence.
+func WithRequest(id string, requested *saml.RequestedAuthnContext) ResponseOption {
+	rac := cloneRequestedAuthnContext(requested)
 	return responseOptionFunc(func(o *responseOptions) {
-		if id != "" {
-			o.requestIDs = append(o.requestIDs, id)
+		if id == "" {
+			return
+		}
+		o.requestIDs = append(o.requestIDs, id)
+		if o.requested == nil {
+			o.requested = map[string]*saml.RequestedAuthnContext{}
+		}
+		if prev, seen := o.requested[id]; !seen || prev == nil {
+			o.requested[id] = rac
 		}
 	})
+}
+
+// requestedAuthnContext returns the authentication context that the
+// requests of WithRequest asked for, or nil if none asked for one, and
+// ErrConflictingAuthnContexts if they asked for different ones.
+func (o *responseOptions) requestedAuthnContext() (*saml.RequestedAuthnContext, error) {
+	var (
+		rac   *saml.RequestedAuthnContext
+		first = true
+	)
+	for _, r := range o.requested {
+		switch {
+		case first:
+			rac, first = r, false
+		case !sameAuthnContext(rac, r):
+			return nil, ErrConflictingAuthnContexts
+		}
+	}
+	return rac, nil
+}
+
+// sameAuthnContext reports whether a and b ask for the same context. An
+// empty Comparison means exact (saml-core §3.3.2.2.1).
+func sameAuthnContext(a, b *saml.RequestedAuthnContext) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	comparison := func(c string) string {
+		if c == "" {
+			return string(saml.AuthnContextComparisonExact)
+		}
+		return c
+	}
+	return comparison(a.Comparison) == comparison(b.Comparison) &&
+		slices.Equal(a.AuthnContextClassRefs, b.AuthnContextClassRefs)
 }
 
 // AllowUnsolicited accepts an unsolicited response, sent by the IdP without
@@ -446,15 +531,25 @@ func checkAuthnAge(a *saml.Assertion, maxAge, skew time.Duration, now time.Time)
 // AllowIDPInitiated set with WithServiceProvider). Otherwise ParseResponse
 // returns ErrNoRequestID.
 //
-// AllowUnsolicited and an AuthnContextOption passed to ParseResponse take
-// precedence over the corresponding settings made with WithServiceProvider;
-// without them, those settings apply.
+// AllowUnsolicited and an AuthnContextOption passed to ParseResponse, or
+// the authentication context of a WithRequest, take precedence over the
+// corresponding settings made with WithServiceProvider; without them,
+// those settings apply.
 func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...ResponseOption) (*Assertion, error) {
 	var o responseOptions
 	for _, opt := range opts {
 		if opt != nil {
 			opt.applyResponse(&o)
 		}
+	}
+	if o.authnContext == nil {
+		// Enforce what the request asked for, as if the same
+		// AuthnContextOption were passed.
+		rac, err := o.requestedAuthnContext()
+		if err != nil {
+			return nil, err
+		}
+		o.authnContext = rac
 	}
 	if err := checkAuthnContext(o.authnContext); err != nil {
 		return nil, err

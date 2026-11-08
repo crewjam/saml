@@ -200,7 +200,7 @@ index 9689cbb..b0cba5e 100644
 +			var opts []samlsp.ResponseOption
 +			login, err := self.pending.Find(w, r)
 +			if err == nil {
-+				opts = append(opts, samlsp.WithRequestID(login.ID))
++				opts = append(opts, login.ResponseOption())
 +			}
 +			if self.authenticator.SamlAllowIdpInitiated {
 +				opts = append(opts, samlsp.AllowUnsolicited)

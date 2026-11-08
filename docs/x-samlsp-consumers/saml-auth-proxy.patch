@@ -174,7 +174,7 @@ index 0000000..fe0966e
 +	returnTo := "/"
 +	login, err := a.pending.Find(w, r)
 +	if err == nil {
-+		opts = append(opts, samlsp.WithRequestID(login.ID))
++		opts = append(opts, login.ResponseOption())
 +		returnTo = login.Data
 +	} else if !errors.Is(err, pending.ErrNotFound) {
 +		a.logger.Warn("Invalid pending login cookie", zap.Error(err))
