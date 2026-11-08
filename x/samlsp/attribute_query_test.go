@@ -21,6 +21,7 @@ import (
 type attributeAuthority struct {
 	*httptest.Server
 	queried []string // the attribute Names of the last query
+	sigAlg  string   // the signature method of the last query
 	status  string
 }
 
@@ -38,6 +39,10 @@ func newAttributeAuthority(t *testing.T, ti *testIDP) *attributeAuthority {
 		if query == nil || query.FindElement("./Signature") == nil {
 			http.Error(w, "unsigned or missing query", http.StatusBadRequest)
 			return
+		}
+		aa.sigAlg = ""
+		if m := query.FindElement("./Signature/SignedInfo/SignatureMethod"); m != nil {
+			aa.sigAlg = m.SelectAttrValue("Algorithm", "")
 		}
 		aa.queried = nil
 		for _, a := range query.FindElements("./Attribute") {

@@ -388,10 +388,16 @@ func WithAuthnContextComparator(satisfies func(comparison saml.AuthnContextCompa
 
 // WithSignatureMethod sets the XML signature algorithm of everything the
 // SP signs: AuthnRequests (with SignAuthnRequests), logout messages,
-// attribute queries and signed metadata. It must suit the key of WithSigningKey:
-// dsig.RSASHA256SignatureMethod, RSASHA384 or RSASHA512 for an RSA key,
-// and dsig.ECDSASHA256SignatureMethod, ECDSASHA384 or ECDSASHA512 for an
-// ECDSA key. SHA-1 is refused. The default is SHA-256.
+// attribute queries, ArtifactResolves, signed metadata and SignElement. It
+// must suit the key of WithSigningKey: dsig.RSASHA256SignatureMethod,
+// RSASHA384 or RSASHA512 for an RSA key, and dsig.ECDSASHA256SignatureMethod,
+// ECDSASHA384 or ECDSASHA512 for an ECDSA key. SHA-1 is refused. The default
+// is SHA-256.
+//
+// A ServiceProviderOption that sets the saml.ServiceProvider's
+// LogoutSignatureMethod changes the method of logout messages only; one
+// that sets SignatureMethod changes that of AuthnRequests, which it also
+// signs, and of the other messages above except logout messages.
 func WithSignatureMethod(method string) Option {
 	return optionFunc(func(c *Config, _ *configOptions) { c.signatureMethod = method })
 }
@@ -419,15 +425,26 @@ func checkSignatureMethod(method string, key crypto.Signer) error {
 	return nil
 }
 
-// signWithLogoutMethod makes sp sign SOAP messages, attribute queries and
-// metadata with the method of LogoutSignatureMethod, which is the one of
-// WithSignatureMethod. Package saml signs those with SignatureMethod,
-// which also turns on the signing of AuthnRequests, so it is set only on
-// the ServiceProvider of a call that makes none.
-func signWithLogoutMethod(sp *saml.ServiceProvider) {
-	if sp.LogoutSignatureMethod != "" {
-		sp.SignatureMethod = sp.LogoutSignatureMethod
+// signWithGeneralMethod makes sp, the ServiceProvider of a call that
+// makes no AuthnRequest, sign what package saml signs with SignatureMethod
+// (attribute queries, ArtifactResolves, metadata and SignElement) with the
+// SP's general method. Setting SignatureMethod also turns on the signing
+// of AuthnRequests, so New sets it only with SignAuthnRequests.
+//
+// The method is SignatureMethod, if set; otherwise that of
+// WithSignatureMethod, if it suits sp.Key (which a ServiceProviderOption
+// may have replaced); otherwise SHA-256 for sp.Key. It is not
+// LogoutSignatureMethod, which a ServiceProviderOption may set for the
+// logout messages of one IdP only.
+func (c *Config) signWithGeneralMethod(sp *saml.ServiceProvider) {
+	if sp.SignatureMethod != "" {
+		return
 	}
+	method := c.signatureMethod
+	if method == "" || checkSignatureMethod(method, sp.Key) != nil {
+		method = signatureMethod(sp.Key)
+	}
+	sp.SignatureMethod = method
 }
 
 // WithClock sets the time source used to check validity periods. It is
@@ -659,7 +676,7 @@ func (c *Config) MetadataXML(_ context.Context, opts ...ServiceProviderOption) (
 	if !sp.SignMetadata {
 		return xml.MarshalIndent(md, "", "  ")
 	}
-	signWithLogoutMethod(sp)
+	c.signWithGeneralMethod(sp)
 	el, err := sp.SignEntityDescriptor(md)
 	if err != nil {
 		return nil, err
