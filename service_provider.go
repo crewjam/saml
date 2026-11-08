@@ -131,10 +131,12 @@ type ServiceProvider struct {
 	// and connects only to public addresses, is used: the endpoints come
 	// from the IdP metadata, which could otherwise point them at services
 	// on your own network. Set a client to reach an IdP on your own
-	// network; it is used as it is, so guard its dialer (such as with
-	// code.dny.dev/ssrf) if the metadata is not fully trusted. Whichever
-	// client is used, a redirect to a location that is not https (or
-	// http, with AllowInsecureSOAPEndpoints) is not followed.
+	// network; apart from its redirect policy it is used as it is, so guard
+	// its dialer (such as with code.dny.dev/ssrf) if the metadata is not
+	// fully trusted. Whichever client is used, no redirect is followed,
+	// whatever its CheckRedirect says: the SOAP binding has none, and
+	// following one would send the message, and present any TLS client
+	// certificate of the client, to a location the metadata never named.
 	HTTPClient *http.Client
 
 	// AllowInsecureSOAPEndpoints lets the service provider send SOAP
@@ -1021,12 +1023,31 @@ func fingerprintFormat(fp []byte) (string, error) {
 	return buf.String(), nil
 }
 
-// MakeArtifactResolveRequest produces a new ArtifactResolve object to send to the idp's Artifact resolver
+// MakeArtifactResolveRequest produces a new ArtifactResolve object to send
+// to the IdP's ArtifactResolutionService for the SOAP binding, the one
+// GetArtifactBindingLocation returns, whose Location is also the request's
+// Destination (saml-core §3.2.1). ParseResponse, which knows the artifact,
+// sends it instead to the endpoint whose index the artifact names, and sets
+// Destination to that one.
+//
+// The request is signed with SignArtifactResolve whenever Key is set,
+// whether or not SignatureMethod is: the IdP must authenticate the requester
+// before it returns the message an artifact stands for (saml-bindings
+// §3.6.5.2). Without Key the request is unsigned, and the requester must be
+// authenticated some other way, such as with a TLS client certificate in
+// HTTPClient.
 func (sp *ServiceProvider) MakeArtifactResolveRequest(artifactID string) (*ArtifactResolve, error) {
+	return sp.makeArtifactResolveRequest(artifactID, sp.artifactResolutionLocation(nil))
+}
+
+// makeArtifactResolveRequest is MakeArtifactResolveRequest for the
+// ArtifactResolutionService at destination.
+func (sp *ServiceProvider) makeArtifactResolveRequest(artifactID, destination string) (*ArtifactResolve, error) {
 	req := ArtifactResolve{
 		ID:           fmt.Sprintf("id-%x", randomBytes(sp.randReader(), 20)),
 		IssueInstant: sp.now(),
 		Version:      "2.0",
+		Destination:  destination,
 		Issuer: &Issuer{
 			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
 			Value:  firstSet(sp.EntityID, sp.MetadataURL.String()),
@@ -1034,7 +1055,7 @@ func (sp *ServiceProvider) MakeArtifactResolveRequest(artifactID string) (*Artif
 		Artifact: artifactID,
 	}
 
-	if len(sp.SignatureMethod) > 0 {
+	if !signerutil.IsNil(sp.Key) {
 		if err := sp.SignArtifactResolve(&req); err != nil {
 			return nil, err
 		}
@@ -1220,12 +1241,19 @@ func (sp *ServiceProvider) signingContext(signatureMethod string) (*dsig.Signing
 	return signingContext, nil
 }
 
-// SignArtifactResolve adds the `Signature` element to the `ArtifactResolve`.
+// SignArtifactResolve adds the `Signature` element to the `ArtifactResolve`,
+// replacing any it already has. It signs with SignatureMethod or, when that
+// is empty, with SHA-256 for the type of Key.
 func (sp *ServiceProvider) SignArtifactResolve(req *ArtifactResolve) error {
-	signingContext, err := GetSigningContext(sp)
+	signatureMethod := sp.SignatureMethod
+	if signatureMethod == "" && !signerutil.IsNil(sp.Key) {
+		signatureMethod = defaultSignatureMethod(sp.Key.Public())
+	}
+	signingContext, err := sp.signingContext(signatureMethod)
 	if err != nil {
 		return err
 	}
+	req.Signature = nil
 	assertionEl := req.Element()
 
 	signedRequestEl, err := signingContext.SignEnveloped(assertionEl)
@@ -1452,7 +1480,12 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 		retErr.PrivateErr = classify(fmt.Errorf("invalid artifact: %w", err), ErrArtifactResolution)
 		return nil, retErr
 	}
-	artifactResolveRequest, err := sp.MakeArtifactResolveRequest(artifactID)
+	location := sp.artifactResolutionLocation(artifact)
+	if err := checkSOAPEndpoint(location, sp.AllowInsecureSOAPEndpoints); err != nil {
+		retErr.PrivateErr = classify(fmt.Errorf("cannot resolve artifact: %w", err), ErrArtifactResolution)
+		return nil, retErr
+	}
+	artifactResolveRequest, err := sp.makeArtifactResolveRequest(artifactID, location)
 	if err != nil {
 		retErr.PrivateErr = classify(fmt.Errorf("cannot generate artifact resolution request: %w", err), ErrArtifactResolution)
 		return nil, retErr
@@ -1461,12 +1494,6 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 	requestBody, err := elementToBytes(artifactResolveRequest.SoapRequest())
 	if err != nil {
 		retErr.PrivateErr = classify(err, ErrArtifactResolution)
-		return nil, retErr
-	}
-
-	location := sp.artifactResolutionLocation(artifact)
-	if err := checkSOAPEndpoint(location, sp.AllowInsecureSOAPEndpoints); err != nil {
-		retErr.PrivateErr = classify(fmt.Errorf("cannot resolve artifact: %w", err), ErrArtifactResolution)
 		return nil, retErr
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", location, bytes.NewReader(requestBody))
@@ -1480,7 +1507,7 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 	req.Header.Set("SOAPAction", soapActionSAML)
 	setNoCacheHeaders(req.Header)
 
-	httpClient := soapHTTPClient(sp.HTTPClient, sp.AllowInsecureSOAPEndpoints)
+	httpClient := soapHTTPClient(sp.HTTPClient)
 	response, err := httpClient.Do(req) //nolint:gosec // G704: the URL is the IdP's ArtifactResolutionService from its metadata, not from the request
 	if err != nil {
 		retErr.PrivateErr = classify(fmt.Errorf("cannot resolve artifact: %w", err), ErrArtifactResolution)
@@ -1590,6 +1617,10 @@ func (sp *ServiceProvider) ParseXMLArtifactResponse(soapResponseXML []byte, poss
 		retErr.PrivateErr = classify(fmt.Errorf("expected a SOAP Envelope"), ErrMalformedMessage)
 		return nil, retErr
 	}
+	if err := checkNoMandatorySOAPHeader(doc.Root()); err != nil {
+		retErr.PrivateErr = classify(err, ErrUnsupported)
+		return nil, retErr
+	}
 
 	soapBodyEl, err := findOneChild(doc.Root(), "http://schemas.xmlsoap.org/soap/envelope/", "Body")
 	if err != nil {
@@ -1630,9 +1661,16 @@ func (sp *ServiceProvider) parseArtifactResponse(artifactResponseEl *etree.Eleme
 			retErr.PrivateErr = err
 			return nil, retErr
 		}
-		if artifactResponse.Issuer != nil && artifactResponse.Issuer.Value != sp.IDPMetadata.EntityID {
-			retErr.PrivateErr = classify(fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
-			return nil, retErr
+		if artifactResponse.Issuer != nil {
+			idpEntityID, err := sp.idpEntityID()
+			if err != nil {
+				retErr.PrivateErr = err
+				return nil, retErr
+			}
+			if artifactResponse.Issuer.Value != idpEntityID {
+				retErr.PrivateErr = classify(fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", idpEntityID), ErrIssuerMismatch)
+				return nil, retErr
+			}
 		}
 		if artifactResponse.Status.StatusCode.Value != StatusSuccess {
 			retErr.PrivateErr = newErrBadStatus(artifactResponse.Status)
@@ -1861,8 +1899,17 @@ func (sp *ServiceProvider) parseReceivedResponse(responseEl, receivedEl *etree.E
 		if err := sp.limits().checkIssueInstant("response IssueInstant", response.IssueInstant, now); err != nil {
 			return nil, err
 		}
-		if response.Issuer != nil && response.Issuer.Value != sp.IDPMetadata.EntityID {
-			return nil, classify(fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
+		if response.Issuer != nil {
+			idpEntityID, err := sp.idpEntityID()
+			if err != nil {
+				return nil, err
+			}
+			if response.Issuer.Value != idpEntityID {
+				return nil, classify(fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", idpEntityID), ErrIssuerMismatch)
+			}
+			if err := checkSSOIssuerFormat("response", response.Issuer); err != nil {
+				return nil, err
+			}
 		}
 		if response.Status.StatusCode.Value != StatusSuccess {
 			return nil, newErrBadStatus(response.Status)
@@ -2289,6 +2336,30 @@ func checkVersion(what, version string) error {
 	return nil
 }
 
+// idpEntityID returns the entity ID of IDPMetadata, which the Issuer of
+// every message and assertion from the IdP must be. A misconfigured SP
+// without IDPMetadata gets an error, not a panic: it has no IdP that any
+// Issuer could name.
+func (sp *ServiceProvider) idpEntityID() (string, error) {
+	if sp.IDPMetadata == nil {
+		return "", errors.New("cannot check the Issuer: IDPMetadata is not set")
+	}
+	return sp.IDPMetadata.EntityID, nil
+}
+
+// checkSSOIssuerFormat checks the Format of issuer, the Issuer of a Response
+// or of an Assertion (what) of the Web Browser SSO profile, which "MUST be
+// omitted or have a value of urn:oasis:names:tc:SAML:2.0:nameid-format:entity"
+// (saml-profiles §4.1.4.2). Another Format is an error matching
+// ErrIssuerMismatch: the IdP is named by its entity ID, so an Issuer of
+// another Format does not name it, whatever its value.
+func checkSSOIssuerFormat(what string, issuer *Issuer) error {
+	if issuer.Format != "" && issuer.Format != entityNameIDFormat {
+		return classify(fmt.Errorf("%s Issuer Format %q is not %s (saml-profiles §4.1.4.2)", what, issuer.Format, entityNameIDFormat), ErrIssuerMismatch)
+	}
+	return nil
+}
+
 func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleRequestIDs []string, now time.Time) error {
 	if err := checkVersion("assertion", assertion.Version); err != nil {
 		return err
@@ -2299,8 +2370,15 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if assertion.IssueInstant.Add(-sp.maxClockSkew()).After(now) {
 		return classify(fmt.Errorf("assertion IssueInstant %s is in the future", assertion.IssueInstant), ErrNotYetValid)
 	}
-	if assertion.Issuer.Value != sp.IDPMetadata.EntityID {
-		return classify(fmt.Errorf("issuer is not %q", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
+	idpEntityID, err := sp.idpEntityID()
+	if err != nil {
+		return err
+	}
+	if assertion.Issuer.Value != idpEntityID {
+		return classify(fmt.Errorf("issuer is not %q", idpEntityID), ErrIssuerMismatch)
+	}
+	if err := checkSSOIssuerFormat("assertion", &assertion.Issuer); err != nil {
+		return err
 	}
 	if assertion.Subject == nil {
 		return classify(fmt.Errorf("assertion has no Subject"), ErrMissingElement)
