@@ -1,5 +1,6 @@
-# Deploys tools/gosaml to gosaml.dev (Fly.io) on every push to main. See "Deploying from GitHub Actions" in
-# tools/gosaml/README.md for the one-time setup of the FLY_API_TOKEN secret.
+# Deploys tools/gosaml to gosaml.dev (Fly.io) on every push to main. See
+# "Deploying from GitHub Actions" in tools/gosaml/README.md for the
+# one-time setup of the FLY_API_TOKEN secret.
 #
 # How the token is kept safe:
 #   - It is an *environment* secret of the "gosaml-production" environment,
