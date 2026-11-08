@@ -371,8 +371,8 @@
 //
 // [samltest.dev]: https://www.samltest.dev/
 // [API]: https://www.samltest.dev/#api
-// [code.dny.dev/ssrf]: https://pkg.go.dev/code.dny.dev/ssrf
 // [OASIS SAML v2.0 Errata 05]: https://docs.oasis-open.org/security/saml/v2.0/errata05/csd01/saml-v2.0-errata05-csd01.html
+// [code.dny.dev/ssrf]: https://pkg.go.dev/code.dny.dev/ssrf
 // [package documentation]: https://pkg.go.dev/github.com/crewjam/saml/x/samlsp
 // [interoperable SAML]: https://kantarainitiative.github.io/SAMLprofiles/saml2int.html
 // [sstc-saml-binding-simplesign-cs-01]: https://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-binding-simplesign-cs-01.pdf
