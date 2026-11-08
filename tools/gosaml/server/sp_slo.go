@@ -68,7 +68,7 @@ func (s *Server) startSPSession(w http.ResponseWriter, r *http.Request, in *stor
 		_ = s.Store.DeleteSession(r.Context(), c.Value, in.ID)
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name: spCookieName(in), Value: id, Path: "/sp/" + in.ID + "/", Expires: expires,
+		Name: spCookieName(in), Value: id, Path: "/", Expires: expires,
 		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: strings.HasPrefix(s.BaseURL, "https://"),
 	})
 	return nil
@@ -76,7 +76,7 @@ func (s *Server) startSPSession(w http.ResponseWriter, r *http.Request, in *stor
 
 func (s *Server) clearSPSessionCookie(w http.ResponseWriter, in *store.Instance) {
 	http.SetCookie(w, &http.Cookie{
-		Name: spCookieName(in), Path: "/sp/" + in.ID + "/", MaxAge: -1, HttpOnly: true,
+		Name: spCookieName(in), Path: "/", MaxAge: -1, HttpOnly: true,
 		Secure: strings.HasPrefix(s.BaseURL, "https://"),
 	})
 }

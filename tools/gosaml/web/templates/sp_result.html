@@ -1,8 +1,16 @@
 {{define "content"}}{{with .Data}}
 <section class="card">
   <p class="eyebrow"><span class="badge sp">SP</span> {{.Name}}</p>
-  {{if .Assertion}}{{with .Assertion}}
-  <h1 class="result ok">Logged in as <code>{{.Subject}}</code></h1>
+  {{if .Assertion}}
+  <h1 class="result ok">Logged in as <code>{{.Assertion.Subject}}</code></h1>
+  {{if .SignedIn}}
+  <div class="row top-actions">
+    <form method="post" action="/sp/{{.InstanceID}}/logout"><button>Log out everywhere</button></form>
+    <form method="post" action="/sp/{{.InstanceID}}/logout"><input type="hidden" name="mode" value="local"><button class="secondary">Log out of this SP only</button></form>
+    <a class="button secondary" href="/sp/{{.InstanceID}}/">Session page</a>
+  </div>
+  {{end}}
+  {{with .Assertion}}
   <table class="kv">
     <tr><th>NameID</th><td><code class="wrap">{{.NameID.Value}}</code></td></tr>
     <tr><th>NameID format</th><td><code>{{.NameID.Format}}</code></td></tr>
@@ -40,9 +48,7 @@
   {{end}}
   {{if .ResponseXML}}<details {{if not .Assertion}}open{{end}}><summary>Response as received</summary><div class="xml-head"><span>XML</span><button type="button" class="small secondary" data-copy-from="next">Copy</button></div><pre class="xml">{{.ResponseXML}}</pre></details>{{end}}
   <div class="row">
-    {{if .SignedIn}}<form method="post" action="/sp/{{.InstanceID}}/logout"><button>Log out everywhere</button></form>
-    <a class="button secondary" href="/sp/{{.InstanceID}}/">Session page</a>{{else}}
-    <a class="button" href="/sp/{{.InstanceID}}/login">Log in again</a>{{end}}
+    <a class="button {{if .SignedIn}}secondary{{end}}" href="/sp/{{.InstanceID}}/login">Log in again</a>
     {{if .ManageURL}}<a class="button secondary" href="{{.ManageURL}}">Manage this SP</a>{{end}}
   </div>
 </section>

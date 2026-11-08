@@ -439,6 +439,8 @@ type idpManagePage struct {
 	Flash       string
 	Formats     []saml.NameIDFormat
 	Others      []myInstance
+	// Current is this browser's session at the IdP, if any.
+	Current *idpSession
 }
 
 func (s *Server) manageIdP(w http.ResponseWriter, r *http.Request, in *store.Instance) {
@@ -461,6 +463,9 @@ func (s *Server) manageIdP(w http.ResponseWriter, r *http.Request, in *store.Ins
 		SLOURL:      s.BaseURL + "/idp/" + in.ID + "/slo",
 		ArtifactURL: s.BaseURL + "/idp/" + in.ID + "/artifact",
 		Events:      events, Flash: flashMessage(r), Formats: nameIDFormats,
+	}
+	if run, err := s.idpRun(r.Context(), in.ID); err == nil {
+		p.Current, _ = s.idpSessionFromCookie(r, run)
 	}
 	p.Sessions, err = s.idpSessionViews(r.Context(), in)
 	if err != nil {

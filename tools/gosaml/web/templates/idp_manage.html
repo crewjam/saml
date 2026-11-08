@@ -90,6 +90,12 @@
 
 <section class="card" id="sessions">
   <h2>Sessions</h2>
+  {{with .Current}}
+  <div class="current">
+    <p>This browser is logged in to this IdP as <strong>{{.Username}}</strong>, at {{len .Participants}} service provider(s). <span class="meta"><a href="/idp/{{$.Data.Instance.ID}}/session">session page</a></span></p>
+    <form method="post" action="/idp/{{$.Data.Instance.ID}}/logout"><button>Log out everywhere</button></form>
+  </div>
+  {{end}}
   <p class="hint">Each login starts an IdP session, which later logins from the same browser reuse (single sign-on){{if not .Config.RememberSessions}}; this IdP is set not to remember logins{{end}}. Logging out of one of its service providers, or here, logs the user out of all of them. Users see their own session at <a href="/idp/{{.Instance.ID}}/session">/idp/{{.Instance.ID}}/session</a>.</p>
   {{range .Sessions}}
   <div class="session">

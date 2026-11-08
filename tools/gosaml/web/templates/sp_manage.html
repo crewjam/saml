@@ -52,7 +52,17 @@
 </section>
 
 <section class="card" id="login">
-  <h2>Log in</h2>
+  <h2>{{if .Current}}Logged in{{else}}Log in{{end}}</h2>
+  {{with .Current}}
+  <div class="current">
+    <p>This browser is logged in to this SP as <strong>{{.Subject}}</strong> <span class="meta">since {{since .CreatedAt}} · <a href="/sp/{{$.Data.Instance.ID}}/">session page</a></span></p>
+    <div class="row">
+      <form method="post" action="/sp/{{$.Data.Instance.ID}}/logout"><button>Log out everywhere</button></form>
+      <form method="post" action="/sp/{{$.Data.Instance.ID}}/logout"><input type="hidden" name="mode" value="local"><button class="secondary">Log out of this SP only</button></form>
+    </div>
+    <p class="hint">"Everywhere" is SP-initiated single logout: a LogoutRequest to the IdP, which logs you out of its other SPs too.</p>
+  </div>
+  {{end}}
   {{if .Config.IdPEntityID}}
   <form method="post" action="/sp/{{.Instance.ID}}/login" class="stack">
     <div class="checks">
@@ -87,7 +97,7 @@
         <label>RelayState <span class="meta">optional, up to 80 bytes</span><input name="relay_state" maxlength="80"></label>
       </div>
     </details>
-    <div><button>Log in with the IdP</button></div>
+    <div><button {{if .Current}}class="secondary"{{end}}>{{if .Current}}Log in again{{else}}Log in with the IdP{{end}}</button></div>
   </form>
   <p class="hint">Anyone can start a login with this SP's settings from this link, and see their session at the second:</p>
   {{template "copy" (kv "Login URL" .LoginURL)}}

@@ -51,7 +51,11 @@ func TestSingleLogout(t *testing.T) {
 	_, body := h.do(http.MethodGet, "/sp/"+spIDs[1]+"/", nil)
 	mustContain(t, body, "alice@example.com", "Log out everywhere")
 	_, body = h.do(http.MethodGet, "/manage/"+idpSecret, nil)
-	mustContain(t, body, "/sp/"+spIDs[0]+"/metadata", "/sp/"+spIDs[1]+"/metadata", "IdP-initiated logout")
+	mustContain(t, body, "/sp/"+spIDs[0]+"/metadata", "/sp/"+spIDs[1]+"/metadata", "IdP-initiated logout",
+		"This browser is logged in to this IdP as <strong>alice</strong>", "Log out everywhere")
+	// The SP's management page offers logout next to login.
+	_, body = h.do(http.MethodGet, "/manage/"+spSecrets[0], nil)
+	mustContain(t, body, "This browser is logged in to this SP as", "Log out everywhere", "Log out of this SP only")
 
 	// SP-initiated: SP 0 → IdP → SP 1 → IdP → SP 0, all through the browser.
 	_, body = h.do(http.MethodPost, "/sp/"+spIDs[0]+"/logout", nil)

@@ -46,7 +46,7 @@ func idpCookieName(in *store.Instance) string { return "gosaml_idp_" + in.ID }
 
 func (s *Server) setIdPSessionCookie(w http.ResponseWriter, in *store.Instance, id string) {
 	c := &http.Cookie{
-		Name: idpCookieName(in), Value: id, Path: "/idp/" + in.ID + "/",
+		Name: idpCookieName(in), Value: id, Path: "/",
 		MaxAge: int(idpSessionLifetime.Seconds()), HttpOnly: true, SameSite: http.SameSiteLaxMode,
 	}
 	if strings.HasPrefix(s.BaseURL, "https://") {
@@ -59,7 +59,7 @@ func (s *Server) setIdPSessionCookie(w http.ResponseWriter, in *store.Instance, 
 
 func (s *Server) clearIdPSessionCookie(w http.ResponseWriter, in *store.Instance) {
 	http.SetCookie(w, &http.Cookie{
-		Name: idpCookieName(in), Path: "/idp/" + in.ID + "/", MaxAge: -1, HttpOnly: true,
+		Name: idpCookieName(in), Path: "/", MaxAge: -1, HttpOnly: true,
 		Secure: strings.HasPrefix(s.BaseURL, "https://"),
 	})
 }

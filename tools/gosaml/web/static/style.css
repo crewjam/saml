@@ -223,3 +223,7 @@ pre.detail { white-space: pre-wrap; word-break: break-word; }
 .session .row { margin-top: 8px; }
 .keys-box { margin-top: 10px; }
 .keys-box textarea { margin-top: 4px; }
+.current { background: var(--accent-soft); border-radius: 8px; padding: 12px 14px; margin-bottom: 16px; }
+.current p { margin: 0 0 4px; }
+.current .hint { margin-top: 8px; margin-bottom: 0; }
+.top-actions { margin: 4px 0 8px; }

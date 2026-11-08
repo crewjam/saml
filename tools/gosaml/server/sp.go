@@ -385,6 +385,8 @@ type spManagePage struct {
 	Formats     []saml.NameIDFormat
 	Contexts    []saml.AuthnContextClass
 	Others      []myInstance
+	// Current is this browser's session at the SP, if any.
+	Current *spSessionView
 }
 
 func (s *Server) manageSP(w http.ResponseWriter, r *http.Request, in *store.Instance) {
@@ -410,6 +412,7 @@ func (s *Server) manageSP(w http.ResponseWriter, r *http.Request, in *store.Inst
 		SessionURL:  s.BaseURL + "/sp/" + in.ID + "/",
 		Events:      events, Flash: flashMessage(r), Formats: nameIDFormats, Contexts: authnContexts,
 	}
+	p.Current = s.spSessionFromCookie(r, in)
 	p.Sessions, err = s.spSessionViews(r.Context(), in)
 	if err != nil {
 		s.fail(w, r, http.StatusInternalServerError, "Cannot read the sessions.", err)
