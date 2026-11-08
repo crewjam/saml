@@ -176,7 +176,10 @@ func WithMetadata(modify func(md *saml.EntityDescriptor)) Option {
 // use, built for this call with the identity provider's metadata, and with
 // the ServiceProviderOptions passed to New and then opts applied. It is
 // for packages that handle SAML messages this package does not; the
-// result is a new value, which may be changed.
+// result is a new value, which may be changed, and which shares no slice
+// with c. Its IDPMetadata, though, is the value the MetadataFunc returned,
+// which may be shared with other calls (RemoteMetadata caches it): do not
+// modify it, but replace it with a copy.
 //
 // To sign with the SP's key, use SignElement: the ServiceProvider signs
 // AuthnRequests with SignatureMethod only when SignAuthnRequests is set.

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 
 	"github.com/beevik/etree"
@@ -495,14 +496,15 @@ func (c *Config) serviceProvider(ctx context.Context, opts []ServiceProviderOpti
 
 // localServiceProvider returns a new saml.ServiceProvider configured from
 // c, without the identity provider's metadata and without applying any
-// ServiceProviderOption.
+// ServiceProviderOption. It shares no slice with c, so that changing it
+// cannot change c.
 func (c *Config) localServiceProvider() *saml.ServiceProvider {
 	sp := &saml.ServiceProvider{
 		EntityID:              c.entityID,
 		Key:                   c.key,
 		Certificate:           c.certificate,
-		Intermediates:         c.intermediates,
-		DecryptionKeys:        c.decryptionKeys,
+		Intermediates:         slices.Clone(c.intermediates),
+		DecryptionKeys:        slices.Clone(c.decryptionKeys),
 		EncryptionKey:         c.encryptionKey,
 		EncryptionCertificate: c.encryptionCert,
 		HTTPClient:            c.httpClient,
