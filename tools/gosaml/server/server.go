@@ -128,6 +128,8 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /sp/{id}/slo", s.spSLO)
 	m.HandleFunc("POST /sp/{id}/slo", s.spSLO)
 	m.HandleFunc("POST /sp/{id}/artifact", s.spArtifact)
+
+	s.apiRoutes()
 }
 
 type ctxKey int
@@ -188,7 +190,7 @@ type page struct {
 
 // navItems maps a template to the navigation item it is under.
 var navItems = map[string]string{
-	"home": "home", "inspect": "inspect", "about": "about",
+	"home": "home", "inspect": "inspect", "about": "about", "api": "api",
 	"idp_manage": "idp", "idp_session": "idp", "idp_logout": "idp",
 	"sp_manage": "sp", "sp_session": "sp", "sp_logout": "sp", "sp_result": "sp",
 }
@@ -462,17 +464,18 @@ func (s *Server) inspectPage(w http.ResponseWriter, r *http.Request) {
 	s.renderStatus(w, r, http.StatusOK, "inspect", "Inspector", struct{ Posted string }{posted})
 }
 
-// createInstance stores a new instance with a fresh key pair, and the
+// errTooManyInstances is returned by newInstance when MaxInstances exist.
+var errTooManyInstances = errors.New("too many instances")
+
+// newInstance stores a new instance with a fresh key pair, and the
 // configuration config makes given the instance's ID.
-func (s *Server) createInstance(w http.ResponseWriter, r *http.Request, kind store.Kind, config func(id string) any) {
-	n, err := s.Store.CountInstances(r.Context())
+func (s *Server) newInstance(ctx context.Context, kind store.Kind, config func(id string) any) (*store.Instance, error) {
+	n, err := s.Store.CountInstances(ctx)
 	if err != nil {
-		s.fail(w, r, http.StatusInternalServerError, "Cannot create the instance.", err)
-		return
+		return nil, err
 	}
 	if n >= s.MaxInstances {
-		s.fail(w, r, http.StatusServiceUnavailable, "Too many instances exist right now. Try again later: they expire after "+roundDuration(s.TTL)+".", nil)
-		return
+		return nil, errTooManyInstances
 	}
 	// Names are memorable words (see names.go), so a new one may be taken:
 	// try again with another.
@@ -480,31 +483,47 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request, kind sto
 		id, secret := newInstanceID(attempt), newInstanceSecret(attempt)
 		keyPEM, certPEM, err := newKeyPair(s.BaseURL+"/"+string(kind)+"/"+id, s.TTL+24*time.Hour)
 		if err != nil {
-			s.fail(w, r, http.StatusInternalServerError, "Cannot create a key.", err)
-			return
+			return nil, fmt.Errorf("cannot create a key: %w", err)
 		}
 		b, err := encodeConfig(config(id))
 		if err != nil {
-			s.fail(w, r, http.StatusInternalServerError, "Cannot create the instance.", err)
-			return
+			return nil, err
 		}
 		now := time.Now()
 		in := &store.Instance{
 			ID: id, Secret: secret, Kind: kind, KeyPEM: keyPEM, CertPEM: certPEM,
 			Config: b, CreatedAt: now, ExpiresAt: now.Add(s.TTL),
 		}
-		err = s.Store.CreateInstance(r.Context(), in)
+		err = s.Store.CreateInstance(ctx, in)
 		if errors.Is(err, store.ErrTaken) && attempt < 10 {
 			continue
 		}
 		if err != nil {
-			s.fail(w, r, http.StatusInternalServerError, "Cannot create the instance.", err)
-			return
+			return nil, err
 		}
-		s.setMine(w, append(mine(r), secret))
-		seeOther(w, r, "/manage/"+secret)
+		return in, nil
+	}
+}
+
+// tooManyMessage says why an instance cannot be created.
+func (s *Server) tooManyMessage() string {
+	return "Too many instances exist right now. Try again later: they expire after " + roundDuration(s.TTL) + "."
+}
+
+// createInstance creates an instance from a form post, remembers it in
+// this browser, and sends the browser to its management page.
+func (s *Server) createInstance(w http.ResponseWriter, r *http.Request, kind store.Kind, config func(id string) any) {
+	in, err := s.newInstance(r.Context(), kind, config)
+	if errors.Is(err, errTooManyInstances) {
+		s.fail(w, r, http.StatusServiceUnavailable, s.tooManyMessage(), nil)
 		return
 	}
+	if err != nil {
+		s.fail(w, r, http.StatusInternalServerError, "Cannot create the instance.", err)
+		return
+	}
+	s.setMine(w, append(mine(r), in.Secret))
+	seeOther(w, r, "/manage/"+in.Secret)
 }
 
 func (s *Server) manage(w http.ResponseWriter, r *http.Request) {

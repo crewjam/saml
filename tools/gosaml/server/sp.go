@@ -516,28 +516,15 @@ func (s *Server) spAction(w http.ResponseWriter, r *http.Request, in *store.Inst
 		save("Settings saved.", "settings")
 
 	case "idp-set", "idp-refresh":
-		var data []byte
 		source := strings.TrimSpace(r.FormValue("metadata_url"))
 		if action == "idp-refresh" {
 			source = cfg.IdPMetadataSource
 		}
-		if source != "" {
-			data, err = s.fetchMetadata(ctx, source)
-		} else {
-			data = []byte(strings.TrimSpace(r.FormValue("metadata_xml")))
-			if len(data) == 0 {
-				err = errors.New("give a metadata URL or paste the metadata XML")
-			}
-		}
-		var md *saml.EntityDescriptor
-		if err == nil {
-			md, err = samlsp.ParseMetadata(data)
-		}
+		md, err := s.setIdP(ctx, cfg, source, r.FormValue("metadata_xml"))
 		if err != nil {
 			flash(w, r, in, "Cannot use that identity provider: "+err.Error(), "idp")
 			return
 		}
-		cfg.IdPMetadata, cfg.IdPMetadataSource, cfg.IdPEntityID = string(data), source, md.EntityID
 		save("Identity provider "+md.EntityID+" saved.", "idp")
 
 	case "session-logout", "session-local-logout":
@@ -551,4 +538,28 @@ func (s *Server) spAction(w http.ResponseWriter, r *http.Request, in *store.Inst
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// setIdP makes an SP trust the IdP whose metadata is at source or, if
+// source is empty, in metadataXML.
+func (s *Server) setIdP(ctx context.Context, cfg *SPConfig, source, metadataXML string) (*saml.EntityDescriptor, error) {
+	var data []byte
+	var err error
+	if source != "" {
+		data, err = s.fetchMetadata(ctx, source)
+	} else {
+		data = []byte(strings.TrimSpace(metadataXML))
+		if len(data) == 0 {
+			err = errors.New("give a metadata URL or paste the metadata XML")
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	md, err := samlsp.ParseMetadata(data)
+	if err != nil {
+		return nil, err
+	}
+	cfg.IdPMetadata, cfg.IdPMetadataSource, cfg.IdPEntityID = string(data), source, md.EntityID
+	return md, nil
 }
