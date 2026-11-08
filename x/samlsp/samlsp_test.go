@@ -289,7 +289,7 @@ func TestAuthnRequestOptions(t *testing.T) {
 	msg, err := cfg.AuthnRequest(t.Context(), "s",
 		samlsp.ForceAuthn,
 		samlsp.IsPassive,
-		samlsp.WithAuthnContext(samlsp.ComparisonMinimum, samlsp.AuthnContextPasswordProtectedTransport, samlsp.AuthnContextX509),
+		samlsp.WithAuthnContext(saml.ComparisonMinimum, saml.AuthnContextPasswordProtectedTransport, saml.AuthnContextX509),
 		samlsp.WithResponseBinding(saml.HTTPArtifactBinding),
 	)
 	if err != nil {
@@ -306,7 +306,7 @@ func TestAuthnRequestOptions(t *testing.T) {
 		t.Error("IsPassive not set")
 	}
 	if rac := req.RequestedAuthnContext; rac == nil || rac.Comparison != "minimum" ||
-		len(rac.AuthnContextClassRefs) != 2 || rac.AuthnContextClassRefs[1] != string(samlsp.AuthnContextX509) {
+		len(rac.AuthnContextClassRefs) != 2 || rac.AuthnContextClassRefs[1] != string(saml.AuthnContextX509) {
 		t.Errorf("RequestedAuthnContext = %+v", req.RequestedAuthnContext)
 	}
 	if req.ProtocolBinding != saml.HTTPArtifactBinding {
@@ -628,9 +628,9 @@ func TestAuthnContextChecked(t *testing.T) {
 		ctx     samlsp.AuthnContextOption
 		wantErr error
 	}{
-		{"satisfied", samlsp.WithAuthnContext(samlsp.ComparisonExact, samlsp.AuthnContextX509, samlsp.AuthnContextPasswordProtectedTransport), nil},
-		{"not satisfied", samlsp.WithAuthnContext(samlsp.ComparisonExact, samlsp.AuthnContextX509), saml.ErrAuthnContextMismatch},
-		{"no comparator", samlsp.WithAuthnContext(samlsp.ComparisonMinimum, samlsp.AuthnContextPassword), saml.ErrUnsupported},
+		{"satisfied", samlsp.WithAuthnContext(saml.ComparisonExact, saml.AuthnContextX509, saml.AuthnContextPasswordProtectedTransport), nil},
+		{"not satisfied", samlsp.WithAuthnContext(saml.ComparisonExact, saml.AuthnContextX509), saml.ErrAuthnContextMismatch},
+		{"no comparator", samlsp.WithAuthnContext(saml.ComparisonMinimum, saml.AuthnContextPassword), saml.ErrUnsupported},
 	} {
 		msg, err := cfg.AuthnRequest(t.Context(), "s", tt.ctx)
 		if err != nil {
@@ -644,11 +644,11 @@ func TestAuthnContextChecked(t *testing.T) {
 
 	// With a comparator, "minimum" is decided by it.
 	cfg = newTestConfig(t, ti, samlsp.WithAuthnContextComparator(
-		func(c samlsp.AuthnContextComparison, requested []samlsp.AuthnContextClass, got samlsp.AuthnContextClass) bool {
-			return c == samlsp.ComparisonMinimum && requested[0] == samlsp.AuthnContextPassword &&
-				got == samlsp.AuthnContextPasswordProtectedTransport
+		func(c saml.AuthnContextComparison, requested []saml.AuthnContextClass, got saml.AuthnContextClass) bool {
+			return c == saml.ComparisonMinimum && requested[0] == saml.AuthnContextPassword &&
+				got == saml.AuthnContextPasswordProtectedTransport
 		}))
-	minimum := samlsp.WithAuthnContext(samlsp.ComparisonMinimum, samlsp.AuthnContextPassword)
+	minimum := samlsp.WithAuthnContext(saml.ComparisonMinimum, saml.AuthnContextPassword)
 	msg, err := cfg.AuthnRequest(t.Context(), "s", minimum)
 	if err != nil {
 		t.Fatal(err)

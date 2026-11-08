@@ -79,9 +79,9 @@ func ExampleWithAuthnContext() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	stepUp := samlsp.WithAuthnContext(samlsp.ComparisonExact,
-		samlsp.AuthnContextMobileTwoFactorContract,
-		samlsp.AuthnContextSmartcardPKI)
+	stepUp := samlsp.WithAuthnContext(saml.ComparisonExact,
+		saml.AuthnContextMobileTwoFactorContract,
+		saml.AuthnContextSmartcardPKI)
 
 	http.HandleFunc("/settings/delete-account", func(w http.ResponseWriter, r *http.Request) {
 		msg, err := config.AuthnRequest(r.Context(), rand.Text(), samlsp.ForceAuthn, stepUp)
@@ -111,16 +111,16 @@ func ExampleWithAuthnContext() {
 // A comparison other than ComparisonExact needs an order of the classes,
 // which WithAuthnContextComparator gives.
 func ExampleWithAuthnContextComparator() {
-	strength := map[samlsp.AuthnContextClass]int{
-		samlsp.AuthnContextPassword:                   1,
-		samlsp.AuthnContextPasswordProtectedTransport: 2,
-		samlsp.AuthnContextMobileTwoFactorContract:    3,
-		samlsp.AuthnContextSmartcardPKI:               4,
+	strength := map[saml.AuthnContextClass]int{
+		saml.AuthnContextPassword:                   1,
+		saml.AuthnContextPasswordProtectedTransport: 2,
+		saml.AuthnContextMobileTwoFactorContract:    3,
+		saml.AuthnContextSmartcardPKI:               4,
 	}
 	entityID := "https://sp.example.com/saml/metadata"
 	config, err := samlsp.New(entityID, exampleIDP(),
-		samlsp.WithAuthnContextComparator(func(comparison samlsp.AuthnContextComparison, requested []samlsp.AuthnContextClass, got samlsp.AuthnContextClass) bool {
-			if comparison != samlsp.ComparisonMinimum {
+		samlsp.WithAuthnContextComparator(func(comparison saml.AuthnContextComparison, requested []saml.AuthnContextClass, got saml.AuthnContextClass) bool {
+			if comparison != saml.ComparisonMinimum {
 				return false
 			}
 			for _, r := range requested {
@@ -133,7 +133,7 @@ func ExampleWithAuthnContextComparator() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	atLeastTwoFactor := samlsp.WithAuthnContext(samlsp.ComparisonMinimum, samlsp.AuthnContextMobileTwoFactorContract)
+	atLeastTwoFactor := samlsp.WithAuthnContext(saml.ComparisonMinimum, saml.AuthnContextMobileTwoFactorContract)
 	_, _ = config, atLeastTwoFactor // pass to AuthnRequest and ParseResponse
 }
 

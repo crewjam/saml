@@ -2,19 +2,7 @@ package saml
 
 import "fmt"
 
-// authnContextPasswordProtectedTransport is the authentication context class
-// the IdP asserts when the Session does not say which one was achieved.
-const authnContextPasswordProtectedTransport = "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport" //nolint:gosec // G101: an authentication context class URI, not a credential
-
 const authnContextClassPrefix = "urn:oasis:names:tc:SAML:2.0:ac:classes:"
-
-// The Comparison values of a RequestedAuthnContext (saml-core §3.3.2.2.1).
-const (
-	authnContextComparisonExact   = "exact"
-	authnContextComparisonMinimum = "minimum"
-	authnContextComparisonMaximum = "maximum"
-	authnContextComparisonBetter  = "better"
-)
 
 // DefaultAuthnContextClassStrengths returns the ranking of authentication
 // context classes the IdP uses for the "minimum", "maximum" and "better"
@@ -58,7 +46,8 @@ func DefaultAuthnContextClassStrengths() map[string]int {
 // *StatusError instead: Responder with NoAuthnContext, or Requester for an
 // unknown Comparison.
 func (req *IdpAuthnRequest) authnContextClassRef(session *Session) (string, error) {
-	achieved := authnContextPasswordProtectedTransport
+	// The class asserted when the Session does not say which one was achieved.
+	achieved := string(AuthnContextPasswordProtectedTransport)
 	if session != nil && session.AuthnContextClassRef != "" {
 		achieved = session.AuthnContextClassRef
 	}
@@ -122,13 +111,13 @@ func (idp *IdentityProvider) authnContextClassStrengths() map[string]int {
 func authnContextSatisfies(comparison string, requested []string, achieved string, strengths map[string]int) (ok, known bool) {
 	var match func(achieved, requested int) bool
 	switch comparison {
-	case "", authnContextComparisonExact:
+	case "", string(ComparisonExact):
 		return containsString(requested, achieved), true
-	case authnContextComparisonMinimum:
+	case string(ComparisonMinimum):
 		match = func(a, r int) bool { return a >= r }
-	case authnContextComparisonMaximum:
+	case string(ComparisonMaximum):
 		match = func(a, r int) bool { return a <= r }
-	case authnContextComparisonBetter:
+	case string(ComparisonBetter):
 		return authnContextRankedMatch(requested, achieved, strengths, func(a, r int) bool { return a > r }), true
 	default:
 		return false, false

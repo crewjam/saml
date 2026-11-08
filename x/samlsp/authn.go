@@ -55,11 +55,11 @@ var (
 //
 // Pass the same option to ParseResponse, which then refuses an assertion
 // whose AuthnContextClassRef does not satisfy it, with an error matching
-// saml.ErrAuthnContextMismatch. A comparison other than ComparisonExact
+// saml.ErrAuthnContextMismatch. A comparison other than saml.ComparisonExact
 // needs WithAuthnContextComparator, since the order of the classes is
 // up to each deployment; without it, ParseResponse refuses every
 // assertion.
-func WithAuthnContext(comparison AuthnContextComparison, classes ...AuthnContextClass) AuthnContextOption {
+func WithAuthnContext(comparison saml.AuthnContextComparison, classes ...saml.AuthnContextClass) AuthnContextOption {
 	refs := make([]string, len(classes))
 	for i, c := range classes {
 		refs[i] = string(c)

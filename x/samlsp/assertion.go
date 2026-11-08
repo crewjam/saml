@@ -41,7 +41,7 @@ type Assertion struct {
 
 	// AuthnContextClassRef is how the IdP authenticated the user, such as
 	// "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport".
-	AuthnContextClassRef AuthnContextClass
+	AuthnContextClassRef saml.AuthnContextClass
 
 	// SessionIndexes name the user's session at the IdP. Keep them to pass
 	// to x/samlsp/slo with slo.WithSessionIndex.
@@ -89,7 +89,7 @@ func newAssertion(a *saml.Assertion) *Assertion {
 		if i == 0 {
 			out.AuthnInstant = s.AuthnInstant
 			if s.AuthnContext.AuthnContextClassRef != nil {
-				out.AuthnContextClassRef = AuthnContextClass(s.AuthnContext.AuthnContextClassRef.Value)
+				out.AuthnContextClassRef = saml.AuthnContextClass(s.AuthnContext.AuthnContextClassRef.Value)
 			}
 		}
 		if s.SessionIndex != "" {

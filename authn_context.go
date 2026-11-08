@@ -1,4 +1,4 @@
-package samlsp
+package saml
 
 // AuthnContextClass is a SAML authentication context class: a way the IdP
 // authenticates the user (saml-authn-context-2.0-os §3.4). The constants
