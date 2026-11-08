@@ -1,14 +1,9 @@
 package main
 
 import (
-	"bytes"
-	"compress/flate"
-	"encoding/base64"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"html"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -184,8 +179,9 @@ func (a *App) loginInProgress(w http.ResponseWriter, r *http.Request) ([]samlsp.
 	}
 
 	// Not a login of ours: an IdP-initiated one, if the provider allows
-	// them. Its RelayState, if any, is the IdP's (or an attacker's).
-	issuer, err := peekIssuer(r, "SAMLResponse")
+	// them. Its RelayState, if any, is the IdP's (or an attacker's). The
+	// unverified Issuer only chooses the IdP to verify the Response with.
+	issuer, err := samlsp.PeekIssuer(r)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -244,10 +240,11 @@ func (a *App) slo(w http.ResponseWriter, r *http.Request) {
 }
 
 // idpLogout ends the sessions an IdP's LogoutRequest names. The request
-// carries no state of ours, so its IdP is found by its Issuer, then the
-// request is verified against that IdP's metadata.
+// carries no state of ours, so its IdP is found by its unverified Issuer
+// (samlsp.PeekIssuer), then the request is verified against that IdP's
+// metadata.
 func (a *App) idpLogout(w http.ResponseWriter, r *http.Request) {
-	issuer, err := peekIssuer(r, "SAMLRequest")
+	issuer, err := samlsp.PeekIssuer(r)
 	if err != nil {
 		slo.WriteRequestError(w, r)
 		return
@@ -320,51 +317,6 @@ func (a *App) setCookie(w http.ResponseWriter, name, value, path string, maxAge 
 		c.SameSite = http.SameSiteLaxMode
 	}
 	http.SetCookie(w, c)
-}
-
-// peekIssuer returns the Issuer of the SAML message in the form field
-// param of r, without verifying it. It is only for choosing which IdP's
-// metadata to verify the message with, when the message carries no state
-// of ours: an IdP-initiated Response or LogoutRequest. A forged Issuer
-// only chooses metadata the message then fails to verify against.
-//
-// It reads the HTTP-POST and HTTP-POST-SimpleSign bindings, and, for a
-// GET, HTTP-Redirect, whose message is deflated. HTTP-Artifact carries no
-// Issuer, and is not supported for unsolicited messages here.
-func peekIssuer(r *http.Request, param string) (string, error) {
-	encoded := r.FormValue(param)
-	if encoded == "" {
-		return "", fmt.Errorf("no %s", param)
-	}
-	data, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		return "", fmt.Errorf("%s is not base64: %w", param, err)
-	}
-	if r.Method == http.MethodGet {
-		data, err = io.ReadAll(io.LimitReader(flate.NewReader(bytes.NewReader(data)), 1<<20))
-		if err != nil {
-			return "", fmt.Errorf("%s is not deflated: %w", param, err)
-		}
-	}
-	var msg struct {
-		Issuer string `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
-		// A Response's own Issuer is optional; its assertion's is not
-		// (unless the assertion is encrypted).
-		Assertion struct {
-			Issuer string `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
-		} `xml:"urn:oasis:names:tc:SAML:2.0:assertion Assertion"`
-	}
-	if err := xml.Unmarshal(data, &msg); err != nil {
-		return "", fmt.Errorf("%s is not XML: %w", param, err)
-	}
-	issuer := strings.TrimSpace(msg.Issuer)
-	if issuer == "" {
-		issuer = strings.TrimSpace(msg.Assertion.Issuer)
-	}
-	if issuer == "" {
-		return "", fmt.Errorf("%s has no Issuer", param)
-	}
-	return issuer, nil
 }
 
 // isLocalPath reports whether p is a path on this site, safe to redirect

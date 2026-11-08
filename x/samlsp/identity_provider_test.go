@@ -3,6 +3,8 @@ package samlsp_test
 import (
 	"context"
 	"errors"
+	"log"
+	"net/http"
 	"testing"
 
 	"github.com/crewjam/saml"
@@ -105,4 +107,38 @@ func TestNoIdentityProvider(t *testing.T) {
 	if md := cfg.Metadata(ctx); md.EntityID != spEntityID {
 		t.Errorf("Metadata().EntityID = %q", md.EntityID)
 	}
+}
+
+// An ACS that accepts IdP-initiated logins for many tenants finds the
+// tenant of an unsolicited Response by its Issuer, then verifies the
+// Response against that tenant's IdP.
+func ExamplePeekIssuer() {
+	config, err := samlsp.New(nil, "https://sp.example.com/saml/metadata")
+	if err != nil {
+		log.Fatal(err)
+	}
+	// tenantIDP returns the metadata of the tenant whose IdP has this
+	// entity ID, from the application's database.
+	tenantIDP := func(string) (samlsp.MetadataFunc, bool) { return nil, false }
+
+	http.HandleFunc(config.ACSPath(), func(w http.ResponseWriter, r *http.Request) {
+		issuer, err := samlsp.PeekIssuer(r) // unverified: only chooses the IdP
+		if err != nil {
+			http.Error(w, "login failed", http.StatusBadRequest)
+			return
+		}
+		idp, ok := tenantIDP(issuer)
+		if !ok {
+			http.Error(w, "unknown IdP", http.StatusForbidden)
+			return
+		}
+		assertion, err := config.ParseResponse(r.Context(), r,
+			samlsp.AllowUnsolicited, samlsp.WithIdentityProvider(idp))
+		if err != nil {
+			http.Error(w, "login failed", http.StatusForbidden)
+			return
+		}
+		startSession(w, assertion)
+		http.Redirect(w, r, "/", http.StatusFound)
+	})
 }

@@ -43,8 +43,12 @@
 // An SP that serves several IdPs, such as one per tenant, can instead
 // name the IdP per call with WithIdentityProvider, and pass New a nil
 // MetadataFunc. IdentityProviderContext names it for calls that take no
-// such option. When the SP itself differs per tenant, by entity ID or ACS
-// URL, build a Config per request; New is cheap, but see WithReplayState.
+// such option. A message that carries none of the SP's own state, such as
+// an IdP-initiated Response or an IdP's LogoutRequest, names its IdP only
+// in its Issuer: PeekIssuer reads it, unverified, to choose the IdP that
+// verifies the message. When the SP itself differs per tenant, by entity
+// ID or ACS URL, build a Config per request; New is cheap, but see
+// WithReplayState.
 //
 // Settings that have no Option of their own are reached with a
 // ServiceProviderOption, which adjusts the saml.ServiceProvider that each
