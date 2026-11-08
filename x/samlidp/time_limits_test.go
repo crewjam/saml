@@ -52,3 +52,40 @@ func TestForceAuthnInstantUsesClockSkew(t *testing.T) {
 		t.Error("Response accepted an AuthnInstant beyond the configured clock skew")
 	}
 }
+
+// A negative clock skew or issue delay set by an IdentityProviderOption is
+// refused too: by New, if the option is passed to it, and by the method
+// it is passed to otherwise.
+func TestNegativeTimeLimitIdentityProviderOption(t *testing.T) {
+	keys(t)
+	negative := samlidp.WithIdentityProvider(func(idp *saml.IdentityProvider) { idp.MaxClockSkew = -time.Minute })
+	if _, err := samlidp.New(idpEntityID, samlidp.StaticServiceProviders(), samlidp.WithSigningKey(idpKey, idpCert), negative); err == nil {
+		t.Error("New accepted a negative clock skew")
+	}
+
+	p := newPair(t, nil, nil)
+	ctx := context.Background()
+	msg, err := p.sp.AuthnRequest(ctx, "rs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.idp.ParseAuthnRequest(ctx, browserRequest(t, msg), negative); err == nil {
+		t.Error("ParseAuthnRequest accepted a negative clock skew")
+	}
+	if _, err := p.idp.IDPInitiated(ctx, spEntityID, "", negative); err == nil {
+		t.Error("IDPInitiated accepted a negative clock skew")
+	}
+	req, err := p.idp.IDPInitiated(ctx, spEntityID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.idp.Response(ctx, req, testSubject, negative); err == nil {
+		t.Error("Response accepted a negative clock skew")
+	}
+	if _, err := p.idp.ErrorResponse(ctx, req, &saml.StatusError{TopLevel: saml.StatusResponder}, negative); err == nil {
+		t.Error("ErrorResponse accepted a negative clock skew")
+	}
+	if _, err := p.idp.Response(ctx, req, testSubject); err != nil {
+		t.Fatal(err)
+	}
+}

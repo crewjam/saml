@@ -63,7 +63,10 @@ func (c *Config) Send(msg OutgoingMessage, opts ...IdentityProviderOption) (*Mes
 	if msg.Param != "SAMLRequest" && msg.Param != "SAMLResponse" {
 		return nil, fmt.Errorf("samlidp: invalid message parameter %q", msg.Param)
 	}
-	idp := c.identityProvider(opts)
+	idp, err := c.checkedIdentityProvider(opts)
+	if err != nil {
+		return nil, err
+	}
 	m := &Message{
 		ID:           msg.Element.SelectAttrValue("ID", ""),
 		InResponseTo: msg.InResponseTo,
@@ -110,7 +113,11 @@ func (c *Config) Send(msg OutgoingMessage, opts ...IdentityProviderOption) (*Mes
 // as the SAML schema requires of protocol messages and assertions, and
 // last otherwise. el is not modified.
 func (c *Config) SignElement(el *etree.Element, opts ...IdentityProviderOption) (*etree.Element, error) {
-	return signElement(c.identityProvider(opts), el)
+	idp, err := c.checkedIdentityProvider(opts)
+	if err != nil {
+		return nil, err
+	}
+	return signElement(idp, el)
 }
 
 // signElement returns a copy of el signed by idp.

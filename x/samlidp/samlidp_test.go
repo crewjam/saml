@@ -172,6 +172,7 @@ func postForm(t *testing.T, target string, fields url.Values) *http.Request {
 
 var testSubject = samlidp.Subject{
 	NameID:       "transient-1234",
+	NameIDFormat: saml.TransientNameIDFormat,
 	AuthnInstant: time.Now().Add(-time.Minute),
 	SessionIndex: "session-1",
 	Attributes: []samlidp.Attribute{

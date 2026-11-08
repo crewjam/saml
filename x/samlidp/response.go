@@ -20,11 +20,23 @@ type Subject struct {
 	NameID string
 
 	// NameIDFormat is the format of NameID, such as
-	// saml.PersistentNameIDFormat or saml.EmailAddressNameIDFormat. The
-	// default is saml.TransientNameIDFormat, which the SP takes to change
-	// at each login, as package saml has it. For the persistent and
-	// transient formats, the NameID is qualified with the IdP's and the
-	// SP's entity IDs (saml-core §8.3.7, §8.3.8).
+	// saml.PersistentNameIDFormat or saml.EmailAddressNameIDFormat. Set it
+	// to say what NameID is. The default is saml.UnspecifiedNameIDFormat
+	// (saml-core §8.3.1), which promises the SP nothing about the
+	// identifier, and with which the NameID is not qualified. Unlike
+	// package saml, which defaults to transient, this package does not
+	// assume that NameID is a new, one-time identifier: an SP takes a
+	// transient NameID to change at each login (saml-core §8.3.8), so a
+	// stable user ID sent as transient misleads it. Use
+	// saml.TransientNameIDFormat only for a NameID made anew for each
+	// login, and saml.PersistentNameIDFormat for an opaque identifier
+	// kept for the user and the SP. For the persistent and transient
+	// formats, the NameID is qualified with the IdP's and the SP's entity
+	// IDs (saml-core §8.3.7, §8.3.8).
+	//
+	// An SP whose request asks for a particular format, as one of
+	// x/samlsp asks for transient by default, is answered with the
+	// status InvalidNameIDPolicy unless NameIDFormat is that format.
 	NameIDFormat saml.NameIDFormat
 
 	// AuthnInstant is when the IdP authenticated the user. It is required.
@@ -165,9 +177,13 @@ func (c *Config) Response(ctx context.Context, req *AuthnRequest, subject Subjec
 		return nil, err
 	}
 
+	nameIDFormat := subject.NameIDFormat
+	if nameIDFormat == "" {
+		nameIDFormat = saml.UnspecifiedNameIDFormat
+	}
 	session := &saml.Session{
 		NameID:               subject.NameID,
-		NameIDFormat:         string(subject.NameIDFormat),
+		NameIDFormat:         string(nameIDFormat),
 		Index:                subject.SessionIndex,
 		CreateTime:           subject.AuthnInstant,
 		AuthnContextClassRef: string(subject.AuthnContextClassRef),
@@ -242,6 +258,20 @@ func (c *Config) Response(ctx context.Context, req *AuthnRequest, subject Subjec
 //
 // Use it too for the *saml.StatusError that ParseAuthnRequest and
 // Response return.
+//
+// An error Response is posted, never sent with a custom Binding such as
+// the HTTP-Artifact binding of x/samlidp/idpartifact, which would keep it
+// in a store until the SP fetched it. An error Response is what anyone
+// can get for an SP that does not sign its requests, as often as they
+// like, by sending its AuthnRequest with IsPassive, for example, so it
+// must not take up room that the Responses of real logins need. If
+// req.ACSBinding is that of the custom Binding, the Response is posted to
+// the SP's default assertion consumer service with the HTTP-POST or
+// HTTP-POST-SimpleSign binding instead (saml-metadata §2.2.3). If the SP
+// has none, the custom Binding is used only if req.Signed, since a signed
+// request is accepted only once, and so each error Response it stores
+// costs the SP's signature; otherwise ErrorResponse fails with an error
+// matching saml.ErrUnknownAssertionConsumerService.
 func (c *Config) ErrorResponse(ctx context.Context, req *AuthnRequest, status *saml.StatusError, opts ...ResponseOption) (*Message, error) {
 	if status == nil {
 		return nil, errors.New("samlidp: ErrorResponse needs a status")
@@ -250,6 +280,18 @@ func (c *Config) ErrorResponse(ctx context.Context, req *AuthnRequest, status *s
 	ireq, err := c.answer(ctx, req, o)
 	if err != nil {
 		return nil, err
+	}
+	if !sendable(ireq.ACSEndpoint.Binding) {
+		// Choose before the Response is made, so that a request that
+		// cannot be answered costs no signature.
+		d, ep := defaultACSWithBinding(ireq.ServiceProviderMetadata, sendable)
+		switch {
+		case ep != nil:
+			ireq.SPSSODescriptor, ireq.ACSEndpoint = d, ep
+		case !req.Signed:
+			return nil, fmt.Errorf("samlidp: service provider %q has no assertion consumer service to post an error response to, and the request was not signed, so it is not sent with binding %s: %w",
+				req.ServiceProvider, ireq.ACSEndpoint.Binding, saml.ErrUnknownAssertionConsumerService)
+		}
 	}
 	if err := ireq.MakeErrorResponse(status.TopLevel, status.SecondLevel, status.Message); err != nil {
 		return nil, err
@@ -305,7 +347,10 @@ func (c *Config) answer(ctx context.Context, req *AuthnRequest, o responseOption
 	if err != nil {
 		return nil, err
 	}
-	idp := c.identityProvider(o.idp)
+	idp, err := c.checkedIdentityProvider(o.idp)
+	if err != nil {
+		return nil, err
+	}
 	ireq := &saml.IdpAuthnRequest{
 		IDP:                     idp,
 		HTTPRequest:             (&http.Request{RemoteAddr: o.address}).WithContext(ctx),

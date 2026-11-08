@@ -127,12 +127,11 @@ func New(entityID string, serviceProviders ServiceProviderFunc, opts ...Option) 
 	if err := c.encryption().checkConfigured(c.unrestrictedIdentityProvider(nil)); err != nil {
 		return nil, err
 	}
-	if len(c.checks) > 0 {
-		idp := c.identityProvider(nil)
-		for _, check := range c.checks {
-			if err := check(idp); err != nil {
-				return nil, err
-			}
+	idp := c.identityProvider(nil)
+	// An IdentityProviderOption may set the time limits too.
+	for _, check := range append([]func(*saml.IdentityProvider) error{checkTimeLimits}, c.checks...) {
+		if err := check(idp); err != nil {
+			return nil, err
 		}
 	}
 	return c, nil
@@ -242,8 +241,9 @@ func WithSignatureMethod(method string) Option {
 }
 
 // WithNameIDFormats sets the NameID formats that the IdP metadata says the
-// IdP issues. The default is transient. It does not limit what Response
-// issues, which is the Subject's NameIDFormat.
+// IdP issues. The default is saml.UnspecifiedNameIDFormat, the format of a
+// Subject that sets none. It does not limit what Response issues, which is
+// the Subject's NameIDFormat.
 func WithNameIDFormats(formats ...saml.NameIDFormat) Option {
 	return optionFunc(func(c *Config, _ *configOptions) {
 		c.nameIDFormats = append(c.nameIDFormats, formats...)
@@ -300,10 +300,7 @@ func WithRand(randReader io.Reader) Option {
 // saml.IdentityProvider.MaxClockSkew, so it applies to this Config only.
 // Zero, the default, means saml.MaxClockSkew.
 func WithClockSkew(d time.Duration) Option {
-	return optionFunc(func(c *Config, _ *configOptions) {
-		c.clockSkew = d
-		c.checks = append(c.checks, checkTimeLimits)
-	})
+	return optionFunc(func(c *Config, _ *configOptions) { c.clockSkew = d })
 }
 
 // WithMaxIssueDelay sets the longest allowed time between the IssueInstant
@@ -312,16 +309,15 @@ func WithClockSkew(d time.Duration) Option {
 // valid. It sets saml.IdentityProvider.MaxIssueDelay, so it applies to
 // this Config only. Zero, the default, means saml.MaxIssueDelay.
 func WithMaxIssueDelay(d time.Duration) Option {
-	return optionFunc(func(c *Config, _ *configOptions) {
-		c.issueDelay = d
-		c.checks = append(c.checks, checkTimeLimits)
-	})
+	return optionFunc(func(c *Config, _ *configOptions) { c.issueDelay = d })
 }
 
-// checkTimeLimits refuses a negative clock skew or issue delay.
+// checkTimeLimits refuses a negative clock skew or issue delay, whether
+// set by WithClockSkew and WithMaxIssueDelay or by an
+// IdentityProviderOption, passed to New or to a method.
 func checkTimeLimits(idp *saml.IdentityProvider) error {
 	if idp.MaxClockSkew < 0 || idp.MaxIssueDelay < 0 {
-		return errors.New("samlidp: WithClockSkew and WithMaxIssueDelay need a duration that is not negative")
+		return fmt.Errorf("samlidp: the clock skew (%s) and issue delay (%s) must not be negative", idp.MaxClockSkew, idp.MaxIssueDelay)
 	}
 	return nil
 }
@@ -444,11 +440,12 @@ func WithReplayState(state ReplayState) Option {
 // Response makes the assertion from the Subject (change it with
 // WithAssertion), nor are its ResponseFormTemplate and
 // SimpleSignResponseFormTemplate, since Message writes its own forms. Its
-// ServiceProviderProvider is replaced, in ParseAuthnRequest and
-// IDPInitiated, by one that calls the ServiceProviderFunc of New, with
-// which Response and ErrorResponse look the SP up again, so that both
-// steps see the same metadata: to look SPs up differently, change the
-// ServiceProviderFunc.
+// ServiceProviderProvider is replaced, after the options are applied, by
+// one that calls the ServiceProviderFunc of New, with which every method
+// looks SPs up, so that the SP whose keys verified a message is the one
+// whose metadata is used to answer it: to look SPs up differently,
+// change the ServiceProviderFunc. A negative MaxClockSkew or MaxIssueDelay
+// is refused, by New or by the method the option is passed to.
 type IdentityProviderOption func(idp *saml.IdentityProvider)
 
 func (f IdentityProviderOption) applyConfig(c *Config, _ *configOptions) {
@@ -564,20 +561,24 @@ func (c *Config) unrestrictedIdentityProvider(opts []IdentityProviderOption) *sa
 	if method == "" {
 		method = signatureMethod(c.key)
 	}
+	nameIDFormats := slices.Clone(c.nameIDFormats)
+	if len(nameIDFormats) == 0 {
+		// Package saml advertises transient by default.
+		nameIDFormats = []saml.NameIDFormat{saml.UnspecifiedNameIDFormat}
+	}
 	idp := &saml.IdentityProvider{
-		Signer:                  c.key,
-		Certificate:             c.certificate,
-		Intermediates:           slices.Clone(c.intermediates),
-		ExtraCertificates:       slices.Clone(c.extraCerts),
-		MetadataURL:             c.entityURL,
-		SSOURL:                  c.ssoURL,
-		SignatureMethod:         method,
-		NameIDFormats:           slices.Clone(c.nameIDFormats),
-		Clock:                   c.clock,
-		Rand:                    c.Rand(),
-		MaxClockSkew:            c.clockSkew,
-		MaxIssueDelay:           c.issueDelay,
-		ServiceProviderProvider: serviceProviderProvider{c.serviceProviders, c.clock},
+		Signer:            c.key,
+		Certificate:       c.certificate,
+		Intermediates:     slices.Clone(c.intermediates),
+		ExtraCertificates: slices.Clone(c.extraCerts),
+		MetadataURL:       c.entityURL,
+		SSOURL:            c.ssoURL,
+		SignatureMethod:   method,
+		NameIDFormats:     nameIDFormats,
+		Clock:             c.clock,
+		Rand:              c.Rand(),
+		MaxClockSkew:      c.clockSkew,
+		MaxIssueDelay:     c.issueDelay,
 		// Package saml logs what it refuses and ignores; this package
 		// returns errors instead.
 		Logger: log.New(io.Discard, "", 0),
@@ -597,7 +598,20 @@ func (c *Config) unrestrictedIdentityProvider(opts []IdentityProviderOption) *sa
 			opt(idp)
 		}
 	}
+	// Whatever the options set: every step looks the SP up with the
+	// ServiceProviderFunc (see IdentityProviderOption).
+	idp.ServiceProviderProvider = serviceProviderProvider{c.serviceProviders, c.clock}
 	return idp
+}
+
+// checkedIdentityProvider is identityProvider, but fails if opts set a
+// negative time limit (see checkTimeLimits).
+func (c *Config) checkedIdentityProvider(opts []IdentityProviderOption) (*saml.IdentityProvider, error) {
+	idp := c.identityProvider(opts)
+	if err := checkTimeLimits(idp); err != nil {
+		return nil, err
+	}
+	return idp, nil
 }
 
 // IdentityProvider returns the saml.IdentityProvider that the methods of c
@@ -605,7 +619,10 @@ func (c *Config) unrestrictedIdentityProvider(opts []IdentityProviderOption) *sa
 // and then opts applied. It is for handling SAML messages this package
 // does not, such as single logout; the result is a new value, which may be
 // changed. Its ServiceProviderProvider calls the ServiceProviderFunc of New
-// with the context of the http.Request it is given.
+// with the context of the http.Request it is given, whatever opts set.
+// Since it returns no error, it does not refuse a negative MaxClockSkew or
+// MaxIssueDelay that opts set; check the result for them if opts come from
+// elsewhere, as x/samlidp/idpslo does.
 //
 // Its AssertionEncrypterFunc and LogoutNameIDEncrypterFunc enforce the
 // encryption policy of New (see EnableInsecureAESCBC and

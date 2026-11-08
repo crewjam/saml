@@ -327,8 +327,16 @@ func (req *Request) Matches(p saml.SessionParticipant) bool {
 // WriteRequestError. A request that is valid, but whose sessions the IdP
 // will not end, such as from an SP that is not a participant of them, is
 // answered with Response and a status that says so (see WithStatus).
+//
+// opts adjust the saml.IdentityProvider that verifies the request, as for
+// the methods of samlidp.Config, but cannot replace its
+// ServiceProviderProvider: the SP is looked up with the
+// ServiceProviderFunc of the Config, as Response looks it up again.
 func (s *Service) ParseRequest(ctx context.Context, r *http.Request, opts ...samlidp.IdentityProviderOption) (*Request, error) {
-	idp := s.config.IdentityProvider(opts...)
+	idp, err := s.identityProvider(opts)
+	if err != nil {
+		return nil, err
+	}
 	if r.Method == http.MethodPost && !saml.IsSOAPRequest(r) {
 		// Parse the form here: r.WithContext makes a copy, and a body the
 		// copy parsed could not be read again.
@@ -369,6 +377,20 @@ func (s *Service) ParseRequest(ctx context.Context, r *http.Request, opts ...sam
 		out.ResponseLocation = responseLocation(*ep)
 	}
 	return out, nil
+}
+
+// identityProvider returns the saml.IdentityProvider of the Config with
+// opts applied. Its ServiceProviderProvider calls the ServiceProviderFunc
+// of the Config whatever opts set, so that the SP whose keys verify a
+// message is the one Response and ParseResponse look up. It fails if opts
+// set a negative clock skew or issue delay, as the methods of
+// samlidp.Config do.
+func (s *Service) identityProvider(opts []samlidp.IdentityProviderOption) (*saml.IdentityProvider, error) {
+	idp := s.config.IdentityProvider(opts...)
+	if idp.MaxClockSkew < 0 || idp.MaxIssueDelay < 0 {
+		return nil, fmt.Errorf("idpslo: the clock skew (%s) and issue delay (%s) must not be negative", idp.MaxClockSkew, idp.MaxIssueDelay)
+	}
+	return idp, nil
 }
 
 // responseLocation returns where a LogoutResponse is sent at endpoint: its
@@ -574,7 +596,10 @@ func (s *Service) Request(ctx context.Context, p saml.SessionParticipant, relayS
 	if err != nil {
 		return nil, err
 	}
-	idp := s.config.IdentityProvider(o.idp...)
+	idp, err := s.identityProvider(o.idp)
+	if err != nil {
+		return nil, err
+	}
 	req, err := idp.MakeLogoutRequest(md, p, ep.Location)
 	if err != nil {
 		return nil, err
@@ -638,7 +663,10 @@ func (s *Service) ParseResponse(ctx context.Context, r *http.Request, servicePro
 	if err := r.ParseForm(); err != nil {
 		return nil, err
 	}
-	idp := s.config.IdentityProvider()
+	idp, err := s.identityProvider(nil)
+	if err != nil {
+		return nil, err
+	}
 	resp, err := idp.ValidateLogoutResponse(r.WithContext(ctx), serviceProvider, requestIDs)
 	if err != nil {
 		return nil, err
@@ -681,7 +709,10 @@ func (s *Service) SendRequest(ctx context.Context, p saml.SessionParticipant, op
 	for _, opt := range opts {
 		opt(&o)
 	}
-	idp := s.config.IdentityProvider(o.idp...)
+	idp, err := s.identityProvider(o.idp)
+	if err != nil {
+		return nil, err
+	}
 	if !hasSOAP(idp.LogoutBindings) {
 		return nil, errors.New("idpslo: SendRequest needs BackChannel")
 	}
