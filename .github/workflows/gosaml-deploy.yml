@@ -8,7 +8,7 @@
 #     branch deploy. A workflow run on any other branch, or for a pull
 #     request (from a fork or not), cannot read it, even if it edits this
 #     file.
-#   - It is a Fly deploy token for the gosaml app alone, not an
+#   - It is a Fly deploy token for the gosamldev app alone, not an
 #     organization or personal token.
 #   - Only the deploy job uses the environment. All of the Go code (the
 #     tests, go vet, the build, and the modules they download) runs in the

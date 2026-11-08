@@ -11,12 +11,12 @@
 # live logs never wait for a cold start.
 #
 # One-time setup:
-#   fly apps create gosaml
+#   fly apps create gosamldev
 #   fly volumes create gosaml_data --region iad --size 1 --yes
 #   fly certs add gosaml.dev
 #   (then point gosaml.dev's DNS at the app, as `fly certs show gosaml.dev` says)
 
-app = "gosaml"
+app = "gosamldev"
 primary_region = "iad"
 
 [build]

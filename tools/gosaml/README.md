@@ -109,7 +109,7 @@ into the binary itself. A binary built without `deploy.sh` says `dev`.
 First deploy:
 
 ```sh
-fly apps create gosaml
+fly apps create gosamldev
 fly volumes create gosaml_data --region iad --size 1 --yes
 fly certs add gosaml.dev    # then set DNS as `fly certs show gosaml.dev` says
 ./deploy.sh
@@ -128,7 +128,7 @@ One-time setup, by a repository admin:
 1. Make a deploy token for this one app, not an organization token:
 
    ```sh
-   fly tokens create deploy --app gosaml --name github-actions --expiry 8760h
+   fly tokens create deploy --app gosamldev --name github-actions --expiry 8760h
    ```
 
    It prints `FlyV1 fm2_…`; copy the whole line, `FlyV1 ` included. Do not
@@ -146,7 +146,7 @@ One-time setup, by a repository admin:
    each deploy.
 
 To rotate the token, make a new one, replace the secret, then revoke the
-old one: `fly tokens list --app gosaml`, then `fly tokens revoke <id>`.
+old one: `fly tokens list --app gosamldev`, then `fly tokens revoke <id>`.
 Revoke it right away if it may have leaked.
 
 Environment variables: `GOSAML_BASE_URL` (default
