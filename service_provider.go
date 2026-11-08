@@ -3456,14 +3456,20 @@ func (sp *ServiceProvider) ValidateLogoutResponseRequest(req *http.Request) erro
 // response's InResponseTo must be one of possibleRequestIDs, the IDs of the
 // LogoutRequests this service provider sent and still expects an answer to,
 // so that a LogoutResponse cannot be replayed or delivered unsolicited.
+//
+// A response that is valid and answers one of possibleRequestIDs, but
+// whose status is not Success, is returned together with an error that
+// matches ErrBadStatus, so that the caller can still record its ID.
 func (sp *ServiceProvider) ParseLogoutResponse(req *http.Request, possibleRequestIDs []string) (*LogoutResponse, error) {
+	// resp is nil unless the response is valid but for its status, which
+	// is reported only once InResponseTo matches.
 	resp, err := sp.parseLogoutResponseRequest(req)
-	if err != nil {
+	if resp == nil {
 		return nil, err
 	}
 	for _, possibleRequestID := range possibleRequestIDs {
 		if possibleRequestID != "" && resp.InResponseTo == possibleRequestID {
-			return resp, nil
+			return resp, err
 		}
 	}
 	return nil, &InvalidResponseError{
@@ -3516,6 +3522,10 @@ func (sp *ServiceProvider) parseLogoutResponseSimpleSign(req *http.Request) (*Lo
 	if err := sp.validateLogoutResponse(&resp); err != nil {
 		retErr.PrivateErr = err
 		return nil, retErr
+	}
+	if err := logoutResponseStatusError(&resp); err != nil {
+		retErr.PrivateErr = err
+		return &resp, retErr
 	}
 	return &resp, nil
 }
@@ -3573,6 +3583,10 @@ func (sp *ServiceProvider) parseLogoutResponseForm(postFormData string) (*Logout
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
+	if err := logoutResponseStatusError(&resp); err != nil {
+		retErr.PrivateErr = err
+		return &resp, retErr
+	}
 	return &resp, nil
 }
 
@@ -3619,6 +3633,10 @@ func (sp *ServiceProvider) validateLogoutResponseRedirectQuery(rawQuery string) 
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
+	if err := logoutResponseStatusError(&resp); err != nil {
+		retErr.PrivateErr = err
+		return &resp, retErr
+	}
 	return &resp, nil
 }
 
@@ -3638,10 +3656,15 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 	if resp.Issuer == nil || resp.Issuer.Value != sp.IDPMetadata.EntityID {
 		return classify(fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
 	}
+	return nil
+}
+
+// logoutResponseStatusError returns an error that matches ErrBadStatus if
+// the status of resp, an otherwise valid LogoutResponse, is not Success.
+func logoutResponseStatusError(resp *LogoutResponse) error {
 	if resp.Status.StatusCode.Value != StatusSuccess {
 		return classify(fmt.Errorf("status code was not %s", StatusSuccess), newErrBadStatus(resp.Status))
 	}
-
 	return nil
 }
 

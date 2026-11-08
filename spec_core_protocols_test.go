@@ -367,11 +367,13 @@ func TestSpecProtocol_3_7_3_2_SPAcceptsSuccessWithPartialLogout(t *testing.T) {
 	r := e.logoutResponse()
 	r.Status.StatusCode.StatusCode = &StatusCode{Value: StatusPartialLogout}
 	assert.Check(t, e.sp.validateLogoutResponse(r))
+	assert.Check(t, logoutResponseStatusError(r))
 
 	r = e.logoutResponse()
 	r.Status.StatusCode = StatusCode{Value: StatusResponder, StatusCode: &StatusCode{Value: StatusPartialLogout}}
 	var badStatus ErrBadStatus
-	assert.Check(t, errors.As(e.sp.validateLogoutResponse(r), &badStatus))
+	assert.Check(t, e.sp.validateLogoutResponse(r))
+	assert.Check(t, errors.As(logoutResponseStatusError(r), &badStatus))
 	assert.Check(t, is.Equal(StatusResponder, badStatus.Status))
 }
 

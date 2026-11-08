@@ -473,9 +473,12 @@ func (s *Service) ParseResponse(ctx context.Context, r *http.Request, requestIDs
 	if err := r.ParseForm(); err != nil {
 		return nil, err
 	}
-	resp, err := sp.ParseLogoutResponse(r.WithContext(ctx), requestIDs)
-	if err != nil {
-		return nil, err
+	// A response whose status is not Success comes back with an error
+	// matching saml.ErrBadStatus, once its InResponseTo has matched: it
+	// is recorded, like any other, before that error is returned.
+	resp, statusErr := sp.ParseLogoutResponse(r.WithContext(ctx), requestIDs)
+	if resp == nil {
+		return nil, statusErr
 	}
 	if resp.ID == "" {
 		return nil, errors.New("slo: the logout response has no ID")
@@ -484,6 +487,9 @@ func (s *Service) ParseResponse(ctx context.Context, r *http.Request, requestIDs
 		if err := sp.ReplayCache.Consume(logoutResponseReplayPrefix+resp.ID, resp.IssueInstant.Add(timelimit.SPIssueDelay(sp))); err != nil {
 			return nil, fmt.Errorf("slo: logout response %q: %w", resp.ID, err)
 		}
+	}
+	if statusErr != nil {
+		return nil, statusErr
 	}
 	return resp, partialLogout(resp)
 }
