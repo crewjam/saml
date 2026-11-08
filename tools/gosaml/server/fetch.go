@@ -35,6 +35,11 @@ func publicOnly(_, address string, _ syscall.RawConn) error {
 		cgnat.Contains(ip) || benchmarking.Contains(ip) {
 		return errForbiddenAddress
 	}
+	for _, p := range embedsIPv4 {
+		if p.Contains(ip) {
+			return errForbiddenAddress
+		}
+	}
 	if p := ap.Port(); p != 80 && p != 443 && p != 8080 && p != 8443 {
 		return fmt.Errorf("port %d is not allowed", p)
 	}
@@ -44,6 +49,17 @@ func publicOnly(_, address string, _ syscall.RawConn) error {
 var (
 	cgnat        = netip.MustParsePrefix("100.64.0.0/10")
 	benchmarking = netip.MustParsePrefix("198.18.0.0/15")
+
+	// embedsIPv4 are IPv6 transition prefixes whose addresses carry an
+	// IPv4 address, which a gateway may forward to: through NAT64, the
+	// public-looking 64:ff9b::a00:1 is 10.0.0.1. Metadata has no need of
+	// them, so they are refused rather than decoded and checked.
+	embedsIPv4 = []netip.Prefix{
+		netip.MustParsePrefix("64:ff9b::/96"),   // NAT64, well-known (RFC 6052)
+		netip.MustParsePrefix("64:ff9b:1::/48"), // NAT64, local use (RFC 8215)
+		netip.MustParsePrefix("2002::/16"),      // 6to4 (RFC 3056)
+		netip.MustParsePrefix("2001::/32"),      // Teredo (RFC 4380)
+	}
 )
 
 // newFetchClient returns the HTTP client the server fetches visitors'

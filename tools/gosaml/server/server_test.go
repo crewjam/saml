@@ -229,15 +229,21 @@ func TestEndToEnd(t *testing.T) {
 
 func TestPublicOnly(t *testing.T) {
 	for addr, ok := range map[string]bool{
-		"127.0.0.1:443":        false,
-		"10.1.2.3:443":         false,
-		"169.254.169.254:80":   false,
-		"[fdaa::3]:443":        false,
-		"[::1]:443":            false,
-		"100.64.1.1:443":       false,
-		"8.8.8.8:443":          true,
-		"8.8.8.8:22":           false,
-		"[2606:4700::1111]:80": true,
+		"127.0.0.1:443":              false,
+		"10.1.2.3:443":               false,
+		"169.254.169.254:80":         false,
+		"[fdaa::3]:443":              false,
+		"[::1]:443":                  false,
+		"100.64.1.1:443":             false,
+		"8.8.8.8:443":                true,
+		"8.8.8.8:22":                 false,
+		"[2606:4700::1111]:80":       true,
+		"[64:ff9b::a00:1]:443":       false, // NAT64 of 10.0.0.1
+		"[64:ff9b:1::a9fe:a9fe]:443": false, // local NAT64 of 169.254.169.254
+		"[2002:a00:1::1]:443":        false, // 6to4 of 10.0.0.1
+		"[2001:0:4136:e378:8000:63bf:f5ff:fffe]:443": false, // Teredo
+		"[::ffff:10.0.0.1]:443":                      false,
+		"0.0.0.0:443":                                false,
 	} {
 		if err := publicOnly("tcp", addr, nil); (err == nil) != ok {
 			t.Errorf("%s: %v", addr, err)
