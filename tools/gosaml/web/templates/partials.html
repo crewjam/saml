@@ -1,0 +1,31 @@
+{{define "copy"}}<div class="field"><span class="label">{{.K}}</span><div class="copy"><code>{{.V}}</code><button type="button" class="small" data-copy="{{.V}}">Copy</button></div></div>{{end}}
+
+{{define "flash"}}{{if .}}<div class="flash" role="status">{{.}}</div>{{end}}{{end}}
+
+{{define "expiry"}}<p class="meta">Created {{since .CreatedAt}}. Deleted in {{until .ExpiresAt}}, or when the server restarts.</p>{{end}}
+
+{{define "events"}}
+<section id="log" class="card">
+  <div class="card-head">
+    <h2>Log</h2>
+    <form method="post" action="/manage/{{.Secret}}/clear-events"><button class="small secondary">Clear</button></form>
+  </div>
+  <p class="hint">Messages this instance sent and received, newest first. The last {{.Max}} are kept. Reload to see new ones.</p>
+  {{if not .Events}}<p class="empty">Nothing yet.</p>{{end}}
+  <ol class="events">
+  {{range .Events}}
+    <li class="{{if .OK}}ok{{else}}bad{{end}}">
+      <details>
+        <summary>
+          <span class="dir">{{if eq .Direction "in"}}⇠ in{{else if eq .Direction "out"}}⇢ out{{else}}•{{end}}</span>
+          <span class="title">{{.Title}}</span>
+          <time title="{{clock .At}}">{{since .At}}</time>
+        </summary>
+        {{if .Detail}}<pre class="detail">{{.Detail}}</pre>{{end}}
+        {{if .XML}}<div class="xml-head"><span>XML</span><button type="button" class="small secondary" data-copy-from="next">Copy</button></div><pre class="xml">{{.XML}}</pre>{{end}}
+      </details>
+    </li>
+  {{end}}
+  </ol>
+</section>
+{{end}}

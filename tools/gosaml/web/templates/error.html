@@ -1,0 +1,8 @@
+{{define "content"}}
+<section class="card narrow">
+  <h1>Something went wrong</h1>
+  <p class="lead">{{.Data.Message}}</p>
+  {{if .Data.Detail}}<h2>Details</h2><pre class="detail">{{.Data.Detail}}</pre>{{end}}
+  <p><a href="/">Home</a></p>
+</section>
+{{end}}

@@ -1,0 +1,140 @@
+{{define "content"}}{{with .Data}}
+<div class="page-head">
+  <div>
+    <p class="eyebrow"><span class="badge idp">IdP</span> Test identity provider</p>
+    <h1>{{.Config.Name}}</h1>
+    {{template "expiry" .Instance}}
+  </div>
+  <form method="post" action="/manage/{{.Secret}}/delete" data-confirm="Delete this IdP now? Service providers that trust it will stop working.">
+    <button class="danger secondary">Delete</button>
+  </form>
+</div>
+{{template "flash" .Flash}}
+<p class="notice">This page's URL is the only key to this IdP. Bookmark it, and share it only with people who should change it.</p>
+
+<section class="card" id="connect">
+  <h2>Give these to your service provider</h2>
+  <p class="hint">Most SPs need only the metadata URL. Others ask for the entity ID, SSO URL and certificate separately.</p>
+  {{template "copy" (kv "Metadata URL" .MetadataURL)}}
+  {{template "copy" (kv "Entity ID (Issuer)" .EntityID)}}
+  {{template "copy" (kv "SSO URL (HTTP-Redirect and HTTP-POST)" .SSOURL)}}
+  <div class="field"><span class="label">Signing certificate</span><a href="{{.CertURL}}">Download PEM</a></div>
+</section>
+
+<section class="card" id="sps">
+  <h2>Service providers</h2>
+  {{if .Config.AutoFetchSPMetadata}}<p class="hint">An SP whose entity ID is its metadata URL can log in without being registered: its metadata is fetched at each login. Register others here.</p>{{end}}
+  {{if .Config.ServiceProviders}}
+  <table class="list">
+    <thead><tr><th>Entity ID</th><th>Metadata</th><th></th></tr></thead>
+    <tbody>
+    {{range .Config.ServiceProviders}}
+      <tr>
+        <td><code class="wrap">{{.EntityID}}</code></td>
+        <td>{{if .Source}}<span class="meta">from <code class="wrap">{{.Source}}</code></span>{{else}}<span class="meta">pasted</span>{{end}}<br><span class="meta">{{since .AddedAt}}</span>
+          <details><summary>XML</summary><pre class="xml">{{.Metadata}}</pre></details></td>
+        <td class="actions">
+          {{if .Source}}<form method="post" action="/manage/{{$.Data.Secret}}/sp-refresh"><input type="hidden" name="entity_id" value="{{.EntityID}}"><button class="small secondary">Refresh</button></form>{{end}}
+          <form method="post" action="/manage/{{$.Data.Secret}}/sp-remove"><input type="hidden" name="entity_id" value="{{.EntityID}}"><button class="small secondary danger">Remove</button></form>
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}<p class="empty">No service providers registered.</p>{{end}}
+
+  {{if .Others}}
+  <div class="pair">
+    <span class="label">Your test SPs</span>
+    {{range .Others}}
+    <form method="post" action="/manage/{{$.Data.Secret}}/sp-add"><input type="hidden" name="metadata_url" value="{{.MetadataURL}}"><button class="small secondary">Add {{.Name}}</button></form>
+    {{end}}
+  </div>
+  {{end}}
+
+  <form method="post" action="/manage/{{.Secret}}/sp-add" class="stack">
+    <h3>Register a service provider</h3>
+    <label>Metadata URL <input type="url" name="metadata_url" placeholder="https://sp.example.com/saml/metadata"></label>
+    <label>or metadata XML <textarea name="metadata_xml" rows="5" placeholder="&lt;EntityDescriptor …"></textarea></label>
+    <div><button>Register</button></div>
+  </form>
+</section>
+
+<section class="card" id="users">
+  <h2>Users</h2>
+  <p class="hint">When an SP sends a user here to log in, you choose which of these users to log in as. There are no passwords.</p>
+  {{range .Config.Users}}
+  <details class="user">
+    <summary><strong>{{.Username}}</strong> <span class="meta">{{.NameID}} · {{short .NameIDFormat}} · {{len .Attributes}} attributes</span></summary>
+    <form method="post" action="/manage/{{$.Data.Secret}}/user-save" class="stack">
+      <input type="hidden" name="username" value="{{.Username}}">
+      {{template "user-fields" (userForm . $.Data)}}
+      <div class="row">
+        <button>Save {{.Username}}</button>
+      </div>
+    </form>
+    <form method="post" action="/manage/{{$.Data.Secret}}/user-remove"><input type="hidden" name="username" value="{{.Username}}"><button class="small secondary danger">Remove {{.Username}}</button></form>
+  </details>
+  {{end}}
+  <details class="user">
+    <summary><strong>Add a user</strong></summary>
+    <form method="post" action="/manage/{{.Secret}}/user-save" class="stack">
+      <label>Username <input name="username" required maxlength="100"></label>
+      {{template "user-fields" (userForm nil .)}}
+      <div><button>Add user</button></div>
+    </form>
+  </details>
+</section>
+
+<section class="card" id="initiate">
+  <h2>IdP-initiated login</h2>
+  <p class="hint">Send an unsolicited Response to a service provider, as an IdP's application portal does.</p>
+  <form method="post" action="/manage/{{.Secret}}/initiate" class="stack">
+    <label>Service provider entity ID
+      <input name="entity_id" list="sp-list" required placeholder="https://sp.example.com/saml/metadata">
+      <datalist id="sp-list">{{range .Config.ServiceProviders}}<option value="{{.EntityID}}">{{end}}{{range .Others}}<option value="{{.MetadataURL}}">{{end}}</datalist>
+    </label>
+    <label>RelayState <span class="meta">optional; many SPs take it as where to go after login</span><input name="relay_state" maxlength="80"></label>
+    <div><button>Choose a user and send</button></div>
+  </form>
+</section>
+
+<section class="card" id="settings">
+  <h2>Settings</h2>
+  <form method="post" action="/manage/{{.Secret}}/settings" class="stack">
+    <label>Name <input name="name" value="{{.Config.Name}}" maxlength="100"></label>
+    <label class="check"><input type="checkbox" name="auto_fetch" {{if .Config.AutoFetchSPMetadata}}checked{{end}}> Accept unregistered SPs whose entity ID is a metadata URL</label>
+    <label class="check"><input type="checkbox" name="require_signed" {{if .Config.RequireSignedRequests}}checked{{end}}> Require signed AuthnRequests</label>
+    <label>Signature algorithm
+      <select name="signature_method">
+        <option value="sha256" {{if eq .Config.SignatureMethod "sha256"}}selected{{end}}>RSA-SHA-256</option>
+        <option value="sha384" {{if eq .Config.SignatureMethod "sha384"}}selected{{end}}>RSA-SHA-384</option>
+        <option value="sha512" {{if eq .Config.SignatureMethod "sha512"}}selected{{end}}>RSA-SHA-512</option>
+      </select>
+    </label>
+    <label>Assertion encryption <span class="meta">for SPs whose metadata has an encryption certificate</span>
+      <select name="encryption">
+        <option value="auto" {{if eq .Config.Encryption "auto"}}selected{{end}}>Automatic: the strongest the SP's metadata lists</option>
+        <option value="gcm" {{if eq .Config.Encryption "gcm"}}selected{{end}}>RSA-OAEP-SHA256 and AES-256-GCM</option>
+        <option value="cbc" {{if eq .Config.Encryption "cbc"}}selected{{end}}>RSA-OAEP and AES-128-CBC (legacy)</option>
+        <option value="off" {{if eq .Config.Encryption "off"}}selected{{end}}>Off: never encrypt</option>
+      </select>
+    </label>
+    <div><button>Save settings</button></div>
+  </form>
+</section>
+
+{{template "events" .}}
+{{end}}{{end}}
+
+{{define "user-fields"}}
+<label>NameID <input name="nameid" value="{{if .User}}{{.User.NameID}}{{end}}" maxlength="1000" placeholder="defaults to the username"></label>
+<label>NameID format
+  <select name="nameid_format">
+    {{range .Formats}}<option value="{{.}}" {{if $.User}}{{if eq (print .) $.User.NameIDFormat}}selected{{end}}{{end}}>{{.}}</option>{{end}}
+  </select>
+</label>
+<label>Attributes <span class="meta">one value per line: <code>Name = value</code> or <code>Name (FriendlyName) = value</code>; repeat a name for several values</span>
+  <textarea name="attributes" rows="8" spellcheck="false">{{.Text}}</textarea>
+</label>
+{{end}}

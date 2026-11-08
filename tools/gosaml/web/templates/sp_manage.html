@@ -1,0 +1,119 @@
+{{define "content"}}{{with .Data}}
+<div class="page-head">
+  <div>
+    <p class="eyebrow"><span class="badge sp">SP</span> Test service provider</p>
+    <h1>{{.Config.Name}}</h1>
+    {{template "expiry" .Instance}}
+  </div>
+  <form method="post" action="/manage/{{.Secret}}/delete" data-confirm="Delete this SP now?">
+    <button class="danger secondary">Delete</button>
+  </form>
+</div>
+{{template "flash" .Flash}}
+<p class="notice">This page's URL is the only key to this SP. Bookmark it, and share it only with people who should change it.</p>
+
+<section class="card" id="connect">
+  <h2>Give these to your identity provider</h2>
+  <p class="hint">Most IdPs can read the metadata URL. Others ask for the entity ID (audience) and ACS URL separately.</p>
+  {{template "copy" (kv "Metadata URL" .MetadataURL)}}
+  {{template "copy" (kv "Entity ID (Audience)" .EntityID)}}
+  {{template "copy" (kv "ACS URL (HTTP-POST)" .ACSURL)}}
+  <div class="field"><span class="label">Signing and encryption certificate</span><a href="{{.CertURL}}">Download PEM</a></div>
+</section>
+
+<section class="card" id="idp">
+  <h2>Identity provider</h2>
+  {{if .Config.IdPEntityID}}
+  <table class="kv">
+    <tr><th>Entity ID</th><td><code class="wrap">{{.Config.IdPEntityID}}</code></td></tr>
+    <tr><th>Metadata</th><td>{{if .Config.IdPMetadataSource}}from <code class="wrap">{{.Config.IdPMetadataSource}}</code>{{else}}pasted{{end}}
+      <details><summary>XML</summary><pre class="xml">{{.Config.IdPMetadata}}</pre></details></td></tr>
+  </table>
+  {{if .Config.IdPMetadataSource}}<form method="post" action="/manage/{{.Secret}}/idp-refresh"><button class="small secondary">Refresh metadata</button></form>{{end}}
+  {{else}}<p class="empty">No identity provider yet. Add its metadata to log in.</p>{{end}}
+
+  {{if .Others}}
+  <div class="pair">
+    <span class="label">Your test IdPs</span>
+    {{range .Others}}
+    <form method="post" action="/manage/{{$.Data.Secret}}/idp-set"><input type="hidden" name="metadata_url" value="{{.MetadataURL}}"><button class="small secondary">Use {{.Name}}</button></form>
+    {{end}}
+  </div>
+  {{end}}
+
+  <form method="post" action="/manage/{{.Secret}}/idp-set" class="stack">
+    <h3>{{if .Config.IdPEntityID}}Replace{{else}}Set{{end}} the identity provider</h3>
+    <label>Metadata URL <input type="url" name="metadata_url" placeholder="https://idp.example.com/metadata"></label>
+    <label>or metadata XML <textarea name="metadata_xml" rows="5" placeholder="&lt;EntityDescriptor …"></textarea></label>
+    <div><button>Save</button></div>
+  </form>
+</section>
+
+<section class="card" id="login">
+  <h2>Log in</h2>
+  {{if .Config.IdPEntityID}}
+  <form method="post" action="/sp/{{.Instance.ID}}/login" class="stack">
+    <div class="checks">
+      <label class="check"><input type="checkbox" name="force_authn"> ForceAuthn</label>
+      <label class="check"><input type="checkbox" name="is_passive"> IsPassive</label>
+    </div>
+    <details>
+      <summary>Options</summary>
+      <div class="stack">
+        <label>Binding
+          <select name="binding">
+            <option value="">As in settings</option>
+            <option value="redirect">HTTP-Redirect</option>
+            <option value="post">HTTP-POST</option>
+            <option value="simplesign">HTTP-POST-SimpleSign</option>
+          </select>
+        </label>
+        <label>Requested authentication context <span class="meta">exact; the assertion must match it</span>
+          <select name="authn_context">
+            <option value="">None</option>
+            {{range .Contexts}}<option value="{{.}}">{{short (print .)}}</option>{{end}}
+          </select>
+        </label>
+        <label>RelayState <span class="meta">optional, up to 80 bytes</span><input name="relay_state" maxlength="80"></label>
+      </div>
+    </details>
+    <div><button>Log in with the IdP</button></div>
+  </form>
+  <p class="hint">Anyone can start a login with this SP's settings from this link:</p>
+  {{template "copy" (kv "Login URL" .LoginURL)}}
+  {{else}}<p class="empty">Set the identity provider first.</p>{{end}}
+</section>
+
+<section class="card" id="settings">
+  <h2>Settings</h2>
+  <form method="post" action="/manage/{{.Secret}}/settings" class="stack">
+    <label>Name <input name="name" value="{{.Config.Name}}" maxlength="100"></label>
+    <label class="check"><input type="checkbox" name="sign_requests" {{if .Config.SignAuthnRequests}}checked{{end}}> Sign AuthnRequests</label>
+    <label class="check"><input type="checkbox" name="encryption_key" {{if .Config.PublishEncryptionKey}}checked{{end}}> Publish an encryption certificate, so the IdP encrypts assertions</label>
+    <label class="check"><input type="checkbox" name="allow_unsolicited" {{if .Config.AllowUnsolicited}}checked{{end}}> Accept IdP-initiated logins</label>
+    <label>Default binding
+      <select name="binding">
+        <option value="" {{if eq .Config.Binding ""}}selected{{end}}>Automatic: HTTP-Redirect if the IdP supports it</option>
+        <option value="redirect" {{if eq .Config.Binding "redirect"}}selected{{end}}>HTTP-Redirect</option>
+        <option value="post" {{if eq .Config.Binding "post"}}selected{{end}}>HTTP-POST</option>
+        <option value="simplesign" {{if eq .Config.Binding "simplesign"}}selected{{end}}>HTTP-POST-SimpleSign</option>
+      </select>
+    </label>
+    <label>NameID format to ask for
+      <select name="nameid_format">
+        <option value="" {{if eq .Config.NameIDFormat ""}}selected{{end}}>Unspecified: let the IdP choose</option>
+        {{range .Formats}}{{if ne (print .) "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"}}<option value="{{.}}" {{if eq (print .) $.Data.Config.NameIDFormat}}selected{{end}}>{{.}}</option>{{end}}{{end}}
+      </select>
+    </label>
+    <fieldset>
+      <legend>Relax checks</legend>
+      <p class="hint">The SP makes the checks of crewjam/saml's x/samlsp package, which are stricter than many IdPs expect. Relax them to see whether they are why a login fails.</p>
+      <label class="check"><input type="checkbox" name="allow_sha1" {{if .Config.AllowSHA1}}checked{{end}}> Accept SHA-1 signatures</label>
+      <label class="check"><input type="checkbox" name="allow_unsigned_cbc" {{if .Config.AllowUnsignedCBC}}checked{{end}}> Accept AES-CBC encrypted assertions in unsigned Responses</label>
+    </fieldset>
+    <div><button>Save settings</button></div>
+  </form>
+</section>
+
+{{template "events" .}}
+{{end}}{{end}}

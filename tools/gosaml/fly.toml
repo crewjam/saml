@@ -1,0 +1,54 @@
+# gosaml.dev on Fly.io. Deploy with ./deploy.sh, which builds the binary
+# this image is made from.
+#
+# Everything the app stores is temporary by design:
+#   - There is no volume ([mounts]): the SQLite database is on the
+#     machine's root filesystem, which is discarded whenever the machine
+#     is replaced (every deploy) or restarted. The app also deletes the
+#     database at startup.
+#   - Each test IdP or SP is deleted GOSAML_TTL after it is created.
+#
+# Since state is on one machine's disk, run exactly one machine
+# (deploy.sh passes --ha=false) and keep it running: if Fly stopped it
+# when idle, everyone's test IdPs and SPs would vanish within minutes,
+# which is sooner than GOSAML_TTL promises.
+#
+# One-time setup:
+#   fly apps create gosaml
+#   fly certs add gosaml.dev
+#   (then point gosaml.dev's DNS at the app, as `fly certs show gosaml.dev` says)
+
+app = "gosaml"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  GOSAML_BASE_URL = "https://gosaml.dev"
+  GOSAML_DB = "/tmp/gosaml.db"
+  GOSAML_TTL = "24h"
+  GOSAML_MAX_INSTANCES = "5000"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 300
+
+  [[http_service.checks]]
+    grace_period = "5s"
+    interval = "30s"
+    method = "GET"
+    path = "/healthz"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

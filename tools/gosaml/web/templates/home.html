@@ -1,0 +1,54 @@
+{{define "content"}}
+<section class="hero">
+  <h1>Test SAML without setting anything up.</h1>
+  <p class="lead">Create a throwaway identity provider or service provider, point the system you are building at it, and watch every message go by. Or paste a SAML message into the inspector to see what is in it.</p>
+</section>
+
+<div class="grid three">
+  <section class="card" id="idp">
+    <h2>Test identity provider</h2>
+    <p>An IdP with users you define. Register your service provider by its metadata, then log in to it as any user, with any attributes, or answer with an error to see how your SP copes.</p>
+    <form method="post" action="/new/idp"><button>Create an IdP</button></form>
+  </section>
+  <section class="card" id="sp">
+    <h2>Test service provider</h2>
+    <p>An SP that trusts your identity provider. Log in through it to see exactly what your IdP asserts: the NameID, the attributes, the signatures, and why a Response was refused.</p>
+    <form method="post" action="/new/sp"><button>Create an SP</button></form>
+  </section>
+  <section class="card">
+    <h2>Inspector</h2>
+    <p>Decode an AuthnRequest, Response, logout message or metadata from a URL, a POST body or base64. It runs in your browser: what you paste is not sent to the server.</p>
+    <a class="button" href="/inspect">Open the inspector</a>
+  </section>
+</div>
+
+{{if .Data.Mine}}
+<section class="card">
+  <h2>Your instances</h2>
+  <p class="hint">The instances this browser created. Bookmark a management page to come back to it from elsewhere: its URL is the only key to it.</p>
+  <table class="list">
+    <thead><tr><th>Kind</th><th>Name</th><th>Metadata</th><th>Expires in</th></tr></thead>
+    <tbody>
+    {{range .Data.Mine}}
+      <tr>
+        <td><span class="badge {{.Kind}}">{{if eq .Kind "idp"}}IdP{{else}}SP{{end}}</span></td>
+        <td><a href="/manage/{{.Secret}}">{{.Name}}</a></td>
+        <td><code class="wrap">{{.MetadataURL}}</code></td>
+        <td>{{until .ExpiresAt}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}
+
+<section class="card">
+  <h2>How it works</h2>
+  <ol class="steps">
+    <li><strong>Create</strong> an IdP or an SP. Each gets its own entity ID, endpoints and signing key.</li>
+    <li><strong>Exchange metadata</strong> with the system you are testing: give it this instance's metadata URL, and give this instance its metadata (a URL or the XML).</li>
+    <li><strong>Log in</strong>, and read the log: every request and response, decoded.</li>
+  </ol>
+  <p class="hint">A test IdP and a test SP made here can be connected to each other in one click, to see a complete login.</p>
+</section>
+{{end}}

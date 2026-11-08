@@ -1,0 +1,47 @@
+{{define "content"}}{{with .Data}}
+<section class="card">
+  <p class="eyebrow"><span class="badge sp">SP</span> {{.Name}}</p>
+  {{if .Assertion}}{{with .Assertion}}
+  <h1 class="result ok">Logged in as <code>{{.Subject}}</code></h1>
+  <table class="kv">
+    <tr><th>NameID</th><td><code class="wrap">{{.NameID.Value}}</code></td></tr>
+    <tr><th>NameID format</th><td><code>{{.NameID.Format}}</code></td></tr>
+    {{if .NameID.NameQualifier}}<tr><th>NameQualifier</th><td><code class="wrap">{{.NameID.NameQualifier}}</code></td></tr>{{end}}
+    {{if .NameID.SPNameQualifier}}<tr><th>SPNameQualifier</th><td><code class="wrap">{{.NameID.SPNameQualifier}}</code></td></tr>{{end}}
+    <tr><th>Issuer</th><td><code class="wrap">{{.Issuer}}</code></td></tr>
+    <tr><th>In response to</th><td>{{if .InResponseTo}}<code>{{.InResponseTo}}</code>{{else}}nothing: an IdP-initiated login{{end}}</td></tr>
+    <tr><th>Authenticated</th><td>{{clock .AuthnInstant}} ({{since .AuthnInstant}})</td></tr>
+    <tr><th>Authentication context</th><td><code class="wrap">{{.AuthnContextClassRef}}</code></td></tr>
+    {{if .SessionIndexes}}<tr><th>Session index</th><td><code class="wrap">{{join .SessionIndexes ", "}}</code></td></tr>{{end}}
+    {{if not .SessionNotOnOrAfter.IsZero}}<tr><th>Session ends</th><td>in {{until .SessionNotOnOrAfter}}</td></tr>{{end}}
+    <tr><th>Assertion valid until</th><td>{{clock .NotOnOrAfter}}</td></tr>
+    <tr><th>Assertion ID</th><td><code class="wrap">{{.ID}}</code></td></tr>
+  </table>
+  <h2>Attributes</h2>
+  {{if .Attributes}}
+  <table class="list attrs">
+    <thead><tr><th>Name</th><th>FriendlyName</th><th>Values</th></tr></thead>
+    <tbody>
+    {{range .Attributes}}
+      <tr><td><code class="wrap">{{.Name}}</code>{{if .NameFormat}}<br><span class="meta">{{short .NameFormat}}</span>{{end}}</td><td>{{.FriendlyName}}</td>
+        <td><ul class="values">{{range .Values}}<li><code class="wrap">{{.}}</code></li>{{end}}</ul></td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}<p class="empty">The IdP sent no attributes.</p>{{end}}
+  {{end}}
+  {{if .RelayState}}<p class="meta">RelayState: <code>{{.RelayState}}</code></p>{{end}}
+  {{if .AssertionXML}}<details><summary>Assertion (verified{{if .ResponseXML}}, decrypted if it was encrypted{{end}})</summary><div class="xml-head"><span>XML</span><button type="button" class="small secondary" data-copy-from="next">Copy</button></div><pre class="xml">{{.AssertionXML}}</pre></details>{{end}}
+  {{else}}
+  <h1 class="result bad">Login failed</h1>
+  <p>The SP refused the Response. This is what the library reported:</p>
+  <pre class="detail">{{.Error}}</pre>
+  {{if .Hints}}<h2>What may be wrong</h2><ul>{{range .Hints}}<li>{{.}}</li>{{end}}</ul>{{end}}
+  {{end}}
+  {{if .ResponseXML}}<details {{if not .Assertion}}open{{end}}><summary>Response as received</summary><div class="xml-head"><span>XML</span><button type="button" class="small secondary" data-copy-from="next">Copy</button></div><pre class="xml">{{.ResponseXML}}</pre></details>{{end}}
+  <div class="row">
+    <a class="button" href="/sp/{{.InstanceID}}/login">Log in again</a>
+    {{if .ManageURL}}<a class="button secondary" href="{{.ManageURL}}">Manage this SP</a>{{end}}
+  </div>
+</section>
+{{end}}{{end}}

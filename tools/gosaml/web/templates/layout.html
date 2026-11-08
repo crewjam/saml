@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{if .Title}}{{.Title}} · {{end}}gosaml.dev</title>
+<meta name="description" content="Test SAML identity providers and service providers, and a SAML message decoder that runs in your browser.">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/app.js" defer></script>
+{{block "head" .}}{{end}}
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/">gosaml<span>.dev</span></a>
+  <nav>
+    <a href="/#idp">Test IdP</a>
+    <a href="/#sp">Test SP</a>
+    <a href="/inspect">Inspector</a>
+    <a href="/about">About</a>
+  </nav>
+</header>
+<main>
+{{block "content" .}}{{end}}
+</main>
+<footer>
+  <p>Everything here is temporary. Test IdPs and SPs are deleted {{dur .TTL}} after they are created, and whenever the server restarts. Do not use real credentials or personal data.</p>
+  <p>Built on <a href="https://github.com/crewjam/saml">github.com/crewjam/saml</a>.</p>
+</footer>
+</body>
+</html>

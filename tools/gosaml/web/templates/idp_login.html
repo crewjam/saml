@@ -1,0 +1,58 @@
+{{define "content"}}{{with .Data}}
+<section class="card narrow">
+  <p class="eyebrow"><span class="badge idp">IdP</span> {{.Name}}</p>
+  <h1>Log in to {{if .Request.ProviderName}}{{.Request.ProviderName}}{{else}}a service provider{{end}}</h1>
+  <table class="kv">
+    <tr><th>Service provider</th><td><code class="wrap">{{.Request.ServiceProvider}}</code></td></tr>
+    <tr><th>Response goes to</th><td><code class="wrap">{{.Request.ACSURL}}</code> <span class="meta">{{short .Request.ACSBinding}}</span></td></tr>
+    {{if .Request.ID}}<tr><th>Request ID</th><td><code>{{.Request.ID}}</code></td></tr>{{else}}<tr><th>Request</th><td>none: IdP-initiated</td></tr>{{end}}
+    {{if .Request.RelayState}}<tr><th>RelayState</th><td><code class="wrap">{{.Request.RelayState}}</code></td></tr>{{end}}
+    {{if .Request.NameIDFormat}}<tr><th>Asks for NameID format</th><td><code>{{.Request.NameIDFormat}}</code></td></tr>{{end}}
+    {{if .Request.AuthnContextClasses}}<tr><th>Asks for authentication</th><td>{{.Request.AuthnContextComparison}}: {{range .Request.AuthnContextClasses}}<code>{{short (print .)}}</code> {{end}}</td></tr>{{end}}
+    {{if .Request.Subject}}<tr><th>Asks for user</th><td><code>{{.Request.Subject.Value}}</code></td></tr>{{end}}
+    {{if .Request.ForceAuthn}}<tr><th>ForceAuthn</th><td>yes: the SP wants a fresh login</td></tr>{{end}}
+  </table>
+
+  <form method="post" action="/idp/{{.InstanceID}}/login" class="stack">
+    <input type="hidden" name="pending" value="{{.PendingID}}">
+    <fieldset>
+      <legend>Log in as</legend>
+      {{range $i, $u := .Users}}
+      <label class="choice"><input type="radio" name="user" value="{{$u.Username}}" {{if eq $i 0}}checked{{end}}>
+        <span><strong>{{$u.Username}}</strong> <span class="meta">{{$u.NameID}}</span></span></label>
+      {{else}}<p class="empty">This IdP has no users. Add some on its management page.</p>{{end}}
+    </fieldset>
+    <details>
+      <summary>Options</summary>
+      <div class="stack">
+        <label>NameID format
+          <select name="nameid_format">
+            <option value="">As the SP asks{{if .Request.NameIDFormat}} ({{short (print .Request.NameIDFormat)}}){{end}}, else the user's own</option>
+            <option value="user">The user's own, even if the SP asks for another</option>
+            {{range .Formats}}<option value="{{.}}">{{.}}</option>{{end}}
+          </select>
+        </label>
+        <label>Authentication context
+          <select name="authn_context">
+            {{range .Contexts}}<option value="{{.}}" {{if eq (print .) $.Data.SelectedCtx}}selected{{end}}>{{short (print .)}}</option>{{end}}
+          </select>
+        </label>
+        <label>Session lifetime <span class="meta">SessionNotOnOrAfter, in hours; empty for none</span><input type="number" name="session_hours" min="1" max="720"></label>
+      </div>
+    </details>
+    <div class="row">
+      <button name="action" value="login">Log in</button>
+    </div>
+    <details>
+      <summary>Answer with an error instead</summary>
+      <div class="stack">
+        <label>Status
+          <select name="error_status">{{range .Errors}}<option>{{.}}</option>{{end}}</select>
+        </label>
+        <label>StatusMessage <span class="meta">optional</span><input name="status_message" maxlength="200"></label>
+        <div><button name="action" value="error" class="secondary danger">Send error Response</button></div>
+      </div>
+    </details>
+  </form>
+</section>
+{{end}}{{end}}

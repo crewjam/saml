@@ -1,0 +1,20 @@
+{{define "content"}}
+<section class="card narrow prose">
+  <h1>About gosaml.dev</h1>
+  <p>gosaml.dev is a set of SAML 2.0 testing tools built on <a href="https://github.com/crewjam/saml">github.com/crewjam/saml</a>, a SAML implementation in Go. The test IdPs and SPs use the library's <code>x/samlidp</code> and <code>x/samlsp</code> packages, with their default, hardened checks, so they behave as an application built on it would.</p>
+
+  <h2>Everything is temporary</h2>
+  <p>Test IdPs and SPs, their keys, users and logs are deleted {{dur .TTL}} after they are created. The server keeps them in a database that is deleted whenever it restarts, which may be at any time. Nothing is backed up.</p>
+
+  <h2>Who can see what</h2>
+  <ul>
+    <li>The management page of an instance is reachable by anyone who has its URL, and by no one else. Keep it to yourself.</li>
+    <li>Metadata and protocol endpoints are public, as SAML needs them to be.</li>
+    <li>The log of an instance holds the messages it exchanged, including the attributes of users who logged in through it. Do not log in with real accounts or personal data.</li>
+    <li>The inspector decodes messages in your browser with WebAssembly. What you paste is not sent anywhere. If an IdP posts a Response to the inspector page itself, that request reaches the server, which puts it in the page and keeps nothing.</li>
+  </ul>
+
+  <h2>Limits</h2>
+  <p>An IdP can have 50 users and 50 service providers. Metadata is fetched only from public addresses, with a size limit. Single logout and the artifact binding are not offered yet.</p>
+</section>
+{{end}}
