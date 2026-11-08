@@ -1,9 +1,9 @@
-package saferedirect_test
+package redirect_test
 
 import (
 	"testing"
 
-	"github.com/crewjam/saml/x/samlsp/saferedirect"
+	"github.com/crewjam/saml/pkg/redirect"
 )
 
 func TestIsSafe(t *testing.T) {
@@ -51,7 +51,7 @@ func TestIsSafe(t *testing.T) {
 		{"/\xff", false},
 		{"/%zz", false},
 	} {
-		if got := saferedirect.IsSafe(tt.p); got != tt.safe {
+		if got := redirect.IsSafe(tt.p); got != tt.safe {
 			t.Errorf("IsSafe(%q) = %v, want %v", tt.p, got, tt.safe)
 		}
 	}

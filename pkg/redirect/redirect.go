@@ -1,11 +1,11 @@
-// Package saferedirect checks return paths before an application
+// Package redirect checks return paths before an application
 // redirects the browser to them.
 //
 // A return path often comes from the request, such as the data of a
 // pending login (see x/samlsp/pending) or the RelayState of an unsolicited
 // Response, which the IdP or an attacker chose. Redirecting to it as is
 // would make the application an open redirector.
-package saferedirect
+package redirect
 
 import (
 	"net/url"
@@ -19,7 +19,7 @@ import (
 // that came from the request:
 //
 //	next := login.Data
-//	if !saferedirect.IsSafe(next) {
+//	if !redirect.IsSafe(next) {
 //		next = "/"
 //	}
 //	http.Redirect(w, r, next, http.StatusFound)

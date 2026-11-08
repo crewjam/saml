@@ -14,7 +14,7 @@
 //
 //	func login(w http.ResponseWriter, r *http.Request) {
 //		next := r.URL.Query().Get("next")
-//		if !saferedirect.IsSafe(next) || len(next) > 100 {
+//		if !redirect.IsSafe(next) || len(next) > 100 {
 //			next = "/"
 //		}
 //		msg, err := config.AuthnRequest(r.Context(), rand.Text())
@@ -31,7 +31,7 @@
 //		tracker.Forget(w, login)
 //		startSession(w, assertion)
 //		next := login.Data
-//		if !saferedirect.IsSafe(next) {
+//		if !redirect.IsSafe(next) {
 //			next = "/"
 //		}
 //		http.Redirect(w, r, next, http.StatusFound)
@@ -200,7 +200,7 @@ type Login struct {
 	// Data is the data passed to Remember, such as where to send the
 	// user after login. The browser cannot change it, but it is only as
 	// trustworthy as what Remember was given. Check a return path with
-	// saferedirect.IsSafe (package x/samlsp/saferedirect) before redirecting to it: browsers read
+	// redirect.IsSafe (package pkg/redirect) before redirecting to it: browsers read
 	// many paths that merely start with "/" as naming another host, such
 	// as "//evil.example", "/\evil.example" and "/<tab>/evil.example".
 	Data string
