@@ -69,13 +69,13 @@ func (s *Server) fetchMetadata(ctx context.Context, rawURL string) ([]byte, erro
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 		return nil, errors.New("the metadata URL must be an http or https URL")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil) //nolint:gosec // G704: s.fetch refuses private addresses
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/samlmetadata+xml, application/xml, text/xml")
 	req.Header.Set("User-Agent", "gosaml.dev metadata fetcher")
-	resp, err := s.fetch.Do(req) //nolint:gosec // G704: s.fetch refuses private addresses
+	resp, err := s.fetch.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("cannot fetch the metadata: %w", err)
 	}
