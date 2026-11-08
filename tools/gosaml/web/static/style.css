@@ -381,3 +381,19 @@ fieldset.relax .help { clear: both; max-width: 40em; margin-top: 0; padding-top:
 @media (max-width: 600px) { .login-h1 { font-size: 32px; } }
 .sec-head .sec-h2 { padding-bottom: 0; border-bottom: 0; }
 .dl dd { overflow-wrap: anywhere; }
+
+/* Inspector */
+.inspector h1 { margin-bottom: 8px; }
+.inspect-form { margin-bottom: 48px; gap: 8px; }
+.field-label { font-size: 14px; font-weight: 500; }
+.inspect-bar { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px 24px; flex-wrap: wrap; }
+.inspect-bar .keys-box { flex: 1 1 320px; padding: 8px 0 0; }
+.inspect-bar .keys-box[open] { flex-basis: 100%; }
+.inspect-bar .keys-box .help { margin-top: 8px; }
+.decoded-from { margin-bottom: 48px; }
+.decoded-more { margin-top: 32px; }
+.decoded-more .dl { margin-top: 8px; }
+.decoded-error { margin-bottom: 32px; }
+.inspect-note { margin-top: 56px; }
+.decoded + .decoded, .decoded-from + .decoded { margin-top: 0; }
+#output > * + * { margin-top: 56px; }

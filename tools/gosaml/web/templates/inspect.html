@@ -1,26 +1,31 @@
 {{define "head"}}<script src="/static/wasm_exec.js" defer></script><script src="/static/inspect.js" defer></script>{{end}}
 {{define "content"}}
-<section class="hero compact">
-  <h1>SAML inspector</h1>
-  <p class="lead">Paste a SAML message in any form: a redirect URL, a POST body, a raw HTTP request, base64 (deflated or not), or XML. It is decoded in your browser with WebAssembly; nothing you paste is sent to the server.</p>
-</section>
-<section class="card">
-  <label for="input" class="label">Message</label>
-  <textarea id="input" rows="8" spellcheck="false" autocomplete="off" placeholder="https://idp.example.com/sso?SAMLRequest=fZJNT8MwDIbv…&#10;SAMLResponse=PHNhbWxwOlJlc3BvbnNl…&#10;&lt;md:EntityDescriptor …"></textarea>
-  <details id="keys-box" class="keys-box">
-    <summary>Check signatures against a certificate</summary>
-    <label for="keys" class="label">Certificate: PEM, base64, or the signer's metadata</label>
-    <textarea id="keys" rows="5" spellcheck="false" autocomplete="off" placeholder="-----BEGIN CERTIFICATE-----&#10;MIIC…&#10;-----END CERTIFICATE-----&#10;or &lt;EntityDescriptor …"></textarea>
-    <p class="hint">Every XML signature is checked with the certificate in its own KeyInfo anyway, which shows whether the message was changed. Only a certificate you trust, such as the one in the issuer's metadata, shows who signed it.</p>
-  </details>
-  <div class="row">
-    <button type="button" id="decode">Decode</button>
-    <button type="button" id="share" class="secondary" title="Puts the message in the page URL after #, which browsers do not send to servers">Copy link</button>
-    <button type="button" id="clear" class="secondary">Clear</button>
-    <span id="status" class="meta" role="status">Loading the decoder…</span>
-  </div>
-  <p class="hint">To see what an IdP sends, set an SP's ACS URL to <code>{{.BaseURL}}/inspect</code>: the Response it posts is shown here. That request does reach the server, which puts it in the page and keeps nothing.</p>
-</section>
+<main class="narrow inspector">
+  <h1>Inspector</h1>
+  <p class="lead">Decode a SAML message in any form: a redirect URL, a POST body, a raw HTTP request, base64 (deflated or not), or XML. What you paste doesn't leave your browser.</p>
+
+  <form id="inspect-form" class="stack inspect-form" hx-boost="false">
+    <label for="input" class="field-label">Message</label>
+    <textarea id="input" rows="4" class="mono-in" spellcheck="false" autocomplete="off" placeholder="https://idp.example.com/sso?SAMLRequest=fZJNT8MwDIbv…&#10;SAMLResponse=PHNhbWxwOlJlc3BvbnNl…&#10;&lt;md:EntityDescriptor …"></textarea>
+    <div class="inspect-bar">
+      <details id="keys-box" class="disclose keys-box">
+        <summary>Check signatures against a certificate, or decrypt with a key</summary>
+        <label for="keys" class="field-label">Certificates (PEM, base64, or the signer's metadata) and private keys (PEM)</label>
+        <textarea id="keys" rows="5" class="mono-in" spellcheck="false" autocomplete="off" placeholder="-----BEGIN CERTIFICATE-----&#10;MIIC…&#10;-----END CERTIFICATE-----&#10;-----BEGIN PRIVATE KEY-----&#10;…"></textarea>
+        <p class="help">Every XML signature is checked with the certificate in its own KeyInfo anyway, which shows whether the message was changed. Only a certificate you trust, such as the one in the issuer's metadata, shows who signed it. A private key decrypts encrypted assertions; like the message, it stays in your browser.</p>
+      </details>
+      <div class="actions">
+        <button type="button" id="clear" class="btn secondary">Clear</button>
+        <button type="button" id="share" class="btn secondary" title="Puts the message in the page URL after #, which browsers do not send to servers">Copy link</button>
+        <button type="submit" id="decode" class="btn">Decode</button>
+      </div>
+    </div>
+    <p id="status" class="meta" role="status">Loading the decoder…</p>
+  </form>
+
+  <div id="output" aria-live="polite"></div>
+
+  <p class="help inspect-note">To see what an IdP sends, set an SP's ACS URL to <span class="mono">{{.BaseURL}}/inspect</span>. The Response it posts is shown here. That request does reach the server, which puts it in the page and keeps nothing.</p>
+</main>
 <script type="application/json" id="posted">{{.Data.Posted}}</script>
-<div id="output" aria-live="polite"></div>
 {{end}}

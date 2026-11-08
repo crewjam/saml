@@ -23,18 +23,72 @@
     return e;
   }
 
-  function table(rows) {
-    const t = el("table");
-    for (const r of rows) t.append(el("tr", null, el("th", null, r.k), el("td", null, r.v)));
-    return t;
+  const dl = (rows, cls) => {
+    const d = el("dl", cls ? { class: cls } : null);
+    for (const r of rows) d.append(el("dt", null, r.k), el("dd", r.cls ? { class: r.cls } : null, r.v));
+    return d;
+  };
+  const mark = { ok: "✓", warn: "!", bad: "✗" };
+
+  // xmlPane renders XML tokens (see inspect.XMLToken) as text nodes and
+  // spans: the same markup as the server's xmlTokens.
+  function xmlPane(tokens) {
+    const pre = el("pre", { class: "xml" });
+    for (const t of tokens) pre.append(t.k === "text" ? document.createTextNode(t.t) : el("span", { class: "x-" + t.k }, t.t));
+    return pre;
   }
 
-  function section(title, rows) {
-    return el("div", { class: "section" }, el("h3", null, title), table(rows));
+  // renderView builds the same markup as the server's "decoded" template,
+  // from the View the decoder made for the message.
+  function renderView(v, m) {
+    const head = el("div", { class: "decoded-head" }, el("h2", null, v.title + " ", el("span", { class: "decoded-sub" }, v.sub || "")));
+    if (v.checks && v.checks.length) {
+      head.append(el("ul", { class: "checks" }, ...v.checks.map((c) => el("li", { class: c.level }, mark[c.level] + " " + c.text))));
+    }
+    const groups = el("div", { class: "groups" });
+    for (const g of v.groups || []) {
+      groups.append(el("div", null, el("h3", null, g.title), dl(g.rows.map((r) => ({ k: r.k, v: r.v, cls: r.mono ? "mono" : r.time ? "time" : "" })))));
+    }
+    for (const n of v.notes || []) groups.append(el("p", { class: "explain" }, n));
+    const grid = el("div", { class: "decoded-grid" }, groups);
+    if (v.xml && v.xml.length) {
+      grid.append(el("div", { class: "minw0" },
+        el("div", { class: "pane-head" }, el("h3", null, "XML"), copyButton(() => m.xml)),
+        xmlPane(v.xml)));
+    }
+    const sec = el("section", { class: "decoded", "aria-label": "Decoded message" }, head, grid);
+    // Signature details and certificates, which the View summarises.
+    const more = el("div", { class: "disclosures decoded-more" });
+    for (const s of m.signatures || []) {
+      more.append(el("details", null, el("summary", null, "Signature of " + s.signs),
+        dl([
+          checkRow("Trusted certificate", s.trust),
+          checkRow("Own KeyInfo certificate", s.integrity),
+          { k: "Reference", v: (s.referenceURI || "(empty)") + (s.referenceMatches ? ": matches the element" : ": does not match the element"), cls: "mono" },
+          { k: "Signature method", v: s.signatureMethod, cls: "mono" },
+          { k: "Digest method", v: s.digestMethod, cls: "mono" },
+          { k: "Canonicalization", v: s.canonicalization, cls: "mono" },
+          { k: "Transforms", v: s.transforms || "", cls: "mono" },
+        ].filter((r) => r.v), "dl")));
+    }
+    for (const c of m.certificates || []) {
+      const d = el("details", null, el("summary", null, "Certificate (" + c.where + "): " + (c.subject || c.error || "") + (c.expired ? " (expired)" : "")));
+      if (!c.error) {
+        d.append(dl([
+          { k: "Subject", v: c.subject }, { k: "Issuer", v: c.issuer },
+          { k: "Valid", v: c.notBefore + " to " + c.notAfter, cls: "time" },
+          { k: "Key", v: c.key }, { k: "Serial", v: c.serial, cls: "mono" },
+          { k: "SHA-1", v: c.sha1, cls: "mono" }, { k: "SHA-256", v: c.sha256, cls: "mono" },
+        ], "dl"), el("div", { class: "pane-head" }, el("h3", null, "PEM"), copyButton(() => c.pem)), el("pre", { class: "pane" }, c.pem));
+      }
+      more.append(d);
+    }
+    if (more.childElementCount) sec.append(more);
+    return sec;
   }
 
   function copyButton(getText) {
-    const b = el("button", { type: "button", class: "small secondary" }, "Copy");
+    const b = el("button", { type: "button", class: "btn secondary sm" }, "Copy");
     b.addEventListener("click", () => {
       navigator.clipboard.writeText(getText()).then(() => {
         b.textContent = "Copied";
@@ -44,93 +98,32 @@
     return b;
   }
 
-  function renderMessage(m) {
-    const card = el("section", { class: "card" });
-    card.append(el("div", { class: "msg-head" },
-      el("h2", null, m.type),
-      m.parameter ? el("span", { class: "badge" }, m.parameter) : null,
-      el("span", { class: "meta" }, m.encoding + (m.namespace ? " · " + m.namespace : ""))));
-    if (m.error) card.append(el("div", { class: "error-box" }, m.error));
-    if (m.warnings && m.warnings.length) {
-      card.append(el("ul", { class: "warnings" }, ...m.warnings.map((w) => el("li", null, w))));
-    }
-    if (m.sections && m.sections.length) {
-      card.append(el("div", { class: "sections" }, ...m.sections.map((s) => section(s.title, s.rows))));
-    }
-    if (m.signatures && m.signatures.length) {
-      card.append(el("h3", null, "Signatures"));
-      const grid = el("div", { class: "sections" });
-      for (const s of m.signatures) {
-        grid.append(section("Signature of " + s.signs, [
-          checkRow("Trusted certificate", s.trust),
-          checkRow("Own KeyInfo certificate", s.integrity),
-          { k: "Reference", v: s.referenceURI + (s.referenceMatches ? " ✓ matches" : " ✕ does not match the element") },
-          { k: "Signature method", v: s.signatureMethod },
-          { k: "Digest method", v: s.digestMethod },
-          { k: "Canonicalization", v: s.canonicalization },
-          { k: "Transforms", v: s.transforms || "" },
-          { k: "Certificate in KeyInfo", v: s.hasCertificate ? "yes" : "no" },
-        ].filter((r) => r.v)));
-      }
-      card.append(grid);
-    }
-    if (m.certificates && m.certificates.length) {
-      card.append(el("h3", null, "Certificates"));
-      for (const c of m.certificates) {
-        const d = el("details", { class: "cert" + (c.expired ? " expired" : "") });
-        d.append(el("summary", null, c.where + ": " + (c.subject || c.error || "") + (c.expired ? " (expired)" : "")));
-        if (!c.error) {
-          d.append(table([
-            { k: "Subject", v: c.subject }, { k: "Issuer", v: c.issuer },
-            { k: "Valid", v: c.notBefore + " to " + c.notAfter },
-            { k: "Key", v: c.key }, { k: "Serial", v: c.serial },
-            { k: "SHA-1", v: c.sha1 }, { k: "SHA-256", v: c.sha256 },
-          ]));
-          d.append(el("div", { class: "xml-head" }, el("span", null, "PEM"), copyButton(() => c.pem)), el("pre", null, c.pem));
-        }
-        card.append(d);
-      }
-    }
-    if (m.xml) {
-      const pre = el("pre", { class: "xml" }, m.xml);
-      const d = el("details", { open: "" }, el("summary", null, "XML"),
-        el("div", { class: "xml-head" }, el("span", null, "Indented for reading: the whitespace differs, so signatures will not verify against this copy."), copyButton(() => m.xml)),
-        pre);
-      card.append(d);
-    }
-    return card;
-  }
-
   // checkRow describes a signature check, or nothing if it was not made.
   function checkRow(label, c) {
     if (!c) return { k: label, v: "" };
-    return { k: label, v: c.ok ? "✓ valid, signed by " + c.by : "✕ " + c.error };
+    return { k: label, v: c.ok ? "✓ valid, signed by " + c.by : "✗ " + c.error };
   }
 
   function render(res) {
     output.replaceChildren();
     if (res.error) {
-      output.append(el("section", { class: "card" }, el("div", { class: "error-box" }, res.error)));
+      output.append(el("p", { class: "verdict bad-text decoded-error" }, "✗ " + res.error));
       return;
     }
-    const rows = [{ k: "Input", v: res.input }];
-    if (res.binding) rows.push({ k: "Binding", v: res.binding });
-    for (const p of res.params || []) rows.push(p);
-    const top = el("div", { class: "sections" }, section("Decoded from", rows));
+    // What the input was, when there is more to it than the messages.
+    const rows = [];
+    for (const p of res.params || []) rows.push({ k: p.k, v: p.v, cls: p.k === "Warning" ? "" : "mono" });
     if (res.detached) {
-      top.append(section("Binding signature (" + res.detached.binding + ")", [
-        { k: "SigAlg", v: res.detached.sigAlg },
-        res.detached.trust ? checkRow("Trusted certificate", res.detached.trust)
-          : { k: "Checked", v: "not yet: paste the signer's certificate to check it" },
-      ]));
+      rows.push({ k: "Binding signature", v: res.detached.binding + ", " + res.detached.sigAlg, cls: "mono" });
+      rows.push(res.detached.trust ? checkRow("Checked", res.detached.trust)
+        : { k: "Checked", v: "Not yet: paste the signer's certificate to check it." });
     }
-    if (res.keys || res.keysError) {
-      const krows = (res.keys || []).map((c) => ({ k: "Certificate", v: c.subject + (c.expired ? " (expired)" : "") }));
-      if (res.keysError) krows.push({ k: "Problem", v: res.keysError });
-      top.append(section("Checking with", krows));
+    for (const c of res.keys || []) rows.push({ k: "Checking with", v: c.subject + (c.expired ? " (expired)" : "") });
+    if (res.keysError) rows.push({ k: "Keys", v: res.keysError });
+    if (rows.length) {
+      output.append(el("section", { class: "decoded-from" }, el("h2", { class: "sec-h2" }, "Decoded from " + res.input + (res.binding ? ", " + res.binding : "")), dl(rows, "dl")));
     }
-    output.append(el("section", { class: "card" }, top));
-    for (const m of res.messages) output.append(renderMessage(m));
+    for (const m of res.messages) output.append(renderView(m.view || { title: m.type, sub: "", checks: m.error ? [{ level: "bad", text: m.error }] : [] }, m));
   }
 
   function decode() {
@@ -178,7 +171,7 @@
       timer = setTimeout(decode, 250);
     });
   }
-  $("decode").addEventListener("click", decode);
+  $("inspect-form").addEventListener("submit", (e) => { e.preventDefault(); decode(); });
   $("clear").addEventListener("click", () => {
     input.value = "";
     keys.value = "";

@@ -53,16 +53,25 @@ var detachedAlgorithms = map[string]x509.SignatureAlgorithm{
 
 // ParseWithKeys is Parse, and also checks every signature against the
 // certificates in keys: PEM certificates, base64 DER, or metadata, whose
-// certificates are all used. Each XML signature is also checked with the
+// certificates are all used. PEM private keys in keys decrypt encrypted
+// assertions, each of which is added as a message after the one it was
+// in. Each XML signature is also checked with the
 // certificate in its own KeyInfo, if it has one, which shows whether the
 // message is intact but not who signed it.
 func ParseWithKeys(input, keys string, now time.Time) *Result {
 	res := parse(input, now)
 	var certs []*x509.Certificate
 	if strings.TrimSpace(keys) != "" {
-		var err error
-		certs, err = ParseCertificates(keys)
+		private, err := parsePrivateKeys(keys)
 		if err != nil {
+			res.KeysError = err.Error()
+		}
+		if len(private) > 0 {
+			decryptAssertions(res, private, now)
+		}
+		certs, err = ParseCertificates(keys)
+		// Private keys alone are fine: there are just no certificates.
+		if err != nil && res.KeysError == "" && (len(private) == 0 || len(certs) > 0) {
 			res.KeysError = err.Error()
 		}
 		for _, c := range certs {
