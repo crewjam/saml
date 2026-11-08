@@ -616,3 +616,35 @@ func TestResolutionServiceChecks(t *testing.T) {
 		}
 	}
 }
+
+// TestMemoryStoreMaxEntries checks that a full store refuses new messages,
+// still replaces one it keeps, and takes new ones again once one is
+// resolved; and that Encode reports a full store.
+func TestMemoryStoreMaxEntries(t *testing.T) {
+	s := &artifact.MemoryStore{MaxEntries: 2}
+	ctx := context.Background()
+	m := artifact.StoredMessage{XML: []byte("<x/>"), Recipient: idpEntityID, ExpiresAt: time.Now().Add(time.Minute)}
+	for _, art := range []string{"a", "b", "b"} {
+		if err := s.Save(ctx, art, m); err != nil {
+			t.Fatalf("Save(%s): %v", art, err)
+		}
+	}
+	if err := s.Save(ctx, "c", m); !errors.Is(err, artifact.ErrStoreFull) {
+		t.Fatalf("Save into a full store: %v", err)
+	}
+	if got, _ := s.Take(ctx, "a", idpEntityID); got == nil {
+		t.Fatal("Take(a) = nil")
+	}
+	if err := s.Save(ctx, "c", m); err != nil {
+		t.Fatalf("Save after a Take: %v", err)
+	}
+
+	_, cfg, b, store, _ := setup(t)
+	store.MaxEntries = 1
+	if _, err := cfg.AuthnRequest(t.Context(), "r", samlsp.WithCustomBinding(b)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cfg.AuthnRequest(t.Context(), "r", samlsp.WithCustomBinding(b)); !errors.Is(err, artifact.ErrStoreFull) {
+		t.Errorf("AuthnRequest with a full store: %v", err)
+	}
+}
