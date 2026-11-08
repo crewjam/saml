@@ -290,6 +290,9 @@ func TestNextRefresh(t *testing.T) {
 		{"earlier validUntil", saml.EntityDescriptor{ValidUntil: now.Add(5 * time.Minute)}, now.Add(5 * time.Minute)},
 		{"later validUntil", saml.EntityDescriptor{ValidUntil: now.Add(5 * time.Hour)}, now.Add(time.Hour)},
 		{"both", saml.EntityDescriptor{CacheDuration: 10 * time.Minute, ValidUntil: now.Add(5 * time.Minute)}, now.Add(5 * time.Minute)},
+		// No sooner than a minute, however stale the metadata.
+		{"validUntil passed", saml.EntityDescriptor{ValidUntil: now.Add(-time.Hour)}, now.Add(time.Minute)},
+		{"tiny cacheDuration", saml.EntityDescriptor{CacheDuration: time.Second}, now.Add(time.Minute)},
 	} {
 		if got := r.nextRefresh(&tt.md, now); !got.Equal(tt.want) {
 			t.Errorf("%s: %v, want %v", tt.name, got, tt.want)
@@ -330,13 +333,61 @@ func TestRemoteMetadataClock(t *testing.T) {
 	if _, err := now(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	// Expired by the real clock: the next call fetches again, and waits for
-	// it, as there is no valid metadata to give meanwhile.
+	// Expired by the real clock when it arrives: it is not fetched again
+	// for a minute, rather than on every call.
 	if _, err := now(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if n := hits.Load(); n != 2 {
-		t.Errorf("with the real clock: %d fetches, want 2", n)
+	if n := hits.Load(); n != 1 {
+		t.Errorf("with the real clock: %d fetches, want 1", n)
+	}
+}
+
+// TestRemoteMetadataErrorBackoff checks that, with no metadata to fall
+// back on, a failed fetch is not retried for a minute: calls meanwhile get
+// its error.
+func TestRemoteMetadataErrorBackoff(t *testing.T) {
+	s := newMetadataServer(t)
+	s.fail.Store(true)
+	r, now := testRemote(s)
+	_, first := r.get(t.Context())
+	if first == nil {
+		t.Fatal("no error")
+	}
+	*now = now.Add(30 * time.Second)
+	if _, err := r.get(t.Context()); err != first {
+		t.Errorf("got %v, want the first error", err)
+	}
+	if n := s.hits.Load(); n != 1 {
+		t.Errorf("%d fetches within the minute, want 1", n)
+	}
+
+	s.fail.Store(false)
+	*now = now.Add(time.Minute)
+	if _, err := r.get(t.Context()); err != nil {
+		t.Errorf("after the minute: %v", err)
+	}
+	if n := s.hits.Load(); n != 2 {
+		t.Errorf("%d fetches, want 2", n)
+	}
+}
+
+func TestWithRefreshIntervalNotPositive(t *testing.T) {
+	for _, d := range []time.Duration{0, -time.Minute} {
+		if got := newMetadataOptions([]MetadataOption{WithRefreshInterval(d)}).refreshInterval; got != DefaultMetadataRefreshInterval {
+			t.Errorf("WithRefreshInterval(%v): %v, want the default", d, got)
+		}
+	}
+}
+
+// TestMDQMetadataKeepsOptions checks that MDQMetadata does not write into
+// the caller's slice of options.
+func TestMDQMetadataKeepsOptions(t *testing.T) {
+	opts := make([]MetadataOption, 1, 2)
+	opts[0] = WithRefreshInterval(time.Minute)
+	MDQMetadata("https://mdq.example.com", "https://idp.example.com/metadata", opts...)
+	if extra := opts[:2][1]; extra != nil {
+		t.Error("MDQMetadata appended to the caller's options")
 	}
 }
 
