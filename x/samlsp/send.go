@@ -40,9 +40,11 @@ type OutgoingMessage struct {
 	// RelayState is sent with the message.
 	RelayState string
 
-	// Sign says whether to sign the message with the key of WithKey: with
-	// an enveloped XML signature, or with the binding's own signature for
-	// HTTP-Redirect. HTTP-POST-SimpleSign always signs.
+	// Sign says to sign the message with the key of WithKey, if there is
+	// one that can sign: with an enveloped XML signature, or with the
+	// binding's own signature for HTTP-Redirect. Without such a key, the
+	// message is sent unsigned. HTTP-POST-SimpleSign always signs, and
+	// fails without a key.
 	Sign bool
 
 	// Build returns the message, unsigned, addressed to destination. sp is
@@ -133,9 +135,6 @@ func (c *Config) send(ctx context.Context, msg OutgoingMessage, o messageOptions
 	method := c.method()
 	signMethod := ""
 	if msg.Sign {
-		if method == "" {
-			return nil, errors.New("samlsp: signing the message needs an RSA or ECDSA key (see WithKey)")
-		}
 		signMethod = method
 	}
 	signed := func() (*etree.Element, error) {
@@ -186,6 +185,23 @@ func (c *Config) send(ctx context.Context, msg OutgoingMessage, o messageOptions
 		return out.PostForm(fields)
 	}
 	return nil, fmt.Errorf("samlsp: unsupported binding %q", binding)
+}
+
+// Prepare returns, for a message that a package sends other than through
+// Send, such as directly to the IdP with the SOAP binding: the
+// saml.ServiceProvider of the call, with the ServiceProviderOptions of
+// opts applied, and a function that applies the WithModify options of opts
+// to the message. The other options of opts do not apply.
+func (c *Config) Prepare(ctx context.Context, opts ...MessageOption) (*saml.ServiceProvider, func(message any) error, error) {
+	var o messageOptions
+	for _, opt := range opts {
+		opt.applyMessage(&o)
+	}
+	sp, err := c.serviceProvider(ctx, o.sp)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sp, o.modifier(), nil
 }
 
 // method returns the signature method of the key: that of
