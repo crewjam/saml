@@ -248,31 +248,45 @@ func TestLogin(t *testing.T) {
 	}
 }
 
+// TestSignedRequestReplay checks that a signed request, with whichever
+// binding carries its signature, is accepted only once, and that an
+// unsigned one is not recorded.
 func TestSignedRequestReplay(t *testing.T) {
-	p := newPair(t, nil, []samlsp.Option{samlsp.SignAuthnRequests})
 	ctx := context.Background()
-	msg, err := p.sp.AuthnRequest(ctx, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := p.idp.ParseAuthnRequest(ctx, browserRequest(t, msg)); err != nil {
-		t.Fatal(err)
-	}
-	_, err = p.idp.ParseAuthnRequest(ctx, browserRequest(t, msg))
-	if !errors.Is(err, saml.ErrAssertionReplayed) {
-		t.Fatalf("replayed signed request: got %v", err)
+	for _, binding := range []string{saml.HTTPRedirectBinding, saml.HTTPPostBinding} {
+		t.Run(binding, func(t *testing.T) {
+			p := newPair(t, nil, []samlsp.Option{samlsp.SignAuthnRequests})
+			msg, err := p.sp.AuthnRequest(ctx, "", samlsp.WithBinding(binding))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if msg.Binding != binding {
+				t.Fatalf("Binding = %s", msg.Binding)
+			}
+			if _, err := p.idp.ParseAuthnRequest(ctx, browserRequest(t, msg)); err != nil {
+				t.Fatal(err)
+			}
+			_, err = p.idp.ParseAuthnRequest(ctx, browserRequest(t, msg))
+			if !errors.Is(err, saml.ErrAssertionReplayed) {
+				t.Fatalf("replayed signed request: got %v", err)
+			}
+		})
 	}
 
 	// An unsigned request is not recorded.
-	p = newPair(t, nil, nil)
-	msg, err = p.sp.AuthnRequest(ctx, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for range 2 {
-		if _, err := p.idp.ParseAuthnRequest(ctx, browserRequest(t, msg)); err != nil {
-			t.Fatal(err)
-		}
+	for _, binding := range []string{saml.HTTPRedirectBinding, saml.HTTPPostBinding} {
+		t.Run("unsigned "+binding, func(t *testing.T) {
+			p := newPair(t, nil, nil)
+			msg, err := p.sp.AuthnRequest(ctx, "", samlsp.WithBinding(binding))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if _, err := p.idp.ParseAuthnRequest(ctx, browserRequest(t, msg)); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
 	}
 }
 

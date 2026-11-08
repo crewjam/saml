@@ -80,6 +80,7 @@ func TestIDPVerifiesSignatureOverAuthnRequestExtensions(t *testing.T) {
 
 	req, err := validateAuthnRequest(t, test, postForm(t, authReq.Post("relay")))
 	assert.NilError(t, err)
+	assert.Check(t, req.RequestSigned)
 	authnExtensionsHint(t, req.Request.Extensions)
 
 	requestXML := string(spcovSerialize(t, authReq.Element()))

@@ -994,6 +994,12 @@ type IdpAuthnRequest struct {
 	ResponseEl              *etree.Element
 	Now                     time.Time
 
+	// RequestSigned is set by Validate when it has verified a signature
+	// of the request: the query string signature of the HTTP-Redirect
+	// binding, the signature of the HTTP-POST-SimpleSign binding, or an
+	// enveloped XML signature. It is false for an unsigned request.
+	RequestSigned bool
+
 	// simpleSign is the HTTP-POST-SimpleSign message the request arrived
 	// in, or nil if it arrived with another binding. Validate checks its
 	// signature once it knows the service provider.
@@ -1126,11 +1132,14 @@ func (req *IdpAuthnRequest) isSigned() bool {
 // its AuthnRequests (AuthnRequestsSigned="true") or the IdP's
 // WantAuthnRequestsSigned is set. Otherwise it is accepted.
 //
+// RequestSigned is set if a signature was verified.
+//
 // A signed request, and any request when WantAuthnRequestsSigned is set,
 // must have a Destination equal to SSOURL, as saml-bindings-2.0-os §3.4.5.2
 // and §3.5.5.2 require of signed messages; so must any request that has a
 // Destination.
 func (req *IdpAuthnRequest) Validate() error {
+	req.RequestSigned = false
 	if err := xmlroundtrip.Validate(req.RequestBuffer); err != nil {
 		return classify(err, ErrMalformedMessage)
 	}

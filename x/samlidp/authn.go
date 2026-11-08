@@ -260,7 +260,7 @@ func (c *Config) ParseAuthnRequest(ctx context.Context, r *http.Request, opts ..
 		return nil, err
 	}
 
-	if isSigned(ireq) {
+	if ireq.RequestSigned {
 		key := ReplayKey(req.ServiceProvider, req.ID)
 		if err := c.replayState.Consume(ctx, key, req.IssueInstant.Add(timelimit.IDPIssueDelay(idp))); err != nil {
 			return nil, fmt.Errorf("samlidp: authn request %q: %w", req.ID, err)
@@ -548,35 +548,6 @@ func sendable(binding string) bool {
 // service with binding, with the custom Binding of o, if any.
 func (o *parseOptions) sendable(binding string) bool {
 	return sendable(binding) || (o.custom != nil && binding == o.custom.URI())
-}
-
-// isSigned reports whether ireq, a validated request, was signed: with
-// the query string signature of HTTP-Redirect, the form signature of
-// HTTP-POST-SimpleSign, or an enveloped XML signature. Validate has
-// verified whichever signature it carries.
-func isSigned(ireq *saml.IdpAuthnRequest) bool {
-	r := ireq.HTTPRequest
-	switch r.Method {
-	case http.MethodGet:
-		q := r.URL.Query()
-		if q.Has("Signature") || q.Has("SigAlg") {
-			return true
-		}
-	case http.MethodPost:
-		if r.PostForm.Has("Signature") || r.PostForm.Has("SigAlg") {
-			return true
-		}
-	}
-	doc := etree.NewDocument()
-	if err := doc.ReadFromBytes(ireq.RequestBuffer); err != nil || doc.Root() == nil {
-		return false
-	}
-	for _, el := range doc.Root().ChildElements() {
-		if el.Tag == "Signature" && el.NamespaceURI() == "http://www.w3.org/2000/09/xmldsig#" {
-			return true
-		}
-	}
-	return false
 }
 
 // responseStatus returns the status of the error Response el.
