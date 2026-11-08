@@ -130,6 +130,7 @@ func (s *Server) samlSP(in *store.Instance, cfg *SPConfig) (*samlsp.Config, erro
 	opts = append(opts, samlsp.WithNameIDFormat(format))
 	opts = append(opts,
 		samlsp.WithHTTPClient(s.soap),
+		samlsp.AcceptArtifactResponses, // the SP may ask for it per login
 		artifact.ResolutionService(s.BaseURL+"/sp/"+in.ID+"/artifact", 1))
 	var sloOpts []slo.EndpointOption
 	if cfg.BackChannelLogout {

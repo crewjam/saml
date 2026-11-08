@@ -437,7 +437,7 @@ func decodeRedirectRequest(t *testing.T, u *url.URL) *saml.AuthnRequest {
 
 func TestAuthnRequestOptions(t *testing.T) {
 	ti := newTestIDP(t)
-	cfg := newTestConfig(t, ti)
+	cfg := newTestConfig(t, ti, samlsp.AcceptArtifactResponses)
 	msg, err := cfg.AuthnRequest(t.Context(), "s",
 		samlsp.ForceAuthn,
 		samlsp.IsPassive,

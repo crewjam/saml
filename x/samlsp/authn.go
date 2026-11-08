@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -21,6 +22,11 @@ var ErrNoEndpoint = errors.New("samlsp: the identity provider has no endpoint fo
 // ErrNoRequestID is returned by ParseResponse when it is called with
 // neither WithRequestID nor AllowUnsolicited.
 var ErrNoRequestID = errors.New("samlsp: no request ID to match InResponseTo against")
+
+// ErrArtifactNotAccepted is returned by ParseResponse for a request that
+// carries a SAMLart when the SP metadata does not list the ACS with the
+// HTTP-Artifact binding (see AcceptArtifactResponses).
+var ErrArtifactNotAccepted = errors.New("samlsp: the ACS does not accept the HTTP-Artifact binding")
 
 // ErrAuthnTooOld is returned by ParseResponse, through a
 // *saml.InvalidResponseError, for an assertion whose AuthnInstant is older
@@ -214,10 +220,10 @@ func WithACSIndex(index int) AuthnOption {
 // saml.HTTPPostBinding (the default), saml.HTTPArtifactBinding or
 // saml.HTTPPostSimpleSignBinding. ParseResponse accepts all three either way.
 // The SP metadata must list the ACS with any binding other than
-// HTTP-POST, as it lists HTTP-Artifact by default, or AuthnRequest
-// returns an error:
-// for HTTP-POST-SimpleSign, add it to the saml.ServiceProvider's
-// AssertionConsumerServiceBindings with WithServiceProvider.
+// HTTP-POST, or AuthnRequest returns an error: for HTTP-Artifact, pass
+// AcceptArtifactResponses to New; for HTTP-POST-SimpleSign, add it to the
+// saml.ServiceProvider's AssertionConsumerServiceBindings with
+// WithServiceProvider.
 func WithResponseBinding(binding string) AuthnOption {
 	return authnOptionFunc(func(o *authnOptions) { o.responseBinding = binding })
 }
@@ -331,7 +337,11 @@ func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...Au
 				// binding, that the SP metadata does not list
 				// (saml-profiles §4.1.4.1). HTTP-POST, the default, is
 				// not checked, to spare building the metadata.
-				return nil, fmt.Errorf("samlsp: the SP metadata has no AssertionConsumerService at %s with the binding %s; list it in the saml.ServiceProvider's AssertionConsumerServiceBindings", acsURL, o.responseBinding)
+				hint := "list it in the saml.ServiceProvider's AssertionConsumerServiceBindings"
+				if o.responseBinding == saml.HTTPArtifactBinding {
+					hint = "pass AcceptArtifactResponses to New"
+				}
+				return nil, fmt.Errorf("samlsp: the SP metadata has no AssertionConsumerService at %s with the binding %s; %s", acsURL, o.responseBinding, hint)
 			}
 			if o.attributeIndex != nil && !hasAttributeConsumingServiceIndex(c.Metadata(ctx), *o.attributeIndex) {
 				return nil, fmt.Errorf("samlsp: the SP metadata has no AttributeConsumingService with index %d", *o.attributeIndex)
@@ -425,9 +435,12 @@ func checkAuthnAge(a *saml.Assertion, maxAge, skew time.Duration, now time.Time)
 // the ACS URL, and returns its assertion. Call it from the handler at
 // the ACS URL passed to New.
 //
-// It accepts the HTTP-POST, HTTP-POST-SimpleSign and HTTP-Artifact
-// bindings. For HTTP-Artifact, it resolves the artifact with a request to
-// the IdP. That request uses ctx and the HTTP client of WithHTTPClient.
+// It accepts the HTTP-POST and HTTP-POST-SimpleSign bindings, and the
+// HTTP-Artifact binding if the SP metadata lists the ACS with it (see
+// AcceptArtifactResponses); otherwise it refuses a SAMLart with
+// ErrArtifactNotAccepted, without a request to the IdP. For HTTP-Artifact,
+// it resolves the artifact with a request to the IdP. That request uses
+// ctx and the HTTP client of WithHTTPClient.
 //
 // At least one WithRequestID or AllowUnsolicited is required (or
 // AllowIDPInitiated set with WithServiceProvider). Otherwise ParseResponse
@@ -470,6 +483,12 @@ func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...Res
 	if err := r.ParseForm(); err != nil {
 		return nil, err
 	}
+	// Package saml resolves a SAMLart from the query or the form; refuse
+	// it unless the ACS is listed with HTTP-Artifact, so that a forged
+	// artifact cannot make the SP sign and send an ArtifactResolve.
+	if r.Form.Get("SAMLart") != "" && !acceptsArtifact(sp) {
+		return nil, ErrArtifactNotAccepted
+	}
 	// Sign the ArtifactResolve of an HTTP-Artifact response, which package
 	// saml does only with SignatureMethod: the IdP must authenticate the
 	// SP before it hands over the Response (saml-bindings §3.6.3).
@@ -489,6 +508,14 @@ func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...Res
 		}
 	}
 	return newAssertion(a, o.requestIDs, bearerCheck{recipient: sp.AcsURL.String(), skew: skew, start: start, end: now}), nil
+}
+
+// acceptsArtifact reports whether sp's metadata lists the ACS with the
+// HTTP-Artifact binding. An empty AssertionConsumerServiceBindings, which
+// only a ServiceProviderOption can leave, lists it, as package saml does.
+func acceptsArtifact(sp *saml.ServiceProvider) bool {
+	return len(sp.AssertionConsumerServiceBindings) == 0 ||
+		slices.Contains(sp.AssertionConsumerServiceBindings, saml.HTTPArtifactBinding)
 }
 
 // hasACS reports whether md, SP metadata, lists an

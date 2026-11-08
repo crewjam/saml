@@ -118,11 +118,13 @@
 // server-side session. A cookie for it must reach the ACS with the IdP's
 // cross-site POST, so it must be SameSite=None and Secure.
 //
-// ParseResponse returns a verified Assertion. It accepts the HTTP-POST,
-// HTTP-POST-SimpleSign and HTTP-Artifact bindings. For HTTP-Artifact it
-// resolves the artifact with the IdP, using the HTTP client of
-// WithHTTPClient. It accepts an unsolicited (IdP-initiated) Response only
-// with AllowUnsolicited.
+// ParseResponse returns a verified Assertion. It accepts the HTTP-POST
+// and HTTP-POST-SimpleSign bindings, and, with AcceptArtifactResponses,
+// which lists the ACS with it in the SP metadata, the HTTP-Artifact
+// binding: it then resolves the artifact with the IdP, using the HTTP
+// client of WithHTTPClient. It accepts an unsolicited (IdP-initiated)
+// Response only with AllowUnsolicited.
+
 //
 // # Single Logout and other extensions
 //

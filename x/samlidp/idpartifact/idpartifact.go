@@ -26,7 +26,8 @@
 // The artifact is used when the AuthnRequest asks for an assertion
 // consumer service with the HTTP-Artifact binding, by index, or by URL
 // with ProtocolBinding HTTP-Artifact (as x/samlsp does with
-// samlsp.WithResponseBinding(saml.HTTPArtifactBinding)); other requests
+// samlsp.WithResponseBinding(saml.HTTPArtifactBinding), given
+// samlsp.AcceptArtifactResponses); other requests
 // are answered with HTTP-POST as before.
 //
 // The browser takes the artifact to the SP with a redirect, or, with

@@ -304,7 +304,9 @@
 //
 // The SAML standard is huge and complex with many dark corners and strange, unused features. This package implements the most commonly used subset of these features required to provide a single sign on experience. The package supports at least the subset of SAML known as [interoperable SAML].
 //
-// This package supports the Web SSO profile. Message flows from the service provider to the IDP are supported using the HTTP Redirect binding and the HTTP POST binding, and with x/samlsp/artifact the HTTP Artifact binding. Message flows from the IDP to the service provider are supported via the HTTP POST binding and, on the service provider side, the HTTP Artifact binding (ParseResponse resolves the artifact with the IDP's ArtifactResolutionService over SOAP). The identity provider in this package answers with HTTP POST, or HTTP POST SimpleSign (below); it does not issue artifacts.
+// This package supports the Web SSO profile. Message flows from the service provider to the IDP are supported using the HTTP Redirect binding and the HTTP POST binding, and with x/samlsp/artifact the HTTP Artifact binding. Message flows from the IDP to the service provider are supported via the HTTP POST binding and, on the service provider side, the HTTP Artifact binding (ParseResponse resolves the artifact with the IDP's ArtifactResolutionService over SOAP; in x/samlsp, only with samlsp.AcceptArtifactResponses, which lists the HTTP-Artifact ACS in the SP metadata).
+//
+//	The identity provider in this package answers with HTTP POST, or HTTP POST SimpleSign (below); it does not issue artifacts.
 //
 // The Single Logout profile is supported with the HTTP Redirect and HTTP POST bindings: SP initiated and IDP initiated logout on the service provider side (see Logging out), and SP initiated logout on the identity provider side (see Single logout).
 //

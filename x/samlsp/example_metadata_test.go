@@ -167,7 +167,8 @@ func ExampleWithHTTPClient() {
 		"https://sp.example.com/saml/metadata",
 		samlsp.RemoteMetadata("https://idp.example.com/metadata", samlsp.WithHTTPClient(mtlsClient)),
 		samlsp.WithSigningKey(spKey, spCert),
-		samlsp.WithHTTPClient(mtlsClient))
+		samlsp.WithHTTPClient(mtlsClient),
+		samlsp.AcceptArtifactResponses)
 	if err != nil {
 		log.Fatal(err)
 	}
