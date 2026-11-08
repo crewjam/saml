@@ -117,6 +117,12 @@ type AuthnRequest struct {
 	AuthnContextComparison saml.AuthnContextComparison
 	AuthnContextClasses    []saml.AuthnContextClass
 
+	// AuthnContextDecls are the authentication context declarations
+	// (AuthnContextDeclRef) the SP asked for instead of classes. The IdP
+	// asserts only classes, so Response refuses a request that has them,
+	// with StatusNoAuthnContext (saml-core §3.3.2.2.1).
+	AuthnContextDecls []string
+
 	// Subject, if not nil, names the user the SP asked the IdP to
 	// authenticate. Response refuses a Subject whose NameID does not
 	// match it, with StatusUnknownPrincipal.
@@ -193,13 +199,15 @@ func (c *Config) ParseAuthnRequest(ctx context.Context, r *http.Request, opts ..
 	idp.ResponseWriter = &captured
 	idp.OnError = func(_ http.ResponseWriter, _ *http.Request, _ int, err error) { captured.err = err }
 	idp.ReplayCache = nil
-	r = r.WithContext(ctx)
-	// Parse the form here, so that it is kept for the second look below.
+	// Parse the form here, so that it is kept for the second look below,
+	// and on the caller's request, before WithContext copies it, so that
+	// the caller can still read the form whose body this consumes.
 	if r.Method == http.MethodPost {
 		if err := r.ParseForm(); err != nil {
 			return nil, fmt.Errorf("samlidp: cannot parse the request: %w: %w", saml.ErrMalformedMessage, err)
 		}
 	}
+	r = r.WithContext(ctx)
 	idp.ServeSSO(discardResponseWriter{}, r)
 
 	switch {
@@ -348,6 +356,7 @@ func newAuthnRequest(ireq *saml.IdpAuthnRequest) *AuthnRequest {
 		for _, ref := range rac.AuthnContextClassRefs {
 			req.AuthnContextClasses = append(req.AuthnContextClasses, saml.AuthnContextClass(ref))
 		}
+		req.AuthnContextDecls = append([]string(nil), rac.AuthnContextDeclRefs...)
 	}
 	if q.Subject != nil && q.Subject.NameID != nil {
 		nameID := *q.Subject.NameID
@@ -493,6 +502,11 @@ func (req *AuthnRequest) samlRequest() (saml.AuthnRequest, error) {
 		q.RequestedAuthnContext = &saml.RequestedAuthnContext{
 			Comparison:            string(req.AuthnContextComparison),
 			AuthnContextClassRefs: refs,
+		}
+	} else if len(req.AuthnContextDecls) > 0 {
+		q.RequestedAuthnContext = &saml.RequestedAuthnContext{
+			Comparison:           string(req.AuthnContextComparison),
+			AuthnContextDeclRefs: append([]string(nil), req.AuthnContextDecls...),
 		}
 	}
 	if req.Subject != nil {
