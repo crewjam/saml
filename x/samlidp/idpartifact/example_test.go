@@ -31,7 +31,11 @@ func Example() {
 		log.Print(err)
 		return
 	}
-	binding := idpartifact.New(config, idpartifact.NewMemoryStore(), 1)
+	binding, err := idpartifact.New(config, idpartifact.NewMemoryStore(), 1)
+	if err != nil {
+		log.Print(err)
+		return
+	}
 	binding.Form = true // keep the artifact out of URLs
 	http.Handle(binding.Path(), binding)
 

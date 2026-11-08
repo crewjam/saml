@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	dsig "github.com/russellhaering/goxmldsig"
+
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/x/samlidp"
 	"github.com/crewjam/saml/x/samlidp/idpartifact"
@@ -105,7 +107,7 @@ func newWorld(t *testing.T, configure func(*idpartifact.Binding)) *world {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.binding = idpartifact.New(w.idp, w.store, 3)
+	w.binding = newBinding(t, w.idp, w.store, 3)
 	if configure != nil {
 		configure(w.binding)
 	}
@@ -351,12 +353,51 @@ func TestMetadata(t *testing.T) {
 	if w.binding.Path() != "/saml/artifact" {
 		t.Errorf("Path = %q", w.binding.Path())
 	}
-	if p := idpartifact.New(w.idp, w.store, 9).Path(); p != "" {
-		t.Errorf("Path of an unknown index = %q", p)
+	// An index the metadata does not advertise is refused, rather than
+	// making artifacts that cannot be resolved and an empty Path.
+	if _, err := idpartifact.New(w.idp, w.store, 9); err == nil || !strings.Contains(err.Error(), "index 9") {
+		t.Errorf("New with an unknown index: %v", err)
 	}
 	key, cert := keyPair(t, 0)
 	if _, err := samlidp.New(idpEntityID, samlidp.StaticServiceProviders(), samlidp.WithSigningKey(key, cert),
 		idpartifact.ResolutionService("/relative", 1)); err == nil {
 		t.Error("relative URL: no error")
+	}
+}
+
+// newBinding returns the Binding of New, failing t on an error.
+func newBinding(t *testing.T, config *samlidp.Config, store idpartifact.Store, index uint16) *idpartifact.Binding {
+	t.Helper()
+	b, err := idpartifact.New(config, store, index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// TestMemoryStoreClock checks that New gives a MemoryStore with no Clock
+// the clock of samlidp.WithClock, by which the Binding sets ExpiresAt: a
+// message stored by a clock set in the past is kept for its lifetime, not
+// forgotten at once by the system clock.
+func TestMemoryStoreClock(t *testing.T) {
+	past := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock := dsig.NewFakeClockAt(past)
+	key, cert := keyPair(t, 0)
+	config, err := samlidp.New(idpEntityID, samlidp.StaticServiceProviders(), samlidp.WithSigningKey(key, cert),
+		samlidp.WithClock(clock), idpartifact.ResolutionService("https://idp.example.com/saml/artifact", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := idpartifact.NewMemoryStore()
+	newBinding(t, config, store, 1)
+	if store.Clock != clock {
+		t.Fatal("New did not set the store's Clock")
+	}
+	if err := store.Save(context.Background(), "a", idpartifact.StoredMessage{ExpiresAt: config.Now().Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if store.Len() != 1 {
+		t.Error("the message expired by the system clock")
 	}
 }

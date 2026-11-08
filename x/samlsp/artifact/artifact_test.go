@@ -261,7 +261,7 @@ func setup(t *testing.T) (*fakeIDP, *samlsp.Config, *artifact.Binding, *artifact
 		t.Fatal(err)
 	}
 	store := artifact.NewMemoryStore()
-	return idp, cfg, artifact.New(cfg, store, 3), store, spCert
+	return idp, cfg, newBinding(t, cfg, store), store, spCert
 }
 
 func TestAuthnRequestByArtifact(t *testing.T) {
@@ -536,7 +536,7 @@ func TestResolveFailures(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			idp, cfg, _, _, _ := setup(t)
-			b := artifact.New(cfg, store, 3)
+			b := newBinding(t, cfg, store)
 			msg, err := cfg.AuthnRequest(t.Context(), "r", samlsp.WithCustomBinding(b))
 			if err != nil {
 				t.Fatal(err)
@@ -552,11 +552,11 @@ func TestResolveFailures(t *testing.T) {
 	spKey, spCert := keyPair(t)
 	down, err := samlsp.New(spEntityID, func(context.Context) (*saml.EntityDescriptor, error) {
 		return nil, errors.New("metadata unavailable")
-	}, samlsp.WithSigningKey(spKey, spCert))
+	}, samlsp.WithSigningKey(spKey, spCert), artifact.ResolutionService(arsURL, 3))
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := artifact.New(down, artifact.NewMemoryStore(), 3)
+	b := newBinding(t, down, artifact.NewMemoryStore())
 	if w := idp.resolve(t, b, "AAQAAA==", idpEntityID, idp.key, idp.cert); !isFault(w) {
 		t.Errorf("metadata unavailable: %d", w.Code)
 	}
@@ -575,7 +575,7 @@ func TestIdentityProviderPerCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := artifact.New(cfg, artifact.NewMemoryStore(), 3)
+	b := newBinding(t, cfg, artifact.NewMemoryStore())
 	idpMetadata := samlsp.StaticMetadata(idp.metadata())
 
 	msg, err := cfg.AuthnRequest(t.Context(), "relay-1",
@@ -593,13 +593,145 @@ func TestIdentityProviderPerCall(t *testing.T) {
 	}
 }
 
+// TestIdentityProviderByIssuer resolves artifacts for a Config made
+// without an IdP, with no middleware: Binding.IdentityProvider finds the
+// IdP by the Issuer of the ArtifactResolve, whose signature must then
+// verify with that IdP's metadata.
+func TestIdentityProviderByIssuer(t *testing.T) {
+	const otherEntityID = "https://idp-b.example.com/metadata"
+	idpA := &fakeIDP{}
+	idpA.key, idpA.cert = keyPair(t)
+	idpB := &fakeIDP{}
+	idpB.key, idpB.cert = keyPair(t)
+	mdB := idpB.metadata()
+	mdB.EntityID = otherEntityID
+	idps := map[string]samlsp.MetadataFunc{
+		idpEntityID:   samlsp.StaticMetadata(idpA.metadata()),
+		otherEntityID: samlsp.StaticMetadata(mdB),
+	}
+
+	spKey, spCert := keyPair(t)
+	cfg, err := samlsp.New(spEntityID, nil, samlsp.WithSigningKey(spKey, spCert),
+		artifact.ResolutionService(arsURL, 3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := newBinding(t, cfg, artifact.NewMemoryStore())
+	var lookups []string
+	b.IdentityProvider = func(_ context.Context, entityID string) (samlsp.MetadataFunc, error) {
+		lookups = append(lookups, entityID)
+		if idp, ok := idps[entityID]; ok {
+			return idp, nil
+		}
+		return nil, errors.New("unknown IdP")
+	}
+	isFault := func(w *httptest.ResponseRecorder) bool {
+		return w.Code == http.StatusInternalServerError && strings.Contains(w.Body.String(), "Fault")
+	}
+
+	msg, err := cfg.AuthnRequest(t.Context(), "relay-1",
+		samlsp.WithCustomBinding(b), samlsp.WithIdentityProvider(idps[idpEntityID]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	art := msg.RedirectURL().Query().Get("SAMLart")
+
+	// IdP B claims to be IdP A, or names itself: either way the message
+	// is not given to it.
+	if w := idpB.resolve(t, b, art, idpEntityID, idpB.key, idpB.cert); !isFault(w) {
+		t.Errorf("IdP B signing as IdP A: %d %s", w.Code, w.Body.String())
+	}
+	if got := artifactResponse(t, idpB.resolve(t, b, art, otherEntityID, idpB.key, idpB.cert), spCert); got != nil {
+		t.Error("IdP B was given the message for IdP A")
+	}
+	// An IdP that IdentityProvider does not know.
+	if w := idpA.resolve(t, b, art, "https://unknown.example.com", idpA.key, idpA.cert); !isFault(w) {
+		t.Errorf("unknown IdP: %d", w.Code)
+	}
+
+	got := artifactResponse(t, idpA.resolve(t, b, art, idpEntityID, idpA.key, idpA.cert), spCert)
+	if got == nil || got.SelectAttrValue("ID", "") != msg.ID {
+		t.Fatalf("resolved %v, want the AuthnRequest %s", got, msg.ID)
+	}
+	if want := []string{idpEntityID, otherEntityID, "https://unknown.example.com", idpEntityID}; strings.Join(lookups, " ") != strings.Join(want, " ") {
+		t.Errorf("IdentityProvider called with %v, want %v", lookups, want)
+	}
+
+	// Without IdentityProvider, and with no IdP in the context, the
+	// request cannot be verified.
+	b.IdentityProvider = nil
+	if w := idpA.resolve(t, b, art, idpEntityID, idpA.key, idpA.cert); !isFault(w) {
+		t.Errorf("no IdP: %d", w.Code)
+	}
+}
+
+// newBinding returns the Binding of New with index 3, failing t on an
+// error.
+func newBinding(t *testing.T, cfg *samlsp.Config, store artifact.Store) *artifact.Binding {
+	t.Helper()
+	b, err := artifact.New(cfg, store, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 func TestPath(t *testing.T) {
 	_, cfg, b, _, _ := setup(t)
 	if got := b.Path(); got != "/saml/artifact" {
 		t.Errorf("Path = %q", got)
 	}
-	if got := artifact.New(cfg, artifact.NewMemoryStore(), 9).Path(); got != "" {
-		t.Errorf("Path for an index not advertised = %q", got)
+	// An index the metadata does not advertise is refused, rather than
+	// making artifacts that cannot be resolved and an empty Path.
+	if _, err := artifact.New(cfg, artifact.NewMemoryStore(), 9); err == nil || !strings.Contains(err.Error(), "index 9") {
+		t.Errorf("New with an index not advertised: %v", err)
+	}
+	// So is an SP with no ArtifactResolutionService at all.
+	key, cert := keyPair(t)
+	bare, err := samlsp.New(spEntityID, nil, samlsp.WithSigningKey(key, cert))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := artifact.New(bare, artifact.NewMemoryStore(), 3); err == nil {
+		t.Error("New without a ResolutionService: accepted")
+	}
+}
+
+// TestMemoryStoreClockFromConfig checks that New gives a MemoryStore with
+// no Clock the clock of samlsp.WithClock, by which the Binding sets
+// ExpiresAt: a message stored by a clock set in the past is kept for its
+// lifetime, not forgotten at once by the system clock.
+func TestMemoryStoreClockFromConfig(t *testing.T) {
+	past := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock := dsig.NewFakeClockAt(past)
+	idpKey, idpCert := keyPair(t)
+	idp := &fakeIDP{key: idpKey, cert: idpCert}
+	spKey, spCert := keyPair(t)
+	cfg, err := samlsp.New(spEntityID, samlsp.StaticMetadata(idp.metadata()),
+		samlsp.WithSigningKey(spKey, spCert), samlsp.WithClock(clock),
+		artifact.ResolutionService(arsURL, 3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := artifact.NewMemoryStore()
+	b := newBinding(t, cfg, store)
+	if store.Clock != clock {
+		t.Fatal("New did not set the store's Clock")
+	}
+	if _, err := cfg.AuthnRequest(t.Context(), "r", samlsp.WithCustomBinding(b)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if store.Len() != 1 {
+		t.Error("the message expired by the system clock")
+	}
+
+	// A Clock already set is kept.
+	own := dsig.NewFakeClockAt(past)
+	mine := &artifact.MemoryStore{Clock: own}
+	newBinding(t, cfg, mine)
+	if mine.Clock != own {
+		t.Error("New replaced the store's Clock")
 	}
 }
 
@@ -614,5 +746,37 @@ func TestResolutionServiceChecks(t *testing.T) {
 		if _, err := samlsp.New(spEntityID, samlsp.StaticMetadata(idp.metadata()), opts...); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// TestMemoryStoreMaxEntries checks that a full store refuses new messages,
+// still replaces one it keeps, and takes new ones again once one is
+// resolved; and that Encode reports a full store.
+func TestMemoryStoreMaxEntries(t *testing.T) {
+	s := &artifact.MemoryStore{MaxEntries: 2}
+	ctx := context.Background()
+	m := artifact.StoredMessage{XML: []byte("<x/>"), Recipient: idpEntityID, ExpiresAt: time.Now().Add(time.Minute)}
+	for _, art := range []string{"a", "b", "b"} {
+		if err := s.Save(ctx, art, m); err != nil {
+			t.Fatalf("Save(%s): %v", art, err)
+		}
+	}
+	if err := s.Save(ctx, "c", m); !errors.Is(err, artifact.ErrStoreFull) {
+		t.Fatalf("Save into a full store: %v", err)
+	}
+	if got, _ := s.Take(ctx, "a", idpEntityID); got == nil {
+		t.Fatal("Take(a) = nil")
+	}
+	if err := s.Save(ctx, "c", m); err != nil {
+		t.Fatalf("Save after a Take: %v", err)
+	}
+
+	_, cfg, b, store, _ := setup(t)
+	store.MaxEntries = 1
+	if _, err := cfg.AuthnRequest(t.Context(), "r", samlsp.WithCustomBinding(b)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cfg.AuthnRequest(t.Context(), "r", samlsp.WithCustomBinding(b)); !errors.Is(err, artifact.ErrStoreFull) {
+		t.Errorf("AuthnRequest with a full store: %v", err)
 	}
 }
