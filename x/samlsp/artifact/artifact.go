@@ -19,7 +19,9 @@
 // The browser takes the artifact to the IdP with a redirect, or, with
 // Binding.Form, with a form it posts. The IdP must list an HTTP-Artifact
 // endpoint for the message in its metadata, and must sign its
-// ArtifactResolve requests. The SP signs its ArtifactResponses with the
+// ArtifactResolve requests, or, with Binding.TLSClientAuth, present a TLS
+// client certificate with the key of one of its signing certificates
+// (saml-bindings §3.6.5.2). The SP signs its ArtifactResponses with the
 // key of samlsp.WithSigningKey, which ResolutionService requires.
 //
 // An SP that serves several IdPs, made with a nil MetadataFunc, names the
@@ -33,6 +35,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha1" //nolint:gosec // SAML type 0x0004 artifacts identify their source by SHA-1 (saml-bindings §3.6.4)
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -91,6 +94,29 @@ type Binding struct {
 	// Issuer thus only chooses metadata that the request fails to verify
 	// against; but two IdPs must not share an entity ID.
 	IdentityProvider func(ctx context.Context, entityID string) (samlsp.MetadataFunc, error)
+
+	// TLSClientAuth makes ServeHTTP accept an ArtifactResolve that is not
+	// signed, if the IdP authenticated itself instead with a TLS client
+	// certificate (saml-bindings §3.6.5.2, SOAP binding §3.2.3.1): one
+	// whose public key is that of a signing certificate in the metadata of
+	// the IdP that the request names as its Issuer. The certificate is
+	// matched by its key, not its name, so its chain need not be verified;
+	// but the server must ask for it, with a tls.Config.ClientAuth of
+	// RequireAnyClientCert or stronger, since a TLS server does not by
+	// default. A signed ArtifactResolve is verified as without
+	// TLSClientAuth, and refused if its signature is not valid, whatever
+	// the client certificate.
+	TLSClientAuth bool
+
+	// ClientCertificate, if not nil, returns the TLS client certificate of
+	// the request for TLSClientAuth, instead of the first of
+	// r.TLS.PeerCertificates. Behind a proxy that terminates TLS, r.TLS is
+	// nil; ClientCertificate can then return the certificate that the
+	// proxy forwards, in a header for example. That certificate is then
+	// only as trustworthy as the proxy, and as the guarantee that no
+	// request reaches the Binding except through it with that header set
+	// by it: anyone who can set the header can claim to be any IdP.
+	ClientCertificate func(r *http.Request) *x509.Certificate
 }
 
 var (
@@ -264,8 +290,8 @@ func newArtifact(entityID string, index uint16) (string, error) {
 // ArtifactResolve that the IdP sends with the SAML SOAP binding with an
 // ArtifactResponse signed by the SP, carrying the message of the artifact.
 //
-// The ArtifactResolve must be signed by the IdP, be issued by it, and be
-// fresh. A message is given only once, and only to the IdP it was sent to;
+// The ArtifactResolve must be signed by the IdP (or, with TLSClientAuth,
+// come with its TLS client certificate), be issued by it, and be fresh. A message is given only once, and only to the IdP it was sent to;
 // an artifact that is unknown, expired, already resolved or meant for
 // another party is answered with no message (saml-core §3.5.3). A request
 // that is refused is answered with a SOAP fault, and passed to OnError.
@@ -322,7 +348,12 @@ func (b *Binding) resolve(r *http.Request) (*etree.Element, error) {
 	if err != nil {
 		return nil, err
 	}
-	signed, err := sp.ValidateIDPSignedElement(el)
+	var signed *etree.Element
+	if b.TLSClientAuth && !isSigned(el) {
+		signed, err = b.tlsAuthenticated(r, sp, el)
+	} else {
+		signed, err = sp.ValidateIDPSignedElement(el)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("artifact: the ArtifactResolve: %w", err)
 	}
