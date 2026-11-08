@@ -13,7 +13,6 @@ import (
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/attrname"
 	"github.com/crewjam/saml/x/samlsp"
-	"github.com/crewjam/saml/x/samlsp/saferedirect"
 	"github.com/crewjam/saml/x/samlsp/slo"
 )
 
@@ -158,10 +157,10 @@ func (a *App) acs(w http.ResponseWriter, r *http.Request) {
 	a.db.AddSession(s)
 	a.setCookie(w, sessionCookie, s.ID, "/", int(time.Until(expires)/time.Second), false)
 
-	if !isLocalPath(redirectTo) {
+	if !isLocalURL(redirectTo) {
 		redirectTo = "/"
 	}
-	http.Redirect(w, r, redirectTo, http.StatusFound) //nolint:gosec // G710: redirectTo passed isLocalPath
+	http.Redirect(w, r, redirectTo, http.StatusFound) //nolint:gosec // G710: redirectTo passed isLocalURL
 }
 
 // loginInProgress returns the options that ParseResponse needs for the
@@ -321,18 +320,15 @@ func (a *App) setCookie(w http.ResponseWriter, name, value, path string, maxAge 
 	http.SetCookie(w, c)
 }
 
-// isLocalPath reports whether p, a return path from the request, is safe
-// to redirect to (see saferedirect.IsSafe). It repeats checks that
-// saferedirect.IsSafe makes, of the start of p and of its scheme and host,
-// so that static analyzers, which may not look into another package, see
-// the redirect guarded.
-func isLocalPath(p string) bool {
+// isLocalURL reports whether p is a URL path on this site, safe to redirect
+// to: it starts with "/", but not with "//" or "/\", which browsers read as
+// another host, and is a plain path.
+func isLocalURL(p string) bool {
 	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.HasPrefix(p, "/\\") {
 		return false
 	}
-	if !saferedirect.IsSafe(p) {
-		return false
-	}
+	// url.Parse refuses control characters, such as the tab in "/\t/host",
+	// which browsers drop, leaving "//host".
 	u, err := url.Parse(p)
 	return err == nil && u.Scheme == "" && u.Host == ""
 }
