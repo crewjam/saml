@@ -42,6 +42,18 @@ type Config struct {
 	MaxInstances int
 
 	Logger *slog.Logger
+
+	// RateLimit is how many requests a second each client may make on
+	// average, and RateBurst how many it may make at once. A client is an
+	// IPv4 address or an IPv6 /64. Zero turns rate limiting off.
+	RateLimit float64
+	RateBurst int
+
+	// ClientIPHeader is the request header that holds the client's
+	// address, set by the proxy in front of the server (on Fly.io,
+	// Fly-Client-IP). Empty means the connection's remote address. Set it
+	// only behind a proxy that overwrites it: clients can send it too.
+	ClientIPHeader string
 }
 
 // Server is the web application.
@@ -54,6 +66,8 @@ type Server struct {
 	hub       *hub
 	cookieKey []byte
 	static    *staticFiles
+	limiter   *rateLimiter
+	metrics   *metrics
 }
 
 // New returns a Server.
@@ -81,6 +95,10 @@ func New(cfg Config) (*Server, error) {
 	s.pages = pages
 	s.static = newStaticFiles(web.Static)
 	s.soap = s.newBackChannelClient()
+	if cfg.RateLimit > 0 {
+		s.limiter = newRateLimiter(cfg.RateLimit, cfg.RateBurst)
+	}
+	s.metrics = s.newMetrics()
 	s.routes()
 	return s, nil
 }
@@ -141,10 +159,15 @@ func nonce(r *http.Request) string {
 	return n
 }
 
-// ServeHTTP serves the application with its security headers. Pages may
-// run only the server's own scripts, and the inline scripts that submit
-// SAML forms, which carry the request's nonce.
+// ServeHTTP serves the application: rate limited, logged and counted.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.observe(w, r, s.serve)
+}
+
+// serve serves the application with its security headers. Pages may run
+// only the server's own scripts, and the inline scripts that submit SAML
+// forms, which carry the request's nonce.
+func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	n := rand.Text()
 	h := w.Header()
 	h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'nonce-"+n+"' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; "+

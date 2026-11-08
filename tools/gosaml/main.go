@@ -13,6 +13,10 @@
 //	GOSAML_DB             the SQLite database file (default gosaml.db in the temporary directory)
 //	GOSAML_TTL            how long an IdP or SP lives (default 24h)
 //	GOSAML_MAX_INSTANCES  the most IdPs and SPs that may exist at once (default 5000)
+//	GOSAML_RATE_LIMIT     requests a second each client IP may make on average (default 10; 0 turns it off)
+//	GOSAML_RATE_BURST     requests each client IP may make at once (default 100)
+//	GOSAML_CLIENT_IP_HEADER  the header the proxy in front puts the client's IP in, such as Fly-Client-IP (default none: the connection's address)
+//	GOSAML_METRICS_ADDR   the address to serve Prometheus metrics on, at /metrics (default none: not served)
 package main
 
 import (
@@ -54,6 +58,14 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	rateLimit, err := strconv.ParseFloat(env("GOSAML_RATE_LIMIT", "10"), 64)
+	if err != nil {
+		return err
+	}
+	rateBurst, err := strconv.Atoi(env("GOSAML_RATE_BURST", "100"))
+	if err != nil {
+		return err
+	}
 	dbPath := env("GOSAML_DB", filepath.Join(os.TempDir(), "gosaml.db"))
 
 	// The database is kept across restarts and deploys; instances still
@@ -71,11 +83,14 @@ func run(log *slog.Logger) error {
 	defer db.Close() //nolint:errcheck // exiting
 
 	srv, err := server.New(server.Config{
-		BaseURL:      env("GOSAML_BASE_URL", "http://localhost:8080"),
-		Store:        db,
-		TTL:          ttl,
-		MaxInstances: maxInstances,
-		Logger:       log,
+		BaseURL:        env("GOSAML_BASE_URL", "http://localhost:8080"),
+		Store:          db,
+		TTL:            ttl,
+		MaxInstances:   maxInstances,
+		Logger:         log,
+		RateLimit:      rateLimit,
+		RateBurst:      rateBurst,
+		ClientIPHeader: os.Getenv("GOSAML_CLIENT_IP_HEADER"),
 	})
 	if err != nil {
 		return err
@@ -110,7 +125,20 @@ func run(log *slog.Logger) error {
 		IdleTimeout:       120 * time.Second,
 	}
 	hs.RegisterOnShutdown(srv.CloseLive)
-	errc := make(chan error, 1)
+	errc := make(chan error, 2)
+
+	// Metrics are served on an address of their own, which Fly.io scrapes
+	// (fly.toml's [metrics]) and which is not public.
+	var ms *http.Server
+	if addr := os.Getenv("GOSAML_METRICS_ADDR"); addr != "" {
+		mux := http.NewServeMux()
+		mux.Handle("GET /metrics", srv.MetricsHandler())
+		ms = &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+		go func() {
+			log.Info("serving metrics", "addr", addr)
+			errc <- ms.ListenAndServe()
+		}()
+	}
 	go func() {
 		log.Info("listening", "addr", hs.Addr, "base_url", srv.BaseURL, "db", dbPath, "ttl", ttl)
 		errc <- hs.ListenAndServe()
@@ -122,5 +150,8 @@ func run(log *slog.Logger) error {
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if ms != nil {
+		_ = ms.Shutdown(shutdownCtx)
+	}
 	return hs.Shutdown(shutdownCtx)
 }
