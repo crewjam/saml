@@ -2,6 +2,7 @@ package saml
 
 import (
 	"encoding/xml"
+	"reflect"
 	"testing"
 	"time"
 
@@ -83,7 +84,7 @@ func TestCanParseMetadata(t *testing.T) {
 			},
 		},
 	}
-	assert.Check(t, is.DeepEqual(expected, metadata))
+	assert.Assert(t, reflect.DeepEqual(expected, metadata))
 
 }
 
@@ -303,7 +304,7 @@ func TestRoleDescriptorDurationsRoundTrip(t *testing.T) {
 			// Round trip
 			var ed2 EntityDescriptor
 			assert.NilError(t, xml.Unmarshal(buf, &ed2))
-			assert.Check(t, is.DeepEqual(tc.get(ed2), tc.get(ed)))
+			assert.Assert(t, reflect.DeepEqual(tc.get(ed2), tc.get(ed)))
 		})
 	}
 }

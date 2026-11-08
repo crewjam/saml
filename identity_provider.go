@@ -95,8 +95,7 @@ type SessionProvider interface {
 }
 
 // ServiceProviderProvider is an interface used by IdentityProvider to look up
-// service provider metadata for a request. Metadata with cacheDuration should
-// carry MetadataRetrievedAt, set to the time the provider obtained it.
+// service provider metadata for a request.
 type ServiceProviderProvider interface {
 	// GetServiceProvider returns the Service Provider metadata for the
 	// service provider ID, which is typically the service provider's

@@ -342,9 +342,6 @@ func (sp *ServiceProvider) simpleSignSigningContext(signatureMethod string) (*ds
 // SignatureMethod. el is sent as is: an XML signature it carries is kept,
 // but none is added.
 func (sp *ServiceProvider) simpleSignForm(destination, messageParam string, el *etree.Element, relayState, nonce, signatureMethod string) ([]byte, error) {
-	if err := sp.validateIDPMetadata(); err != nil {
-		return nil, err
-	}
 	signingContext, err := sp.simpleSignSigningContext(signatureMethod)
 	if err != nil {
 		return nil, err

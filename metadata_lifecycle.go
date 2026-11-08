@@ -12,34 +12,30 @@ var (
 	ErrMetadataExpired = errors.New("saml: metadata expired")
 )
 
-// MetadataExpiresAt returns the earliest expiry that can be calculated from
-// the entity's validUntil attributes. cacheDuration is a refresh deadline,
-// not a hard validity limit; use MetadataRefreshAt to include it. A zero time
-// means the metadata has no validUntil bound.
+// MetadataExpiresAt returns the entity's validUntil value. A zero time means
+// the entity has no hard validity bound. Role descriptors have their own
+// validity periods and must be checked only when that role is used.
 func (m *EntityDescriptor) MetadataExpiresAt() time.Time {
 	if m == nil {
 		return time.Time{}
 	}
-	expiry := m.ValidUntil
-	for _, role := range allRoleDescriptors(m) {
-		expiry = earlierTime(expiry, roleValidUntil(role))
-	}
-	return expiry
+	return m.ValidUntil
 }
 
 // MetadataRefreshAt returns the earliest deadline requested by validUntil or
-// cacheDuration. cacheDuration deadlines are relative to MetadataRetrievedAt;
-// if that time is unknown, only validUntil deadlines can be calculated.
+// cacheDuration. retrievedAt is when this metadata document was obtained;
+// cacheDuration deadlines are relative to that time.
 // cacheDuration signals when metadata should be refreshed, but does not by
 // itself make otherwise usable cached metadata invalid.
-func (m *EntityDescriptor) MetadataRefreshAt() time.Time {
+func (m *EntityDescriptor) MetadataRefreshAt(retrievedAt time.Time) time.Time {
 	if m == nil {
 		return time.Time{}
 	}
 	refreshAt := m.MetadataExpiresAt()
-	refreshAt = earlierTime(refreshAt, cacheDeadline(m.CacheDuration, m.MetadataCacheDurationSet || m.CacheDuration != 0, m.MetadataRetrievedAt))
+	refreshAt = earlierTime(refreshAt, cacheDeadline(m.CacheDuration, m.metadataCacheDurationSet || m.CacheDuration != 0, retrievedAt))
 	for _, role := range allRoleDescriptors(m) {
-		refreshAt = earlierTime(refreshAt, cacheDeadline(role.CacheDuration, role.MetadataCacheDurationSet || role.CacheDuration != 0, m.MetadataRetrievedAt))
+		refreshAt = earlierTime(refreshAt, roleValidUntil(role))
+		refreshAt = earlierTime(refreshAt, cacheDeadline(role.CacheDuration, role.metadataCacheDurationSet || role.CacheDuration != 0, retrievedAt))
 	}
 	return refreshAt
 }
@@ -51,8 +47,17 @@ func (m *EntityDescriptor) ValidateMetadataAt(now time.Time) error {
 	if m == nil {
 		return errors.New("saml: metadata is nil")
 	}
-	if expiry := m.MetadataExpiresAt(); !expiry.IsZero() && !now.Before(expiry) {
+	if expiry := m.ValidUntil; !expiry.IsZero() && !now.Before(expiry) {
 		return fmt.Errorf("%w: entity %q expired at %s", ErrMetadataExpired, m.EntityID, expiry.Format(time.RFC3339))
+	}
+	return nil
+}
+
+// ValidateMetadataAt reports whether a role descriptor is still within its
+// advertised validity period at now.
+func (m RoleDescriptor) ValidateMetadataAt(now time.Time) error {
+	if expiry := roleValidUntil(m); !expiry.IsZero() && !now.Before(expiry) {
+		return fmt.Errorf("%w: role descriptor expired at %s", ErrMetadataExpired, expiry.Format(time.RFC3339))
 	}
 	return nil
 }
@@ -100,13 +105,12 @@ func roleValidUntil(m RoleDescriptor) time.Time {
 }
 
 // FindEntityDescriptor returns the entity with entityID from this aggregate
-// and applies all enclosing cache policies to the returned copy. retrievedAt
-// is the time the aggregate document was obtained.
-func (m *EntitiesDescriptor) FindEntityDescriptor(entityID string, retrievedAt time.Time) *EntityDescriptor {
+// and applies all enclosing cache policies to the returned copy.
+func (m *EntitiesDescriptor) FindEntityDescriptor(entityID string) *EntityDescriptor {
 	if m == nil {
 		return nil
 	}
-	return findEntityDescriptor(m, entityID, metadataCachePolicy{}, retrievedAt)
+	return findEntityDescriptor(m, entityID, metadataCachePolicy{})
 }
 
 type metadataCachePolicy struct {
@@ -115,7 +119,7 @@ type metadataCachePolicy struct {
 	cacheSet      bool
 }
 
-func findEntityDescriptor(aggregate *EntitiesDescriptor, entityID string, parent metadataCachePolicy, retrievedAt time.Time) *EntityDescriptor {
+func findEntityDescriptor(aggregate *EntitiesDescriptor, entityID string, parent metadataCachePolicy) *EntityDescriptor {
 	policy := parent
 	if aggregate.ValidUntil != nil {
 		policy.validUntil = earlierTime(policy.validUntil, *aggregate.ValidUntil)
@@ -129,22 +133,21 @@ func findEntityDescriptor(aggregate *EntitiesDescriptor, entityID string, parent
 			continue
 		}
 		entity := aggregate.EntityDescriptors[i]
-		applyMetadataCachePolicy(&entity, policy, retrievedAt)
+		applyMetadataCachePolicy(&entity, policy)
 		return &entity
 	}
 	for i := range aggregate.EntitiesDescriptors {
-		if entity := findEntityDescriptor(&aggregate.EntitiesDescriptors[i], entityID, policy, retrievedAt); entity != nil {
+		if entity := findEntityDescriptor(&aggregate.EntitiesDescriptors[i], entityID, policy); entity != nil {
 			return entity
 		}
 	}
 	return nil
 }
 
-func applyMetadataCachePolicy(entity *EntityDescriptor, policy metadataCachePolicy, retrievedAt time.Time) {
+func applyMetadataCachePolicy(entity *EntityDescriptor, policy metadataCachePolicy) {
 	entity.ValidUntil = earlierTime(entity.ValidUntil, policy.validUntil)
-	if policy.cacheSet && (!entity.MetadataCacheDurationSet && entity.CacheDuration == 0 || policy.cacheDuration < entity.CacheDuration) {
+	if policy.cacheSet && (!entity.metadataCacheDurationSet && entity.CacheDuration == 0 || policy.cacheDuration < entity.CacheDuration) {
 		entity.CacheDuration = policy.cacheDuration
-		entity.MetadataCacheDurationSet = policy.cacheDuration == 0
+		entity.metadataCacheDurationSet = policy.cacheDuration == 0
 	}
-	entity.MetadataRetrievedAt = retrievedAt
 }

@@ -241,7 +241,7 @@ For a feed that signs its metadata, use `NewSignedMetadataProvider` and provide 
 
 `Metadata` fetches on first use and checks for refresh when called again. It refreshes before the current entity's effective `cacheDuration` or `validUntil` deadline. `samlsp.Middleware` calls the provider before each authentication, ACS and SLO operation and uses a request-local service-provider copy, so a refresh does not change configuration seen by concurrent requests. The provider does not start a background goroutine. If a fetch fails, it returns the last document while its `validUntil` bound remains valid; a `cacheDuration` deadline alone does not invalidate cached metadata. After hard expiry, the error is returned and the service provider must not continue using the old keys or endpoints. The returned metadata is shared and must be treated as read-only.
 
-Applications that obtain metadata through a custom `ServiceProviderProvider` should set `EntityDescriptor.MetadataRetrievedAt` to the time they retrieved the document when `cacheDuration` is present, so consumers can calculate its refresh deadline with `MetadataRefreshAt`. Metadata parsed by `samlsp.ParseMetadata` or `ParseMetadataByEntityID` already carries this value.
+Applications that obtain metadata through a custom `ServiceProviderProvider` can calculate a refresh deadline with `EntityDescriptor.MetadataRefreshAt(retrievedAt)`, passing the time they retrieved the document. `cacheDuration` deadlines are relative to that time.
 
 ### Querying attributes from the IDP
 

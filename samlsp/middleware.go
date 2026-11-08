@@ -52,7 +52,9 @@ type Middleware struct {
 	// IDPMetadataProvider, when set, supplies the current IdP metadata for
 	// each authentication, ACS and SLO operation. The metadata is installed
 	// on a request-local ServiceProvider copy, so refreshes do not mutate
-	// configuration shared by concurrent requests.
+	// configuration shared by concurrent requests. The Middleware's shared
+	// ServiceProvider.IDPMetadata remains unchanged; code that needs the latest
+	// metadata outside these handlers should call the provider directly.
 	IDPMetadataProvider IDPMetadataProvider
 	OnError             func(w http.ResponseWriter, r *http.Request, err error)
 	Binding             string // saml.HTTPRedirectBinding, saml.HTTPPostBinding or saml.HTTPPostSimpleSignBinding

@@ -117,6 +117,29 @@ func TestRejectExpiredIDPMetadata(t *testing.T) {
 		assert.NilError(t, err)
 	})
 
+	t.Run("expired metadata does not block endpoint lookup or outgoing messages", func(t *testing.T) {
+		e := spcovSetup(t)
+		e.sp.RejectExpiredIDPMetadata = true
+		expireEntity(e)
+		destination := e.sp.GetSSOBindingLocation(HTTPRedirectBinding)
+		assert.Assert(t, destination != "")
+
+		_, err := e.sp.MakeAuthenticationRequest(destination, HTTPRedirectBinding, HTTPPostBinding)
+		assert.NilError(t, err)
+		_, err = e.sp.MakeLogoutResponse(destination, "request-id")
+		assert.NilError(t, err)
+	})
+
+	t.Run("expired unrelated role does not block SSO verification", func(t *testing.T) {
+		e := spcovSetup(t)
+		e.sp.RejectExpiredIDPMetadata = true
+		e.sp.IDPMetadata.PDPDescriptors = []PDPDescriptor{{
+			RoleDescriptor: RoleDescriptor{ValidUntil: &past},
+		}}
+		_, err := e.sp.ParseXMLResponse(e.signedResponse(t), []string{spcovRequestID}, e.sp.AcsURL)
+		assert.NilError(t, err)
+	})
+
 	t.Run("attribute authority", func(t *testing.T) {
 		e := spcovSetup(t)
 		e.sp.RejectExpiredIDPMetadata = true
@@ -137,5 +160,21 @@ func TestRejectExpiredIDPMetadata(t *testing.T) {
 		e.sp.IDPMetadata.ValidUntil = past
 		_, err = e.sp.attributeAuthoritySigningCerts()
 		assert.Check(t, errors.Is(err, ErrExpired), "%v", err)
+	})
+
+	t.Run("expired unused attribute authority does not block a valid authority", func(t *testing.T) {
+		e := spcovSetup(t)
+		e.sp.RejectExpiredIDPMetadata = true
+		e.sp.IDPMetadata.AttributeAuthorityDescriptors = []AttributeAuthorityDescriptor{
+			{
+				RoleDescriptor: RoleDescriptor{ValidUntil: &past, KeyDescriptors: e.sp.IDPMetadata.IDPSSODescriptors[0].KeyDescriptors},
+			},
+			{
+				RoleDescriptor: RoleDescriptor{ValidUntil: &future, KeyDescriptors: e.sp.IDPMetadata.IDPSSODescriptors[0].KeyDescriptors},
+			},
+		}
+		certs, err := e.sp.attributeAuthoritySigningCerts()
+		assert.NilError(t, err)
+		assert.Equal(t, len(certs), 1)
 	})
 }

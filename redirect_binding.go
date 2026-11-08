@@ -360,9 +360,6 @@ func checkRelayState(limit bool, relayState string) error {
 // signature covers only the SAML parameters, not any query parameters already
 // present in destination.
 func (sp *ServiceProvider) redirectBindingURL(destination, messageParam, encodedMessage, relayState, signatureMethod string) (*url.URL, error) {
-	if err := sp.validateIDPMetadata(); err != nil {
-		return nil, err
-	}
 	if signatureMethod == "" {
 		return signedRedirectBindingURL(destination, messageParam, encodedMessage, relayState, "", nil)
 	}

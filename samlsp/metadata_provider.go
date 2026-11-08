@@ -24,29 +24,37 @@ const (
 	defaultMetadataRefreshInterval = 12 * time.Hour
 	metadataRefreshRetryInterval   = 30 * time.Second
 	maximumMetadataRefreshLead     = 5 * time.Minute
+	minimumMetadataRefreshInterval = time.Minute
+	metadataRefreshFetchTimeout    = 2 * time.Minute
 )
 
 // MetadataProvider fetches and caches one IdP EntityDescriptor. It refreshes
-// the document before the earliest validUntil or cacheDuration deadline. If a
+// the document before the earliest validUntil or cacheDuration deadline, with
+// at least a minute between successful refreshes. If a
 // refresh fails, it can continue returning the previous document until its
 // validUntil bound; after that, it returns the fetch or expiry error.
 //
-// Metadata is fetched on demand rather than in a background goroutine. Call
-// Metadata from the application's normal request or refresh path so that a
-// provider that stays idle does not retain expired metadata indefinitely.
+// Refreshes start on demand and continue independently of the request that
+// triggered them. An idle provider does not refresh in the background.
 // Returned EntityDescriptor values are shared and must be treated as
 // read-only.
 type MetadataProvider struct {
-	client      *http.Client
-	metadataURL url.URL
-	entityID    string
+	client       *http.Client
+	metadataURL  url.URL
+	entityID     string
 	signingCerts []*x509.Certificate
 
-	mu            sync.Mutex
-	current       *saml.EntityDescriptor
-	nextRefreshAt time.Time
-	refreshing    chan struct{}
-	lastError     error
+	mu                 sync.Mutex
+	current            *saml.EntityDescriptor
+	currentRetrievedAt time.Time
+	nextRefreshAt      time.Time
+	refreshing         *metadataRefreshCall
+	lastError          error
+}
+
+type metadataRefreshCall struct {
+	done chan struct{}
+	err  error
 }
 
 // NewMetadataProvider creates an on-demand metadata provider. If entityID is
@@ -92,8 +100,9 @@ func NewSignedMetadataProvider(httpClient *http.Client, metadataURL url.URL, ent
 // Metadata returns the current metadata, fetching it if this is the first
 // call or its refresh time has arrived. The provider derives the refresh time
 // from the effective metadata refresh deadline and refreshes at least one
-// tenth of the remaining time early, up to five minutes. Metadata without a
-// calculable deadline is refreshed every twelve hours.
+// tenth of the remaining time early, up to five minutes, with a one-minute
+// minimum interval. Metadata without a calculable deadline is refreshed
+// every twelve hours.
 func (p *MetadataProvider) Metadata(ctx context.Context) (*saml.EntityDescriptor, error) {
 	return p.get(ctx, false)
 }
@@ -117,6 +126,9 @@ func (p *MetadataProvider) LastRefreshError() error {
 
 func (p *MetadataProvider) get(ctx context.Context, force bool) (*saml.EntityDescriptor, error) {
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		p.mu.Lock()
 		now := saml.TimeNow()
 		if !force && now.Before(p.nextRefreshAt) {
@@ -135,12 +147,9 @@ func (p *MetadataProvider) get(ctx context.Context, force bool) (*saml.EntityDes
 			wait := p.refreshing
 			p.mu.Unlock()
 			select {
-			case <-wait:
-				if force {
-					p.mu.Lock()
-					err := p.lastError
-					p.mu.Unlock()
-					return nil, err
+			case <-wait.done:
+				if force || errors.Is(wait.err, context.Canceled) {
+					return nil, wait.err
 				}
 				continue
 			case <-ctx.Done():
@@ -148,64 +157,84 @@ func (p *MetadataProvider) get(ctx context.Context, force bool) (*saml.EntityDes
 			}
 		}
 
-		wait := make(chan struct{})
+		wait := &metadataRefreshCall{done: make(chan struct{})}
 		p.refreshing = wait
 		previous := p.current
+		previousRetrievedAt := p.currentRetrievedAt
 		p.mu.Unlock()
 
-		updated, err := p.fetch(ctx)
-		now = saml.TimeNow()
-
-		p.mu.Lock()
-		var result *saml.EntityDescriptor
-		if err == nil {
-			p.current = updated
-			p.nextRefreshAt = metadataRefreshAt(updated, now)
-			p.lastError = nil
-			result = updated
-		} else {
-			p.lastError = err
-			p.nextRefreshAt = metadataRetryAt(previous, now)
-			if !force && previous != nil && previous.ValidateMetadataAt(now) == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-				result = previous
-				err = nil
+		go p.runRefresh(ctx, wait, previous, previousRetrievedAt)
+		select {
+		case <-wait.done:
+			if force || errors.Is(wait.err, context.Canceled) {
+				return nil, wait.err
 			}
+			continue
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
-		p.refreshing = nil
-		close(wait)
-		p.mu.Unlock()
-		return result, err
 	}
 }
 
-func (p *MetadataProvider) fetch(ctx context.Context) (*saml.EntityDescriptor, error) {
+func (p *MetadataProvider) runRefresh(callerCtx context.Context, call *metadataRefreshCall, previous *saml.EntityDescriptor, previousRetrievedAt time.Time) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(callerCtx), metadataRefreshFetchTimeout)
+	defer cancel()
+
+	updated, retrievedAt, err := p.fetch(ctx)
+	now := saml.TimeNow()
+
+	p.mu.Lock()
+	if err == nil {
+		p.current = updated
+		p.currentRetrievedAt = retrievedAt
+		p.nextRefreshAt = metadataRefreshAt(updated, retrievedAt, now)
+		p.lastError = nil
+	} else if errors.Is(err, context.Canceled) {
+		p.lastError = nil
+		p.nextRefreshAt = now
+		call.err = err
+	} else {
+		p.lastError = err
+		p.nextRefreshAt = metadataRetryAt(previous, now)
+		if previous != nil && previous.ValidateMetadataAt(now) == nil {
+			p.current = previous
+			p.currentRetrievedAt = previousRetrievedAt
+		}
+		call.err = err
+	}
+	p.refreshing = nil
+	close(call.done)
+	p.mu.Unlock()
+}
+
+func (p *MetadataProvider) fetch(ctx context.Context) (*saml.EntityDescriptor, time.Time, error) {
 	data, err := fetchMetadataBytes(ctx, p.client, p.metadataURL)
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	retrievedAt := saml.TimeNow()
 	var metadata *saml.EntityDescriptor
 	switch {
 	case len(p.signingCerts) > 0 && p.entityID == "":
-		metadata, err = ParseSignedMetadataAt(data, p.signingCerts, retrievedAt)
+		metadata, err = ParseSignedMetadata(data, p.signingCerts)
 	case len(p.signingCerts) > 0:
-		metadata, err = ParseSignedMetadataByEntityIDAt(data, p.entityID, p.signingCerts, retrievedAt)
+		metadata, err = ParseSignedMetadataByEntityID(data, p.entityID, p.signingCerts)
 	case p.entityID == "":
-		metadata, err = ParseMetadataAt(data, retrievedAt)
+		metadata, err = ParseMetadata(data)
 	default:
-		metadata, err = ParseMetadataByEntityIDAt(data, p.entityID, retrievedAt)
+		metadata, err = ParseMetadataByEntityID(data, p.entityID)
 	}
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	if err := metadata.ValidateMetadataAt(retrievedAt); err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
-	return metadata, nil
+	return metadata, retrievedAt, nil
 }
 
-func metadataRefreshAt(metadata *saml.EntityDescriptor, now time.Time) time.Time {
-	refreshAt := metadata.MetadataRefreshAt()
+func metadataRefreshAt(metadata *saml.EntityDescriptor, retrievedAt, now time.Time) time.Time {
+	refreshAt := metadata.MetadataRefreshAt(retrievedAt)
 	if refreshAt.IsZero() {
 		return now.Add(defaultMetadataRefreshInterval)
 	}
@@ -215,8 +244,9 @@ func metadataRefreshAt(metadata *saml.EntityDescriptor, now time.Time) time.Time
 		lead = maximumMetadataRefreshLead
 	}
 	refreshAt = refreshAt.Add(-lead)
-	if !refreshAt.After(now) {
-		return now
+	minimumRefreshAt := now.Add(minimumMetadataRefreshInterval)
+	if refreshAt.Before(minimumRefreshAt) {
+		return minimumRefreshAt
 	}
 	return refreshAt
 }

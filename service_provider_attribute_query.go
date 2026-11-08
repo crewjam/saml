@@ -51,7 +51,7 @@ type AttributeQueryResult struct {
 // the IdP metadata, or "" if there is none. Attribute queries use
 // SOAPBinding.
 func (sp *ServiceProvider) GetAttributeServiceLocation(binding string) string {
-	if sp.IDPMetadata == nil || sp.validateIDPMetadata() != nil {
+	if sp.IDPMetadata == nil {
 		return ""
 	}
 	for _, attributeAuthority := range sp.IDPMetadata.AttributeAuthorityDescriptors {
@@ -88,9 +88,6 @@ func (sp *ServiceProvider) GetAttributeServiceLocation(binding string) string {
 // LogoutSignatureMethod is set or SOAP single logout is offered; set one of
 // them so that the attribute authority can verify the query.
 func (sp *ServiceProvider) MakeAttributeQuery(nameID NameID, attributes ...Attribute) (*AttributeQuery, error) {
-	if err := sp.validateIDPMetadata(); err != nil {
-		return nil, err
-	}
 	if sp.IDPMetadata == nil {
 		return nil, errors.New("cannot make an attribute query: IDPMetadata is not set")
 	}
@@ -274,9 +271,6 @@ func (sp *ServiceProvider) ParseXMLAttributeQueryResponse(soapResponseXML []byte
 }
 
 func (sp *ServiceProvider) parseAttributeQueryResponse(soapResponseXML []byte, query *AttributeQuery, now time.Time) (*AttributeQueryResult, error) {
-	if err := sp.validateIDPMetadata(); err != nil {
-		return nil, err
-	}
 	if query == nil || query.ID == "" || query.Subject == nil || query.Subject.NameID == nil {
 		return nil, classify(errors.New("the attribute query has no ID or no Subject NameID"), ErrMissingElement)
 	}
@@ -344,9 +338,13 @@ func (sp *ServiceProvider) attributeAuthoritySigningCerts() ([]*x509.Certificate
 		return nil, err
 	}
 	var keyDescriptors []KeyDescriptor
+	var expiredRoleErr error
 	for i, attributeAuthority := range sp.IDPMetadata.AttributeAuthorityDescriptors {
 		if err := sp.checkRoleNotExpired(&sp.IDPMetadata.AttributeAuthorityDescriptors[i].RoleDescriptor, "AttributeAuthorityDescriptor"); err != nil {
-			return nil, err
+			if len(attributeAuthority.KeyDescriptors) > 0 && expiredRoleErr == nil {
+				expiredRoleErr = err
+			}
+			continue
 		}
 		keyDescriptors = append(keyDescriptors, attributeAuthority.KeyDescriptors...)
 	}
@@ -356,6 +354,9 @@ func (sp *ServiceProvider) attributeAuthoritySigningCerts() ([]*x509.Certificate
 	}
 	if len(certs) > 0 {
 		return certs, nil
+	}
+	if expiredRoleErr != nil {
+		return nil, expiredRoleErr
 	}
 	return sp.getIDPSigningCerts()
 }

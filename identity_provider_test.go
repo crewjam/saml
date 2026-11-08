@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -225,7 +226,7 @@ func TestIDPCanProduceMetadata(t *testing.T) {
 			},
 		},
 	}
-	assert.Check(t, is.DeepEqual(expected, test.IDP.Metadata()))
+	assert.Assert(t, reflect.DeepEqual(expected, test.IDP.Metadata()))
 }
 
 func TestIDPMetadataPublishesExtraCertificates(t *testing.T) {
