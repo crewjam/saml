@@ -259,7 +259,7 @@ func New(config *samlsp.Config, key []byte, opts ...Option) (*Tracker, error) {
 	t := &Tracker{
 		key:    append([]byte(nil), key...),
 		prefix: DefaultCookiePrefix,
-		path:   acs.Path,
+		path:   acs.EscapedPath(),
 		secure: acs.Scheme == "https",
 		slots:  DefaultSlots,
 		maxAge: DefaultMaxAge,
