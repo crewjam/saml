@@ -146,7 +146,9 @@
 // the IdP's key, Consume records messages for replay protection, and
 // IdentityProvider reaches the configuration. Keep the Participant of
 // each Response with the user's IdP session: it names the session that
-// single logout must end at the SP.
+// single logout must end at the SP. Give each SP its own opaque
+// SessionIndex, such as an HMAC of the session's ID and the SP's entity
+// ID, never the session token itself: SPs see it (saml-core §2.7.2).
 //
 // # Stability
 //

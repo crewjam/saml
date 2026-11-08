@@ -37,7 +37,11 @@ type Subject struct {
 	AuthnContextClassRef saml.AuthnContextClass
 
 	// SessionIndex, if not empty, names the user's session at the IdP, for
-	// single logout.
+	// single logout. The SP sees it, so it must be opaque, not the IdP's
+	// session token or anything that would let the session be taken over,
+	// and should differ from one SP to another, so that SPs cannot
+	// correlate the user by it (saml-core §2.7.2): for example, an HMAC,
+	// under a key of the IdP, of the session's ID and the SP's entity ID.
 	SessionIndex string
 
 	// SessionNotOnOrAfter, if not zero, is when the SP must end the
