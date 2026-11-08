@@ -322,14 +322,19 @@ func (a *App) setCookie(w http.ResponseWriter, name, value, path string, maxAge 
 }
 
 // isLocalPath reports whether p, a return path from the request, is safe
-// to redirect to (see saferedirect.IsSafe). It repeats the checks of the
-// start of p that saferedirect.IsSafe makes, so that static analyzers,
-// which may not look into another package, see the redirect guarded.
+// to redirect to (see saferedirect.IsSafe). It repeats checks that
+// saferedirect.IsSafe makes, of the start of p and of its scheme and host,
+// so that static analyzers, which may not look into another package, see
+// the redirect guarded.
 func isLocalPath(p string) bool {
 	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.HasPrefix(p, "/\\") {
 		return false
 	}
-	return saferedirect.IsSafe(p)
+	if !saferedirect.IsSafe(p) {
+		return false
+	}
+	u, err := url.Parse(p)
+	return err == nil && u.Scheme == "" && u.Host == ""
 }
 
 // mustParseURL parses a URL known to be valid.
