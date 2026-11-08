@@ -321,9 +321,15 @@ func (a *App) setCookie(w http.ResponseWriter, name, value, path string, maxAge 
 
 // isLocalPath reports whether p is a path on this site, safe to redirect
 // to: it starts with "/", but not with "//" or "/\", which browsers read as
-// another host.
+// another host, and is a plain path.
 func isLocalPath(p string) bool {
-	return strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "//") && !strings.HasPrefix(p, "/\\")
+	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.HasPrefix(p, "/\\") {
+		return false
+	}
+	// url.Parse refuses control characters, such as the tab in "/\t/host",
+	// which browsers drop, leaving "//host".
+	u, err := url.Parse(p)
+	return err == nil && u.Scheme == "" && u.Host == ""
 }
 
 // mustParseURL parses a URL known to be valid.

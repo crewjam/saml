@@ -304,10 +304,12 @@ func TestIdPInitiatedLogin(t *testing.T) {
 	}
 
 	// An IdP RelayState that is not a local path is not followed.
-	form = unsolicited()
-	form.Set("RelayState", "/\\evil.example")
-	if w := newBrowser(t, app).post(spBase+"/saml/acs", form); w.Header().Get("Location") != "/" {
-		t.Errorf("redirected to %q", w.Header().Get("Location"))
+	for _, relayState := range []string{"/\\evil.example", "/\t/evil.example"} {
+		form = unsolicited()
+		form.Set("RelayState", relayState)
+		if w := newBrowser(t, app).post(spBase+"/saml/acs", form); w.Header().Get("Location") != "/" {
+			t.Errorf("RelayState %q: redirected to %q", relayState, w.Header().Get("Location"))
+		}
 	}
 }
 
