@@ -285,7 +285,7 @@ func (c *Config) answer(ctx context.Context, req *AuthnRequest, o responseOption
 	if !sendable(req.ACSBinding) && (o.custom == nil || req.ACSBinding != o.custom.URI()) {
 		return nil, fmt.Errorf("samlidp: cannot send a response with binding %q (see WithCustomBinding)", req.ACSBinding)
 	}
-	md, err := lookupServiceProvider(ctx, c.serviceProviders, req.ServiceProvider)
+	md, err := lookupServiceProvider(ctx, c.serviceProviders, req.ServiceProvider, c.clock)
 	if err != nil {
 		return nil, err
 	}

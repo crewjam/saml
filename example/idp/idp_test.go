@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/x509"
 	"fmt"
 	"html"
 	"io"
@@ -213,9 +214,10 @@ func formFields(body string) url.Values {
 
 // world is the example IdP and a service provider that trusts it.
 type world struct {
-	idp *identityProvider
-	url string
-	sp  *testSP
+	idp  *identityProvider
+	url  string
+	cert *x509.Certificate // signs the IdP metadata
+	sp   *testSP
 }
 
 func newWorld(t *testing.T) *world {
@@ -226,11 +228,14 @@ func newWorld(t *testing.T) *world {
 	t.Cleanup(server.Close)
 	w.url = server.URL
 
-	w.sp = newTestSP(t, samlsp.RemoteMetadata(server.URL+"/metadata"))
 	key, cert, err := newKeyPair()
 	if err != nil {
 		t.Fatal(err)
 	}
+	w.cert = cert
+	// The metadata is served over plain http, so it is trusted for its
+	// signature.
+	w.sp = newTestSP(t, samlsp.RemoteMetadata(server.URL+"/metadata", samlsp.WithMetadataSigners(cert)))
 	sps := newRemoteServiceProviders([]string{w.sp.config.EntityID()}, nil)
 	if w.idp, err = newIdentityProvider(server.URL, key, cert, sps, exampleUsers()); err != nil {
 		t.Fatal(err)
@@ -317,7 +322,7 @@ func TestLoginCSRF(t *testing.T) {
 
 func TestUntrustedSP(t *testing.T) {
 	w := newWorld(t)
-	other := newTestSP(t, samlsp.RemoteMetadata(w.url+"/metadata"))
+	other := newTestSP(t, samlsp.RemoteMetadata(w.url+"/metadata", samlsp.WithMetadataSigners(w.cert)))
 	b := newBrowser(t)
 	if p := b.get(other.server.URL + "/login"); p.status != http.StatusBadRequest {
 		t.Fatalf("got %d", p.status)

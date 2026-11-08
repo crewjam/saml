@@ -590,7 +590,7 @@ func newMetadataServer(t *testing.T, md *saml.EntityDescriptor) *metadataServer 
 		t.Fatal(err)
 	}
 	s := &metadataServer{}
-	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	s.Server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		s.hits.Add(1)
 		if s.fail.Load() {
 			http.Error(w, "down", http.StatusServiceUnavailable)

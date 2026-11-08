@@ -1,10 +1,15 @@
 package samlsp_test
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"testing"
+	"time"
 
+	dsig "github.com/russellhaering/goxmldsig"
+
+	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/x/samlsp"
 )
 
@@ -48,6 +53,35 @@ func TestParseMetadata(t *testing.T) {
 			}
 			if md.EntityID != tt.entity {
 				t.Errorf("EntityID = %q, want %q", md.EntityID, tt.entity)
+			}
+		})
+	}
+}
+
+// TestParseMetadataExpired checks that metadata is refused once a
+// validUntil of the IdP's entity, of its roles, or of an aggregate around
+// it has passed by the clock of WithClock.
+func TestParseMetadataExpired(t *testing.T) {
+	const (
+		ns      = `xmlns="urn:oasis:names:tc:SAML:2.0:metadata"`
+		sso     = `<SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example.com/sso"/>`
+		in2000  = `2000-06-01T00:00:00Z`
+		entity  = `<EntityDescriptor ` + ns + ` entityID="https://idp.example.com/metadata" validUntil="` + in2000 + `"><IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">` + sso + `</IDPSSODescriptor></EntityDescriptor>`
+		idpRole = `<EntityDescriptor ` + ns + ` entityID="https://idp.example.com/metadata"><IDPSSODescriptor validUntil="` + in2000 + `" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">` + sso + `</IDPSSODescriptor></EntityDescriptor>`
+		aaRole  = `<EntityDescriptor ` + ns + ` entityID="https://idp.example.com/metadata"><IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">` + sso + `</IDPSSODescriptor><AttributeAuthorityDescriptor validUntil="` + in2000 + `" protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"><AttributeService Binding="urn:oasis:names:tc:SAML:2.0:bindings:SOAP" Location="https://idp.example.com/aa"/></AttributeAuthorityDescriptor></EntityDescriptor>`
+		agg     = `<EntitiesDescriptor ` + ns + ` validUntil="` + in2000 + `"><EntityDescriptor entityID="https://idp.example.com/metadata"><IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">` + sso + `</IDPSSODescriptor></EntityDescriptor></EntitiesDescriptor>`
+	)
+	before := samlsp.WithClock(dsig.NewFakeClockAt(time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)))
+	for name, data := range map[string]string{"entity": entity, "IDPSSODescriptor": idpRole, "AttributeAuthorityDescriptor": aaRole, "aggregate": agg} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := samlsp.ParseMetadata([]byte(data)); !errors.Is(err, saml.ErrExpired) {
+				t.Errorf("err = %v, want saml.ErrExpired", err)
+			}
+			if _, err := samlsp.StaticMetadataBytes([]byte(data))(t.Context()); !errors.Is(err, saml.ErrExpired) {
+				t.Errorf("StaticMetadataBytes: %v, want saml.ErrExpired", err)
+			}
+			if _, err := samlsp.ParseMetadata([]byte(data), before); err != nil {
+				t.Errorf("before validUntil: %v", err)
 			}
 		})
 	}

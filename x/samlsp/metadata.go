@@ -55,6 +55,9 @@ type metadataOptions struct {
 	certs           []*x509.Certificate
 	client          *http.Client
 	refreshInterval time.Duration
+	maxStale        time.Duration
+	maxSize         int64
+	onFetchError    func(error)
 	clock           *dsig.Clock
 	accept          string
 }
@@ -68,7 +71,9 @@ func WithIdentityProviderEntityID(entityID string) MetadataOption {
 
 // WithMetadataSigners makes metadata acceptable only if it carries a valid
 // XML signature by one of certs. Use it whenever the metadata comes over a
-// channel that is not otherwise trusted.
+// channel that is not otherwise trusted. With it, RemoteMetadata and
+// MDQMetadata also fetch from plain http URLs, since the signature, not
+// the channel, then vouches for the metadata.
 func WithMetadataSigners(certs ...*x509.Certificate) MetadataOption {
 	return metadataOptionFunc(func(o *metadataOptions) { o.certs = append(o.certs, certs...) })
 }
@@ -79,11 +84,17 @@ type HTTPClientOption struct{ client *http.Client }
 
 // WithHTTPClient sets the HTTP client for requests to the IdP. Passed to
 // New, it is used to resolve HTTP-Artifact responses, for back-channel
-// logout and for attribute queries; passed to RemoteMetadata, to fetch
-// metadata. Use it for timeouts, proxies, or a TLS client certificate.
+// logout and for attribute queries; passed to RemoteMetadata or
+// MDQMetadata, to fetch metadata. Use it for timeouts, proxies, a TLS
+// client certificate, or a Transport whose DialContext limits the
+// addresses requests may reach.
 //
-// Without it, New uses http.DefaultClient, and RemoteMetadata a client
-// that times out after two minutes.
+// Without it, New uses a client that times out after 10 seconds and
+// follows no redirects (see saml.ServiceProvider.HTTPClient), and
+// RemoteMetadata and MDQMetadata one that times out after two minutes.
+// Whichever client is used, a redirect is not followed to a URL that the
+// request could not have been sent to in the first place: one that is not
+// https, unless that is allowed.
 func WithHTTPClient(client *http.Client) HTTPClientOption { return HTTPClientOption{client} }
 
 func (h HTTPClientOption) applyMetadata(o *metadataOptions) { o.client = h.client }
@@ -107,6 +118,56 @@ func WithRefreshInterval(d time.Duration) MetadataOption {
 // by default.
 const DefaultMetadataRefreshInterval = time.Hour
 
+// WithMaxStale bounds how long RemoteMetadata and MDQMetadata keep using
+// metadata that sets no validUntil while fetches of it fail: once d has
+// passed since it was fetched, callers wait for a fetch and get its error.
+// Metadata with a validUntil (on the IdP's entity, its IDPSSODescriptor or
+// AttributeAuthorityDescriptor roles, or an EntitiesDescriptor around it)
+// is used until then instead, as its publisher allows. The default is
+// DefaultMetadataMaxStale. A d that is not positive means the default.
+func WithMaxStale(d time.Duration) MetadataOption {
+	return metadataOptionFunc(func(o *metadataOptions) {
+		if d <= 0 {
+			d = DefaultMetadataMaxStale
+		}
+		o.maxStale = d
+	})
+}
+
+// DefaultMetadataMaxStale is how long, by default, RemoteMetadata uses
+// metadata without a validUntil after fetching it, when it cannot fetch it
+// again.
+const DefaultMetadataMaxStale = 24 * time.Hour
+
+// WithFetchErrorHandler makes RemoteMetadata and MDQMetadata call f with
+// the error of every fetch that fails, including a refresh that fails
+// while callers still get the cached metadata, which would otherwise go
+// unnoticed. Use it to log or to alert. f is called from the goroutine of
+// the fetch, never concurrently for one MetadataFunc, and must not block
+// for long.
+func WithFetchErrorHandler(f func(error)) MetadataOption {
+	return metadataOptionFunc(func(o *metadataOptions) { o.onFetchError = f })
+}
+
+// WithMaxMetadataSize sets the size in bytes of the largest metadata
+// document RemoteMetadata and MDQMetadata read; a larger one fails the
+// fetch. The default, DefaultMaxMetadataSize, is ample for the metadata of
+// one IdP or an MDQ response, but not for a large federation aggregate:
+// use MDQMetadata for those if the federation offers it, or raise the
+// limit. An n that is not positive means the default.
+func WithMaxMetadataSize(n int64) MetadataOption {
+	return metadataOptionFunc(func(o *metadataOptions) {
+		if n <= 0 {
+			n = DefaultMaxMetadataSize
+		}
+		o.maxSize = n
+	})
+}
+
+// DefaultMaxMetadataSize is the size in bytes of the largest metadata
+// document RemoteMetadata and MDQMetadata read by default.
+const DefaultMaxMetadataSize = 10 << 20
+
 // metadataRetryInterval is the least time RemoteMetadata waits between
 // fetches: before it retries a fetch that failed, and before it fetches
 // again metadata whose cacheDuration or validUntil would make it due at
@@ -115,8 +176,9 @@ const metadataRetryInterval = time.Minute
 
 // StaticMetadataBytes returns a MetadataFunc that always returns the
 // identity provider metadata in data, such as a file the IdP administrator
-// sent or one embedded with go:embed. The options WithIdentityProviderEntityID
-// and WithMetadataSigners apply; the others are for RemoteMetadata.
+// sent or one embedded with go:embed. The options WithIdentityProviderEntityID,
+// WithMetadataSigners and WithClock apply; the others are for
+// RemoteMetadata.
 //
 // data is parsed once, now. If it is not valid metadata, every call of the
 // MetadataFunc returns the error, so every Config method that uses it fails.
@@ -132,17 +194,25 @@ func StaticMetadataBytes(data []byte, opts ...MetadataOption) MetadataFunc {
 // StaticMetadataBytes does, for an application that keeps or validates it
 // itself: for example, to refuse an IdP's metadata when an administrator
 // uploads it, rather than at the next login. The options
-// WithIdentityProviderEntityID and WithMetadataSigners apply; the others
-// are for RemoteMetadata.
+// WithIdentityProviderEntityID, WithMetadataSigners and WithClock apply;
+// the others are for RemoteMetadata.
 //
 // data may be an EntityDescriptor or an EntitiesDescriptor aggregate; the
 // result is the IdP's EntityDescriptor. It returns an error if data is not
 // metadata, is not signed by one of the WithMetadataSigners certificates,
-// or describes no single identity provider.
+// or describes no single identity provider; and one that matches
+// saml.ErrExpired if, by the clock of WithClock, the validUntil
+// (saml-metadata §2.2.1) has passed of the IdP's entity, of its
+// IDPSSODescriptor or AttributeAuthorityDescriptor roles, or of an
+// EntitiesDescriptor around it.
 func ParseMetadata(data []byte, opts ...MetadataOption) (*saml.EntityDescriptor, error) {
-	md, err := parseMetadata(data, newMetadataOptions(opts))
+	o := newMetadataOptions(opts)
+	md, err := parseMetadata(data, o)
 	if err == nil {
 		err = checkIDPMetadata(md)
+	}
+	if err == nil {
+		err = checkNotExpired(md, o.clock.Now())
 	}
 	if err != nil {
 		return nil, fmt.Errorf("samlsp: invalid identity provider metadata: %w", err)
@@ -151,9 +221,15 @@ func ParseMetadata(data []byte, opts ...MetadataOption) (*saml.EntityDescriptor,
 }
 
 func newMetadataOptions(opts []MetadataOption) metadataOptions {
-	o := metadataOptions{refreshInterval: DefaultMetadataRefreshInterval}
+	o := metadataOptions{
+		refreshInterval: DefaultMetadataRefreshInterval,
+		maxStale:        DefaultMetadataMaxStale,
+		maxSize:         DefaultMaxMetadataSize,
+	}
 	for _, opt := range opts {
-		opt.applyMetadata(&o)
+		if opt != nil {
+			opt.applyMetadata(&o)
+		}
 	}
 	return o
 }
@@ -177,16 +253,45 @@ func parseMetadata(data []byte, o metadataOptions) (*saml.EntityDescriptor, erro
 	return md, err
 }
 
-// maxMetadataSize is the size in bytes of the largest metadata document
-// RemoteMetadata reads. It leaves room for federation aggregates.
-const maxMetadataSize = 256 << 20
-
 func fetchMetadata(ctx context.Context, metadataURL url.URL, o metadataOptions) (*saml.EntityDescriptor, error) {
-	data, err := idpmetadata.Fetch(ctx, o.client, metadataURL, maxMetadataSize, o.accept)
+	if len(o.certs) == 0 && metadataURL.Scheme != "https" {
+		return nil, fmt.Errorf("samlsp: refusing to fetch metadata from %q: not an https URL, and no WithMetadataSigners", metadataURL.Redacted())
+	}
+	data, err := idpmetadata.Fetch(ctx, metadataHTTPClient(o), metadataURL, o.maxSize, o.accept)
 	if err != nil {
 		return nil, err
 	}
 	return parseMetadata(data, o)
+}
+
+// metadataHTTPClient returns the client to fetch metadata with: a copy of
+// that of WithHTTPClient, or one that times out after
+// metadataFetchTimeout, whose redirect policy, without WithMetadataSigners,
+// also refuses to follow a redirect to a URL that is not https. Without
+// that, a redirect from https to http would let anyone on the network path
+// supply the metadata.
+func metadataHTTPClient(o metadataOptions) *http.Client {
+	c := http.Client{Timeout: metadataFetchTimeout}
+	if o.client != nil {
+		c = *o.client
+	}
+	if len(o.certs) > 0 {
+		return &c
+	}
+	next := c.CheckRedirect
+	c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if req.URL.Scheme != "https" {
+			return fmt.Errorf("samlsp: refusing to follow a redirect to %q: not an https URL, and no WithMetadataSigners", req.URL.Redacted())
+		}
+		if next != nil {
+			return next(req, via)
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &c
 }
 
 // RemoteMetadata returns a MetadataFunc that fetches identity provider
@@ -194,19 +299,37 @@ func fetchMetadata(ctx context.Context, metadataURL url.URL, o metadataOptions) 
 //
 // The metadata is fetched when first needed. It is due again once the
 // refresh interval (see WithRefreshInterval), its cacheDuration or its
-// validUntil has passed, which picks up rotated signing certificates.
-// While the cached metadata is still valid, callers get it at once and a
-// single refresh runs in the background; callers wait only when there is
-// no valid metadata, and then share one fetch. If a refresh fails, the
-// cached metadata is kept until its validUntil, and the fetch is retried a
-// minute later. Fetches are at least a minute apart: when a fetch fails and
-// there is no valid metadata, calls in the next minute get its error
-// without fetching again, and metadata whose validUntil or cacheDuration
-// has (nearly) run out when it arrives is kept for a minute.
+// validUntil has passed, which picks up rotated signing certificates; the
+// cacheDuration and validUntil of its IDPSSODescriptor and
+// AttributeAuthorityDescriptor roles count too. While the cached metadata
+// is still valid, callers get it at once and a single refresh runs in the
+// background; callers wait only when there is no valid metadata, and then
+// share one fetch. If a refresh fails, the cached metadata is kept until
+// its validUntil (or, if it has none, for WithMaxStale after it was
+// fetched), and the fetch is retried a minute later. Fetches are at least
+// a minute apart: when a fetch fails and there is no valid metadata, calls
+// in the next minute get its error without fetching again, and metadata
+// whose cacheDuration has (nearly) run out when it arrives is kept for a
+// minute. WithFetchErrorHandler hears of every failed fetch.
+//
+// Fetched metadata is checked as ParseMetadata checks it, and refused, as
+// a failed fetch, if it is expired. Without WithMetadataSigners,
+// metadataURL must be https, and a redirect to a URL that is not is not
+// followed, so that TLS vouches for the metadata. A document larger than
+// WithMaxMetadataSize allows is refused too.
 //
 // Fetches are not cancelled with the context of the call that started
 // them, since other calls may be waiting for them, but time out after two
 // minutes. A caller that stops waiting gets its context's error.
+//
+// The metadata names the certificates trusted to sign the IdP's messages,
+// so whoever controls metadataURL controls who can log in. Take the URL
+// from an untrusted party, such as the administrator of a tenant, only
+// with WithMetadataSigners, or for that party's own IdP. Fetching such a
+// URL is also a request from your server to wherever it points, internal
+// services included (server-side request forgery): limit where it may go
+// with WithHTTPClient, for example with an http.Transport whose
+// DialContext refuses private and loopback addresses.
 //
 // To report a bad URL when the IdP is configured, rather than at the first
 // login, call the returned MetadataFunc once and check its error: the
@@ -223,9 +346,9 @@ func RemoteMetadata(metadataURL string, opts ...MetadataOption) MetadataFunc {
 // fetched from a Metadata Query service at baseURL (the SAML MDQ protocol,
 // draft-young-md-query-saml): from baseURL/entities/{entityID}, URL-encoded.
 // Federations publish MDQ services so that each SP need not download the
-// whole aggregate. It caches and refreshes like RemoteMetadata, and takes
-// the same options. Their responses are signed: pass WithMetadataSigners
-// with the federation's certificate.
+// whole aggregate. It caches, refreshes and checks like RemoteMetadata, and
+// takes the same options. Their responses are signed: pass
+// WithMetadataSigners with the federation's certificate.
 func MDQMetadata(baseURL, entityID string, opts ...MetadataOption) MetadataFunc {
 	u := strings.TrimSuffix(baseURL, "/") + "/entities/" + url.PathEscape(entityID)
 	o := newMetadataOptions(append(slices.Clip(opts), WithIdentityProviderEntityID(entityID)))
@@ -245,6 +368,7 @@ type remoteMetadata struct {
 
 	mu        sync.Mutex
 	md        *saml.EntityDescriptor
+	expiresAt time.Time // when md stops being usable (see expiry)
 	refreshAt time.Time
 	inflight  *metadataFetch // the fetch in progress, or nil
 
@@ -294,7 +418,16 @@ func (r *remoteMetadata) get(ctx context.Context) (*saml.EntityDescriptor, error
 // usable reports whether the cached metadata may still be used at now.
 // r.mu must be held.
 func (r *remoteMetadata) usable(now time.Time) bool {
-	return r.md.ValidUntil.IsZero() || now.Before(r.md.ValidUntil)
+	return now.Before(r.expiresAt)
+}
+
+// expiry returns when md, fetched at now, stops being usable: at its
+// earliest validUntil, or if it has none, once WithMaxStale has passed.
+func (r *remoteMetadata) expiry(md *saml.EntityDescriptor, now time.Time) time.Time {
+	if validUntil, _ := metadataValidity(md); !validUntil.IsZero() {
+		return validUntil
+	}
+	return now.Add(r.opts.maxStale)
 }
 
 // startFetch returns the fetch in progress, starting one if there is none.
@@ -309,6 +442,11 @@ func (r *remoteMetadata) startFetch(ctx context.Context) *metadataFetch {
 	go func() {
 		defer cancel()
 		md, err := r.fetch(fetchCtx)
+		if err != nil && r.opts.onFetchError != nil {
+			// Still in flight, so that calls for one MetadataFunc are
+			// never concurrent.
+			r.opts.onFetchError(err)
+		}
 
 		r.mu.Lock()
 		now := r.now()
@@ -316,6 +454,7 @@ func (r *remoteMetadata) startFetch(ctx context.Context) *metadataFetch {
 		switch {
 		case err == nil:
 			r.md = md
+			r.expiresAt = r.expiry(md, now)
 			r.refreshAt = r.nextRefresh(md, now)
 		case r.md != nil && r.usable(now):
 			// Keep the cached metadata and retry later.
@@ -347,17 +486,25 @@ func (r *remoteMetadata) fetch(ctx context.Context) (*saml.EntityDescriptor, err
 	if err := checkIDPMetadata(md); err != nil {
 		return nil, err
 	}
+	if err := checkNotExpired(md, r.now()); err != nil {
+		return nil, err
+	}
 	return md, nil
 }
 
 // nextRefresh returns when md, fetched at now, is due to be fetched again.
 func (r *remoteMetadata) nextRefresh(md *saml.EntityDescriptor, now time.Time) time.Time {
+	validUntil, cacheDuration := metadataValidity(md)
 	next := now.Add(r.opts.refreshInterval)
-	if md.CacheDuration > 0 && md.CacheDuration < r.opts.refreshInterval {
-		next = now.Add(md.CacheDuration)
+	if cacheDuration > 0 && cacheDuration < r.opts.refreshInterval {
+		next = now.Add(cacheDuration)
 	}
-	if !md.ValidUntil.IsZero() && md.ValidUntil.Before(next) {
-		next = md.ValidUntil
+	if !validUntil.IsZero() && validUntil.Before(next) {
+		next = validUntil
+	}
+	// Refresh before metadata without a validUntil goes stale.
+	if expiresAt := r.expiry(md, now); expiresAt.Before(next) {
+		next = expiresAt
 	}
 	// Metadata that is already (or nearly) expired or stale when it
 	// arrives must not make every call fetch it again.
@@ -376,6 +523,31 @@ func later(a, b time.Time) time.Time {
 	return b
 }
 
+// metadataValidity returns the earliest validUntil and the shortest
+// cacheDuration (saml-metadata §2.2.1) of md and of its roles whose expiry
+// a saml.ServiceProvider with RejectExpiredIDPMetadata checks: its
+// IDPSSODescriptors and AttributeAuthorityDescriptors. Each is zero if
+// none sets one. md already carries those of the EntitiesDescriptors
+// around it (see idpmetadata.Parse).
+func metadataValidity(md *saml.EntityDescriptor) (validUntil time.Time, cacheDuration time.Duration) {
+	validUntil, cacheDuration = md.ValidUntil, md.CacheDuration
+	narrow := func(role *saml.RoleDescriptor) {
+		if role.ValidUntil != nil && !role.ValidUntil.IsZero() && (validUntil.IsZero() || role.ValidUntil.Before(validUntil)) {
+			validUntil = *role.ValidUntil
+		}
+		if role.CacheDuration > 0 && (cacheDuration <= 0 || role.CacheDuration < cacheDuration) {
+			cacheDuration = role.CacheDuration
+		}
+	}
+	for i := range md.IDPSSODescriptors {
+		narrow(&md.IDPSSODescriptors[i].RoleDescriptor)
+	}
+	for i := range md.AttributeAuthorityDescriptors {
+		narrow(&md.AttributeAuthorityDescriptors[i].RoleDescriptor)
+	}
+	return validUntil, cacheDuration
+}
+
 // checkIDPMetadata returns an error if md does not describe an identity
 // provider.
 func checkIDPMetadata(md *saml.EntityDescriptor) error {
@@ -384,6 +556,15 @@ func checkIDPMetadata(md *saml.EntityDescriptor) error {
 	}
 	if len(md.IDPSSODescriptors) == 0 {
 		return fmt.Errorf("samlsp: metadata for %q has no IDPSSODescriptor", md.EntityID)
+	}
+	return nil
+}
+
+// checkNotExpired returns an error that matches saml.ErrExpired if md,
+// identity provider metadata, is expired at now (see metadataValidity).
+func checkNotExpired(md *saml.EntityDescriptor, now time.Time) error {
+	if validUntil, _ := metadataValidity(md); !validUntil.IsZero() && !now.Before(validUntil) {
+		return fmt.Errorf("samlsp: metadata for %q expired at %s: %w", md.EntityID, validUntil.UTC().Format(time.RFC3339), saml.ErrExpired)
 	}
 	return nil
 }
