@@ -118,8 +118,10 @@ func WithScriptNonce(nonce string) ResponseOption {
 
 // Response returns the Response that tells the service provider who the
 // user is, as the answer to req, to send with Message.Write. The assertion
-// is signed, and so is the Response; the assertion is encrypted if the
-// SP's metadata publishes an encryption certificate.
+// is signed, and so is the Response (to sign only one of them, as some
+// IdPs do, set saml.IdentityProvider.ResponseSigning with
+// WithIdentityProvider); the assertion is encrypted if the SP's metadata
+// publishes an encryption certificate.
 //
 // The service provider is looked up again, and req.ACSURL must still be
 // one of its assertion consumer services.
@@ -193,9 +195,14 @@ func (c *Config) Response(ctx context.Context, req *AuthnRequest, subject Subjec
 	}
 	// The participant is identified by the plaintext NameID, which
 	// MakeAssertionEl replaces with an EncryptedID if the request asks.
+	// The participant names the session as the SP received it: a
+	// WithAssertion may have changed the SessionIndex.
 	participant := &saml.SessionParticipant{
 		ServiceProviderID: ireq.ServiceProviderMetadata.EntityID,
 		SessionIndex:      subject.SessionIndex,
+	}
+	if len(a.AuthnStatements) > 0 {
+		participant.SessionIndex = a.AuthnStatements[0].SessionIndex
 	}
 	if a.Subject != nil && a.Subject.NameID != nil {
 		participant.NameID = *a.Subject.NameID
