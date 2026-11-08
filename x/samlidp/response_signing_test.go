@@ -94,9 +94,7 @@ func TestSignAssertionOnlyWithCBC(t *testing.T) {
 		enc.BlockCipher = xmlenc.AES256CBC
 		idp.AssertionEncrypter = enc
 	})}
-	spOpts := []samlsp.Option{samlsp.WithEncryptionKey(spKey, spCert)}
-
-	p := newPair(t, idpOpts, spOpts)
+	p := newPair(t, idpOpts, []samlsp.Option{samlsp.WithEncryptionKey(spKey, spCert)})
 	_, root, _, err := p.respond(t, testSubject)
 	if root.FindElement("./EncryptedAssertion") == nil || signed(root) {
 		t.Fatal("not an encrypted assertion in an unsigned Response")
@@ -105,9 +103,10 @@ func TestSignAssertionOnlyWithCBC(t *testing.T) {
 		t.Fatal("the SP accepted AES-CBC in an unsigned Response")
 	}
 
-	relaxed := newPair(t, idpOpts, append(spOpts, samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
-		sp.RequireSignedResponseForCBC = false
-	})))
+	relaxed := newPair(t, idpOpts, []samlsp.Option{
+		samlsp.WithEncryptionKey(spKey, spCert),
+		samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) { sp.RequireSignedResponseForCBC = false }),
+	})
 	if _, _, _, err := relaxed.respond(t, testSubject); err != nil {
 		t.Fatalf("relaxed SP refused: %v", errors.Unwrap(err))
 	}
