@@ -11,10 +11,6 @@
 //	config, err := samlsp.New(idp, entityID, samlsp.WithSigningKey(key, cert),
 //		artifact.ResolutionService("https://sp.example.com/saml/artifact", 1))
 //	binding := artifact.New(config, artifact.NewMemoryStore(), 1)
-//
-// With samlsp.WithClock, give the MemoryStore the same clock:
-//
-//	binding := artifact.New(config, &artifact.MemoryStore{Clock: clock}, 1)
 //	http.Handle("/saml/artifact", binding)
 //
 //	msg, err := config.AuthnRequest(ctx, relayState, samlsp.WithCustomBinding(binding))
