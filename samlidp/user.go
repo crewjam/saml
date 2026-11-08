@@ -2,6 +2,7 @@ package samlidp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -48,8 +49,7 @@ func (s *Server) HandleGetUser(w http.ResponseWriter, r *http.Request) {
 	user := User{}
 	err := s.Store.Get(fmt.Sprintf("/users/%s", r.PathValue("id")), &user)
 	if err != nil {
-		s.logger.Printf("ERROR: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		s.storeError(w, err)
 		return
 	}
 	user.HashedPassword = nil
@@ -84,10 +84,10 @@ func (s *Server) HandlePutUser(w http.ResponseWriter, r *http.Request) {
 	} else {
 		existingUser := User{}
 		err := s.Store.Get(fmt.Sprintf("/users/%s", r.PathValue("id")), &existingUser)
-		switch err {
-		case nil:
+		switch {
+		case err == nil:
 			user.HashedPassword = existingUser.HashedPassword
-		case ErrNotFound:
+		case errors.Is(err, ErrNotFound):
 			// nop
 		default:
 			s.logger.Printf("ERROR: %s", err)
@@ -110,8 +110,7 @@ func (s *Server) HandlePutUser(w http.ResponseWriter, r *http.Request) {
 func (s *Server) HandleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	err := s.Store.Delete(fmt.Sprintf("/users/%s", r.PathValue("id")))
 	if err != nil {
-		s.logger.Printf("ERROR: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		s.storeError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

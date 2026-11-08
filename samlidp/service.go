@@ -154,8 +154,7 @@ func (s *Server) HandleGetService(w http.ResponseWriter, r *http.Request) {
 	service := Service{}
 	err := s.Store.Get(fmt.Sprintf("/services/%s", r.PathValue("id")), &service)
 	if err != nil {
-		s.logger.Printf("ERROR: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		s.storeError(w, err)
 		return
 	}
 	if len(service.RawMetadata) > 0 {
@@ -236,14 +235,12 @@ func (s *Server) HandleDeleteService(w http.ResponseWriter, r *http.Request) {
 	service := Service{}
 	err := s.Store.Get(fmt.Sprintf("/services/%s", id), &service)
 	if err != nil {
-		s.logger.Printf("ERROR: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		s.storeError(w, err)
 		return
 	}
 
 	if err := s.Store.Delete(fmt.Sprintf("/services/%s", id)); err != nil {
-		s.logger.Printf("ERROR: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		s.storeError(w, err)
 		return
 	}
 

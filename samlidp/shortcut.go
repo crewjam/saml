@@ -51,7 +51,7 @@ func (s *Server) HandleGetShortcut(w http.ResponseWriter, r *http.Request) {
 	shortcut := Shortcut{}
 	err := s.Store.Get(fmt.Sprintf("/shortcuts/%s", r.PathValue("id")), &shortcut)
 	if err != nil {
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		s.storeError(w, err)
 		return
 	}
 	if err := json.NewEncoder(w).Encode(shortcut); err != nil {
@@ -82,7 +82,7 @@ func (s *Server) HandlePutShortcut(w http.ResponseWriter, r *http.Request) {
 func (s *Server) HandleDeleteShortcut(w http.ResponseWriter, r *http.Request) {
 	err := s.Store.Delete(fmt.Sprintf("/shortcuts/%s", r.PathValue("id")))
 	if err != nil {
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		s.storeError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -95,8 +95,7 @@ func (s *Server) HandleIDPInitiated(w http.ResponseWriter, r *http.Request) {
 	shortcutName := r.PathValue("shortcut")
 	shortcut := Shortcut{}
 	if err := s.Store.Get(fmt.Sprintf("/shortcuts/%s", shortcutName), &shortcut); err != nil {
-		s.logger.Printf("ERROR: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		s.storeError(w, err)
 		return
 	}
 
