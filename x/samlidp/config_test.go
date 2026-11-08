@@ -10,6 +10,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/x/samlidp"
@@ -179,6 +182,71 @@ func TestParseMetadata(t *testing.T) {
 		if _, err := samlidp.ParseMetadata([]byte(bad)); err == nil {
 			t.Errorf("%q: no error", bad)
 		}
+	}
+}
+
+// TestParseMetadataExpired checks that ParseMetadata refuses SP metadata
+// once a validUntil of the entity, its SPSSODescriptor or an aggregate
+// around it has passed by the clock of WithClock, and that a nil option is
+// skipped.
+func TestParseMetadataExpired(t *testing.T) {
+	p := newPair(t, nil, nil)
+	ctx := context.Background()
+	past := time.Date(2000, 6, 1, 0, 0, 0, 0, time.UTC)
+	before := samlidp.WithClock(dsig.NewFakeClockAt(time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)))
+	marshal := func(v any) []byte {
+		t.Helper()
+		data, err := xml.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	entity := *p.sp.Metadata(ctx)
+	entity.ValidUntil = past
+	role := *p.sp.Metadata(ctx)
+	role.ValidUntil = time.Time{}
+	role.SPSSODescriptors = append([]saml.SPSSODescriptor(nil), role.SPSSODescriptors...)
+	role.SPSSODescriptors[0].ValidUntil = &past
+	inner := *p.sp.Metadata(ctx)
+	inner.ValidUntil = time.Time{}
+	agg := saml.EntitiesDescriptor{ValidUntil: &past, EntitiesDescriptors: []saml.EntitiesDescriptor{{EntityDescriptors: []saml.EntityDescriptor{inner}}}}
+
+	for name, data := range map[string][]byte{"entity": marshal(entity), "SPSSODescriptor": marshal(role), "aggregate": marshal(agg)} {
+		if _, err := samlidp.ParseMetadata(data, nil); !errors.Is(err, saml.ErrExpired) {
+			t.Errorf("%s: err = %v, want saml.ErrExpired", name, err)
+		}
+		md, err := samlidp.ParseMetadata(data, before)
+		if err != nil {
+			t.Errorf("%s, before validUntil: %v", name, err)
+			continue
+		}
+		if name == "aggregate" && !md.ValidUntil.Equal(past) {
+			t.Errorf("aggregate: ValidUntil = %v, want the aggregate's %v", md.ValidUntil, past)
+		}
+	}
+}
+
+// TestExpiredServiceProvider checks that a Config refuses an SP whose
+// metadata has expired.
+func TestExpiredServiceProvider(t *testing.T) {
+	p := newPair(t, nil, nil)
+	ctx := context.Background()
+	md := *p.sp.Metadata(ctx)
+	md.ValidUntil = time.Now().Add(-time.Minute)
+	c, err := samlidp.New(idpEntityID, samlidp.StaticServiceProviders(&md), samlidp.WithSigningKey(idpKey, idpCert))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ServiceProvider(ctx, spEntityID); !errors.Is(err, saml.ErrExpired) {
+		t.Errorf("ServiceProvider: %v, want saml.ErrExpired", err)
+	}
+	msg, err := p.sp.AuthnRequest(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ParseAuthnRequest(ctx, browserRequest(t, msg)); err == nil {
+		t.Error("ParseAuthnRequest accepted a request from an SP whose metadata has expired")
 	}
 }
 

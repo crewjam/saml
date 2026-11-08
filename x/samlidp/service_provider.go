@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
+
+	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/internal/xmlroundtrip"
@@ -25,7 +28,8 @@ import (
 //
 // Config calls it every time it handles a request or makes a Response for
 // an SP, with that call's context, so it must be cheap and safe for
-// concurrent use. Use StaticServiceProviders, or write your own: for
+// concurrent use. Config refuses metadata whose validUntil, or that of its
+// SPSSODescriptor, has passed, with an error that matches saml.ErrExpired. Use StaticServiceProviders, or write your own: for
 // example, to read metadata from a database. The returned metadata must not
 // be modified afterwards.
 type ServiceProviderFunc func(ctx context.Context, entityID string) (*saml.EntityDescriptor, error)
@@ -60,8 +64,9 @@ func unknownServiceProvider(entityID string) error {
 	return fmt.Errorf("samlidp: service provider %q: %w", entityID, errors.Join(ErrUnknownServiceProvider, os.ErrNotExist))
 }
 
-// lookupServiceProvider calls lookup and checks what it returns.
-func lookupServiceProvider(ctx context.Context, lookup ServiceProviderFunc, entityID string) (*saml.EntityDescriptor, error) {
+// lookupServiceProvider calls lookup and checks what it returns, judging
+// its expiry by clock.
+func lookupServiceProvider(ctx context.Context, lookup ServiceProviderFunc, entityID string, clock *dsig.Clock) (*saml.EntityDescriptor, error) {
 	md, err := lookup(ctx, entityID)
 	switch {
 	case errors.Is(err, ErrUnknownServiceProvider) || errors.Is(err, os.ErrNotExist):
@@ -75,25 +80,47 @@ func lookupServiceProvider(ctx context.Context, lookup ServiceProviderFunc, enti
 	case len(md.SPSSODescriptors) == 0:
 		return nil, fmt.Errorf("samlidp: the metadata of %q has no SPSSODescriptor", entityID)
 	}
+	if err := checkNotExpired(md, clockNow(clock)); err != nil {
+		return nil, fmt.Errorf("samlidp: service provider %q: %w", entityID, err)
+	}
 	return md, nil
+}
+
+// checkNotExpired returns an error that matches saml.ErrExpired if the
+// validUntil (saml-metadata §2.2.1) of md, service provider metadata, or of
+// one of its SPSSODescriptors has passed at now.
+func checkNotExpired(md *saml.EntityDescriptor, now time.Time) error {
+	validUntil := md.ValidUntil
+	for i := range md.SPSSODescriptors {
+		if v := md.SPSSODescriptors[i].ValidUntil; v != nil && !v.IsZero() && (validUntil.IsZero() || v.Before(validUntil)) {
+			validUntil = *v
+		}
+	}
+	if !validUntil.IsZero() && !now.Before(validUntil) {
+		return fmt.Errorf("metadata expired at %s: %w", validUntil.UTC().Format(time.RFC3339), saml.ErrExpired)
+	}
+	return nil
 }
 
 // ServiceProvider returns the metadata of the service provider entityID,
 // from the ServiceProviderFunc passed to New. The error matches
 // ErrUnknownServiceProvider if it does not know the SP.
 func (c *Config) ServiceProvider(ctx context.Context, entityID string) (*saml.EntityDescriptor, error) {
-	return lookupServiceProvider(ctx, c.serviceProviders, entityID)
+	return lookupServiceProvider(ctx, c.serviceProviders, entityID, c.clock)
 }
 
 // serviceProviderProvider is the saml.ServiceProviderProvider of the
 // IdentityProviders a Config builds. It calls the ServiceProviderFunc with
 // the context of the request.
-type serviceProviderProvider ServiceProviderFunc
+type serviceProviderProvider struct {
+	lookup ServiceProviderFunc
+	clock  *dsig.Clock
+}
 
 func (p serviceProviderProvider) GetServiceProvider(r *http.Request, entityID string) (*saml.EntityDescriptor, error) {
 	// Package saml recognises an unknown SP by os.ErrNotExist, which the
 	// error of lookupServiceProvider then matches.
-	return lookupServiceProvider(r.Context(), ServiceProviderFunc(p), entityID)
+	return lookupServiceProvider(r.Context(), p.lookup, entityID, p.clock)
 }
 
 // MetadataOption configures ParseMetadata.
@@ -108,6 +135,7 @@ func (f metadataOptionFunc) applyMetadata(o *metadataOptions) { f(o) }
 type metadataOptions struct {
 	entityID string
 	certs    []*x509.Certificate
+	clock    *dsig.Clock
 }
 
 // WithServiceProviderEntityID selects the service provider with this
@@ -129,15 +157,24 @@ func WithMetadataSigners(certs ...*x509.Certificate) MetadataOption {
 // administrator uploads it, rather than at its first login.
 //
 // data may be an EntityDescriptor or an EntitiesDescriptor aggregate; the
-// result is the SP's EntityDescriptor. It returns an error if data is not
+// result is the SP's EntityDescriptor, which takes the earliest validUntil
+// of the EntitiesDescriptors around it. It returns an error if data is not
 // metadata, is not signed by one of the WithMetadataSigners certificates,
-// or describes no single service provider.
+// or describes no single service provider; and one that matches
+// saml.ErrExpired if, by the clock of WithClock, the validUntil
+// (saml-metadata §2.2.1) has passed of the SP's entity, of its
+// SPSSODescriptor, or of an EntitiesDescriptor around it.
 func ParseMetadata(data []byte, opts ...MetadataOption) (*saml.EntityDescriptor, error) {
 	var o metadataOptions
 	for _, opt := range opts {
-		opt.applyMetadata(&o)
+		if opt != nil {
+			opt.applyMetadata(&o)
+		}
 	}
 	md, err := parseMetadata(data, o)
+	if err == nil {
+		err = checkNotExpired(md, clockNow(o.clock))
+	}
 	if err != nil {
 		return nil, fmt.Errorf("samlidp: invalid service provider metadata: %w", err)
 	}
@@ -172,7 +209,7 @@ func parseMetadata(data []byte, o metadataOptions) (*saml.EntityDescriptor, erro
 		if err := xml.Unmarshal(data, entities); err != nil {
 			return nil, err
 		}
-		candidates = spEntities(entities)
+		candidates = spEntities(entities, time.Time{})
 	default:
 		return nil, fmt.Errorf("the root element is %s %s, not a metadata EntityDescriptor", root.XMLName.Space, root.XMLName.Local)
 	}
@@ -196,14 +233,22 @@ func parseMetadata(data []byte, o metadataOptions) (*saml.EntityDescriptor, erro
 }
 
 // spEntities returns the entities in entities and in any EntitiesDescriptor
-// nested in it.
-func spEntities(entities *saml.EntitiesDescriptor) []*saml.EntityDescriptor {
+// nested in it. Each takes the earliest validUntil of outer, its own and
+// those of the EntitiesDescriptors around it.
+func spEntities(entities *saml.EntitiesDescriptor, outer time.Time) []*saml.EntityDescriptor {
+	if v := entities.ValidUntil; v != nil && !v.IsZero() && (outer.IsZero() || v.Before(outer)) {
+		outer = *v
+	}
 	out := make([]*saml.EntityDescriptor, 0, len(entities.EntityDescriptors))
 	for i := range entities.EntityDescriptors {
-		out = append(out, &entities.EntityDescriptors[i])
+		md := &entities.EntityDescriptors[i]
+		if !outer.IsZero() && (md.ValidUntil.IsZero() || outer.Before(md.ValidUntil)) {
+			md.ValidUntil = outer
+		}
+		out = append(out, md)
 	}
 	for i := range entities.EntitiesDescriptors {
-		out = append(out, spEntities(&entities.EntitiesDescriptors[i])...)
+		out = append(out, spEntities(&entities.EntitiesDescriptors[i], outer)...)
 	}
 	return out
 }

@@ -255,12 +255,19 @@ func WithMetadata(modify func(md *saml.EntityDescriptor)) Option {
 
 // WithClock sets the time source used for timestamps and to check validity
 // periods: that of the saml.IdentityProvider each method builds, of Now,
-// and of the default ReplayState. It is mainly useful in tests. Without
-// it, times come from saml.TimeNow, as in package saml, and the default
-// ReplayState reads the system clock.
-func WithClock(clock *dsig.Clock) Option {
-	return optionFunc(func(c *Config, _ *configOptions) { c.clock = clock })
-}
+// of the default ReplayState, and of ParseMetadata's validUntil check. It
+// is mainly useful in tests. Without it, times come from saml.TimeNow, as
+// in package saml, and the default ReplayState reads the system clock.
+func WithClock(clock *dsig.Clock) ClockOption { return ClockOption{clock} }
+
+// ClockOption is the option that WithClock returns. It is both an Option,
+// for New, and a MetadataOption, for ParseMetadata, whose validUntil check
+// it judges.
+type ClockOption struct{ clock *dsig.Clock }
+
+func (o ClockOption) applyConfig(c *Config, _ *configOptions) { c.clock = o.clock }
+
+func (o ClockOption) applyMetadata(m *metadataOptions) { m.clock = o.clock }
 
 // WithAffiliation sets how the IdP decides whether the service provider
 // serviceProvider is a member of the affiliation affiliation, an
@@ -474,7 +481,7 @@ func (c *Config) identityProvider(opts []IdentityProviderOption) *saml.IdentityP
 		SignatureMethod:         method,
 		NameIDFormats:           slices.Clone(c.nameIDFormats),
 		Clock:                   c.clock,
-		ServiceProviderProvider: serviceProviderProvider(c.serviceProviders),
+		ServiceProviderProvider: serviceProviderProvider{c.serviceProviders, c.clock},
 		// Package saml logs what it refuses and ignores; this package
 		// returns errors instead.
 		Logger: log.New(io.Discard, "", 0),
