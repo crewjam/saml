@@ -1,4 +1,6 @@
-// Package main contains an example service provider implementation.
+// Package main is a minimal service provider built with
+// github.com/crewjam/saml/x/samlsp: it logs users in with SAML, keeps a
+// session for them, and logs them out with single logout.
 //
 // The IdP metadata names the certificates trusted to sign assertions, so it
 // is loaded from a file you downloaded and checked once, not fetched from
@@ -7,31 +9,38 @@
 //	curl -o idp-metadata.xml https://www.samltest.dev/apps/<APP_ID>/metadata
 //	go run ./example/trivial -idp-metadata idp-metadata.xml
 //
-// To fetch it at start-up instead, use samlsp.FetchSignedMetadata with the
-// IdP's metadata signing certificate.
+// Register the SP with the IdP with its entity ID,
+// http://localhost:8000/saml/metadata, and ACS URL,
+// http://localhost:8000/saml/acs, then browse to http://localhost:8000/hello.
 package main
 
 import (
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"flag"
 	"fmt"
+	"html"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
+	"strings"
+	"sync"
 	"time"
 
-	"github.com/crewjam/saml/samlsp"
+	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/x/samlsp"
+	"github.com/crewjam/saml/x/samlsp/slo"
 )
 
-var samlMiddleware *samlsp.Middleware
-
-func hello(w http.ResponseWriter, r *http.Request) {
-	// An error writing to the client cannot be reported back to it.
-	_, _ = fmt.Fprintf(w, "Hello, %s!", samlsp.AttributeFromContext(r.Context(), "displayName"))
-}
+var (
+	config *samlsp.Config
+	logout *slo.Service
+)
 
 func main() {
 	idpMetadataPath := flag.String("idp-metadata", "",
@@ -45,49 +54,38 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	keyPair.Leaf, err = x509.ParseCertificate(keyPair.Certificate[0])
+	cert, err := x509.ParseCertificate(keyPair.Certificate[0])
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	key, ok := keyPair.PrivateKey.(*rsa.PrivateKey)
 	if !ok {
 		log.Fatal("myservice.key must hold an RSA private key")
 	}
 
-	idpMetadataXML, err := os.ReadFile(*idpMetadataPath)
-	if err != nil {
-		log.Fatal(err)
-	}
-	idpMetadata, err := samlsp.ParseMetadata(idpMetadataXML)
+	idpMetadata, err := os.ReadFile(*idpMetadataPath)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	rootURL, err := url.Parse("http://localhost:8000")
+	config, err = samlsp.New(samlsp.StaticMetadataBytes(idpMetadata),
+		"http://localhost:8000/saml/metadata", // the entity ID; the ACS is at /saml/acs
+		samlsp.WithSigningKey(key, cert),
+		samlsp.WithEncryptionKey(key, cert), // for IdPs that encrypt assertions
+		slo.Endpoint("http://localhost:8000/saml/slo"))
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	samlMiddleware, err = samlsp.New(samlsp.Options{
-		URL:         *rootURL,
-		Key:         key,
-		Certificate: keyPair.Leaf,
-		IDPMetadata: idpMetadata,
-		SignRequest: true, // some IdP require the SLO request to be signed
-	})
-	if err != nil {
+	if logout, err = slo.New(config); err != nil {
 		log.Fatal(err)
 	}
-	app := http.HandlerFunc(hello)
 
-	http.Handle("/hello", samlMiddleware.RequireAccount(app))
-	// samlMiddleware serves /saml/metadata, /saml/acs and the single logout
-	// endpoint /saml/slo.
-	http.Handle("/saml/", samlMiddleware)
-	// Visiting /logout ends the local session and sends the user to the IDP
-	// to log out there too (SP initiated single logout).
-	http.HandleFunc("/logout", samlMiddleware.HandleStartLogout)
+	http.HandleFunc(config.MetadataPath(), config.ServeMetadata)
+	http.HandleFunc(config.ACSPath(), acs)
+	http.HandleFunc(logout.Path(), sloHandler)
+	http.HandleFunc("POST /logout", startLogout)
+	http.Handle("/hello", requireLogin(http.HandlerFunc(hello)))
+	http.HandleFunc("GET /{$}", home)
 
 	server := &http.Server{
 		Addr:              "localhost:8000",
@@ -97,4 +95,222 @@ func main() {
 		IdleTimeout:       2 * time.Minute,
 	}
 	log.Fatal(server.ListenAndServe())
+}
+
+func hello(w http.ResponseWriter, r *http.Request) {
+	s := sessionFrom(r)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<p>Hello, %s!</p><form method="post" action="/logout"><button>Log out</button></form>`,
+		html.EscapeString(s.assertion.Subject))
+}
+
+func home(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, `<p><a href="/hello">Log in</a></p>`)
+}
+
+// requireLogin serves next to users with a session, and sends the others
+// to the IdP to log in.
+func requireLogin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if sessionFrom(r) == nil {
+			startLogin(w, r, r.URL.RequestURI())
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// startLogin sends the browser to the IdP with an AuthnRequest. The
+// request's ID, and where to go after login, wait in a cookie named after
+// the RelayState, so that the Response is accepted only in the browser
+// that asked for it.
+func startLogin(w http.ResponseWriter, r *http.Request, returnTo string) {
+	relayState := rand.Text()
+	msg, err := config.AuthnRequest(r.Context(), relayState)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	setTempCookie(w, "saml_"+relayState, config.ACSPath(), url.Values{"id": {msg.ID}, "to": {returnTo}}.Encode())
+	msg.Write(w)
+}
+
+// acs is the assertion consumer service: it verifies the IdP's Response
+// and starts a session.
+func acs(w http.ResponseWriter, r *http.Request) {
+	name := "saml_" + r.FormValue("RelayState")
+	cookie, err := r.Cookie(name)
+	if err != nil {
+		http.Error(w, "no login in progress", http.StatusForbidden)
+		return
+	}
+	deleteCookie(w, name, config.ACSPath())
+	pending, err := url.ParseQuery(cookie.Value)
+	if err != nil {
+		http.Error(w, "no login in progress", http.StatusForbidden)
+		return
+	}
+
+	assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(pending.Get("id")))
+	if err != nil {
+		log.Printf("login failed: %v", errors.Unwrap(err))
+		http.Error(w, "login failed", http.StatusForbidden)
+		return
+	}
+	startSession(w, assertion)
+
+	returnTo := pending.Get("to")
+	if !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") {
+		returnTo = "/hello"
+	}
+	http.Redirect(w, r, returnTo, http.StatusFound)
+}
+
+// startLogout ends the local session, then sends the browser to the IdP to
+// log out there too.
+func startLogout(w http.ResponseWriter, r *http.Request) {
+	s := sessionFrom(r)
+	endSession(w, r)
+	if s == nil {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	msg, err := logout.Request(r.Context(), s.assertion.NameID, rand.Text(),
+		slo.WithSessionIndex(s.assertion.SessionIndexes...))
+	if err != nil {
+		// For example samlsp.ErrNoEndpoint: the IdP has no single logout.
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	setTempCookie(w, "saml_logout", logout.Path(), msg.ID)
+	msg.Write(w)
+}
+
+// sloHandler receives the IdP's answer to startLogout, and logout requests
+// that the IdP starts.
+func sloHandler(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case slo.IsRequest(r):
+		req, err := logout.ParseRequest(r.Context(), r)
+		if err != nil {
+			slo.WriteRequestError(w, r)
+			return
+		}
+		endSessionsOf(req.NameID, req.SessionIndexes)
+		msg, err := logout.Response(r.Context(), req)
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+		msg.Write(w)
+
+	case slo.IsResponse(r):
+		var requestID string
+		if c, err := r.Cookie("saml_logout"); err == nil {
+			requestID = c.Value
+		}
+		deleteCookie(w, "saml_logout", logout.Path())
+		if _, err := logout.ParseResponse(r.Context(), r, requestID); err != nil {
+			log.Printf("single logout: %v", err)
+		}
+		// The local session ended when logout started.
+		http.Redirect(w, r, "/", http.StatusFound)
+
+	default:
+		http.Error(w, "not a SAML message", http.StatusBadRequest)
+	}
+}
+
+// Sessions are kept in memory, under a random ID in a cookie. A real
+// application would use its own session store.
+
+type session struct {
+	assertion *samlsp.Assertion
+	expires   time.Time
+}
+
+var sessions = struct {
+	sync.Mutex
+	m map[string]*session
+}{m: map[string]*session{}}
+
+const sessionCookie = "session"
+
+func startSession(w http.ResponseWriter, a *samlsp.Assertion) {
+	expires := time.Now().Add(8 * time.Hour)
+	if !a.SessionNotOnOrAfter.IsZero() && a.SessionNotOnOrAfter.Before(expires) {
+		expires = a.SessionNotOnOrAfter
+	}
+	id := rand.Text()
+	sessions.Lock()
+	sessions.m[id] = &session{assertion: a, expires: expires}
+	sessions.Unlock()
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookie, Value: id, Path: "/", Expires: expires,
+		HttpOnly: true, Secure: secure(), SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func sessionFrom(r *http.Request) *session {
+	c, err := r.Cookie(sessionCookie)
+	if err != nil {
+		return nil
+	}
+	sessions.Lock()
+	defer sessions.Unlock()
+	s := sessions.m[c.Value]
+	if s != nil && time.Now().After(s.expires) {
+		delete(sessions.m, c.Value)
+		return nil
+	}
+	return s
+}
+
+func endSession(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		sessions.Lock()
+		delete(sessions.m, c.Value)
+		sessions.Unlock()
+	}
+	deleteCookie(w, sessionCookie, "/")
+}
+
+// endSessionsOf ends the sessions of the user nameID, in every browser:
+// those with one of sessionIndexes, or all of them if it is empty.
+func endSessionsOf(nameID saml.NameID, sessionIndexes []string) {
+	sessions.Lock()
+	defer sessions.Unlock()
+	for id, s := range sessions.m {
+		if s.assertion.NameID.Value != nameID.Value {
+			continue
+		}
+		if len(sessionIndexes) == 0 || overlap(s.assertion.SessionIndexes, sessionIndexes) {
+			delete(sessions.m, id)
+		}
+	}
+}
+
+func overlap(a, b []string) bool {
+	return slices.ContainsFunc(a, func(x string) bool { return slices.Contains(b, x) })
+}
+
+// secure reports whether the SP is served over https, so that its cookies
+// can be Secure.
+func secure() bool { return strings.HasPrefix(config.ACSURL(), "https:") }
+
+// setTempCookie sets a cookie that lasts for one exchange with the IdP. The
+// IdP's answer is a cross-site request, so over https the cookie is
+// SameSite=None; over plain http, which is for development, browsers send
+// a cookie without SameSite on a cross-site POST shortly after it was set.
+func setTempCookie(w http.ResponseWriter, name, path, value string) {
+	c := &http.Cookie{Name: name, Value: value, Path: path, MaxAge: 300, HttpOnly: true}
+	if secure() {
+		c.Secure, c.SameSite = true, http.SameSiteNoneMode
+	}
+	http.SetCookie(w, c)
+}
+
+func deleteCookie(w http.ResponseWriter, name, path string) {
+	http.SetCookie(w, &http.Cookie{Name: name, Path: path, MaxAge: -1, HttpOnly: true, Secure: secure()})
 }
