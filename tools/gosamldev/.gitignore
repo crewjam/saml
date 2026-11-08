@@ -4,4 +4,4 @@
 /web/static/wasm_exec.js
 
 # Built by `go build .` in this directory.
-/gosaml
+/gosamldev

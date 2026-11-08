@@ -1,6 +1,8 @@
 // Package saml contains a partial implementation of the SAML standard in golang.
 // SAML is a standard for identity federation, i.e. either allowing a third party to authenticate your users or allowing third parties to rely on us to authenticate their users.
 //
+// > Need something to test against? [gosaml.dev] is a free SAML test server built on this library. It gives you throwaway identity providers and service providers in your browser: define users and attributes, imitate Okta, Entra ID or Shibboleth responses, try single logout, and see exactly why a Response was refused. Its source is in [tools/gosamldev].
+//
 // # Introduction
 //
 // In SAML parlance an Identity Provider (IDP) is a service that knows how to authenticate users. A Service Provider (SP) is a service that delegates authentication to an IDP. If you are building a service where users log in with someone else's credentials, then you are a Service Provider. This package supports implementing both service providers and identity providers.
@@ -360,12 +362,14 @@
 //
 // # AI Disclosure
 //
-// Since approximately November 1, 2026, AI tools have been used to generate code in this repository. All AI-generated code is reviewed personally by the maintainer, except for the code in tools/gosaml.
+// Since approximately November 1, 2026, AI tools have been used to generate code in this repository. All AI-generated code is reviewed personally by the maintainer, except for the code in tools/gosamldev.
 //
 // # Security Issues
 //
 // Please do not report security issues in the issue tracker. Instead, report them privately through GitHub: on the [Security tab], choose Report a vulnerability (or go straight to [the advisory form]). See [SECURITY.md] for details. If your issue is *not* a security issue, please use the issue tracker so other contributors can help.
 //
+// [gosaml.dev]: https://gosaml.dev
+// [tools/gosamldev]: https://github.com/crewjam/saml/blob/main/tools/gosamldev
 // [samltest.dev]: https://www.samltest.dev/
 // [API]: https://www.samltest.dev/#api
 // [code.dny.dev/ssrf]: https://pkg.go.dev/code.dny.dev/ssrf

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/crewjam/saml/tools/gosaml/store"
+	"github.com/crewjam/saml/tools/gosamldev/store"
 )
 
 // The log entry page shows the HTTP exchange each event happened in: the

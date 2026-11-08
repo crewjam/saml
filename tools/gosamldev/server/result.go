@@ -10,7 +10,7 @@ import (
 	"github.com/beevik/etree"
 
 	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/tools/gosaml/inspect"
+	"github.com/crewjam/saml/tools/gosamldev/inspect"
 	"github.com/crewjam/saml/xmlenc"
 )
 

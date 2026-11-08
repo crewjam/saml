@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/crewjam/saml/tools/gosaml/store"
+	"github.com/crewjam/saml/tools/gosamldev/store"
 )
 
 type harness struct {

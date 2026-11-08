@@ -1,6 +1,6 @@
 # Runs the checks on every push to main and, once they all pass, deploys
-# tools/gosaml to gosaml.dev (Fly.io). See "Deploying from GitHub Actions"
-# in tools/gosaml/README.md for the one-time setup of the FLY_API_TOKEN
+# tools/gosamldev to gosaml.dev (Fly.io). See "Deploying from GitHub Actions"
+# in tools/gosamldev/README.md for the one-time setup of the FLY_API_TOKEN
 # secret.
 #
 # How the token is kept safe:
@@ -50,7 +50,7 @@ jobs:
       url: https://gosaml.dev
     defaults:
       run:
-        working-directory: tools/gosaml
+        working-directory: tools/gosamldev
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -60,8 +60,8 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: tools/gosaml/go.mod
-          cache-dependency-path: tools/gosaml/go.sum
+          go-version-file: tools/gosamldev/go.mod
+          cache-dependency-path: tools/gosamldev/go.sum
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
         with:
           version: 0.5.5

@@ -22,19 +22,19 @@ jobs:
           go-version: ${{ matrix.go }}
       - run: go version
       - run: go test -v ./...
-  gosaml:
-    # tools/gosaml is its own module (with a replace directive pointing at
+  gosamldev:
+    # tools/gosamldev is its own module (with a replace directive pointing at
     # this repo), so `go test ./...` at the root does not reach it.
     # It is built and deployed with the latest Go, so test with only that.
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: tools/gosaml
+        working-directory: tools/gosamldev
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: stable
-          cache-dependency-path: tools/gosaml/go.sum
+          cache-dependency-path: tools/gosamldev/go.sum
       - run: go version
       - run: go test -v ./...

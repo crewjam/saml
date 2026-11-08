@@ -21,8 +21,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/crewjam/saml/tools/gosaml/store"
-	"github.com/crewjam/saml/tools/gosaml/web"
+	"github.com/crewjam/saml/tools/gosamldev/store"
+	"github.com/crewjam/saml/tools/gosamldev/web"
 )
 
 // Config configures a Server.

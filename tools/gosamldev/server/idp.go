@@ -14,8 +14,8 @@ import (
 	"github.com/beevik/etree"
 
 	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/tools/gosaml/inspect"
-	"github.com/crewjam/saml/tools/gosaml/store"
+	"github.com/crewjam/saml/tools/gosamldev/inspect"
+	"github.com/crewjam/saml/tools/gosamldev/store"
 	"github.com/crewjam/saml/x/samlidp"
 	"github.com/crewjam/saml/x/samlidp/idpartifact"
 	"github.com/crewjam/saml/x/samlidp/idpslo"
