@@ -145,7 +145,11 @@ func Example() {
 			http.Error(w, "no login in progress", http.StatusBadRequest)
 			return
 		}
-		http.SetCookie(w, &http.Cookie{Name: "saml_login", Path: "/", MaxAge: -1})
+		// Expire the cookie with the attributes it was set with.
+		http.SetCookie(w, &http.Cookie{
+			Name: "saml_login", Path: "/", MaxAge: -1,
+			Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode,
+		})
 		answer(w, r, req, u)
 	})
 }
