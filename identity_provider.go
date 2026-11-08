@@ -1310,9 +1310,17 @@ func (req *IdpAuthnRequest) selectACSEndpoint(match func(*IndexedEndpoint) bool)
 // findACSEndpoint returns copies of the first AssertionConsumerService
 // endpoint in the service provider metadata for which match returns true
 // and of its SPSSODescriptor, or nils if there is none.
+//
+// An endpoint whose Location is not an http or https URL is skipped, as for
+// SingleLogoutService endpoints: metadata built in Go, rather than parsed,
+// has not had its locations checked, and the Location becomes the
+// Response's Destination and the action of the form that posts it.
 func (req *IdpAuthnRequest) findACSEndpoint(match func(*IndexedEndpoint) bool) (*SPSSODescriptor, *IndexedEndpoint) {
 	for _, spssoDescriptor := range req.ServiceProviderMetadata.SPSSODescriptors {
 		for _, endpoint := range spssoDescriptor.AssertionConsumerServices {
+			if _, err := checkEndpointLocation(endpoint.Binding, endpoint.Location); err != nil {
+				continue
+			}
 			if match(&endpoint) {
 				// Copy, so that the pointers do not alias the metadata.
 				spssoDescriptor, endpoint := spssoDescriptor, endpoint
