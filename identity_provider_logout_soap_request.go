@@ -45,33 +45,7 @@ func readSOAPLogoutRequest(r *http.Request) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("SOAP logout request: %w", err)
 	}
-	if err := checkNoMandatorySOAPHeader(el); err != nil {
-		return nil, fmt.Errorf("SOAP logout request: %w", err)
-	}
 	return elementToBytes(el)
-}
-
-// checkNoMandatorySOAPHeader fails if the envelope that holds bodyChild has
-// a header entry with mustUnderstand="1": the IdP understands none, so it
-// must not process the message (SOAP 1.1 §4.2.3).
-func checkNoMandatorySOAPHeader(bodyChild *etree.Element) error {
-	body := bodyChild.Parent()
-	if body == nil || body.Parent() == nil {
-		return nil
-	}
-	header, err := findChild(body.Parent(), soapEnvelopeNamespace, "Header")
-	if err != nil || header == nil {
-		return err
-	}
-	for _, entry := range header.ChildElements() {
-		for i := range entry.Attr {
-			attr := &entry.Attr[i]
-			if attr.Key == "mustUnderstand" && attr.NamespaceURI() == soapEnvelopeNamespace && attr.Value == "1" {
-				return fmt.Errorf("cannot understand the mandatory SOAP header %s", entry.FullTag())
-			}
-		}
-	}
-	return nil
 }
 
 // serveSOAPLogoutRequest handles a LogoutRequest sent to ServeSLO with the

@@ -446,10 +446,11 @@ type IdentityProvider struct {
 	// seconds, does not follow redirects, and connects only to public
 	// addresses is used: the endpoints come from the service providers'
 	// metadata, which could otherwise point them at services on your own
-	// network. A client set here is used as it is, so guard its dialer
-	// (such as with code.dny.dev/ssrf) if service providers register their
-	// own metadata. Whatever the client, a redirect to a location that is
-	// not https (or http, with AllowInsecureSOAPEndpoints) is not followed.
+	// network. Apart from its redirect policy, a client set here is used as
+	// it is, so guard its dialer (such as with code.dny.dev/ssrf) if service
+	// providers register their own metadata. Whatever the client, no
+	// redirect is followed, whatever its CheckRedirect says: the SOAP
+	// binding has none.
 	HTTPClient *http.Client
 
 	// AllowInsecureSOAPEndpoints lets the IdP send SOAP messages to http

@@ -135,6 +135,16 @@ type AuthnRequest struct {
 	// match it, with StatusUnknownPrincipal.
 	Subject *saml.NameID
 
+	// Signed reports that the SP signed the request, and that
+	// ParseAuthnRequest recorded it so as to accept it only once (see
+	// WithReplayState). It is false for an unsigned request, for an
+	// IdP-initiated login, and for a request that ParseAuthnRequest
+	// returns with an error it found before checking the signature or
+	// recording the request, such as an expired one. ErrorResponse sends
+	// an error Response with a custom Binding that stores it, such as
+	// that of x/samlidp/idpartifact, only for a request that is Signed.
+	Signed bool
+
 	// Extensions are the extension elements of the request's
 	// samlp:Extensions, if any (saml-core §3.2.1), each as an XML
 	// document that declares the namespaces it uses. What they mean, and
@@ -195,7 +205,10 @@ func (c *Config) ParseAuthnRequest(ctx context.Context, r *http.Request, opts ..
 			opt.applyParse(&o)
 		}
 	}
-	idp := c.ssoIdentityProvider(o.idp)
+	idp, err := c.checkedIdentityProvider(o.idp)
+	if err != nil {
+		return nil, err
+	}
 
 	// ServeSSO does everything that comes before asking for a session:
 	// parsing, validation and choosing the ACS. Drive it with a
@@ -281,24 +294,27 @@ func (c *Config) ParseAuthnRequest(ctx context.Context, r *http.Request, opts ..
 			Message:     "the requested assertion consumer service binding is not supported",
 		}
 	}
-	if statusErr := requestSubjectError(ireq.Request.Subject); statusErr != nil {
-		return req, statusErr
-	}
-	if err := c.spNameQualifierError(ctx, idp, req); err != nil {
+	var statusErr error
+	if s := requestSubjectError(ireq.Request.Subject); s != nil {
+		statusErr = s
+	} else if err := c.spNameQualifierError(ctx, idp, req); err != nil {
 		var status *saml.StatusError
-		if errors.As(err, &status) {
-			return req, err
+		if !errors.As(err, &status) {
+			return nil, err
 		}
-		return nil, err
+		statusErr = err
 	}
 
+	// A signed request is recorded before it is answered, with an error
+	// Response or not, so that it is answered only once.
 	if ireq.RequestSigned {
 		key := ReplayKey(req.ServiceProvider, req.ID)
 		if err := c.replayState.Consume(ctx, key, req.IssueInstant.Add(timelimit.IDPIssueDelay(idp))); err != nil {
 			return nil, fmt.Errorf("samlidp: authn request %q: %w", req.ID, err)
 		}
+		req.Signed = true
 	}
-	return req, nil
+	return req, statusErr
 }
 
 // IDPInitiated returns an AuthnRequest for an IdP-initiated login to the
@@ -320,7 +336,10 @@ func (c *Config) IDPInitiated(ctx context.Context, serviceProvider, relayState s
 			opt.applyParse(&o)
 		}
 	}
-	idp := c.ssoIdentityProvider(o.idp)
+	idp, err := c.checkedIdentityProvider(o.idp)
+	if err != nil {
+		return nil, err
+	}
 	r, err := http.NewRequestWithContext(ctx, http.MethodGet, c.ssoURL.String(), http.NoBody)
 	if err != nil {
 		return nil, err
@@ -352,16 +371,6 @@ func (c *Config) IDPInitiated(ctx context.Context, serviceProvider, relayState s
 			serviceProvider, saml.ErrUnknownAssertionConsumerService)
 	}
 	return newAuthnRequest(ireq), nil
-}
-
-// ssoIdentityProvider is identityProvider for ParseAuthnRequest and
-// IDPInitiated: its ServiceProviderProvider calls the ServiceProviderFunc of
-// New, whatever opts set, so that they see the same metadata as Response
-// and ErrorResponse, which look the SP up again.
-func (c *Config) ssoIdentityProvider(opts []IdentityProviderOption) *saml.IdentityProvider {
-	idp := c.identityProvider(opts)
-	idp.ServiceProviderProvider = serviceProviderProvider{c.serviceProviders, c.clock}
-	return idp
 }
 
 // defaultACS returns the default assertion consumer service of the SP

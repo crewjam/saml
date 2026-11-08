@@ -40,35 +40,34 @@ const defaultSOAPTimeout = 10 * time.Second
 // none, and the message must only go to the endpoint in the metadata. It
 // connects only to public addresses, since the endpoint is whatever the
 // peer's metadata says (see package internal/safehttp).
-var defaultSOAPHTTPClient = safehttp.Client(defaultSOAPTimeout, func(*http.Request, []*http.Request) error {
-	return http.ErrUseLastResponse
-})
+var defaultSOAPHTTPClient = safehttp.Client(defaultSOAPTimeout, refuseSOAPRedirect)
 
 // soapHTTPClient returns the HTTP client to send a SOAP message with:
 // defaultSOAPHTTPClient when client is nil, and otherwise a copy of client
-// whose redirect policy also refuses to follow a redirect to a location that
-// checkSOAPEndpoint would refuse. Without that, a 307 or 308 from an https
-// endpoint to a plain http one would re-send the message, with the NameID,
-// attributes or assertion it carries, in the clear.
-func soapHTTPClient(client *http.Client, allowInsecure bool) *http.Client {
+// that follows no redirect, whatever the redirect policy of client.
+//
+// The SAML SOAP binding has no redirects: the message goes to the endpoint
+// in the peer's metadata, and nowhere else (saml-bindings §3.2). Following
+// a 307 or 308 would re-send the message, with the NameID, attributes or
+// assertion it carries, to a location the metadata never named, possibly in
+// the clear, and present the TLS client certificate of client there too.
+func soapHTTPClient(client *http.Client) *http.Client {
 	if client == nil {
 		return defaultSOAPHTTPClient
 	}
 	c := *client
-	next := client.CheckRedirect
-	c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if err := checkSOAPEndpoint(req.URL.String(), allowInsecure); err != nil {
-			return fmt.Errorf("refusing to follow redirect: %w", err)
-		}
-		if next != nil {
-			return next(req, via)
-		}
-		if len(via) >= 10 {
-			return errors.New("stopped after 10 redirects")
-		}
-		return nil
-	}
+	c.CheckRedirect = refuseSOAPRedirect
 	return &c
+}
+
+// errSOAPRedirect is the error of a SOAP exchange whose endpoint answered
+// with a redirect, which is never followed (see soapHTTPClient).
+var errSOAPRedirect = errors.New("the SOAP endpoint answered with a redirect, which the SOAP binding does not allow")
+
+// refuseSOAPRedirect is the CheckRedirect of every client soapHTTPClient
+// returns.
+func refuseSOAPRedirect(req *http.Request, _ []*http.Request) error {
+	return fmt.Errorf("%w (to %s)", errSOAPRedirect, req.URL.Redacted())
 }
 
 // ErrInsecureSOAPEndpoint is returned when a SAML SOAP message would be sent
@@ -176,7 +175,8 @@ func readLimited(r io.Reader, limit int64) ([]byte, error) {
 // protocol element named tag (such as "Response" or "LogoutRequest") that
 // must be the only element of its Body. Each element is matched by its
 // namespace, not just its local name. A Body that holds a SOAP Fault is an
-// error.
+// error, and so is a mandatory header entry (see
+// checkNoMandatorySOAPHeader).
 func soapBodyElement(soapXML []byte, tag string) (*etree.Element, error) {
 	if err := xmlroundtrip.Validate(soapXML); err != nil {
 		return nil, fmt.Errorf("invalid xml: %s", err)
@@ -192,6 +192,9 @@ func soapBodyElement(soapXML []byte, tag string) (*etree.Element, error) {
 	if root.NamespaceURI() != soapEnvelopeNamespace || root.Tag != "Envelope" {
 		return nil, errors.New("expected a SOAP Envelope")
 	}
+	if err := checkNoMandatorySOAPHeader(root); err != nil {
+		return nil, err
+	}
 	bodyEl, err := findOneChild(root, soapEnvelopeNamespace, "Body")
 	if err != nil {
 		return nil, err
@@ -203,4 +206,25 @@ func soapBodyElement(soapXML []byte, tag string) (*etree.Element, error) {
 		return nil, fmt.Errorf("expected exactly one element in the SOAP Body, found %d", n)
 	}
 	return findOneChild(bodyEl, "urn:oasis:names:tc:SAML:2.0:protocol", tag)
+}
+
+// checkNoMandatorySOAPHeader fails if envelope, a SOAP 1.1 Envelope, has a
+// header entry with mustUnderstand="1". The saml packages understand no
+// SOAP header, and a receiver that does not understand a mandatory header
+// entry must not process the message (SOAP 1.1 §4.2.3). That holds for
+// every SOAP message received, requests and responses alike.
+func checkNoMandatorySOAPHeader(envelope *etree.Element) error {
+	header, err := findChild(envelope, soapEnvelopeNamespace, "Header")
+	if err != nil || header == nil {
+		return err
+	}
+	for _, entry := range header.ChildElements() {
+		for i := range entry.Attr {
+			attr := &entry.Attr[i]
+			if attr.Key == "mustUnderstand" && attr.NamespaceURI() == soapEnvelopeNamespace && attr.Value == "1" {
+				return fmt.Errorf("cannot understand the mandatory SOAP header %s", entry.FullTag())
+			}
+		}
+	}
+	return nil
 }

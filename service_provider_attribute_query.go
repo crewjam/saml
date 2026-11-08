@@ -201,7 +201,7 @@ func (sp *ServiceProvider) postSOAP(ctx context.Context, location string, envelo
 	if err := checkSOAPEndpoint(location, sp.AllowInsecureSOAPEndpoints); err != nil {
 		return nil, err
 	}
-	httpClient := soapHTTPClient(sp.HTTPClient, sp.AllowInsecureSOAPEndpoints)
+	httpClient := soapHTTPClient(sp.HTTPClient)
 	return postSOAPMessage(ctx, httpClient, location, envelope, limit)
 }
 

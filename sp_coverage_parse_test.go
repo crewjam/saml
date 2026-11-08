@@ -438,7 +438,7 @@ func TestSpcovHandleArtifactRequestTransportErrors(t *testing.T) {
 		body := spcovSerialize(t, spcovSOAPEnvelope(e.artifactResponseEl(t, "id-someone-else", true, nil)))
 		sp := withTransport(respond(&spcovBody{r: bytes.NewReader(body)}))
 		_, err := sp.handleArtifactRequest(ctx, "the-artifact", []string{spcovRequestID})
-		assert.Error(t, spcovPrivateErr(t, err), "`InResponseTo` does not match the artifact request ID (expected id-c8caccced0d2d4d6d8dadcdee0e2e4e6e8eaecee)")
+		assert.Error(t, spcovPrivateErr(t, err), "`InResponseTo` does not match the artifact request ID (expected id-787a7c7e80828486888a8c8e90929496989a9c9e)")
 	})
 }
 

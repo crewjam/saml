@@ -69,7 +69,8 @@ func (m *Message) RedirectURL() *url.URL {
 // Content-Security-Policy that allows only the form's script; browsers
 // without JavaScript show a button that submits it. With HTTP-Redirect, it
 // writes a 302 redirect. Either way it sets headers that keep the message
-// from being cached (saml-bindings §3.4.5.1, §3.5.5.1). A Message made
+// from being cached (saml-bindings §3.4.5.1, §3.5.5.1), and a
+// Referrer-Policy of no-referrer. A Message made
 // with NewMessage writes what its function writes. Write must be called
 // before anything else is written to w.
 func (m *Message) Write(w http.ResponseWriter) {
@@ -80,6 +81,9 @@ func (m *Message) Write(w http.ResponseWriter) {
 	h := w.Header()
 	h.Set("Cache-Control", "no-cache, no-store")
 	h.Set("Pragma", "no-cache")
+	// The message must not reach a third party in the Referer header
+	// of what the page loads or where it goes.
+	h.Set("Referrer-Policy", "no-referrer")
 	if m.redirectURL != nil {
 		h.Set("Location", m.redirectURL.String())
 		w.WriteHeader(http.StatusFound)
