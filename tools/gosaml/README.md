@@ -152,7 +152,33 @@ Revoke it right away if it may have leaked.
 Environment variables: `GOSAML_BASE_URL` (default
 `http://localhost:8080`), `GOSAML_ADDR` (`:8080`), `GOSAML_DB` (a file in
 the temporary directory), `GOSAML_TTL` (`24h`), `GOSAML_MAX_INSTANCES`
-(`5000`).
+(`5000`), `GOSAML_RATE_LIMIT` and `GOSAML_RATE_BURST` (`10` and `100`; a
+rate of `0` turns rate limiting off), `GOSAML_CLIENT_IP_HEADER` (none;
+`Fly-Client-IP` on Fly.io), `GOSAML_METRICS_ADDR` (none; `:9091` on Fly.io).
+
+## Logs, metrics and rate limiting
+
+- Every request is logged with `log/slog` (method, path, route pattern,
+  status, size, duration, client IP, User-Agent). Management URLs are
+  credentials, so for `/manage/...` and `/api/manage/...` the route
+  pattern (`/manage/{secret}`) is logged instead of the path. `/healthz`
+  is logged at debug level only.
+- Prometheus metrics are served at `/metrics` on `GOSAML_METRICS_ADDR`,
+  apart from the app. On Fly.io, fly.toml's `[metrics]` has Fly scrape
+  them into its managed Prometheus, shown in the app's Metrics tab
+  (Grafana at fly-metrics.net). Besides the Go and process metrics:
+  `gosaml_http_requests_total{method,route,code}`,
+  `gosaml_http_request_duration_seconds{method,route}`,
+  `gosaml_http_requests_in_flight`, `gosaml_http_rate_limited_total`,
+  `gosaml_instances` and `gosaml_live_log_subscribers`. `route` is the
+  `ServeMux` pattern, so its cardinality is bounded.
+- Each client IP (IPv6: each /64) has a token bucket of
+  `GOSAML_RATE_BURST` requests, refilled at `GOSAML_RATE_LIMIT` a second;
+  past it the server answers 429 with `Retry-After`. `/healthz` is exempt.
+  The bucket map is swept of refilled buckets each minute and capped at
+  100,000 clients (past that, new clients share one bucket). Behind a
+  proxy, set `GOSAML_CLIENT_IP_HEADER` to the header it sets; only one that
+  overwrites what clients send can be trusted.
 
 ## Security notes
 

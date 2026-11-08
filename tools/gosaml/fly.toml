@@ -27,6 +27,19 @@ primary_region = "iad"
   GOSAML_DB = "/data/gosaml.db"
   GOSAML_TTL = "24h"
   GOSAML_MAX_INSTANCES = "5000"
+  # Per client IP (IPv6: per /64), a token bucket: 10 requests a second on
+  # average, 100 at once. Fly's proxy sets Fly-Client-IP and overwrites
+  # any a client sends.
+  GOSAML_RATE_LIMIT = "10"
+  GOSAML_RATE_BURST = "100"
+  GOSAML_CLIENT_IP_HEADER = "Fly-Client-IP"
+  GOSAML_METRICS_ADDR = ":9091"
+
+# Fly scrapes these into its managed Prometheus; see them in the app's
+# Metrics tab (fly-metrics.net). The port is not exposed publicly.
+[metrics]
+  port = 9091
+  path = "/metrics"
 
 [mounts]
   source = "gosaml_data"
