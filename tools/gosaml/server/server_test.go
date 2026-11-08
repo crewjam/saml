@@ -156,6 +156,9 @@ func TestEndToEnd(t *testing.T) {
 	acsPage := body
 	_, body = h.submitAutoForm(acsPage)
 	mustContain(t, body, "Logged in as", "alice@example.com", "urn:oid:0.9.2342.19200300.100.1.3", "admins", "Manage this SP")
+	// Home's Logs shows it, linking to the log entry.
+	_, home := h.do(http.MethodGet, "/", nil)
+	mustContain(t, home, `id="logs-h"`, "Logged in alice@example.com", `href="/manage/`+spSecret+`/log/`)
 
 	// The same Response again is refused: the login it answers is over.
 	resp, body = h.submitAutoForm(acsPage)

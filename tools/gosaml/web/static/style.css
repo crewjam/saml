@@ -248,9 +248,9 @@ details > summary { cursor: pointer; font-weight: 500; }
 .live { margin-left: 6px; font-size: 13px; font-weight: 500; color: var(--ok); letter-spacing: 0; }
 .log-list { list-style: none; margin: 0; padding: 0; }
 .log-list li { border-bottom: var(--rule); }
-.log-list a { display: grid; grid-template-columns: 64px minmax(0, 1fr) 16px; gap: 0 12px; padding: 10px 0; color: var(--ink); text-decoration: none; }
+.log-list a { display: grid; grid-template-columns: max-content minmax(0, 1fr) 16px; gap: 0 12px; padding: 10px 0; color: var(--ink); text-decoration: none; }
 .log-list a:hover { background: var(--code-bg); }
-.log-time { font-size: 13.5px; font-variant-numeric: tabular-nums; color: var(--ink-muted); padding-top: 2px; }
+.log-time { font-size: 13.5px; font-variant-numeric: tabular-nums; color: var(--ink-muted); padding-top: 2px; white-space: nowrap; }
 .log-title { min-width: 0; font-size: 14px; word-break: break-word; }
 .log-detail { display: block; font-size: 13px; color: var(--ink-body); word-break: break-all; }
 .log-detail .mono { font-size: 12px; }

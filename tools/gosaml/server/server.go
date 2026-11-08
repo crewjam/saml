@@ -405,8 +405,43 @@ func (s *Server) myInstances(r *http.Request) []myInstance {
 	return out
 }
 
+// homePage is the data of the home page.
+type homePage struct {
+	Mine []myInstance
+	// Log is the latest events of this browser's instances, newest
+	// first, each linking to its log entry.
+	Log []logRow
+	// Lifetime is how long an instance lives, in words.
+	Lifetime string
+}
+
+// homeLogRows is how many events the home page's Logs shows.
+const homeLogRows = 20
+
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "home", struct{ Mine []myInstance }{s.myInstances(r)})
+	ctx := r.Context()
+	p := homePage{Mine: s.myInstances(r), Lifetime: roundDuration(s.TTL)}
+	byID := map[string]*store.Instance{}
+	for _, secret := range mine(r) {
+		if in, err := s.Store.InstanceBySecret(ctx, secret); err == nil {
+			byID[in.ID] = in
+		}
+	}
+	ids := make([]string, 0, len(byID))
+	for id := range byID {
+		ids = append(ids, id)
+	}
+	if events, err := s.Store.RecentEvents(ctx, ids, homeLogRows); err == nil {
+		n := s.names(ctx)
+		for _, e := range events {
+			if in := byID[e.InstanceID]; in != nil {
+				row := n.row(in, e)
+				row.Instance = n.of(string(in.Kind), in.ID)
+				p.Log = append(p.Log, row)
+			}
+		}
+	}
+	s.render(w, r, "home", p)
 }
 
 // inspectPage serves the inspector. A message POSTed to it, as by an IdP

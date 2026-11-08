@@ -33,7 +33,7 @@
 
 {{define "logrow"}}<li data-id="{{.ID}}"><a href="{{.Href}}">
   <time class="log-time" datetime="{{iso .At}}">{{clockTZ .At}}</time>
-  <span class="log-title">{{.Title}}<span class="log-detail"><span class="dir {{.DirClass}}">{{.Dir}}</span>{{range .Parts}}<span> · </span>{{if .Mono}}<span class="mono">{{.Text}}</span>{{else}}<span>{{.Text}}</span>{{end}}{{end}}</span></span>
+  <span class="log-title">{{.Title}}<span class="log-detail"><span class="dir {{.DirClass}}">{{.Dir}}</span>{{range .Parts}}<span> · </span>{{if .Mono}}<span class="mono">{{.Text}}</span>{{else}}<span>{{.Text}}</span>{{end}}{{end}}{{with .Instance}}<span> · </span><span class="log-instance">{{.}}</span>{{end}}</span></span>
   <span class="log-arrow" aria-hidden="true">→</span>
 </a></li>
 {{end}}

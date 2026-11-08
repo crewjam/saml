@@ -86,6 +86,18 @@
     if (msg && !confirm(msg)) e.preventDefault();
   });
 
+  // Home's "Inspect a message" opens the inspector with the message in
+  // the URL's fragment, which is not sent to the server. This listens in
+  // the capture phase, before htmx would boost the form into a request.
+  document.addEventListener("submit", (e) => {
+    const form = e.target.closest && e.target.closest("form[data-inspect]");
+    if (!form) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const m = form.querySelector("textarea").value.trim();
+    location.href = "/inspect" + (m ? "#m=" + encodeURIComponent(m) : "");
+  }, true);
+
   // The login picker's button names the chosen user.
   document.addEventListener("change", (e) => {
     if (e.target.name !== "user" || !e.target.closest("[data-login-picker]")) return;
@@ -95,7 +107,7 @@
 
   // Times are rendered in UTC; show them in the viewer's time zone. This
   // runs again on whatever htmx swaps in.
-  const localTimes = (root) => root.querySelectorAll("time[datetime]:not([data-local])").forEach((el) => {
+  const localTimes = (root) => root.querySelectorAll("time[datetime]:not([data-local]):not([data-keep])").forEach((el) => {
     const d = new Date(el.getAttribute("datetime"));
     if (isNaN(d)) return;
     el.textContent = el.dataset.date !== undefined ? d.toLocaleString() : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });

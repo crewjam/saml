@@ -1,64 +1,67 @@
-{{define "content"}}
-<section class="hero">
-  <h1>Test SAML without setting anything up.</h1>
-  <p class="lead">Create a throwaway identity provider or service provider, point the system you are building at it, and watch every message go by. Or paste a SAML message into the inspector to see what is in it.</p>
-</section>
-
-<div class="grid three">
-  <section class="card" id="idp">
-    <h2>Test identity provider</h2>
-    <p>An IdP with users you define. Register your service provider by its metadata, then log in to it as any user, with any attributes, or answer with an error to see how your SP copes. It can imitate the responses of Okta, Entra ID or Shibboleth.</p>
-    <form method="post" action="/new/idp" class="create">
-      <label>Shaped like
-        <select name="profile">
-          <option value="generic">Generic</option>
-          <option value="okta">Okta</option>
-          <option value="entra">Entra ID</option>
-          <option value="shibboleth">Shibboleth</option>
-        </select>
-      </label>
-      <button>Create an IdP</button>
+{{define "content"}}{{with .Data}}
+<main class="home">
+  <section class="inspect-box" aria-labelledby="inspect-h">
+    <h2 id="inspect-h">Inspect a message</h2>
+    <form class="stack" action="/inspect" method="get" data-inspect>
+      <label for="msg">Paste an AuthnRequest, Response, logout message or metadata, as a URL, POST body, base64 or raw XML.</label>
+      <textarea id="msg" name="m" rows="6" class="mono-in" spellcheck="false" placeholder="https://sp.example.com/acs?SAMLResponse=PHNhbWxwOlJlc3BvbnNl…"></textarea>
+      <div class="actions"><button class="btn big">Decode</button><span class="meta">What you paste doesn't leave your browser.</span></div>
     </form>
   </section>
-  <section class="card" id="sp">
-    <h2>Test service provider</h2>
-    <p>An SP that trusts your identity provider. Log in through it to see exactly what your IdP asserts: the NameID, the attributes, the signatures, and why a Response was refused.</p>
-    <form method="post" action="/new/sp"><button>Create an SP</button></form>
-  </section>
-  <section class="card">
-    <h2>Inspector</h2>
-    <p>Decode an AuthnRequest, Response, logout message or metadata from a URL, a POST body or base64. It runs in your browser: what you paste is not sent to the server.</p>
-    <a class="button" hx-boost="false" href="/inspect">Open the inspector</a>
-  </section>
-</div>
 
-{{if .Data.Mine}}
-<section class="card">
-  <h2>Your instances</h2>
-  <p class="hint">The instances this browser created. Bookmark a management page to come back to it from elsewhere: its URL is the only key to it.</p>
-  <table class="list">
-    <thead><tr><th>Kind</th><th>Name</th><th>Metadata</th><th>Expires in</th></tr></thead>
-    <tbody>
-    {{range .Data.Mine}}
-      <tr>
-        <td><span class="badge {{.Kind}}">{{if eq .Kind "idp"}}IdP{{else}}SP{{end}}</span></td>
-        <td><a href="/manage/{{.Secret}}">{{.Name}}</a></td>
-        <td><code class="wrap">{{.MetadataURL}}</code></td>
-        <td>{{until .ExpiresAt}}</td>
-      </tr>
-    {{end}}
-    </tbody>
-  </table>
-</section>
-{{end}}
+  <section class="blocks" id="create" aria-label="Create">
+    <div class="block idp">
+      <h2>Identity provider</h2>
+      <p>An identity provider is the system that signs users in and vouches for them, like Okta or Entra ID. This is a fake one for testing your service provider: add some test users, point your SP at it, and sign in as any of them.</p>
+      <form method="post" action="/new/idp" class="block-form"><button class="btn white big">Create an IdP</button></form>
+    </div>
+    <div class="block sp">
+      <h2>Service provider</h2>
+      <p>A service provider is the app a user signs in to, like Slack or Salesforce. This is a fake one for testing your identity provider: point your IdP at it, sign in, and it shows what your IdP sent and whether it would be accepted.</p>
+      <form method="post" action="/new/sp" class="block-form"><button class="btn white big">Create an SP</button></form>
+    </div>
+  </section>
 
-<section class="card">
-  <h2>How it works</h2>
-  <ol class="steps">
-    <li><strong>Create</strong> an IdP or an SP. Each gets its own entity ID, endpoints and signing key.</li>
-    <li><strong>Exchange metadata</strong> with the system you are testing: give it this instance's metadata URL, and give this instance its metadata (a URL or the XML).</li>
-    <li><strong>Log in</strong>, and read the log: every request and response, decoded.</li>
-  </ol>
-  <p class="hint">A test IdP and a test SP made here can be connected to each other in one click, to see a complete login.</p>
-</section>
+  {{with .Mine}}
+  <section class="home-sec" aria-labelledby="instances-h">
+    <h2 class="sec-h2" id="instances-h">Instances</h2>
+    <div class="table-scroll">
+      <table class="tbl instances">
+        <tbody>
+        {{range .}}
+          <tr>
+            <td class="nowrap"><span class="tag {{.Kind}}">{{if eq (print .Kind) "idp"}}IdP{{else}}SP{{end}}</span></td>
+            <td><a href="/manage/{{.Secret}}">{{.Name}}</a></td>
+            <td class="mono">{{.MetadataURL}}</td>
+            <td><button type="button" class="btn secondary xs" data-copy="{{.MetadataURL}}" aria-label="Copy metadata URL of {{.Name}}">Copy</button></td>
+            <td class="nowrap"><time datetime="{{iso .ExpiresAt}}" data-keep title="{{clock .ExpiresAt}}">{{until .ExpiresAt}}</time> left</td>
+            <td class="nowrap" data-confirm-box>
+              <button type="button" class="btn danger xs" data-ask aria-label="Delete {{.Name}}">Delete</button>
+              <span class="confirm" data-asking hidden><span class="confirm-q">Delete for everyone?</span>
+                <form method="post" action="/manage/{{.Secret}}/delete" class="inline"><button class="btn danger-fill xs">Delete</button></form>
+                <button type="button" class="btn secondary xs" data-cancel>Cancel</button></span>
+            </td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {{end}}
+
+  {{with .Log}}
+  <section class="home-sec" aria-labelledby="logs-h">
+    <h2 class="sec-h2" id="logs-h">Logs</h2>
+    <ol class="log-list home-log">{{range .}}{{template "logrow" .}}{{end}}</ol>
+  </section>
+  {{end}}
+</main>
+{{end}}{{end}}
+{{define "footer"}}
+<footer class="footer">
+  <div class="footer-inner">
+    <span>Deleted {{.Data.Lifetime}} after creation, or when the server restarts. Do not use real credentials or personal data.</span>
+    <span>Built on <a href="https://github.com/crewjam/saml">crewjam/saml</a></span>
+  </div>
+</footer>
 {{end}}
