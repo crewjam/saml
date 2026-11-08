@@ -73,15 +73,10 @@
 //
 // ParseResponse accepts each assertion only once (and x/samlsp/slo each
 // LogoutRequest), so that a message copied from a browser's history or a
-// log cannot be used again. By default the IDs are kept in memory.
-// They need no size limit: an ID is recorded only once the message is fully
-// verified as one the IdP issued for this SP, and only until the message
-// expires, at most saml.MaxIssueDelay after it was issued, plus clock
-// skew. So the memory used follows the rate of real logins, and an attacker cannot add
-// to it.
-//
-// The default protects a single process. Applications served by several
-// processes share the state with WithReplayState.
+// log cannot be used again. By default the IDs are kept in memory, in a
+// replay.Memory of package github.com/crewjam/saml/x/samlsp/replay, which
+// protects a single process. Applications served by several processes
+// share a record with WithReplayState.
 //
 // # Web Browser SSO
 //
