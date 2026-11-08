@@ -258,7 +258,7 @@ func (c *Config) answer(ctx context.Context, req *AuthnRequest, o responseOption
 		RelayState:              req.RelayState,
 		Request:                 req.samlRequest(),
 		ServiceProviderMetadata: md,
-		Now:                     idp.Clock.Now(),
+		Now:                     clockNow(idp.Clock),
 	}
 	ireq.SPSSODescriptor, ireq.ACSEndpoint = findACS(md, req.ACSURL, req.ACSBinding)
 	if ireq.ACSEndpoint == nil {

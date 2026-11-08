@@ -253,7 +253,10 @@ func WithMetadata(modify func(md *saml.EntityDescriptor)) Option {
 }
 
 // WithClock sets the time source used for timestamps and to check validity
-// periods. It is mainly useful in tests.
+// periods: that of the saml.IdentityProvider each method builds, of Now,
+// and of the default ReplayState. It is mainly useful in tests. Without
+// it, times come from saml.TimeNow, as in package saml, and the default
+// ReplayState reads the system clock.
 func WithClock(clock *dsig.Clock) Option {
 	return optionFunc(func(c *Config, _ *configOptions) { c.clock = clock })
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
+	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml"
 )
@@ -143,8 +144,19 @@ func (c *Config) Consume(ctx context.Context, serviceProvider, id string, expire
 	return c.replayState.Consume(ctx, ReplayKey(serviceProvider, id), expiresAt)
 }
 
-// Now returns the current time, by the clock of WithClock.
-func (c *Config) Now() time.Time { return c.clock.Now() }
+// Now returns the current time in UTC, by the clock of WithClock, as
+// package saml reads it to validate requests and stamp what the IdP
+// issues: without WithClock, from saml.TimeNow.
+func (c *Config) Now() time.Time { return clockNow(c.clock) }
+
+// clockNow returns the current time in UTC from clock or, if it is nil,
+// from saml.TimeNow, as package saml does.
+func clockNow(clock *dsig.Clock) time.Time {
+	if clock != nil {
+		return clock.Now().UTC()
+	}
+	return saml.TimeNow() //nolint:staticcheck // package saml's fallback when no Clock is set
+}
 
 // Binding sends a Response to a service provider's assertion consumer
 // service with a binding other than those built in (HTTP-POST and
