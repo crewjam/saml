@@ -146,17 +146,17 @@ func startSession(_ http.ResponseWriter, _ *samlsp.Assertion) {}
 // sqlReplayState records accepted message IDs in a database table that
 // every process shares:
 //
-//	CREATE TABLE saml_replay (id text PRIMARY KEY, expires_at timestamptz NOT NULL);
+//	CREATE TABLE saml_replay (key bytea PRIMARY KEY, expires_at timestamptz NOT NULL);
 type sqlReplayState struct{ db *sql.DB }
 
-func (s sqlReplayState) Consume(ctx context.Context, id string, expiresAt time.Time) error {
-	// Insert the ID, or take over an expired record of it. Nothing changes
-	// if an unexpired record exists: that is a replay. ctx is that of the
-	// request whose message is accepted.
+func (s sqlReplayState) Consume(ctx context.Context, key []byte, expiresAt time.Time) error {
+	// Insert the key, or take over an expired record of it. Nothing
+	// changes if an unexpired record exists: that is a replay. ctx is that
+	// of the request whose message is accepted.
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO saml_replay (id, expires_at) VALUES ($1, $2)
-		ON CONFLICT (id) DO UPDATE SET expires_at = EXCLUDED.expires_at
-		WHERE saml_replay.expires_at < now()`, id, expiresAt)
+		INSERT INTO saml_replay (key, expires_at) VALUES ($1, $2)
+		ON CONFLICT (key) DO UPDATE SET expires_at = EXCLUDED.expires_at
+		WHERE saml_replay.expires_at < now()`, key, expiresAt)
 	if err != nil {
 		return err
 	}

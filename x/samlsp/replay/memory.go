@@ -1,7 +1,7 @@
 // Package replay keeps the record that makes each SAML message accepted
-// only once: the IDs of the assertions (and logout requests) a service
-// provider has accepted, each until the message could no longer be
-// accepted anyway. It is the replay state of
+// only once: the keys (see samlsp.ReplayKey) of the assertions, logout
+// requests and artifacts a service provider has accepted, each until the
+// message could no longer be accepted anyway. It is the replay state of
 // github.com/crewjam/saml/x/samlsp; see samlsp.WithReplayState.
 package replay
 
@@ -16,7 +16,7 @@ import (
 	"github.com/crewjam/saml"
 )
 
-// Memory records message IDs in memory, which protects a single process.
+// Memory records message keys in memory, which protects a single process.
 // Applications served by several processes need a record that they share,
 // such as a database table with a unique key on the ID.
 //
@@ -67,15 +67,16 @@ func (s *Memory) startTimer(d time.Duration, f func()) func() bool {
 	return time.AfterFunc(d, f).Stop
 }
 
-// Consume records id as accepted until expiresAt. It returns
-// saml.ErrAssertionReplayed if id is recorded and has not expired. It
-// implements samlsp.ReplayState; ctx is not used.
-func (s *Memory) Consume(_ context.Context, id string, expiresAt time.Time) error {
+// Consume records the message identified by key as accepted until
+// expiresAt. It returns saml.ErrAssertionReplayed if key is recorded and
+// has not expired. It implements samlsp.ReplayState; ctx is not used.
+func (s *Memory) Consume(_ context.Context, key []byte, expiresAt time.Time) error {
+	k := string(key)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	now := s.currentTime()
-	if exp, ok := s.expiry[id]; ok && !now.After(exp) {
+	if exp, ok := s.expiry[k]; ok && !now.After(exp) {
 		return saml.ErrAssertionReplayed
 	}
 	if !now.Before(expiresAt) {
@@ -85,8 +86,8 @@ func (s *Memory) Consume(_ context.Context, id string, expiresAt time.Time) erro
 	if s.expiry == nil {
 		s.expiry = map[string]time.Time{}
 	}
-	s.expiry[id] = expiresAt
-	heap.Push(&s.queue, queued{id: id, expiresAt: expiresAt})
+	s.expiry[k] = expiresAt
+	heap.Push(&s.queue, queued{key: k, expiresAt: expiresAt})
 	s.schedule(now)
 	return nil
 }
@@ -133,8 +134,8 @@ func (s *Memory) expire(gen uint64) {
 		q := heap.Pop(&s.queue).(queued)
 		// The ID may have been recorded again, with a later expiry, after
 		// this record expired; keep that one.
-		if exp, ok := s.expiry[q.id]; ok && exp.Equal(q.expiresAt) {
-			delete(s.expiry, q.id)
+		if exp, ok := s.expiry[q.key]; ok && exp.Equal(q.expiresAt) {
+			delete(s.expiry, q.key)
 		}
 	}
 	s.schedule(now)
@@ -148,7 +149,7 @@ func (s *Memory) Len() int {
 }
 
 type queued struct {
-	id        string
+	key       string
 	expiresAt time.Time
 }
 

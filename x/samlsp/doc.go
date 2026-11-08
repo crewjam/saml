@@ -80,12 +80,15 @@
 //
 // ParseResponse accepts each assertion only once (and x/samlsp/slo each
 // LogoutRequest), so that a message copied from a browser's history or a
-// log cannot be used again. By default the IDs are kept in memory, in a
-// replay.Memory of package github.com/crewjam/saml/x/samlsp/replay, which
-// protects a single process. Applications served by several processes,
-// or that build a Config per request, share a record with WithReplayState.
-// Its Consume gets the context of the call that accepts the message, so a
-// record kept in a database can use the request's deadline.
+// log cannot be used again. Each message is recorded under a hash of its
+// ID and of the IdP's entity ID (ReplayKey), so the messages of different
+// IdPs never collide, and one record can serve every tenant of an SP. By
+// default the record is kept in memory, in a replay.Memory of package
+// github.com/crewjam/saml/x/samlsp/replay, which protects a single process.
+// Applications served by several processes, or that build a Config per
+// request, share a record with WithReplayState. Its Consume gets the
+// context of the call that accepts the message, so a record kept in a
+// database can use the request's deadline.
 //
 // # Web Browser SSO
 //
