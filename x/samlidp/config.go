@@ -440,7 +440,15 @@ func WithReplayState(state ReplayState) Option {
 //
 // The IdentityProvider is used only to parse and validate requests and to
 // make and sign Responses: its SessionProvider, ResponseWriter, OnError
-// and ReplayCache are not used.
+// and ReplayCache are not used. Neither is its AssertionMaker, since
+// Response makes the assertion from the Subject (change it with
+// WithAssertion), nor are its ResponseFormTemplate and
+// SimpleSignResponseFormTemplate, since Message writes its own forms. Its
+// ServiceProviderProvider is replaced, in ParseAuthnRequest and
+// IDPInitiated, by one that calls the ServiceProviderFunc of New, with
+// which Response and ErrorResponse look the SP up again, so that both
+// steps see the same metadata: to look SPs up differently, change the
+// ServiceProviderFunc.
 type IdentityProviderOption func(idp *saml.IdentityProvider)
 
 func (f IdentityProviderOption) applyConfig(c *Config, _ *configOptions) {

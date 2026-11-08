@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/internal/timelimit"
 )
 
 // Subject is what the identity provider asserts about the user it has
@@ -138,8 +139,9 @@ func WithScriptNonce(nonce string) ResponseOption {
 // WithAssertion sees the plaintext NameID, which is encrypted after it.
 //
 // If req.ForceAuthn is set, subject.AuthnInstant must not be before
-// req.IssueInstant, give or take the clock skew (see WithClockSkew): Response returns an
-// error otherwise.
+// req.IssueInstant, give or take the clock skew (see WithClockSkew, or the
+// MaxClockSkew an IdentityProviderOption sets): Response returns an error
+// otherwise.
 //
 // Response does not prevent req from being answered twice: once it is
 // answered, delete the AuthnRequest where it was kept.
@@ -151,13 +153,13 @@ func (c *Config) Response(ctx context.Context, req *AuthnRequest, subject Subjec
 	if subject.AuthnInstant.IsZero() {
 		return nil, errors.New("samlidp: the subject has no AuthnInstant")
 	}
-	if req != nil && req.ForceAuthn && subject.AuthnInstant.Before(req.IssueInstant.Add(-c.ClockSkew())) {
-		return nil, fmt.Errorf("samlidp: the request asks for a new authentication (ForceAuthn), but the subject's AuthnInstant %s is before the request was issued, at %s",
-			subject.AuthnInstant.UTC().Format(time.RFC3339), req.IssueInstant.UTC().Format(time.RFC3339))
-	}
 	ireq, err := c.answer(ctx, req, o)
 	if err != nil {
 		return nil, err
+	}
+	if req.ForceAuthn && subject.AuthnInstant.Before(req.IssueInstant.Add(-timelimit.IDPClockSkew(ireq.IDP))) {
+		return nil, fmt.Errorf("samlidp: the request asks for a new authentication (ForceAuthn), but the subject's AuthnInstant %s is before the request was issued, at %s",
+			subject.AuthnInstant.UTC().Format(time.RFC3339), req.IssueInstant.UTC().Format(time.RFC3339))
 	}
 	if err := c.spNameQualifierError(ctx, ireq.IDP, req); err != nil {
 		return nil, err
@@ -323,16 +325,44 @@ func (c *Config) answer(ctx context.Context, req *AuthnRequest, o responseOption
 // findACS returns copies of the assertion consumer service of md at
 // location with binding, and of its SPSSODescriptor, or nils.
 func findACS(md *saml.EntityDescriptor, location, binding string) (*saml.SPSSODescriptor, *saml.IndexedEndpoint) {
-	u, err := url.Parse(location)
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		return nil, nil
+	return firstACS(md, func(ep *saml.IndexedEndpoint) bool { return ep.Location == location && ep.Binding == binding })
+}
+
+// defaultACSWithBinding returns copies of the default assertion consumer
+// service of md among those whose binding has, and of its SPSSODescriptor,
+// or nils. The default is the first one marked isDefault="true", else the
+// first one not marked isDefault="false", else the first one
+// (saml-metadata §2.2.3), as package saml chooses among the bindings it
+// posts with.
+func defaultACSWithBinding(md *saml.EntityDescriptor, has func(binding string) bool) (*saml.SPSSODescriptor, *saml.IndexedEndpoint) {
+	if d, ep := firstACS(md, func(ep *saml.IndexedEndpoint) bool {
+		return has(ep.Binding) && ep.IsDefault != nil && *ep.IsDefault
+	}); ep != nil {
+		return d, ep
 	}
+	if d, ep := firstACS(md, func(ep *saml.IndexedEndpoint) bool {
+		return has(ep.Binding) && (ep.IsDefault == nil || *ep.IsDefault)
+	}); ep != nil {
+		return d, ep
+	}
+	return firstACS(md, func(ep *saml.IndexedEndpoint) bool { return has(ep.Binding) })
+}
+
+// firstACS returns copies of the first assertion consumer service of md
+// for which match returns true, and of its SPSSODescriptor, or nils. A
+// service whose location is not an http or https URL is skipped.
+func firstACS(md *saml.EntityDescriptor, match func(*saml.IndexedEndpoint) bool) (*saml.SPSSODescriptor, *saml.IndexedEndpoint) {
 	for _, d := range md.SPSSODescriptors {
 		for _, ep := range d.AssertionConsumerServices {
-			if ep.Location == location && ep.Binding == binding {
-				d, ep := d, ep
-				return &d, &ep
+			if !match(&ep) {
+				continue
 			}
+			u, err := url.Parse(ep.Location)
+			if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+				continue
+			}
+			d, ep := d, ep
+			return &d, &ep
 		}
 	}
 	return nil, nil

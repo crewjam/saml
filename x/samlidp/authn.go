@@ -2,8 +2,10 @@ package samlidp
 
 import (
 	"context"
+	"crypto"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/beevik/etree"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/internal/signerutil"
 	"github.com/crewjam/saml/internal/timelimit"
 )
 
@@ -192,7 +195,7 @@ func (c *Config) ParseAuthnRequest(ctx context.Context, r *http.Request, opts ..
 			opt.applyParse(&o)
 		}
 	}
-	idp := c.identityProvider(o.idp)
+	idp := c.ssoIdentityProvider(o.idp)
 
 	// ServeSSO does everything that comes before asking for a session:
 	// parsing, validation and choosing the ACS. Drive it with a
@@ -203,6 +206,14 @@ func (c *Config) ParseAuthnRequest(ctx context.Context, r *http.Request, opts ..
 	idp.ResponseWriter = &captured
 	idp.OnError = func(_ http.ResponseWriter, _ *http.Request, _ int, err error) { captured.err = err }
 	idp.ReplayCache = nil
+	// The error Response that ServeSSO makes is discarded: ErrorResponse
+	// makes and signs the one that is sent. Let it be signed without the
+	// key, so that a refused request costs no signature, which may be a
+	// remote call (a key set as IdentityProvider.Key, rather than Signer,
+	// is local, and is left as it is).
+	if !signerutil.IsNil(idp.Signer) {
+		idp.Signer = discardSigner{idp.Signer}
+	}
 	// Parse the form here, so that it is kept for the second look below,
 	// and on the caller's request, before WithContext copies it, so that
 	// the caller can still read the form whose body this consumes.
@@ -238,11 +249,20 @@ func (c *Config) ParseAuthnRequest(ctx context.Context, r *http.Request, opts ..
 	req := newAuthnRequest(ireq)
 
 	// Package saml matches an ACS named by URL on its location, and prefers
-	// HTTP-POST there. If the request asks for the custom binding, and the
-	// SP lists an ACS with that binding at that location, use it.
+	// HTTP-POST there; for a request that names none, it chooses the SP's
+	// default ACS among those it posts to. If the request asks for the
+	// custom binding, use the SP's ACS with that binding at that location,
+	// or, if it names none, its default ACS with that binding
+	// (saml-profiles §4.1.4.1), if it lists one.
 	if o.custom != nil && ireq.Request.ProtocolBinding == o.custom.URI() && ireq.Request.AssertionConsumerServiceIndex == "" &&
 		ireq.ACSEndpoint.Binding != o.custom.URI() {
-		if _, ep := findACS(ireq.ServiceProviderMetadata, ireq.ACSEndpoint.Location, o.custom.URI()); ep != nil {
+		var ep *saml.IndexedEndpoint
+		if ireq.Request.AssertionConsumerServiceURL != "" {
+			_, ep = findACS(ireq.ServiceProviderMetadata, ireq.ACSEndpoint.Location, o.custom.URI())
+		} else {
+			_, ep = defaultACSWithBinding(ireq.ServiceProviderMetadata, func(b string) bool { return b == o.custom.URI() })
+		}
+		if ep != nil {
 			req.ACSURL, req.ACSBinding = ep.Location, ep.Binding
 		}
 	}
@@ -285,12 +305,13 @@ func (c *Config) ParseAuthnRequest(ctx context.Context, r *http.Request, opts ..
 // service provider serviceProvider, to answer with Response once the user
 // has been authenticated. Its Response is unsolicited, and goes to the
 // SP's default assertion consumer service among those that a Response can
-// be posted to. relayState is sent with it: many SPs take it as the URL to
-// go to after login.
+// be posted to, or, with WithCustomBinding, sent to with its binding too
+// (saml-metadata §2.2.3). relayState is sent with it: many SPs take it as
+// the URL to go to after login.
 //
 // The error matches ErrUnknownServiceProvider if the ServiceProviderFunc
 // does not know serviceProvider, saml.ErrUnknownAssertionConsumerService if
-// the SP has no assertion consumer service to post to, and
+// the SP has no assertion consumer service to send a Response to, and
 // saml.ErrRelayStateTooLong if relayState is longer than 80 bytes.
 func (c *Config) IDPInitiated(ctx context.Context, serviceProvider, relayState string, opts ...ParseOption) (*AuthnRequest, error) {
 	var o parseOptions
@@ -299,16 +320,48 @@ func (c *Config) IDPInitiated(ctx context.Context, serviceProvider, relayState s
 			opt.applyParse(&o)
 		}
 	}
-	idp := c.identityProvider(o.idp)
+	idp := c.ssoIdentityProvider(o.idp)
 	r, err := http.NewRequestWithContext(ctx, http.MethodGet, c.ssoURL.String(), http.NoBody)
 	if err != nil {
 		return nil, err
 	}
 	ireq, err := idp.NewIdpInitiatedRequest(r, serviceProvider, relayState)
+	if o.custom == nil {
+		if err != nil {
+			return nil, err
+		}
+		return newAuthnRequest(ireq), nil
+	}
+
+	// Package saml chooses among the bindings it posts with, and fails if
+	// the SP lists none, having checked relayState and found the SP first.
+	// Choose among those and the custom binding.
+	if errors.Is(err, saml.ErrUnknownAssertionConsumerService) {
+		md, lookupErr := lookupServiceProvider(ctx, c.serviceProviders, serviceProvider, c.clock)
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		ireq, err = &saml.IdpAuthnRequest{IDP: idp, HTTPRequest: r, RelayState: relayState, ServiceProviderMetadata: md}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
+	ireq.SPSSODescriptor, ireq.ACSEndpoint = defaultACSWithBinding(ireq.ServiceProviderMetadata, o.sendable)
+	if ireq.ACSEndpoint == nil {
+		return nil, fmt.Errorf("samlidp: service provider %q has no assertion consumer service to send a response to: %w",
+			serviceProvider, saml.ErrUnknownAssertionConsumerService)
+	}
 	return newAuthnRequest(ireq), nil
+}
+
+// ssoIdentityProvider is identityProvider for ParseAuthnRequest and
+// IDPInitiated: its ServiceProviderProvider calls the ServiceProviderFunc of
+// New, whatever opts set, so that they see the same metadata as Response
+// and ErrorResponse, which look the SP up again.
+func (c *Config) ssoIdentityProvider(opts []IdentityProviderOption) *saml.IdentityProvider {
+	idp := c.identityProvider(opts)
+	idp.ServiceProviderProvider = serviceProviderProvider{c.serviceProviders, c.clock}
+	return idp
 }
 
 // defaultACS returns the default assertion consumer service of the SP
@@ -615,6 +668,13 @@ func (c *ssoCapture) WriteResponse(_ http.ResponseWriter, req *saml.IdpAuthnRequ
 	c.errorResponse = req
 	return nil
 }
+
+// discardSigner is the crypto.Signer of a ServeSSO whose signatures are
+// discarded: it has the public key of the signer it wraps, but signs
+// nothing, and returns an empty signature.
+type discardSigner struct{ crypto.Signer }
+
+func (discardSigner) Sign(io.Reader, []byte, crypto.SignerOpts) ([]byte, error) { return []byte{}, nil }
 
 // discardResponseWriter is the http.ResponseWriter of a ServeSSO that
 // writes nothing.
