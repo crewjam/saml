@@ -146,7 +146,10 @@ func TestIDPRequestedAuthnContextComparisons(t *testing.T) {
 		{"better", []string{racPPT}, racX509, true},
 		{"better", []string{racPPT}, racPPT, false},
 		{"better", []string{racX509}, racPPT, false},
-		{"better", []string{racX509, racPassword}, racPPT, true},
+		{"better", []string{racX509, racPassword}, racPPT, false},          // stronger than every one
+		{"better", []string{racX509, racPassword}, racSmartcardPKI, true},  // stronger than every one
+		{"better", []string{racPPT, racCustomMFA}, racSmartcardPKI, false}, // one unranked
+		{"better", nil, racSmartcardPKI, false},
 		{"better", []string{racCustomMFA}, racSmartcardPKI, false}, // unranked
 	}
 	strengths := DefaultAuthnContextClassStrengths()

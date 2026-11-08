@@ -44,3 +44,20 @@ func TestIDPAssertionNotBeforeIsNeverPostdated(t *testing.T) {
 	assert.Check(t, conditions.NotBefore.Before(confirmation.NotOnOrAfter))
 	assert.Check(t, !confirmation.NotOnOrAfter.After(conditions.NotOnOrAfter))
 }
+
+// The assertion's lifetime runs from the IdP's own clock: a request issued
+// shortly before it expired does not shorten it.
+func TestIDPAssertionLifetimeIsAnchoredToNow(t *testing.T) {
+	for _, offset := range []time.Duration{-(MaxIssueDelay - 5*time.Second), -time.Second, 0} {
+		req := newIssueInstantRequest(t, offset)
+		assert.NilError(t, req.Validate())
+		assert.NilError(t, DefaultAssertionMaker{}.MakeAssertion(req, &Session{ID: "s", UserName: "alice"}))
+
+		want := req.Now.Add(req.IDP.maxIssueDelay())
+		conditions := req.Assertion.Conditions
+		assert.Check(t, conditions.NotOnOrAfter.Equal(want), "offset %s: Conditions NotOnOrAfter %s, want %s", offset, conditions.NotOnOrAfter, want)
+		confirmation := req.Assertion.Subject.SubjectConfirmations[0].SubjectConfirmationData
+		assert.Check(t, confirmation.NotOnOrAfter.Equal(want), "offset %s: SubjectConfirmationData NotOnOrAfter %s, want %s", offset, confirmation.NotOnOrAfter, want)
+		assert.Check(t, conditions.NotBefore.Before(conditions.NotOnOrAfter))
+	}
+}

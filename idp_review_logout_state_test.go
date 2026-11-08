@@ -37,9 +37,9 @@ func logoutStateWith(t *testing.T, n int, random bool) *logoutState {
 			entityID = "https://" + randomHex(t, 12) + ".example.com/saml2/metadata"
 			nameID = randomHex(t, 20)
 		}
-		state.Pending = append(state.Pending, SessionParticipant{
+		state.Pending = append(state.Pending, pendingParticipant{
 			ServiceProviderID: entityID,
-			NameID: NameID{
+			NameID: &NameID{
 				Format:          string(TransientNameIDFormat),
 				NameQualifier:   "https://idp.example.com/saml/metadata",
 				SPNameQualifier: entityID,
