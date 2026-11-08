@@ -53,9 +53,8 @@ type MetadataProvider struct {
 }
 
 type metadataRefreshCall struct {
-	done   chan struct{}
-	err    error
-	forced bool
+	done chan struct{}
+	err  error
 }
 
 // NewMetadataProvider creates an on-demand metadata provider. If entityID is
@@ -149,10 +148,7 @@ func (p *MetadataProvider) get(ctx context.Context, force bool) (*saml.EntityDes
 			p.mu.Unlock()
 			select {
 			case <-wait.done:
-				if force && wait.forced {
-					return nil, wait.err
-				}
-				if errors.Is(wait.err, context.Canceled) {
+				if !force && errors.Is(wait.err, context.Canceled) {
 					return nil, wait.err
 				}
 				continue
@@ -161,7 +157,7 @@ func (p *MetadataProvider) get(ctx context.Context, force bool) (*saml.EntityDes
 			}
 		}
 
-		wait := &metadataRefreshCall{done: make(chan struct{}), forced: force}
+		wait := &metadataRefreshCall{done: make(chan struct{})}
 		p.refreshing = wait
 		previous := p.current
 		previousRetrievedAt := p.currentRetrievedAt

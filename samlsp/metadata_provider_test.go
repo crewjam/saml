@@ -129,6 +129,70 @@ func TestMetadataProviderForcedRefreshRunsAfterInFlightLoad(t *testing.T) {
 	assert.Equal(t, requestCount.Load(), int32(2), "forced refresh should perform its own fetch")
 }
 
+func TestMetadataProviderForcedRefreshRunsAfterFailedForcedRefresh(t *testing.T) {
+	metadataXML := providerTestMetadata()
+	requestStarted := make(chan struct{}, 1)
+	releaseFirstRefresh := make(chan struct{})
+	defer func() {
+		select {
+		case <-releaseFirstRefresh:
+		default:
+			close(releaseFirstRefresh)
+		}
+	}()
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		switch requestCount.Add(1) {
+		case 1:
+			_, _ = w.Write(metadataXML)
+		case 2:
+			requestStarted <- struct{}{}
+			<-releaseFirstRefresh
+			http.Error(w, "temporary upstream error", http.StatusServiceUnavailable)
+		default:
+			_, _ = w.Write(metadataXML)
+		}
+	}))
+	defer server.Close()
+
+	provider := newTestMetadataProvider(t, server)
+	ctx := context.Background()
+	_, err := provider.Metadata(ctx)
+	assert.NilError(t, err)
+
+	firstRefresh := make(chan error, 1)
+	go func() {
+		firstRefresh <- provider.Refresh(ctx)
+	}()
+	<-requestStarted
+
+	secondRefresh := make(chan error, 1)
+	secondRefreshStarted := make(chan struct{})
+	go func() {
+		close(secondRefreshStarted)
+		secondRefresh <- provider.Refresh(ctx)
+	}()
+	<-secondRefreshStarted
+	// Let the second forced refresh join the in-flight forced refresh before
+	// the first one fails. It should then perform its own fetch.
+	time.Sleep(25 * time.Millisecond)
+	close(releaseFirstRefresh)
+
+	select {
+	case err := <-firstRefresh:
+		assert.Assert(t, err != nil, "the first forced refresh should return its fetch error")
+	case <-time.After(3 * time.Second):
+		t.Fatal("first forced refresh did not finish")
+	}
+	select {
+	case err := <-secondRefresh:
+		assert.NilError(t, err, "the second forced refresh should return its own fetch result")
+	case <-time.After(3 * time.Second):
+		t.Fatal("second forced refresh did not finish")
+	}
+	assert.Equal(t, requestCount.Load(), int32(3), "second forced refresh should perform its own fetch")
+}
+
 func TestMetadataProviderSharesConcurrentFetch(t *testing.T) {
 	metadataXML := providerTestMetadata()
 	requestStarted := make(chan struct{}, 1)
