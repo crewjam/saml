@@ -50,7 +50,7 @@ func WithQueriedAttributes(names ...string) QueryOption {
 // SOAP AttributeService, and one matching saml.ErrBadStatus if the IdP
 // refused the query. The query is sent with the HTTP client of
 // WithHTTPClient, to an https endpoint only, and signed with the key of
-// WithKey, by which most attribute authorities decide what to release.
+// WithSigningKey, by which most attribute authorities decide what to release.
 func (c *Config) QueryAttributes(ctx context.Context, nameID saml.NameID, opts ...QueryOption) (Attributes, error) {
 	var o queryOptions
 	for _, opt := range opts {

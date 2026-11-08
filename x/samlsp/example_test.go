@@ -43,14 +43,14 @@ func Example() {
 	config, err := samlsp.New(
 		samlsp.RemoteMetadata("https://idp.example.com/metadata"),
 		"https://sp.example.com/saml/metadata", // the ACS is at https://sp.example.com/saml/acs
-		samlsp.WithKey(key, cert),
+		samlsp.WithSigningKey(key, cert),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 	pending := &pendingRequests{ids: map[string]string{}}
 
-	http.HandleFunc("/saml/metadata", config.ServeMetadata)
+	http.HandleFunc(config.MetadataPath(), config.ServeMetadata)
 
 	http.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
 		relayState := randomString()
@@ -63,7 +63,7 @@ func Example() {
 		req.Write(w)
 	})
 
-	http.HandleFunc("/saml/acs", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc(config.ACSPath(), func(w http.ResponseWriter, r *http.Request) {
 		requestID := pending.take(r.FormValue("RelayState"))
 		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(requestID))
 		if err != nil {

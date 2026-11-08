@@ -73,7 +73,7 @@ func currentSession(*http.Request) (nameID saml.NameID, sessionIndexes []string,
 // makes the Service that sends and receives logout messages.
 func Example() {
 	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
-		samlsp.WithKey(spKey, spCert), // logout messages are signed
+		samlsp.WithSigningKey(spKey, spCert), // logout messages are signed
 		slo.Endpoint("https://sp.example.com/saml/slo"))
 	if err != nil {
 		log.Fatal(err)
@@ -83,15 +83,17 @@ func Example() {
 		log.Fatal(err)
 	}
 	fmt.Println(logout.URL())
+	fmt.Println(logout.Path()) // to serve it at: http.HandleFunc(logout.Path(), ...)
 	// Output:
 	// https://sp.example.com/saml/slo
+	// /saml/slo
 }
 
 // Request starts single logout at the IdP. End the local session first, so
 // the user is logged out of this SP even if the IdP never answers.
 func ExampleService_Request() {
 	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
-		samlsp.WithKey(spKey, spCert), slo.Endpoint("https://sp.example.com/saml/slo"))
+		samlsp.WithSigningKey(spKey, spCert), slo.Endpoint("https://sp.example.com/saml/slo"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -127,7 +129,7 @@ func ExampleService_Request() {
 // (for example, because the user logged out of another SP).
 func ExampleService_ParseRequest() {
 	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
-		samlsp.WithKey(spKey, spCert), slo.Endpoint("https://sp.example.com/saml/slo"))
+		samlsp.WithSigningKey(spKey, spCert), slo.Endpoint("https://sp.example.com/saml/slo"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -136,7 +138,7 @@ func ExampleService_ParseRequest() {
 		log.Fatal(err)
 	}
 
-	http.HandleFunc("/saml/slo", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc(logout.Path(), func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case slo.IsRequest(r):
 			req, err := logout.ParseRequest(r.Context(), r)
@@ -178,7 +180,7 @@ func ExampleService_ParseRequest() {
 // samlsp.WithBinding.
 func ExampleWithStatus() {
 	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
-		samlsp.WithKey(spKey, spCert), slo.Endpoint("https://sp.example.com/saml/slo"))
+		samlsp.WithSigningKey(spKey, spCert), slo.Endpoint("https://sp.example.com/saml/slo"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -208,7 +210,7 @@ func ExampleWithStatus() {
 // at the SLO URL, and Response answers them.
 func ExampleService_SendRequest() {
 	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
-		samlsp.WithKey(spKey, spCert),
+		samlsp.WithSigningKey(spKey, spCert),
 		slo.Endpoint("https://sp.example.com/saml/slo", slo.BackChannel))
 	if err != nil {
 		log.Fatal(err)

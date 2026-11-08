@@ -90,7 +90,7 @@ func ExampleWithAuthnContext() {
 		msg.Write(w)
 	})
 
-	http.HandleFunc("/saml/acs/step-up", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc(config.ACSPath(), func(w http.ResponseWriter, r *http.Request) {
 		assertion, err := config.ParseResponse(r.Context(), r,
 			samlsp.WithRequestID(takePendingRequest(r)), stepUp)
 		if errors.Is(err, saml.ErrAuthnContextMismatch) {
@@ -141,7 +141,7 @@ func ExampleConfig_ParseResponse() {
 		log.Fatal(err)
 	}
 
-	http.HandleFunc("/saml/acs", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc(config.ACSPath(), func(w http.ResponseWriter, r *http.Request) {
 		requestID := takePendingRequest(r)
 		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(requestID))
 
@@ -180,7 +180,7 @@ func ExampleConfig_ParseResponse_unsolicited() {
 		log.Fatal(err)
 	}
 
-	http.HandleFunc("/saml/acs", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc(config.ACSPath(), func(w http.ResponseWriter, r *http.Request) {
 		opts := []samlsp.ResponseOption{samlsp.AllowUnsolicited}
 		if id := takePendingRequest(r); id != "" {
 			opts = append(opts, samlsp.WithRequestID(id))
@@ -219,7 +219,7 @@ func Example_passiveLogin() {
 		msg.Write(w)
 	})
 
-	http.HandleFunc("/saml/acs", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc(config.ACSPath(), func(w http.ResponseWriter, r *http.Request) {
 		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(takePendingRequest(r)))
 		var status saml.ErrBadStatus
 		if errors.As(err, &status) {

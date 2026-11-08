@@ -40,7 +40,7 @@ type OutgoingMessage struct {
 	// RelayState is sent with the message.
 	RelayState string
 
-	// Sign says to sign the message with the key of WithKey, if there is
+	// Sign says to sign the message with the key of WithSigningKey, if there is
 	// one that can sign: with an enveloped XML signature, or with the
 	// binding's own signature for HTTP-Redirect. Without such a key, the
 	// message is sent unsigned. HTTP-POST-SimpleSign always signs, and
@@ -179,7 +179,7 @@ func (c *Config) send(ctx context.Context, msg OutgoingMessage, o messageOptions
 		return out.PostForm(fields)
 	case saml.HTTPPostSimpleSignBinding:
 		if method == "" {
-			return nil, errors.New("samlsp: the HTTP-POST-SimpleSign binding needs an RSA or ECDSA key (see WithKey)")
+			return nil, errors.New("samlsp: the HTTP-POST-SimpleSign binding needs an RSA or ECDSA key (see WithSigningKey)")
 		}
 		fields, err := signer.SimpleSignValues(msg.Param, el, msg.RelayState, method)
 		if err != nil {

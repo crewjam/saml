@@ -82,7 +82,7 @@ func TestSPMetadataAdditions(t *testing.T) {
 func TestSPMetadataAdditionsSigned(t *testing.T) {
 	ti := newTestIDP(t)
 	key, cert := newKeyPair(t, "sp")
-	opts := append(spMetadataOptions(), samlsp.WithKey(key, cert), samlsp.SignMetadata)
+	opts := append(spMetadataOptions(), samlsp.WithSigningKey(key, cert), samlsp.SignMetadata)
 	cfg, err := samlsp.New(staticIDP(ti), spEntityID, opts...)
 	if err != nil {
 		t.Fatal(err)

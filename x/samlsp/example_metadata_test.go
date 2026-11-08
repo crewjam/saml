@@ -162,13 +162,13 @@ func ExampleWithHTTPClient() {
 	config, err := samlsp.New(
 		samlsp.RemoteMetadata("https://idp.example.com/metadata", samlsp.WithHTTPClient(mtlsClient)),
 		"https://sp.example.com/saml/metadata",
-		samlsp.WithKey(spKey, spCert),
+		samlsp.WithSigningKey(spKey, spCert),
 		samlsp.WithHTTPClient(mtlsClient))
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	http.HandleFunc("/saml/acs", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc(config.ACSPath(), func(w http.ResponseWriter, r *http.Request) {
 		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(takePendingRequest(r)))
 		if err != nil {
 			http.Error(w, "login failed", http.StatusForbidden)

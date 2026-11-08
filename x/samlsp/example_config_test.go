@@ -82,7 +82,7 @@ func ExampleConfig_ServeMetadata() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	http.HandleFunc("/saml/metadata", config.ServeMetadata)
+	http.HandleFunc(config.MetadataPath(), config.ServeMetadata)
 
 	w := httptest.NewRecorder()
 	config.ServeMetadata(w, httptest.NewRequest(http.MethodGet, "/saml/metadata", nil))
@@ -116,7 +116,7 @@ func ExampleServiceProviderOption_perCall() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	http.HandleFunc("/saml/acs", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc(config.ACSPath(), func(w http.ResponseWriter, r *http.Request) {
 		requestID := takePendingRequest(r)
 		assertion, err := config.ParseResponse(r.Context(), r,
 			samlsp.WithRequestID(requestID),

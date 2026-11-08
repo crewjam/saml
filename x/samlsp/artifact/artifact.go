@@ -8,7 +8,7 @@
 // samlsp.WithCustomBinding to Config.AuthnRequest, or to the messages of
 // x/samlsp/slo, and serves the ArtifactResolutionService.
 //
-//	config, err := samlsp.New(idp, entityID, samlsp.WithKey(key, cert),
+//	config, err := samlsp.New(idp, entityID, samlsp.WithSigningKey(key, cert),
 //		artifact.ResolutionService("https://sp.example.com/saml/artifact", 1))
 //	binding := artifact.New(config, artifact.NewMemoryStore(), 1)
 //

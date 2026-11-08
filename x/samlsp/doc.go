@@ -16,14 +16,19 @@
 //	config, err := samlsp.New(
 //		samlsp.RemoteMetadata("https://idp.example.com/metadata"),
 //		"https://sp.example.com/saml/metadata", // the SP's entity ID
-//		samlsp.WithKey(key, cert),
+//		samlsp.WithSigningKey(key, cert),
 //	)
-//	http.HandleFunc("/saml/metadata", config.ServeMetadata)
-//	http.HandleFunc("/saml/acs", acs) // config.ACSURL()
+//	http.HandleFunc(config.MetadataPath(), config.ServeMetadata)
+//	http.HandleFunc(config.ACSPath(), acs)
 //
 // The entity ID is conventionally the URL of the SP metadata. Unless
 // WithACSURL says otherwise, the ACS is beside it, at "acs": here,
-// https://sp.example.com/saml/acs.
+// https://sp.example.com/saml/acs. MetadataPath and ACSPath return the
+// paths of those URLs, so that the handlers are served where the IdP
+// expects them.
+//
+// The key of WithSigningKey signs. The IdP can encrypt assertions only to
+// the key of WithEncryptionKey, which may be the same RSA key.
 //
 // The first argument is a MetadataFunc that supplies the identity
 // provider's metadata. The methods that deal with the IdP call it with
@@ -39,7 +44,7 @@
 // method builds. Pass it to New for every call, or to a single call
 // alongside its other options:
 //
-//	config, err := samlsp.New(idp, entityID, samlsp.WithKey(key, cert), samlsp.SignMetadata)
+//	config, err := samlsp.New(idp, entityID, samlsp.WithSigningKey(key, cert), samlsp.SignMetadata)
 //	config.ParseResponse(ctx, r, samlsp.WithRequestID(id), samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
 //		sp.ValidateAudienceRestriction = func(*saml.Assertion) error { return nil }
 //	}))

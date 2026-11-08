@@ -33,7 +33,7 @@ func parseIDPInitiated(t *testing.T, opts []samlsp.Option, respOpts ...samlsp.Re
 	key, cert := fixtureKeyPair(t)
 	opts = append([]samlsp.Option{
 		samlsp.WithACSURL(fx.acsURL),
-		samlsp.WithKey(key, cert),
+		samlsp.WithSigningKey(key, cert),
 		samlsp.WithClock(dsig.NewFakeClockAt(fx.now)),
 	}, opts...)
 	cfg, err := samlsp.New(samlsp.StaticMetadataBytes(coreTestdata(t, fx.metadata)), fx.entityID, opts...)
