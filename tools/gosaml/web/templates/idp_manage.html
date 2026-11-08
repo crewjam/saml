@@ -24,7 +24,7 @@
         {{template "ep" (ep "Artifact resolution URL" "SOAP, index 1" .ArtifactURL)}}
         <div class="ep">
           <span class="ep-label">Signing certificate<span class="ep-binding plain">{{.CertInfo}}</span></span>
-          <div class="ep-value"><a class="grow" href="{{.CertURL}}">Download PEM</a><button type="button" class="btn secondary sm" data-copy="{{.Instance.CertPEM}}">Copy</button></div>
+          <div class="ep-value"><a class="grow" hx-boost="false" href="{{.CertURL}}">Download PEM</a><button type="button" class="btn secondary sm" data-copy="{{.Instance.CertPEM}}">Copy</button></div>
         </div>
       </section>
 
@@ -96,12 +96,12 @@
           <h2 class="sec-h2">Sessions <span class="count">{{len .Sessions}}</span></h2>
           <p class="help">Logins from the same browser reuse a session{{if not .Config.RememberSessions}}, when Remember logins is on{{end}}. Logging out of one SP, or here, logs the user out of all of them.</p>
           {{with .Current}}<div class="row"><span class="row-main">This browser is logged in as <strong>{{.Username}}</strong><span class="row-sub">at {{len .Participants}} service provider(s). <a href="/idp/{{$.Data.Instance.ID}}/session">Session page</a></span></span>
-            <form method="post" action="/idp/{{$.Data.Instance.ID}}/logout" class="inline"><button class="btn sm">Log out everywhere</button></form></div>{{end}}
+            <form hx-boost="false" method="post" action="/idp/{{$.Data.Instance.ID}}/logout" class="inline"><button class="btn sm">Log out everywhere</button></form></div>{{end}}
           {{range .Sessions}}
           <div class="row">
             <span class="row-main"><strong>{{.Username}}</strong><span class="row-sub">Logged in <time datetime="{{iso .AuthnInstant}}">{{since .AuthnInstant}}</time> · {{len .Participants}} SP(s) · session index <span class="mono">{{.SessionIndex}}</span></span></span>
             <div class="actions">
-              <form method="post" action="/manage/{{$.Data.Secret}}/session-logout" class="inline"><input type="hidden" name="session_id" value="{{.ID}}"><button class="btn secondary sm">Log out</button></form>
+              <form hx-boost="false" method="post" action="/manage/{{$.Data.Secret}}/session-logout" class="inline"><input type="hidden" name="session_id" value="{{.ID}}"><button class="btn secondary sm">Log out</button></form>
               <form method="post" action="/manage/{{$.Data.Secret}}/session-delete" class="inline"><input type="hidden" name="session_id" value="{{.ID}}"><button class="btn danger sm">Delete</button></form>
             </div>
           </div>

@@ -1,5 +1,7 @@
-// Small enhancements for the server-rendered pages. Everything works
-// without it, except copying and live log updates.
+// Small enhancements for the server-rendered pages, which htmx boosts
+// (layout.html). Everything works without either, except copying and
+// live log updates. Listeners are delegated from the document, so they
+// keep working on pages htmx swaps in.
 (() => {
   const flashLabel = (btn, text) => {
     const old = btn.textContent;
@@ -66,51 +68,64 @@
     }
   });
 
+  // Confirmation before destructive posts: data-confirm on the form or
+  // on the button that submits it. Forms are boosted by htmx, which asks
+  // through htmx:confirm; forms it does not boost (the protocol ones) get
+  // a plain submit event, which htmx has not already cancelled.
+  const question = (form, submitter) => (submitter && submitter.dataset.confirm) || (form && form.dataset && form.dataset.confirm);
+  document.addEventListener("htmx:confirm", (e) => {
+    const t = e.detail.triggeringEvent;
+    const msg = question(e.detail.elt.closest && e.detail.elt.closest("form"), t && t.submitter);
+    if (!msg) return;
+    e.preventDefault();
+    if (confirm(msg)) e.detail.issueRequest(true);
+  });
   document.addEventListener("submit", (e) => {
-    const msg = e.submitter && e.submitter.dataset.confirm || e.target.dataset.confirm;
+    if (e.defaultPrevented) return;
+    const msg = question(e.target, e.submitter);
     if (msg && !confirm(msg)) e.preventDefault();
   });
 
   // The login picker's button names the chosen user.
-  const picker = document.querySelector("[data-login-picker]");
-  if (picker) {
+  document.addEventListener("change", (e) => {
+    if (e.target.name !== "user" || !e.target.closest("[data-login-picker]")) return;
     const label = document.querySelector("[data-login-as]");
-    picker.addEventListener("change", (e) => {
-      if (e.target.name === "user" && label) label.textContent = "Log in as " + e.target.value;
-    });
-  }
+    if (label) label.textContent = "Log in as " + e.target.value;
+  });
 
-  // Times are rendered in UTC; show them in the viewer's time zone.
-  const localTimes = (root) => root.querySelectorAll("time[datetime]").forEach((el) => {
+  // Times are rendered in UTC; show them in the viewer's time zone. This
+  // runs again on whatever htmx swaps in.
+  const localTimes = (root) => root.querySelectorAll("time[datetime]:not([data-local])").forEach((el) => {
     const d = new Date(el.getAttribute("datetime"));
     if (isNaN(d)) return;
     el.textContent = el.dataset.date !== undefined ? d.toLocaleString() : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     el.title = d.toUTCString();
+    el.dataset.local = "";
   });
   localTimes(document);
+  document.addEventListener("htmx:load", (e) => localTimes(e.detail.elt));
 
   // The Log follows its instance with htmx's SSE extension (see the "log"
   // template): the server sends each new row as HTML, which htmx adds to
   // the top of the list. What is left to do here is the Live indicator,
-  // skipping rows already shown after a reconnect, trimming the list to
-  // the server's limit, and showing times in the viewer's time zone.
-  const log = document.getElementById("log");
-  if (log) {
-    const live = document.getElementById("live");
-    const max = parseInt(log.dataset.max, 10) || 50;
-    log.addEventListener("htmx:sseOpen", () => { live.hidden = false; });
-    log.addEventListener("htmx:sseError", () => { live.hidden = true; });
-    log.addEventListener("htmx:sseClose", () => { live.hidden = true; });
-    log.addEventListener("htmx:sseBeforeMessage", (e) => {
-      const id = e.detail && e.detail.lastEventId;
-      if (e.detail.type === "log" && id && log.querySelector(`#log-list li[data-id="${CSS.escape(id)}"]`)) e.preventDefault();
-    });
-    log.addEventListener("htmx:afterSwap", (e) => {
-      const list = document.getElementById("log-list");
-      if (e.target !== list) return;
-      const first = list.firstElementChild;
-      if (first) { first.classList.add("new"); localTimes(first); }
-      while (list.children.length > max) list.lastElementChild.remove();
-    });
-  }
+  // skipping rows already shown after a reconnect, and trimming the list
+  // to the server's limit. The listeners are on the document because
+  // boosted navigation replaces the Log along with the rest of the page.
+  const liveIndicator = (on) => { const live = document.getElementById("live"); if (live) live.hidden = !on; };
+  document.addEventListener("htmx:sseOpen", () => liveIndicator(true));
+  document.addEventListener("htmx:sseError", () => liveIndicator(false));
+  document.addEventListener("htmx:sseClose", () => liveIndicator(false));
+  document.addEventListener("htmx:sseBeforeMessage", (e) => {
+    const id = e.detail && e.detail.lastEventId;
+    if (e.detail.type === "log" && id && document.querySelector(`#log-list li[data-id="${CSS.escape(id)}"]`)) e.preventDefault();
+  });
+  document.addEventListener("htmx:afterSwap", (e) => {
+    const list = document.getElementById("log-list");
+    if (!list || e.target !== list) return;
+    const log = document.getElementById("log");
+    const max = parseInt(log && log.dataset.max, 10) || 50;
+    const first = list.firstElementChild;
+    if (first) first.classList.add("new");
+    while (list.children.length > max) list.lastElementChild.remove();
+  });
 })();

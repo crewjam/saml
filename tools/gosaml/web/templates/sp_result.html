@@ -5,8 +5,8 @@
   <h1 class="result ok">Logged in as <code>{{.Assertion.Subject}}</code></h1>
   {{if .SignedIn}}
   <div class="row top-actions">
-    <form method="post" action="/sp/{{.InstanceID}}/logout"><button>Log out everywhere</button></form>
-    <form method="post" action="/sp/{{.InstanceID}}/logout"><input type="hidden" name="mode" value="local"><button class="secondary">Log out of this SP only</button></form>
+    <form hx-boost="false" method="post" action="/sp/{{.InstanceID}}/logout"><button>Log out everywhere</button></form>
+    <form hx-boost="false" method="post" action="/sp/{{.InstanceID}}/logout"><input type="hidden" name="mode" value="local"><button class="secondary">Log out of this SP only</button></form>
     <a class="button secondary" href="/sp/{{.InstanceID}}/">Session page</a>
   </div>
   {{end}}
@@ -48,7 +48,7 @@
   {{end}}
   {{if .ResponseXML}}<details {{if not .Assertion}}open{{end}}><summary>Response as received</summary><div class="xml-head"><span>XML</span><button type="button" class="small secondary" data-copy-from="next">Copy</button></div><pre class="xml">{{.ResponseXML}}</pre></details>{{end}}
   <div class="row">
-    <a class="button {{if .SignedIn}}secondary{{end}}" href="/sp/{{.InstanceID}}/login">Log in again</a>
+    <a class="button {{if .SignedIn}}secondary{{end}}" hx-boost="false" href="/sp/{{.InstanceID}}/login">Log in again</a>
     {{if .ManageURL}}<a class="button secondary" href="{{.ManageURL}}">Manage this SP</a>{{end}}
   </div>
 </section>

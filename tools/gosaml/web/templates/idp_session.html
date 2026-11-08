@@ -9,7 +9,7 @@
   </table>
   <h2>Service providers in this session</h2>
   {{template "participants" .Participants}}
-  <form method="post" action="/idp/{{$.Data.InstanceID}}/logout"><button>Log out of all of them</button></form>
+  <form hx-boost="false" method="post" action="/idp/{{$.Data.InstanceID}}/logout"><button>Log out of all of them</button></form>
   <p class="hint">IdP-initiated single logout: the IdP ends this session and sends each service provider a LogoutRequest.</p>
   {{else}}
   <h1>No session</h1>

@@ -34,7 +34,7 @@
     <div class="actions entry-actions">
       {{if .Curl}}<button type="button" class="btn secondary" data-copy="{{.Curl}}">Copy as cURL</button>{{end}}
       {{if .HTTPRequest}}<button type="button" class="btn secondary" data-copy-target="raw-request">Copy raw request</button>{{end}}
-      {{if .InspectHref}}<a class="btn secondary" href="{{.InspectHref}}">Open in the inspector</a>{{end}}
+      {{if .InspectHref}}<a class="btn secondary" hx-boost="false" href="{{.InspectHref}}">Open in the inspector</a>{{end}}
     </div>
     {{if not .HTTPRequest}}<p class="help">No HTTP exchange was kept for this entry: it was recorded outside a request to one of this instance's endpoints.</p>{{end}}
   </section>

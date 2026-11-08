@@ -10,20 +10,20 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&amp;family=DM+Mono:wght@400;500&amp;display=swap">
 <link rel="stylesheet" href="/static/style.css">
-<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true}'>
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true,"historyCacheSize":0,"responseHandling":[{"code":"204","swap":false},{"code":"...","swap":true}]}'>
 <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/htmx-ext-sse@2.2.2/sse.js" integrity="sha384-fw+eTlCc7suMV/1w/7fr2/PmwElUIt5i82bi+qTiLXvjRXZ2/FkiTNA/w0MhXnGI" crossorigin="anonymous" defer></script>
 <script src="/static/app.js" defer></script>
 {{block "head" .}}{{end}}
 </head>
-<body>
+<body hx-boost="true">
 {{block "header" .}}
 <header class="top">
   <div class="top-inner">
     <a class="wordmark" href="/">gosaml.dev</a>
     <nav class="nav" aria-label="Main">
       <a href="/" {{if eq .Nav "home"}}aria-current="page"{{end}}>Home</a>
-      <a href="/inspect" {{if eq .Nav "inspect"}}aria-current="page"{{end}}>Inspector</a>
+      <a hx-boost="false" href="/inspect" {{if eq .Nav "inspect"}}aria-current="page"{{end}}>Inspector</a>
       <a href="{{.NavIdP}}" {{if eq .Nav "idp"}}aria-current="page"{{end}}><span class="nav-sq idp" aria-hidden="true"></span>IdP</a>
       <a href="{{.NavSP}}" {{if eq .Nav "sp"}}aria-current="page"{{end}}><span class="nav-sq sp" aria-hidden="true"></span>SP</a>
       <a href="/about" {{if eq .Nav "about"}}aria-current="page"{{end}}>About</a>

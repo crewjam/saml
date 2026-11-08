@@ -272,3 +272,29 @@ func TestParseAttributes(t *testing.T) {
 		t.Error("expected an error")
 	}
 }
+
+// Boosted form posts are answered with HX-Location, keeping the
+// fragment a redirect would lose, and never push a POST URL.
+func TestBoostedPost(t *testing.T) {
+	h := newHarness(t)
+	secret, _ := h.create("sp")
+	req, _ := http.NewRequest(http.MethodPost, h.base+"/manage/"+secret+"/idp-set", strings.NewReader("metadata_xml=nonsense"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	resp, err := h.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close() //nolint:errcheck // test
+	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("HX-Location"), "/manage/"+secret+"?msg=") || !strings.HasSuffix(resp.Header.Get("HX-Location"), "#idp") {
+		t.Fatalf("got %d, HX-Location %q", resp.StatusCode, resp.Header.Get("HX-Location"))
+	}
+	if resp.Header.Get("HX-Push-Url") != "false" {
+		t.Fatalf("HX-Push-Url = %q", resp.Header.Get("HX-Push-Url"))
+	}
+	// Without htmx, it is an ordinary redirect.
+	resp, _ = h.do(http.MethodPost, "/manage/"+secret+"/clear-events", url.Values{})
+	if resp.Request.URL.Path != "/manage/"+secret {
+		t.Fatalf("not redirected: %s", resp.Request.URL)
+	}
+}

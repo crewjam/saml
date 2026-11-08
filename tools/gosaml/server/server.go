@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
+	"io"
 	"log/slog"
 	"net/http"
 	"path"
@@ -148,6 +149,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.Set("Referrer-Policy", "same-origin")
 	if !strings.HasPrefix(r.URL.Path, "/static/") {
 		h.Set("Cache-Control", "no-store")
+	}
+	if r.Method == http.MethodPost && r.Header.Get("HX-Request") == "true" {
+		// A boosted form post that is answered with a page, not
+		// seeOther, must not put its URL in the history: reloading it
+		// would GET a POST-only route.
+		h.Set("HX-Push-Url", "false")
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 	r = r.WithContext(context.WithValue(r.Context(), nonceKey, n))
@@ -448,7 +455,7 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request, kind sto
 			return
 		}
 		s.setMine(w, append(mine(r), secret))
-		http.Redirect(w, r, "/manage/"+secret, http.StatusSeeOther)
+		seeOther(w, r, "/manage/"+secret)
 		return
 	}
 }
@@ -491,7 +498,7 @@ func (s *Server) manageAction(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		s.setMine(w, kept)
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		seeOther(w, r, "/")
 		return
 	case "clear-events":
 		if err := s.Store.ClearEvents(r.Context(), in.ID); err != nil {
@@ -499,7 +506,14 @@ func (s *Server) manageAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.hub.publish(store.Event{InstanceID: in.ID, ID: clearedEvent})
-		http.Redirect(w, r, "/manage/"+in.Secret+"#log", http.StatusSeeOther)
+		if r.Header.Get("HX-Request") == "true" {
+			// The Clear button posts with htmx and swaps nothing but
+			// this empty list, out of band, so the page stays put.
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			io.WriteString(w, clearedLogList) //nolint:errcheck // nothing to do
+			return
+		}
+		seeOther(w, r, "/manage/"+in.Secret+"#log")
 		return
 	}
 	switch in.Kind {
@@ -518,6 +532,20 @@ func flash(w http.ResponseWriter, r *http.Request, in *store.Instance, msg, anch
 	}
 	if anchor != "" {
 		target += "#" + anchor
+	}
+	seeOther(w, r, target)
+}
+
+// seeOther sends the browser to one of this site's pages after a form
+// post. A post made by htmx (the forms are boosted) is answered with
+// HX-Location instead of a redirect, because a redirect followed by
+// XMLHttpRequest loses the target's #fragment, which many of these
+// carry to bring the changed section into view.
+func seeOther(w http.ResponseWriter, r *http.Request, target string) {
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Location", target)
+		w.WriteHeader(http.StatusOK)
+		return
 	}
 	http.Redirect(w, r, target, http.StatusSeeOther)
 }

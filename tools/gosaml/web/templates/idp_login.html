@@ -13,7 +13,7 @@
     {{if .Request.ForceAuthn}}<tr><th>ForceAuthn</th><td>yes: the SP wants a fresh login</td></tr>{{end}}
   </table>
 
-  <form method="post" action="/idp/{{.InstanceID}}/login" class="stack">
+  <form hx-boost="false" method="post" action="/idp/{{.InstanceID}}/login" class="stack">
     <input type="hidden" name="pending" value="{{.PendingID}}">
     <fieldset>
       <legend>Log in as</legend>

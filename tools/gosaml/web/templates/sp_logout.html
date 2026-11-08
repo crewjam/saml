@@ -6,7 +6,7 @@
   {{if .Subject}}<p class="meta">Session of <code>{{.Subject}}</code></p>{{end}}
   {{if .Detail}}<pre class="detail">{{.Detail}}</pre>{{end}}
   <div class="row">
-    <a class="button" href="/sp/{{.InstanceID}}/login">Log in again</a>
+    <a class="button" hx-boost="false" href="/sp/{{.InstanceID}}/login">Log in again</a>
     {{if .ManageURL}}<a class="button secondary" href="{{.ManageURL}}">Manage this SP</a>{{end}}
   </div>
 </section>
