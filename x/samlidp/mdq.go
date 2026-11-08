@@ -130,9 +130,10 @@ const maxEntityIDLength = 1024
 // asked for and not be expired.
 //
 // MDQ responses are signed: pass WithMetadataSigners with the federation's
-// certificate. Without it, nothing but TLS vouches for the metadata, so
-// baseURL must be https, and a redirect to a URL that is not is not
-// followed. The options WithMetadataSigners, WithClock, WithHTTPClient,
+// certificate. Signed metadata must then have a validUntil, so that an old
+// signed copy cannot be served in place of the current one. Without it,
+// nothing but TLS vouches for the metadata, so baseURL must be https, and
+// a redirect to a URL that is not is not followed. The options WithMetadataSigners, WithClock, WithHTTPClient,
 // WithRefreshInterval, WithMaxStale, WithFetchErrorHandler,
 // WithMaxMetadataSize and WithMaxCachedServiceProviders apply;
 // WithServiceProviderEntityID does not.

@@ -286,6 +286,13 @@ func parseMetadata(data []byte, o metadataOptions) (*saml.EntityDescriptor, erro
 // followed, so that TLS vouches for the metadata. A document larger than
 // WithMaxMetadataSize allows is refused too.
 //
+// With WithMetadataSigners, the signature vouches for the metadata
+// instead, whatever the channel, and the signers, such as a federation's,
+// may sign many entities. So WithIdentityProviderEntityID is then required,
+// so that one of the others cannot be served in place of the IdP, and the
+// metadata must have a validUntil, so that an old signed copy cannot be
+// served after it. Without that option the MetadataFunc returns an error.
+//
 // Fetches are not cancelled with the context of the call that started
 // them, since other calls may be waiting for them, but time out after two
 // minutes. A caller that stops waiting gets its context's error.
@@ -305,7 +312,12 @@ func parseMetadata(data []byte, o metadataOptions) (*saml.EntityDescriptor, erro
 // MetadataFunc as long as the IdP is configured, rather than making a new
 // one with each Config, so that its cache is kept too.
 func RemoteMetadata(metadataURL string, opts ...MetadataOption) MetadataFunc {
-	return newRemote(metadataURL, newMetadataOptions(opts)).Get
+	o := newMetadataOptions(opts)
+	if len(o.certs) > 0 && o.entityID == "" {
+		err := errors.New("samlsp: RemoteMetadata with WithMetadataSigners needs WithIdentityProviderEntityID, so that another entity signed by the same signers is not accepted in place of the IdP")
+		return func(context.Context) (*saml.EntityDescriptor, error) { return nil, err }
+	}
+	return newRemote(metadataURL, o).Get
 }
 
 // MDQMetadata returns a MetadataFunc for the identity provider entityID,
@@ -314,7 +326,8 @@ func RemoteMetadata(metadataURL string, opts ...MetadataOption) MetadataFunc {
 // Federations publish MDQ services so that each SP need not download the
 // whole aggregate. It caches, refreshes and checks like RemoteMetadata, and
 // takes the same options. Their responses are signed: pass
-// WithMetadataSigners with the federation's certificate.
+// WithMetadataSigners with the federation's certificate. The entity is
+// pinned to entityID, and signed responses must have a validUntil.
 func MDQMetadata(baseURL, entityID string, opts ...MetadataOption) MetadataFunc {
 	u := strings.TrimSuffix(baseURL, "/") + "/entities/" + url.PathEscape(entityID)
 	o := newMetadataOptions(append(slices.Clip(opts), WithIdentityProviderEntityID(entityID)))
