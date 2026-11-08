@@ -60,7 +60,7 @@ func TestServeSLOFrontChannelKeepsSessionOfAnotherPrincipal(t *testing.T) {
 	t.Run("invalid session", func(t *testing.T) {
 		app := newSOAPLogoutApp(t)
 		name := app.lt.m.Session.(CookieSessionProvider).Name
-		resp := app.frontChannelLogout(t, saml.HTTPPostBinding, &http.Cookie{Name: name, Value: "not-a-token"}, "index-1")
+		resp := app.frontChannelLogout(t, saml.HTTPPostBinding, &http.Cookie{Name: name, Value: "not-a-token", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode}, "index-1")
 		checkLogoutSuccess(t, app.lt, resp)
 	})
 }
