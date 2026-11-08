@@ -14,7 +14,10 @@ import (
 	_ "embed"
 	"encoding/pem"
 	"encoding/xml"
+	"io"
+	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,8 +58,6 @@ func init() {
 	if spCert, err = x509.ParseCertificate(block.Bytes); err != nil {
 		panic(err)
 	}
-	saml.TimeNow = func() time.Time { return now }
-	saml.Clock = dsig.NewFakeClockAt(now)
 }
 
 func mustParseURL(s string) url.URL {
@@ -112,15 +113,31 @@ func FuzzLogoutRequest(f *testing.F) {
 // FuzzLogoutResponseRedirect feeds an HTTP-Redirect LogoutResponse query
 // string (deflated, base64, detached signature) to the SP.
 func FuzzLogoutResponseRedirect(f *testing.F) {
-	f.Fuzz(func(_ *testing.T, data string) {
-		_ = newSP().ValidateLogoutResponseRedirect(data)
+	f.Add("SAMLResponse=&RelayState=&SigAlg=&Signature=")
+	f.Fuzz(func(_ *testing.T, query string) {
+		sp := newSP()
+		u := sp.SloURL
+		u.RawQuery = query
+		req := &http.Request{Method: http.MethodGet, URL: &u, Header: http.Header{}}
+		_, _ = sp.ParseLogoutResponse(req, []string{requestID})
 	})
 }
 
-// FuzzLogoutResponseForm feeds an HTTP-POST LogoutResponse form value to the SP.
+// FuzzLogoutResponseForm feeds an urlencoded HTTP-POST (or POST-SimpleSign)
+// LogoutResponse body to the SP.
 func FuzzLogoutResponseForm(f *testing.F) {
-	f.Fuzz(func(_ *testing.T, data string) {
-		_ = newSP().ValidateLogoutResponseForm(data)
+	f.Add("SAMLResponse=")
+	f.Add("SAMLResponse=&RelayState=&SigAlg=&Signature=")
+	f.Fuzz(func(_ *testing.T, body string) {
+		sp := newSP()
+		u := sp.SloURL
+		req := &http.Request{
+			Method: http.MethodPost,
+			URL:    &u,
+			Header: http.Header{"Content-Type": {"application/x-www-form-urlencoded"}},
+			Body:   io.NopCloser(strings.NewReader(body)),
+		}
+		_, _ = sp.ParseLogoutResponse(req, []string{requestID})
 	})
 }
 
