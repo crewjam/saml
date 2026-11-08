@@ -12,6 +12,7 @@ import (
 
 	"github.com/beevik/etree"
 
+	"github.com/crewjam/saml/internal/safehttp"
 	"github.com/crewjam/saml/internal/xmlroundtrip"
 	"github.com/crewjam/saml/logger"
 )
@@ -32,17 +33,16 @@ var MaxSOAPLogoutMessageSize int64 = 1 << 20
 // IdentityProvider waits for a SOAP exchange with a service provider.
 const defaultSOAPTimeout = 10 * time.Second
 
-// defaultSOAPHTTPClient is the HTTP client an IdentityProvider sends SOAP
-// messages with when IdentityProvider.HTTPClient is nil. It gives up after
-// defaultSOAPTimeout, so that an unresponsive service provider does not hold
-// up a logout, and does not follow redirects: the SOAP binding has none, and
-// the message must only go to the endpoint in the metadata.
-var defaultSOAPHTTPClient = &http.Client{
-	Timeout: defaultSOAPTimeout,
-	CheckRedirect: func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
-	},
-}
+// defaultSOAPHTTPClient is the HTTP client an IdentityProvider or a
+// ServiceProvider sends SOAP messages with when its HTTPClient is nil. It
+// gives up after defaultSOAPTimeout, so that an unresponsive peer does not
+// hold up a logout, and does not follow redirects: the SOAP binding has
+// none, and the message must only go to the endpoint in the metadata. It
+// connects only to public addresses, since the endpoint is whatever the
+// peer's metadata says (see package internal/safehttp).
+var defaultSOAPHTTPClient = safehttp.Client(defaultSOAPTimeout, func(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+})
 
 // soapHTTPClient returns the HTTP client to send a SOAP message with:
 // defaultSOAPHTTPClient when client is nil, and otherwise a copy of client

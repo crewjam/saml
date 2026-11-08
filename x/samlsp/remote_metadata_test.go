@@ -600,3 +600,27 @@ func TestMetadataOptionsNil(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+// Without WithHTTPClient, metadata is fetched with a client that connects
+// only to public addresses, so that a metadata URL from someone else, such
+// as a tenant's administrator, cannot reach the server's own network.
+func TestRemoteMetadataDefaultClientRefusesLoopback(t *testing.T) {
+	var hits atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		hits.Add(1)
+	}))
+	defer server.Close()
+
+	for name, fn := range map[string]MetadataFunc{
+		"RemoteMetadata": RemoteMetadata(server.URL + "/metadata"),
+		"MDQMetadata":    MDQMetadata(server.URL, "https://idp.example.com/metadata"),
+	} {
+		_, err := fn(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "not a permitted destination") {
+			t.Errorf("%s: got %v", name, err)
+		}
+	}
+	if n := hits.Load(); n != 0 {
+		t.Errorf("the loopback server got %d requests", n)
+	}
+}

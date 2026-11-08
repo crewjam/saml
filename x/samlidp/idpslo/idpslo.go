@@ -130,8 +130,13 @@ func WithDecryptionKey(key *rsa.PrivateKey, cert *x509.Certificate, previous ...
 }
 
 // WithHTTPClient sets the HTTP client SendRequest sends SOAP messages
-// with. By default, a client gives up after 10 seconds and does not follow
-// redirects.
+// with. By default, a client gives up after 10 seconds, does not follow
+// redirects, and connects only to public addresses: SendRequest sends to
+// the SOAP SingleLogoutService in the SP's metadata, and an SP that
+// registers its own metadata could otherwise point it at services on your
+// own network (server-side request forgery). A client given here is used
+// as it is: guard its dialer too, such as with code.dny.dev/ssrf, if SPs
+// register their own metadata.
 func WithHTTPClient(client *http.Client) EndpointOption {
 	return func(o *endpointOptions) { o.httpClient = client }
 }

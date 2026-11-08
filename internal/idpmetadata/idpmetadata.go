@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/internal/safehttp"
 	"github.com/crewjam/saml/internal/xmlroundtrip"
 	"github.com/crewjam/saml/logger"
 )
@@ -196,12 +197,15 @@ func (v metadataValidity) applyTo(entity *saml.EntityDescriptor) {
 	}
 }
 
-var defaultHTTPClient = &http.Client{Timeout: 2 * time.Minute}
+// defaultHTTPClient times out after two minutes, and connects only to
+// public addresses (see package internal/safehttp).
+var defaultHTTPClient = safehttp.Client(2*time.Minute, nil)
 
 // Fetch returns the body of a GET of metadataURL, refusing a response that
 // is not 2xx or is larger than limit bytes (a *TooLargeError). If
-// httpClient is nil, a client with a two-minute timeout is used. If accept
-// is not empty, it is sent as the Accept header.
+// httpClient is nil, a client with a two-minute timeout that connects only
+// to public addresses is used. If accept is not empty, it is sent as the
+// Accept header.
 func Fetch(ctx context.Context, httpClient *http.Client, metadataURL url.URL, limit int64, accept string) ([]byte, error) {
 	if httpClient == nil {
 		httpClient = defaultHTTPClient

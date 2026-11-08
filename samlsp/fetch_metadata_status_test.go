@@ -13,7 +13,8 @@ import (
 )
 
 // FetchMetadata uses a default client when httpClient is nil, instead of
-// panicking.
+// panicking. That client connects only to public addresses, so it refuses
+// the test server, on loopback, and says how to reach it.
 func TestFetchMetadataNilClient(t *testing.T) {
 	test := NewMiddlewareTest(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -24,7 +25,11 @@ func TestFetchMetadataNilClient(t *testing.T) {
 
 	u, err := url.Parse(server.URL + "/metadata")
 	assert.Assert(t, err)
-	md, err := FetchMetadata(context.Background(), nil, *u)
+	_, err = FetchMetadata(context.Background(), nil, *u)
+	assert.Check(t, is.ErrorContains(err, "not a permitted destination"))
+	assert.Check(t, is.ErrorContains(err, "give your own *http.Client"))
+
+	md, err := FetchMetadata(context.Background(), server.Client(), *u)
 	assert.Assert(t, err)
 	assert.Check(t, is.Equal("https://idp.testshib.org/idp/shibboleth", md.EntityID))
 }

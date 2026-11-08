@@ -408,9 +408,13 @@ type IdentityProvider struct {
 	// the LogoutRequests it sends over the SOAP binding to the session
 	// participants whose metadata lists a SOAP SingleLogoutService (see
 	// StartLogout and ServeSLO). If nil, a client that gives up after 10
-	// seconds and does not follow redirects is used. Whatever the client,
-	// a redirect to a location that is not https (or http, with
-	// AllowInsecureSOAPEndpoints) is not followed.
+	// seconds, does not follow redirects, and connects only to public
+	// addresses is used: the endpoints come from the service providers'
+	// metadata, which could otherwise point them at services on your own
+	// network. A client set here is used as it is, so guard its dialer
+	// (such as with code.dny.dev/ssrf) if service providers register their
+	// own metadata. Whatever the client, a redirect to a location that is
+	// not https (or http, with AllowInsecureSOAPEndpoints) is not followed.
 	HTTPClient *http.Client
 
 	// AllowInsecureSOAPEndpoints lets the IdP send SOAP messages to http
