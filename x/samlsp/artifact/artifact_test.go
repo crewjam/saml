@@ -94,10 +94,16 @@ func (idp *fakeIDP) resolve(t *testing.T, b http.Handler, art, issuer string, ke
 // resolveAt is resolve with an ArtifactResolve issued at issueInstant.
 func (idp *fakeIDP) resolveAt(t *testing.T, b http.Handler, art, issuer string, key *rsa.PrivateKey, cert *x509.Certificate, issueInstant time.Time) *httptest.ResponseRecorder {
 	t.Helper()
-	req := &saml.ArtifactResolve{
+	return resolveRequest(t, b, &saml.ArtifactResolve{
 		ID: "id-resolve-1", Version: "2.0", IssueInstant: issueInstant,
 		Issuer: &saml.Issuer{Value: issuer}, Artifact: art,
-	}
+	}, key, cert)
+}
+
+// resolveRequest sends the SP req, signed with key (unsigned if key is
+// nil), and returns the SP's answer.
+func resolveRequest(t *testing.T, b http.Handler, req *saml.ArtifactResolve, key *rsa.PrivateKey, cert *x509.Certificate) *httptest.ResponseRecorder {
+	t.Helper()
 	el := req.Element()
 	if key != nil {
 		signer := dsig.NewDefaultSigningContext(dsig.TLSCertKeyStore{PrivateKey: key, Certificate: [][]byte{cert.Raw}})
@@ -787,5 +793,36 @@ func TestMemoryStoreMaxEntries(t *testing.T) {
 	}
 	if _, err := cfg.AuthnRequest(t.Context(), "r", samlsp.WithCustomBinding(b)); !errors.Is(err, artifact.ErrStoreFull) {
 		t.Errorf("AuthnRequest with a full store: %v", err)
+	}
+}
+
+// An ArtifactResolve must be SAML 2.0 and, if it has a Destination,
+// addressed to this ArtifactResolutionService (saml-core §3.2.1, §3.2.2).
+func TestResolveChecksVersionAndDestination(t *testing.T) {
+	idp, cfg, b, _, spCert := setup(t)
+	msg, err := cfg.AuthnRequest(t.Context(), "r", samlsp.WithCustomBinding(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	art := msg.RedirectURL().Query().Get("SAMLart")
+	req := func(modify func(*saml.ArtifactResolve)) *saml.ArtifactResolve {
+		r := &saml.ArtifactResolve{
+			ID: "id-resolve-1", Version: "2.0", IssueInstant: time.Now().UTC(),
+			Issuer: &saml.Issuer{Value: idpEntityID}, Artifact: art,
+		}
+		modify(r)
+		return r
+	}
+	for name, modify := range map[string]func(*saml.ArtifactResolve){
+		"SAML 1.1":          func(r *saml.ArtifactResolve) { r.Version = "1.1" },
+		"other Destination": func(r *saml.ArtifactResolve) { r.Destination = "https://other.example.com/saml/artifact" },
+	} {
+		if w := resolveRequest(t, b, req(modify), idp.key, idp.cert); w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), "Fault") {
+			t.Errorf("%s: %d %s", name, w.Code, w.Body.String())
+		}
+	}
+	w := resolveRequest(t, b, req(func(r *saml.ArtifactResolve) { r.Destination = arsURL }), idp.key, idp.cert)
+	if got := artifactResponse(t, w, spCert); got == nil {
+		t.Error("the right Destination: no message")
 	}
 }

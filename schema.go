@@ -596,9 +596,13 @@ type ArtifactResolve struct {
 	ID           string    `xml:",attr"`
 	Version      string    `xml:",attr"`
 	IssueInstant time.Time `xml:",attr"`
-	Issuer       *Issuer   `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
-	Signature    *etree.Element
-	Artifact     string `xml:"urn:oasis:names:tc:SAML:2.0:protocol Artifact"`
+	// Destination, if set, is the URL of the ArtifactResolutionService the
+	// request is sent to, which the recipient must check (saml-core
+	// §3.2.1).
+	Destination string  `xml:",attr,omitempty"`
+	Issuer      *Issuer `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
+	Signature   *etree.Element
+	Artifact    string `xml:"urn:oasis:names:tc:SAML:2.0:protocol Artifact"`
 }
 
 // Element returns an etree.Element representing the object in XML form.
@@ -619,6 +623,9 @@ func (r *ArtifactResolve) Element() *etree.Element {
 	el.CreateAttr("ID", r.ID)
 	el.CreateAttr("Version", r.Version)
 	el.CreateAttr("IssueInstant", formatTime(r.IssueInstant))
+	if r.Destination != "" {
+		el.CreateAttr("Destination", r.Destination)
+	}
 	if r.Issuer != nil {
 		el.AddChild(r.Issuer.Element())
 	}

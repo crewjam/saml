@@ -198,19 +198,28 @@ func (b *Binding) Path() string {
 // path returns the path of the URL of the ArtifactResolutionService with
 // the SOAP binding and the Binding's index in md.
 func (b *Binding) path(md *saml.EntityDescriptor) (string, error) {
+	location, err := b.location(md)
+	if err != nil {
+		return "", err
+	}
+	u, err := url.Parse(location)
+	if err != nil {
+		return "", fmt.Errorf("artifact: the ArtifactResolutionService URL %q: %w", location, err)
+	}
+	if p := u.EscapedPath(); p != "" {
+		return p, nil
+	}
+	return "/", nil
+}
+
+// location returns the URL of the ArtifactResolutionService with the SOAP
+// binding and the Binding's index in md.
+func (b *Binding) location(md *saml.EntityDescriptor) (string, error) {
 	for _, d := range md.SPSSODescriptors {
 		for _, ars := range d.ArtifactResolutionServices {
-			if ars.Index != int(b.index) || ars.Binding != saml.SOAPBinding {
-				continue
+			if ars.Index == int(b.index) && ars.Binding == saml.SOAPBinding {
+				return ars.Location, nil
 			}
-			u, err := url.Parse(ars.Location)
-			if err != nil {
-				return "", fmt.Errorf("artifact: the ArtifactResolutionService URL %q: %w", ars.Location, err)
-			}
-			if p := u.EscapedPath(); p != "" {
-				return p, nil
-			}
-			return "/", nil
 		}
 	}
 	return "", fmt.Errorf("artifact: the SP metadata has no ArtifactResolutionService with index %d (see ResolutionService)", b.index)
@@ -391,6 +400,19 @@ func (b *Binding) resolve(r *http.Request) (*etree.Element, error) {
 	}
 	if req.ID == "" {
 		return nil, errors.New("artifact: the ArtifactResolve has no ID")
+	}
+	if req.Version != "2.0" {
+		return nil, fmt.Errorf("artifact: the ArtifactResolve has Version %q, not 2.0", req.Version)
+	}
+	if req.Destination != "" {
+		// saml-core §3.2.1: a Destination must be checked.
+		location, err := b.location(b.config.Metadata(ctx))
+		if err != nil {
+			return nil, err
+		}
+		if req.Destination != location {
+			return nil, fmt.Errorf("artifact: the ArtifactResolve is addressed to %q, not %q: %w", req.Destination, location, saml.ErrDestinationMismatch)
+		}
 	}
 	if req.Issuer == nil || req.Issuer.Value != sp.IDPMetadata.EntityID {
 		return nil, fmt.Errorf("artifact: the ArtifactResolve is not issued by the IdP %s", sp.IDPMetadata.EntityID)
