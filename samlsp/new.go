@@ -1,4 +1,8 @@
 // Package samlsp provides helpers that can be used to protect web services using SAML.
+//
+// New service providers should use github.com/crewjam/saml/x/samlsp, with
+// github.com/crewjam/saml/x/samlsp/slo for single logout. This package
+// remains for existing applications.
 package samlsp
 
 import (
