@@ -1,6 +1,7 @@
 package samlsp
 
 import (
+	"slices"
 	"time"
 
 	"github.com/beevik/etree"
@@ -33,7 +34,11 @@ type Assertion struct {
 	Subject string
 
 	// InResponseTo is the ID of the AuthnRequest that the assertion
-	// answers. It is empty for an unsolicited response.
+	// answers: the WithRequestID that its bearer SubjectConfirmationData
+	// matched (saml-profiles §4.1.4.2), which package saml also requires
+	// of the Response. It is empty for an unsolicited response, even if
+	// the IdP put an InResponseTo in it that a ValidateRequestID hook
+	// accepted.
 	InResponseTo string
 
 	// AuthnInstant is when the IdP authenticated the user.
@@ -63,7 +68,12 @@ type Assertion struct {
 	Raw *saml.Assertion
 }
 
-func newAssertion(a *saml.Assertion) *Assertion {
+// bearerMethod is the Method of a bearer SubjectConfirmation.
+const bearerMethod = "urn:oasis:names:tc:SAML:2.0:cm:bearer" //nolint:gosec // a URI, not a credential
+
+// newAssertion returns the Assertion for a, which package saml verified
+// as answering one of requestIDs, or as unsolicited.
+func newAssertion(a *saml.Assertion, requestIDs []string) *Assertion {
 	out := &Assertion{
 		ID:     a.ID,
 		Issuer: a.Issuer.Value,
@@ -75,8 +85,11 @@ func newAssertion(a *saml.Assertion) *Assertion {
 			out.Subject = a.Subject.NameID.Value
 		}
 		out.BaseID = a.Subject.BaseID
+		// Package saml accepted a bearer confirmation that answers one
+		// of requestIDs, or none; report the request it answers.
 		for _, sc := range a.Subject.SubjectConfirmations {
-			if sc.SubjectConfirmationData != nil && sc.SubjectConfirmationData.InResponseTo != "" {
+			if sc.Method == bearerMethod && sc.SubjectConfirmationData != nil &&
+				slices.Contains(requestIDs, sc.SubjectConfirmationData.InResponseTo) {
 				out.InResponseTo = sc.SubjectConfirmationData.InResponseTo
 				break
 			}

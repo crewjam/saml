@@ -403,7 +403,7 @@ func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...Res
 	if err != nil {
 		return nil, err
 	}
-	return newAssertion(a), nil
+	return newAssertion(a, o.requestIDs), nil
 }
 
 // hasACSIndex reports whether md has an AssertionConsumerService with index.

@@ -280,6 +280,41 @@ func TestIsPassiveNoPassive(t *testing.T) {
 	}
 }
 
+// InResponseTo is the request ID the assertion was accepted for, and
+// empty for a response accepted as unsolicited, even one that names a
+// request a ValidateRequestID hook let through.
+func TestAssertionInResponseTo(t *testing.T) {
+	ti := newTestIDP(t)
+	cfg := newTestConfig(t, ti)
+	msg, err := cfg.AuthnRequest(t.Context(), "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	acs := login(t, ti, msg)
+	acceptAny := samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
+		sp.ValidateRequestID = func(saml.Response, []string) error { return nil }
+	})
+	a, err := cfg.ParseResponse(t.Context(), acs, samlsp.AllowUnsolicited, acceptAny)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.InResponseTo != "" {
+		t.Errorf("unsolicited: InResponseTo = %q, want \"\"", a.InResponseTo)
+	}
+
+	msg, err = cfg.AuthnRequest(t.Context(), "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err = cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID("id-other"), samlsp.WithRequestID(msg.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.InResponseTo != msg.ID {
+		t.Errorf("solicited: InResponseTo = %q, want %q", a.InResponseTo, msg.ID)
+	}
+}
+
 func TestParseResponseNeedsRequestID(t *testing.T) {
 	ti := newTestIDP(t)
 	cfg := newTestConfig(t, ti)
