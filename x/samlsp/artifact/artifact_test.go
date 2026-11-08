@@ -254,7 +254,7 @@ func setup(t *testing.T) (*fakeIDP, *samlsp.Config, *artifact.Binding, *artifact
 	idp := &fakeIDP{key: idpKey, cert: idpCert}
 	spKey, spCert := keyPair(t)
 	cfg, err := samlsp.New(samlsp.StaticMetadata(idp.metadata()), spEntityID,
-		samlsp.WithKey(spKey, spCert), samlsp.SignAuthnRequests,
+		samlsp.WithSigningKey(spKey, spCert), samlsp.SignAuthnRequests,
 		slo.Endpoint("https://sp.example.com/saml/slo"),
 		artifact.ResolutionService(arsURL, 3))
 	if err != nil {
@@ -552,7 +552,7 @@ func TestResolveFailures(t *testing.T) {
 	spKey, spCert := keyPair(t)
 	down, err := samlsp.New(func(context.Context) (*saml.EntityDescriptor, error) {
 		return nil, errors.New("metadata unavailable")
-	}, spEntityID, samlsp.WithKey(spKey, spCert))
+	}, spEntityID, samlsp.WithSigningKey(spKey, spCert))
 	if err != nil {
 		t.Fatal(err)
 	}

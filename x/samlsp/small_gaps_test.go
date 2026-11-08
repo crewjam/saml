@@ -78,7 +78,7 @@ func TestServeMetadataSigningFails(t *testing.T) {
 
 	// A key that fails when it signs: the metadata endpoint answers 500.
 	key, cert := newKeyPair(t, "sp")
-	cfg, err := samlsp.New(staticIDP(ti), spEntityID, samlsp.WithKey(failingSigner{key}, cert), samlsp.SignMetadata)
+	cfg, err := samlsp.New(staticIDP(ti), spEntityID, samlsp.WithSigningKey(failingSigner{key}, cert), samlsp.SignMetadata)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -111,7 +111,7 @@ func New(identityProvider MetadataFunc, entityID string, opts ...Option) (*Confi
 		}
 	}
 	if sp := c.spForMetadata(nil); sp.SignMetadata && signatureMethod(c.key) == "" {
-		return nil, errors.New("samlsp: SignMetadata needs an RSA or ECDSA key (see WithKey)")
+		return nil, errors.New("samlsp: SignMetadata needs an RSA or ECDSA key (see WithSigningKey)")
 	}
 	if len(c.checks) > 0 {
 		sp := c.spForMetadata(nil)
@@ -122,7 +122,7 @@ func New(identityProvider MetadataFunc, entityID string, opts ...Option) (*Confi
 		}
 	}
 	if c.signRequests && signatureMethod(c.key) == "" {
-		return nil, errors.New("samlsp: SignAuthnRequests needs an RSA or ECDSA key (see WithKey)")
+		return nil, errors.New("samlsp: SignAuthnRequests needs an RSA or ECDSA key (see WithSigningKey)")
 	}
 	return c, nil
 }
@@ -192,34 +192,63 @@ var AcceptBaseID Option = optionFunc(func(c *Config, _ *configOptions) { c.accep
 // ACSURL returns the URL of the SP's assertion consumer service.
 func (c *Config) ACSURL() string { return c.acsURL.String() }
 
-// WithKey sets the SP's private key and its certificate, which is published
-// in the SP metadata, with any intermediates of its chain. The key always
-// signs logout messages, and it signs AuthnRequests with
-// SignAuthnRequests. If it is an *rsa.PrivateKey, it also decrypts
-// encrypted assertions.
-func WithKey(key crypto.Signer, cert *x509.Certificate, intermediates ...*x509.Certificate) Option {
+// ACSPath returns the path of the ACS URL, to serve the handler that
+// calls ParseResponse at, so that it cannot drift from the URL the IdP is
+// given:
+//
+//	http.HandleFunc(config.ACSPath(), acs)
+func (c *Config) ACSPath() string { return urlPath(&c.acsURL) }
+
+// MetadataPath returns the path of the entity ID, where the SP metadata is
+// conventionally served:
+//
+//	http.HandleFunc(config.MetadataPath(), config.ServeMetadata)
+//
+// It returns "" if the entity ID is not an http or https URL, such as a
+// URN; serve the metadata at a path of your choosing then.
+func (c *Config) MetadataPath() string {
+	u, err := url.Parse(c.entityID)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return ""
+	}
+	return urlPath(u)
+}
+
+// urlPath returns the path of u, escaped as in a URL, or "/" if it has
+// none: the pattern to serve u at with an http.ServeMux.
+func urlPath(u *url.URL) string {
+	if p := u.EscapedPath(); p != "" {
+		return p
+	}
+	return "/"
+}
+
+// WithSigningKey sets the key that the SP signs with, and its certificate,
+// which the SP metadata publishes for signing, with any intermediates of
+// its chain. It signs logout messages, attribute queries and artifact
+// responses, AuthnRequests with SignAuthnRequests, and the metadata with
+// SignMetadata. It is used only for signing: to accept encrypted
+// assertions, use WithEncryptionKey, which may be given the same RSA key.
+func WithSigningKey(key crypto.Signer, cert *x509.Certificate, intermediates ...*x509.Certificate) Option {
 	return optionFunc(func(c *Config, _ *configOptions) {
 		c.key, c.certificate = key, cert
 		c.intermediates = append([]*x509.Certificate(nil), intermediates...)
 	})
 }
 
-// WithEncryptionKey sets an RSA key pair that the IdP encrypts assertions
-// to, separate from the signing key of WithKey. cert is advertised in the
-// SP metadata for encryption, and key decrypts. Use it when the signing key
-// cannot decrypt (it is ECDSA, or held in an HSM that only signs), or to
-// rotate the two keys apart.
-//
-// Without it, the key of WithKey is advertised for encryption too, if it
-// is an RSA key.
+// WithEncryptionKey sets the RSA key pair that the IdP encrypts assertions
+// to: cert is published in the SP metadata for encryption, and key
+// decrypts. It may be the key of WithSigningKey. Without it (or
+// WithDecryptionKeys), encrypted assertions are refused.
 func WithEncryptionKey(key *rsa.PrivateKey, cert *x509.Certificate) Option {
 	return optionFunc(func(c *Config, _ *configOptions) {
 		c.encryptionKey, c.encryptionCert = key, cert
 	})
 }
 
-// WithDecryptionKeys adds keys that can decrypt encrypted assertions, for
-// key rotation.
+// WithDecryptionKeys adds keys that can decrypt encrypted assertions, after
+// that of WithEncryptionKey, for key rotation. They are not published in
+// the SP metadata.
 func WithDecryptionKeys(keys ...*rsa.PrivateKey) Option {
 	return optionFunc(func(c *Config, _ *configOptions) {
 		c.decryptionKeys = append(c.decryptionKeys, keys...)
@@ -227,7 +256,7 @@ func WithDecryptionKeys(keys ...*rsa.PrivateKey) Option {
 }
 
 // SignAuthnRequests makes AuthnRequests carry a signature by the key of
-// WithKey, using RSA-SHA256 or ECDSA-SHA256.
+// WithSigningKey, using RSA-SHA256 or ECDSA-SHA256.
 var SignAuthnRequests Option = optionFunc(func(c *Config, _ *configOptions) { c.signRequests = true })
 
 // WithNameIDFormat sets the NameID format requested from the IdP. The
@@ -270,7 +299,7 @@ func WithAuthnContextComparator(satisfies func(comparison AuthnContextComparison
 
 // WithSignatureMethod sets the XML signature algorithm of everything the
 // SP signs: AuthnRequests (with SignAuthnRequests), logout messages,
-// attribute queries and signed metadata. It must suit the key of WithKey:
+// attribute queries and signed metadata. It must suit the key of WithSigningKey:
 // dsig.RSASHA256SignatureMethod, RSASHA384 or RSASHA512 for an RSA key,
 // and dsig.ECDSASHA256SignatureMethod, ECDSASHA384 or ECDSASHA512 for an
 // ECDSA key. SHA-1 is refused. The default is SHA-256.
@@ -281,7 +310,7 @@ func WithSignatureMethod(method string) Option {
 // checkSignatureMethod returns an error if method cannot be used with key.
 func checkSignatureMethod(method string, key crypto.Signer) error {
 	if signatureMethod(key) == "" {
-		return errors.New("samlsp: WithSignatureMethod needs an RSA or ECDSA key (see WithKey)")
+		return errors.New("samlsp: WithSignatureMethod needs an RSA or ECDSA key (see WithSigningKey)")
 	}
 	_, isRSA := key.Public().(*rsa.PublicKey)
 	switch method {
@@ -348,7 +377,7 @@ func WithServiceProvider(fn func(sp *saml.ServiceProvider)) ServiceProviderOptio
 }
 
 // SignMetadata makes ServeMetadata and MetadataXML sign the SP metadata
-// with the key of WithKey. Pass it to New. Metadata returns the metadata
+// with the key of WithSigningKey. Pass it to New. Metadata returns the metadata
 // as a struct, which carries no signature.
 var SignMetadata ServiceProviderOption = func(sp *saml.ServiceProvider) { sp.SignMetadata = true }
 
@@ -400,6 +429,8 @@ func (c *Config) localServiceProvider() *saml.ServiceProvider {
 		AuthnNameIDFormat:     c.nameIDFormat,
 		ReplayCache:           c.replayState,
 		Clock:                 c.clock,
+
+		KeyOnlySigns: true,
 
 		AuthnContextClassRefComparator: c.authnContextComparator,
 		AcceptAssertionBaseID:          c.acceptBaseID,

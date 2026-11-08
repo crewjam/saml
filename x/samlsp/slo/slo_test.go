@@ -112,7 +112,7 @@ func newService(t *testing.T, ti *testIDP, endpointOpts []slo.EndpointOption, op
 	t.Helper()
 	key, cert := newKeyPair(t)
 	idp := func(context.Context) (*saml.EntityDescriptor, error) { return ti.idp.Metadata(), nil }
-	opts = append([]samlsp.Option{samlsp.WithKey(key, cert), slo.Endpoint(spSLOURL, endpointOpts...)}, opts...)
+	opts = append([]samlsp.Option{samlsp.WithSigningKey(key, cert), slo.Endpoint(spSLOURL, endpointOpts...)}, opts...)
 	cfg, err := samlsp.New(idp, spEntityID, opts...)
 	if err != nil {
 		t.Fatal(err)
@@ -395,6 +395,9 @@ func TestConfiguration(t *testing.T) {
 	if s.URL() != spSLOURL {
 		t.Errorf("URL = %q", s.URL())
 	}
+	if s.Path() != "/saml/slo" {
+		t.Errorf("Path = %q", s.Path())
+	}
 	endpoints := cfg.Metadata(t.Context()).SPSSODescriptors[0].SingleLogoutServices
 	bindings := make([]string, 0, len(endpoints))
 	for _, e := range endpoints {
@@ -408,14 +411,14 @@ func TestConfiguration(t *testing.T) {
 	}
 
 	for name, opts := range map[string][]samlsp.Option{
-		"relative URL":         {samlsp.WithKey(key, cert), slo.Endpoint("/slo")},
+		"relative URL":         {samlsp.WithSigningKey(key, cert), slo.Endpoint("/slo")},
 		"back channel, no key": {slo.Endpoint(spSLOURL, slo.BackChannel)},
 	} {
 		if _, err := samlsp.New(idp, spEntityID, opts...); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
 	}
-	plain, err := samlsp.New(idp, spEntityID, samlsp.WithKey(key, cert))
+	plain, err := samlsp.New(idp, spEntityID, samlsp.WithSigningKey(key, cert))
 	if err != nil {
 		t.Fatal(err)
 	}

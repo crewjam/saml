@@ -55,16 +55,16 @@ func TestWithSignatureMethodErrors(t *testing.T) {
 	ecKey, ecCert := newECKeyPair(t)
 	for name, opts := range map[string][]samlsp.Option{
 		"no key":      {samlsp.WithSignatureMethod(dsig.RSASHA256SignatureMethod)},
-		"RSA with EC": {samlsp.WithKey(ecKey, ecCert), samlsp.WithSignatureMethod(dsig.RSASHA256SignatureMethod)},
-		"EC with RSA": {samlsp.WithKey(rsaKey, rsaCert), samlsp.WithSignatureMethod(dsig.ECDSASHA256SignatureMethod)},
-		"SHA-1":       {samlsp.WithKey(rsaKey, rsaCert), samlsp.WithSignatureMethod(dsig.RSASHA1SignatureMethod)},
-		"unknown":     {samlsp.WithKey(rsaKey, rsaCert), samlsp.WithSignatureMethod("rot13")},
+		"RSA with EC": {samlsp.WithSigningKey(ecKey, ecCert), samlsp.WithSignatureMethod(dsig.RSASHA256SignatureMethod)},
+		"EC with RSA": {samlsp.WithSigningKey(rsaKey, rsaCert), samlsp.WithSignatureMethod(dsig.ECDSASHA256SignatureMethod)},
+		"SHA-1":       {samlsp.WithSigningKey(rsaKey, rsaCert), samlsp.WithSignatureMethod(dsig.RSASHA1SignatureMethod)},
+		"unknown":     {samlsp.WithSigningKey(rsaKey, rsaCert), samlsp.WithSignatureMethod("rot13")},
 	} {
 		if _, err := samlsp.New(staticIDP(ti), spEntityID, opts...); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
 	}
-	if _, err := samlsp.New(staticIDP(ti), spEntityID, samlsp.WithKey(ecKey, ecCert),
+	if _, err := samlsp.New(staticIDP(ti), spEntityID, samlsp.WithSigningKey(ecKey, ecCert),
 		samlsp.WithSignatureMethod(dsig.ECDSASHA384SignatureMethod)); err != nil {
 		t.Errorf("ECDSA-SHA384 with an EC key: %v", err)
 	}

@@ -4,7 +4,7 @@
 // It is built only on that package's public API. Configure the SP's single
 // logout service with Endpoint when making the Config, then use a Service:
 //
-//	config, err := samlsp.New(idp, entityID, samlsp.WithKey(key, cert),
+//	config, err := samlsp.New(idp, entityID, samlsp.WithSigningKey(key, cert),
 //		slo.Endpoint("https://sp.example.com/saml/slo"))
 //	logout, err := slo.New(config)
 //
@@ -55,7 +55,7 @@ type endpointOptions struct {
 // Enable it only if the application can end a user's sessions on the
 // server, by NameID and SessionIndex: a SOAP LogoutRequest comes without
 // the browser, so deleting a session cookie does not end anything. It
-// needs samlsp.WithKey, which signs the SOAP messages.
+// needs samlsp.WithSigningKey, which signs the SOAP messages.
 var BackChannel EndpointOption = func(o *endpointOptions) { o.backChannel = true }
 
 // EncryptNameID makes Request and SendRequest identify the user with an
@@ -98,7 +98,7 @@ func Endpoint(location string, opts ...EndpointOption) samlsp.Option {
 		}),
 		samlsp.WithCheck(func(sp *saml.ServiceProvider) error {
 			if o.backChannel && sp.LogoutSignatureMethod == "" {
-				return errors.New("slo: BackChannel needs an RSA or ECDSA key (see samlsp.WithKey) to sign SOAP messages")
+				return errors.New("slo: BackChannel needs an RSA or ECDSA key (see samlsp.WithSigningKey) to sign SOAP messages")
 			}
 			return nil
 		}),
@@ -123,6 +123,21 @@ func New(config *samlsp.Config) (*Service, error) {
 // URL returns the URL of the SP's single logout service.
 func (s *Service) URL() string {
 	return s.config.Metadata(context.Background()).SPSSODescriptors[0].SingleLogoutServices[0].Location
+}
+
+// Path returns the path of URL, to serve the SLO handler at, so that it
+// cannot drift from the URL in the SP metadata:
+//
+//	http.HandleFunc(logout.Path(), slo)
+func (s *Service) Path() string {
+	u, err := url.Parse(s.URL())
+	if err != nil {
+		return "" // Endpoint has checked the URL
+	}
+	if p := u.EscapedPath(); p != "" {
+		return p
+	}
+	return "/"
 }
 
 // backChannel reports whether sp offers the SOAP binding.

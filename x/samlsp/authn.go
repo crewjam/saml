@@ -210,7 +210,7 @@ func (f messageOptionFunc) applyAuthn(o *authnOptions)     { f(&o.messageOptions
 
 // WithBinding sends the message with binding: saml.HTTPRedirectBinding,
 // saml.HTTPPostBinding or saml.HTTPPostSimpleSignBinding. The
-// HTTP-POST-SimpleSign binding needs a key that can sign (see WithKey).
+// HTTP-POST-SimpleSign binding needs a key that can sign (see WithSigningKey).
 //
 // By default HTTP-Redirect is used when the identity provider supports it,
 // and HTTP-POST otherwise.

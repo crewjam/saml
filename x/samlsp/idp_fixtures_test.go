@@ -155,7 +155,8 @@ func TestIDPFixtures(t *testing.T) {
 			parse := func(opts ...samlsp.Option) (*samlsp.Assertion, error) {
 				opts = append([]samlsp.Option{
 					samlsp.WithACSURL(fx.acsURL),
-					samlsp.WithKey(key, cert),
+					samlsp.WithSigningKey(key, cert),
+					samlsp.WithEncryptionKey(key.(*rsa.PrivateKey), cert),
 					samlsp.WithClock(dsig.NewFakeClockAt(fx.now)),
 				}, opts...)
 				cfg, err := samlsp.New(samlsp.StaticMetadataBytes(coreTestdata(t, fx.metadata)), fx.entityID, opts...)

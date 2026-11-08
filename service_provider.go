@@ -119,6 +119,12 @@ type ServiceProvider struct {
 	// the metadata.
 	DecryptionKeys []*rsa.PrivateKey
 
+	// KeyOnlySigns, if true, keeps Key to signing: when EncryptionKey is
+	// unset, Key does not decrypt assertions, and Certificate is not
+	// advertised in the metadata for encryption. Encrypted assertions are
+	// then accepted only with EncryptionKey or DecryptionKeys set.
+	KeyOnlySigns bool
+
 	// HTTPClient to use for SOAP exchanges with the IdP: SAML artifact
 	// resolution, attribute queries (QueryAttributes) and SOAP single logout.
 	// If nil, a client with a 10 second timeout that follows no redirects is
@@ -594,7 +600,7 @@ func (sp *ServiceProvider) Metadata() *EntityDescriptor {
 	var encryptionCertBytes []byte
 	if sp.EncryptionCertificate != nil {
 		encryptionCertBytes = sp.EncryptionCertificate.Raw
-	} else if sp.Certificate != nil {
+	} else if sp.Certificate != nil && !sp.KeyOnlySigns {
 		if _, ok := sp.Certificate.PublicKey.(*rsa.PublicKey); ok {
 			encryptionCertBytes = certBytes
 		}
@@ -1905,7 +1911,7 @@ func (sp *ServiceProvider) decryptElement(encryptedEl *etree.Element) (*etree.El
 	keys := make([]namedDecryptionKey, 0, 1+len(sp.DecryptionKeys))
 	if sp.EncryptionKey != nil {
 		keys = append(keys, namedDecryptionKey{"EncryptionKey", sp.EncryptionKey})
-	} else {
+	} else if !sp.KeyOnlySigns {
 		keys = append(keys, namedDecryptionKey{"Key", sp.Key})
 	}
 	for i, k := range sp.DecryptionKeys {

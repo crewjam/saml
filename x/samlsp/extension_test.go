@@ -107,7 +107,7 @@ func (b bindingFunc) Encode(_ context.Context, m *samlsp.OutboundMessage) (*saml
 func TestWithMetadataHook(t *testing.T) {
 	ti := newTestIDP(t)
 	key, cert := newKeyPair(t, "sp")
-	cfg, err := samlsp.New(staticIDP(ti), spEntityID, samlsp.WithKey(key, cert), samlsp.SignMetadata,
+	cfg, err := samlsp.New(staticIDP(ti), spEntityID, samlsp.WithSigningKey(key, cert), samlsp.SignMetadata,
 		samlsp.WithMetadata(func(md *saml.EntityDescriptor) {
 			md.SPSSODescriptors[0].ArtifactResolutionServices = []saml.IndexedEndpoint{
 				{Binding: saml.SOAPBinding, Location: "https://sp.example.com/saml/artifact", Index: 1},
@@ -139,7 +139,7 @@ func TestWithMetadataHook(t *testing.T) {
 func TestSignElementAndServiceProvider(t *testing.T) {
 	ti := newTestIDP(t)
 	key, cert := newKeyPair(t, "sp")
-	cfg, err := samlsp.New(staticIDP(ti), spEntityID, samlsp.WithKey(key, cert),
+	cfg, err := samlsp.New(staticIDP(ti), spEntityID, samlsp.WithSigningKey(key, cert),
 		samlsp.WithSignatureMethod(dsig.RSASHA512SignatureMethod))
 	if err != nil {
 		t.Fatal(err)

@@ -245,10 +245,10 @@ The experimental package `github.com/crewjam/saml/x/samlsp` is a thin layer over
 config, err := samlsp.New(
 	samlsp.RemoteMetadata("https://idp.example.com/metadata"),
 	"https://sp.example.com/saml/metadata", // the entity ID; the ACS is at .../saml/acs
-	samlsp.WithKey(key, cert),
+	samlsp.WithSigningKey(key, cert),
 )
 
-http.HandleFunc("/saml/metadata", config.ServeMetadata)
+http.HandleFunc(config.MetadataPath(), config.ServeMetadata)
 
 http.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
 	relayState := rand.Text()
@@ -257,7 +257,7 @@ http.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
 	req.Write(w)
 })
 
-http.HandleFunc("/saml/acs", func(w http.ResponseWriter, r *http.Request) {
+http.HandleFunc(config.ACSPath(), func(w http.ResponseWriter, r *http.Request) {
 	requestID := ... // the ID remembered under r.FormValue("RelayState")
 	assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(requestID))
 	// ... handle err; start the application's session from assertion.NameID
@@ -272,7 +272,7 @@ Optional features are separate packages, built only on the public API of `x/saml
 - `x/samlsp/slo` adds single logout, through the browser and, optionally, server to server with the SOAP binding:
 
   ```golang
-  config, err := samlsp.New(idp, entityID, samlsp.WithKey(key, cert),
+  config, err := samlsp.New(idp, entityID, samlsp.WithSigningKey(key, cert),
   	slo.Endpoint("https://sp.example.com/saml/slo"))
   logout, err := slo.New(config)
   msg, err := logout.Request(ctx, assertion.NameID, relayState, slo.WithSessionIndex(assertion.SessionIndexes...))

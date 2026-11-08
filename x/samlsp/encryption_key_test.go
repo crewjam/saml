@@ -44,7 +44,7 @@ func TestWithEncryptionKey(t *testing.T) {
 	encKey, encCert := newKeyPair(t, "sp-encryption")
 
 	// The ECDSA key signs; only the RSA key can decrypt.
-	cfg := newTestConfig(t, ti, samlsp.WithKey(sigKey, sigCert), samlsp.WithEncryptionKey(encKey, encCert))
+	cfg := newTestConfig(t, ti, samlsp.WithSigningKey(sigKey, sigCert), samlsp.WithEncryptionKey(encKey, encCert))
 
 	var signing, encryption []string
 	for _, kd := range cfg.Metadata(t.Context()).SPSSODescriptors[0].KeyDescriptors {
@@ -115,7 +115,7 @@ func TestDecryptionKeysForRotation(t *testing.T) {
 	}
 
 	sigKey, sigCert := newKeyPair(t, "signing")
-	rotated, err := samlsp.New(staticIDP(ti), spEntityID, samlsp.WithKey(sigKey, sigCert),
+	rotated, err := samlsp.New(staticIDP(ti), spEntityID, samlsp.WithSigningKey(sigKey, sigCert),
 		samlsp.WithEncryptionKey(newKey, newCert), samlsp.WithDecryptionKeys(oldKey))
 	if err != nil {
 		t.Fatal(err)
@@ -124,12 +124,35 @@ func TestDecryptionKeysForRotation(t *testing.T) {
 		t.Errorf("with the old key kept: %v (%v)", err, errors.Unwrap(err))
 	}
 
-	forgot, err := samlsp.New(staticIDP(ti), spEntityID, samlsp.WithKey(sigKey, sigCert),
+	forgot, err := samlsp.New(staticIDP(ti), spEntityID, samlsp.WithSigningKey(sigKey, sigCert),
 		samlsp.WithEncryptionKey(newKey, newCert))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := login(forgot); err == nil {
 		t.Error("an assertion encrypted to a key the SP does not have was decrypted")
+	}
+}
+
+// TestSigningKeyOnlySigns checks that the key of WithSigningKey is not
+// published for encryption, even an RSA one, and that WithEncryptionKey
+// with the same key is.
+func TestSigningKeyOnlySigns(t *testing.T) {
+	ti := newTestIDP(t)
+	key, cert := newKeyPair(t, "sp")
+	uses := func(opts ...samlsp.Option) map[string]bool {
+		t.Helper()
+		cfg := newTestConfigWithIDP(t, ti, staticIDP(ti), opts...)
+		got := map[string]bool{}
+		for _, kd := range cfg.Metadata(t.Context()).SPSSODescriptors[0].KeyDescriptors {
+			got[kd.Use] = true
+		}
+		return got
+	}
+	if got := uses(samlsp.WithSigningKey(key, cert)); got["encryption"] || !got["signing"] {
+		t.Errorf("signing key only: key uses %v", got)
+	}
+	if got := uses(samlsp.WithSigningKey(key, cert), samlsp.WithEncryptionKey(key, cert)); !got["encryption"] || !got["signing"] {
+		t.Errorf("same key for both: key uses %v", got)
 	}
 }

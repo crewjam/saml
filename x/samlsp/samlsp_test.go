@@ -134,7 +134,7 @@ func newTestConfig(t *testing.T, ti *testIDP, opts ...samlsp.Option) *samlsp.Con
 func newTestConfigWithIDP(t *testing.T, ti *testIDP, idp samlsp.MetadataFunc, opts ...samlsp.Option) *samlsp.Config {
 	t.Helper()
 	key, cert := newKeyPair(t, "sp")
-	opts = append([]samlsp.Option{samlsp.WithKey(key, cert)}, opts...)
+	opts = append([]samlsp.Option{samlsp.WithSigningKey(key, cert)}, opts...)
 	cfg, err := samlsp.New(idp, spEntityID, opts...)
 	if err != nil {
 		t.Fatal(err)
