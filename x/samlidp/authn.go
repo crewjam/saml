@@ -69,14 +69,19 @@ type AuthnRequest struct {
 	NameIDFormat saml.NameIDFormat
 
 	// SPNameQualifier is the SPNameQualifier of the NameIDPolicy, if any:
-	// the namespace, other than the SP's own, that the SP asked the NameID
-	// to be in, as when several SPs share an affiliation. Response puts it
-	// in the NameID; whether the SP may ask for it is the application's
-	// to decide.
+	// the namespace that the SP asked the NameID to be in, which, if not
+	// the SP's own entity ID, must name an affiliation the SP is a member
+	// of (saml-core §3.4.1.1). ParseAuthnRequest and Response refuse one
+	// that WithAffiliation does not allow, with StatusInvalidNameIDPolicy.
+	// Response puts it in the NameID, whose value must then be the user's
+	// identifier in the affiliation.
 	SPNameQualifier string
 
 	// AllowCreate is the AllowCreate of the NameIDPolicy: whether the IdP
-	// may create a new identifier for the user for this SP.
+	// may create a new identifier for the user for this SP (saml-core
+	// §3.4.1.1). If it is false and the user has no identifier for the SP
+	// (or its affiliation) yet, such as no persistent NameID, do not make
+	// one: answer with ErrorResponse and StatusInvalidNameIDPolicy.
 	AllowCreate bool
 
 	// AuthnContextClasses are the authentication context classes the SP
@@ -215,6 +220,13 @@ func (c *Config) ParseAuthnRequest(ctx context.Context, r *http.Request, opts ..
 	}
 	if statusErr := requestSubjectError(ireq.Request.Subject); statusErr != nil {
 		return req, statusErr
+	}
+	if err := c.spNameQualifierError(ctx, idp, req); err != nil {
+		var status *saml.StatusError
+		if errors.As(err, &status) {
+			return req, err
+		}
+		return nil, err
 	}
 
 	if isSigned(ireq) {

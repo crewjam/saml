@@ -110,6 +110,21 @@
 //		idp.EnforceNameIDPolicy = false // this SP asks for a format it does not need
 //	})
 //
+// A NameIDPolicy SPNameQualifier other than the SP's own entity ID is
+// refused, with StatusInvalidNameIDPolicy, unless WithAffiliation says
+// the SP is a member of that affiliation (saml-core §3.4.1.1). Whether a
+// NameID may be created is the application's to decide: if the user has
+// none for the SP yet, such as a persistent one, and the request's
+// AllowCreate is false, answer with ErrorResponse and
+// StatusInvalidNameIDPolicy:
+//
+//	nameID, ok := persistentID(user, req.ServiceProvider)
+//	if !ok && !req.AllowCreate {
+//		msg, err := config.ErrorResponse(r.Context(), req, &saml.StatusError{
+//			TopLevel: saml.StatusRequester, SecondLevel: saml.StatusInvalidNameIDPolicy})
+//		...
+//	}
+//
 // A signed AuthnRequest is accepted only once. By default the record is
 // kept in memory, which protects a single process; see WithReplayState.
 //

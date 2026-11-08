@@ -117,7 +117,8 @@ func WithScriptNonce(nonce string) ResponseOption {
 // one of its assertion consumer services.
 //
 // The request may ask for what the IdP will not assert: a NameID format
-// other than subject.NameIDFormat, an authentication context that
+// other than subject.NameIDFormat, an SPNameQualifier that WithAffiliation
+// does not allow, an authentication context that
 // subject.AuthnContextClassRef does not satisfy, or a user other than
 // subject. The error then matches *saml.StatusError; send it to the SP
 // with ErrorResponse.
@@ -131,6 +132,9 @@ func (c *Config) Response(ctx context.Context, req *AuthnRequest, subject Subjec
 	}
 	ireq, err := c.answer(ctx, req, o)
 	if err != nil {
+		return nil, err
+	}
+	if err := c.spNameQualifierError(ctx, ireq.IDP, req); err != nil {
 		return nil, err
 	}
 

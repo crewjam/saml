@@ -44,6 +44,7 @@ type Config struct {
 	replayState     ReplayState
 	clock           *dsig.Clock
 	metadataValid   time.Duration
+	affiliated      func(ctx context.Context, serviceProvider, affiliation string) (bool, error)
 
 	idpOptions    []IdentityProviderOption
 	metadataHooks []func(*saml.EntityDescriptor)
@@ -259,6 +260,45 @@ func WithMetadata(modify func(md *saml.EntityDescriptor)) Option {
 // ReplayState reads the system clock.
 func WithClock(clock *dsig.Clock) Option {
 	return optionFunc(func(c *Config, _ *configOptions) { c.clock = clock })
+}
+
+// WithAffiliation sets how the IdP decides whether the service provider
+// serviceProvider is a member of the affiliation affiliation, an
+// SPNameQualifier other than its own entity ID that its NameIDPolicy asks
+// for (saml-core §3.4.1.1): for example, by the AffiliateMembers of the
+// AffiliationDescriptor in the affiliation's metadata (saml-metadata
+// §2.5). Without it, or if it reports false, ParseAuthnRequest and
+// Response refuse such a request with StatusInvalidNameIDPolicy; an error
+// it returns is returned by them. Whatever it says, the NameID under that
+// qualifier is the application's to choose: the same for every member of
+// the affiliation.
+func WithAffiliation(member func(ctx context.Context, serviceProvider, affiliation string) (bool, error)) Option {
+	return optionFunc(func(c *Config, _ *configOptions) { c.affiliated = member })
+}
+
+// spNameQualifierError returns the error for req if it asks for an
+// SPNameQualifier other than the SP's own entity ID that WithAffiliation
+// does not allow, or nil. An IdentityProvider that does not enforce the
+// NameIDPolicy ignores the SPNameQualifier.
+func (c *Config) spNameQualifierError(ctx context.Context, idp *saml.IdentityProvider, req *AuthnRequest) error {
+	q := req.SPNameQualifier
+	if q == "" || q == req.ServiceProvider || !idp.EnforceNameIDPolicy {
+		return nil
+	}
+	if c.affiliated != nil {
+		ok, err := c.affiliated(ctx, req.ServiceProvider, q)
+		if err != nil {
+			return fmt.Errorf("samlidp: affiliation %q of service provider %q: %w", q, req.ServiceProvider, err)
+		}
+		if ok {
+			return nil
+		}
+	}
+	return &saml.StatusError{
+		TopLevel:    saml.StatusRequester,
+		SecondLevel: saml.StatusInvalidNameIDPolicy,
+		Message:     "the service provider is not a member of the requested SPNameQualifier",
+	}
 }
 
 // ReplayState records the signed AuthnRequests a Config accepts, so that
