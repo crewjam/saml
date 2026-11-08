@@ -99,7 +99,8 @@ type ParseOption interface {
 }
 
 type parseOptions struct {
-	idp []IdentityProviderOption
+	idp    []IdentityProviderOption
+	custom Binding
 }
 
 // ParseAuthnRequest verifies the AuthnRequest in r, received at the SSO
@@ -186,9 +187,19 @@ func (c *Config) ParseAuthnRequest(ctx context.Context, r *http.Request, opts ..
 	ireq := captured.request
 	req := newAuthnRequest(ireq)
 
+	// Package saml matches an ACS named by URL on its location, and prefers
+	// HTTP-POST there. If the request asks for the custom binding, and the
+	// SP lists an ACS with that binding at that location, use it.
+	if o.custom != nil && ireq.Request.ProtocolBinding == o.custom.URI() && ireq.Request.AssertionConsumerServiceIndex == "" &&
+		ireq.ACSEndpoint.Binding != o.custom.URI() {
+		if _, ep := findACS(ireq.ServiceProviderMetadata, ireq.ACSEndpoint.Location, o.custom.URI()); ep != nil {
+			req.ACSURL, req.ACSBinding = ep.Location, ep.Binding
+		}
+	}
+
 	// With a custom ResponseWriter, ServeSSO lets through an ACS of any
-	// binding; this package only posts.
-	if !sendable(ireq.ACSEndpoint.Binding) {
+	// binding; this package only posts, or uses the custom binding.
+	if !o.sendable(req.ACSBinding) {
 		def, err := c.defaultACS(ctx, idp, req.ServiceProvider)
 		if err != nil {
 			return nil, fmt.Errorf("samlidp: cannot send a response to an assertion consumer service with binding %q: %w", ireq.ACSEndpoint.Binding, err)
@@ -374,9 +385,15 @@ func requestSubjectError(subject *saml.Subject) *saml.StatusError {
 }
 
 // sendable reports whether a Response can be sent to an assertion consumer
-// service with binding.
+// service with binding, without a custom Binding.
 func sendable(binding string) bool {
 	return binding == saml.HTTPPostBinding || binding == saml.HTTPPostSimpleSignBinding
+}
+
+// sendable reports whether a Response can be sent to an assertion consumer
+// service with binding, with the custom Binding of o, if any.
+func (o *parseOptions) sendable(binding string) bool {
+	return sendable(binding) || (o.custom != nil && binding == o.custom.URI())
 }
 
 // isSigned reports whether ireq, a validated request, was signed: with

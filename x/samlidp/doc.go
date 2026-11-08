@@ -87,7 +87,9 @@
 //
 // Message.Write sends the Response to the SP's assertion consumer service
 // with the HTTP-POST (or HTTP-POST-SimpleSign) binding: an HTML form that
-// submits itself.
+// submits itself. For SPs that ask for the HTTP-Artifact binding, see
+// github.com/crewjam/saml/x/samlidp/idpartifact, which plugs in with
+// WithCustomBinding.
 //
 // For an IdP-initiated login, such as from a portal of applications, make
 // the AuthnRequest with IDPInitiated instead of ParseAuthnRequest.

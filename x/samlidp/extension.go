@@ -5,6 +5,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"maps"
+	"net/url"
+	"slices"
 	"time"
 
 	"github.com/beevik/etree"
@@ -142,3 +145,100 @@ func (c *Config) Consume(ctx context.Context, serviceProvider, id string, expire
 
 // Now returns the current time, by the clock of WithClock.
 func (c *Config) Now() time.Time { return c.clock.Now() }
+
+// Binding sends a Response to a service provider's assertion consumer
+// service with a binding other than those built in (HTTP-POST and
+// HTTP-POST-SimpleSign), such as the HTTP-Artifact binding of
+// github.com/crewjam/saml/x/samlidp/idpartifact. Pass it with
+// WithCustomBinding.
+type Binding interface {
+	// URI is the binding's URI, such as saml.HTTPArtifactBinding.
+	URI() string
+
+	// Encode returns the Message that sends m to the SP, made with
+	// m.Redirect or m.PostForm, or with NewMessage.
+	Encode(ctx context.Context, m *OutboundMessage) (*Message, error)
+}
+
+// CustomBindingOption is the option that WithCustomBinding returns. It is
+// a ParseOption and a ResponseOption.
+type CustomBindingOption struct{ b Binding }
+
+// WithCustomBinding lets ParseAuthnRequest accept an AuthnRequest whose
+// assertion consumer service has the binding of b, and makes Response and
+// ErrorResponse send to such a service with b. Pass it to all three.
+//
+// An AuthnRequest that names its ACS by index gets that ACS. One that
+// names it by URL and asks for b's binding (ProtocolBinding) gets the ACS
+// with that binding at that URL, if the SP lists one. Without
+// WithCustomBinding, an ACS with b's binding is answered with
+// StatusUnsupportedBinding at the SP's default ACS.
+func WithCustomBinding(b Binding) CustomBindingOption { return CustomBindingOption{b} }
+
+func (o CustomBindingOption) applyParse(p *parseOptions)       { p.custom = o.b }
+func (o CustomBindingOption) applyResponse(r *responseOptions) { r.custom = o.b }
+
+// OutboundMessage is a signed SAML protocol message that a Config has
+// made, for a Binding to send.
+type OutboundMessage struct {
+	// ID is the ID of the message, and InResponseTo that of the request it
+	// answers, if any.
+	ID           string
+	InResponseTo string
+
+	// Binding is the URI of the binding, and Destination the SP endpoint
+	// with that binding, to which the message is addressed.
+	Binding     string
+	Destination string
+
+	// ServiceProvider is the entity ID of the SP the message is for.
+	ServiceProvider string
+
+	// Param is the name the bindings give the message: "SAMLRequest" or
+	// "SAMLResponse".
+	Param string
+
+	// RelayState and ScriptNonce are those of the call that made the
+	// message.
+	RelayState  string
+	ScriptNonce string
+
+	// Element is the message, signed. It must not be modified.
+	Element *etree.Element
+}
+
+// Redirect returns a Message that sends the browser to u with a 302
+// redirect.
+func (m *OutboundMessage) Redirect(u *url.URL) *Message {
+	msg := m.message()
+	msg.redirectURL = u
+	return msg
+}
+
+// PostForm returns a Message that posts fields to m.Destination from the
+// browser, with a page holding an HTML form that submits itself, as the
+// POST bindings do: the fields are escaped, the page's
+// Content-Security-Policy allows only the form's script (and that script
+// carries m.ScriptNonce, if set), and it is not cached. Add RelayState to
+// fields yourself if the binding sends it.
+func (m *OutboundMessage) PostForm(fields url.Values) (*Message, error) {
+	msg := m.message()
+	names := slices.Sorted(maps.Keys(fields))
+	msg.fields = []formField{}
+	for _, name := range names {
+		for _, value := range fields[name] {
+			msg.fields = append(msg.fields, formField{name, value})
+		}
+	}
+	if err := msg.setForm(m.ScriptNonce); err != nil {
+		return nil, err
+	}
+	return msg, nil
+}
+
+func (m *OutboundMessage) message() *Message {
+	return &Message{
+		ID: m.ID, InResponseTo: m.InResponseTo, Binding: m.Binding,
+		Destination: m.Destination, RelayState: m.RelayState,
+	}
+}

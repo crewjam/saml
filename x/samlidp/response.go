@@ -72,6 +72,7 @@ type ResponseOption interface {
 }
 
 type responseOptions struct {
+	custom  Binding
 	idp     []IdentityProviderOption
 	address string
 	modify  []func(*saml.Assertion) error
@@ -174,7 +175,7 @@ func (c *Config) Response(ctx context.Context, req *AuthnRequest, subject Subjec
 	if err := ireq.MakeResponse(); err != nil {
 		return nil, err
 	}
-	msg, err := postResponse(ireq, o.nonce)
+	msg, err := c.sendResponse(ctx, ireq, o)
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +204,27 @@ func (c *Config) ErrorResponse(ctx context.Context, req *AuthnRequest, status *s
 	if err := ireq.MakeErrorResponse(status.TopLevel, status.SecondLevel, status.Message); err != nil {
 		return nil, err
 	}
-	return postResponse(ireq, o.nonce)
+	return c.sendResponse(ctx, ireq, o)
+}
+
+// sendResponse returns the Message that sends the Response of ireq, which
+// MakeResponse or MakeErrorResponse has made: with the custom Binding of
+// o if the ACS has its binding, and otherwise posted.
+func (c *Config) sendResponse(ctx context.Context, ireq *saml.IdpAuthnRequest, o responseOptions) (*Message, error) {
+	if o.custom == nil || ireq.ACSEndpoint.Binding != o.custom.URI() {
+		return postResponse(ireq, o.nonce)
+	}
+	return o.custom.Encode(ctx, &OutboundMessage{
+		ID:              ireq.ResponseEl.SelectAttrValue("ID", ""),
+		InResponseTo:    ireq.Request.ID,
+		Binding:         ireq.ACSEndpoint.Binding,
+		Destination:     ireq.ACSEndpoint.Location,
+		ServiceProvider: ireq.ServiceProviderMetadata.EntityID,
+		Param:           "SAMLResponse",
+		RelayState:      ireq.RelayState,
+		ScriptNonce:     o.nonce,
+		Element:         ireq.ResponseEl,
+	})
 }
 
 func newResponseOptions(opts []ResponseOption) responseOptions {
@@ -223,8 +244,8 @@ func (c *Config) answer(ctx context.Context, req *AuthnRequest, o responseOption
 	if req == nil {
 		return nil, errors.New("samlidp: nil AuthnRequest")
 	}
-	if !sendable(req.ACSBinding) {
-		return nil, fmt.Errorf("samlidp: cannot send a response with binding %q", req.ACSBinding)
+	if !sendable(req.ACSBinding) && (o.custom == nil || req.ACSBinding != o.custom.URI()) {
+		return nil, fmt.Errorf("samlidp: cannot send a response with binding %q (see WithCustomBinding)", req.ACSBinding)
 	}
 	md, err := lookupServiceProvider(ctx, c.serviceProviders, req.ServiceProvider)
 	if err != nil {

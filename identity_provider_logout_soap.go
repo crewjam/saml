@@ -211,3 +211,33 @@ func (idp *IdentityProvider) parseSOAPLogoutResponse(body []byte, serviceProvide
 	}
 	return &resp, nil
 }
+
+// ValidateSPSignedElement verifies the enveloped XML signature of el, a
+// message from the service provider whose metadata is metadata, against
+// the signing certificates of that metadata, with an algorithm
+// RejectSHA1Signatures allows, and returns what the signature covers: el
+// without its Signature, which the caller reads the message from. el must
+// be signed; the error then matches ErrInvalidSignature. As is usual for
+// keys distributed in metadata, the certificates' validity periods are not
+// checked. Use it for messages the IdP receives with the SOAP binding, such
+// as an ArtifactResolve.
+func (idp *IdentityProvider) ValidateSPSignedElement(el *etree.Element, metadata *EntityDescriptor) (*etree.Element, error) {
+	if el == nil || metadata == nil {
+		return nil, errors.New("no element or no service provider metadata")
+	}
+	certs, err := spSigningCerts(metadata)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkEnvelopedSignatureNotSHA1(idp.RejectSHA1Signatures, el); err != nil {
+		return nil, err
+	}
+	signed, err := verifiedEnvelopedElement(el, certs, idp.dsigClock())
+	if errors.Is(err, errSignatureElementNotPresent) {
+		return nil, classify(fmt.Errorf("the %s is not signed", el.Tag), ErrInvalidSignature)
+	}
+	if err != nil {
+		return nil, classify(err, ErrInvalidSignature)
+	}
+	return signed, nil
+}
