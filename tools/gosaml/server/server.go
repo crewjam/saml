@@ -92,7 +92,12 @@ func (s *Server) routes() {
 	m.Handle("GET /static/", s.static)
 	m.HandleFunc("GET /inspect", s.inspectPage)
 	m.HandleFunc("POST /inspect", s.inspectPage)
-	m.HandleFunc("GET /about", func(w http.ResponseWriter, r *http.Request) { s.render(w, r, "about", nil) })
+	m.HandleFunc("GET /about", func(w http.ResponseWriter, r *http.Request) {
+		s.render(w, r, "about", struct {
+			MaxUsers, MaxSPs, MaxEvents int
+			Lifetime                    string
+		}{maxUsers, maxSPs, store.MaxEventsPerInstance, roundDuration(s.TTL)})
+	})
 
 	m.HandleFunc("POST /new/idp", s.newIdP)
 	m.HandleFunc("POST /new/sp", s.newSP)

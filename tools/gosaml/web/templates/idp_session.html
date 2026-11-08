@@ -1,19 +1,29 @@
 {{define "content"}}{{with .Data}}
-<section class="card narrow">
-  <p class="eyebrow"><span class="badge idp">IdP</span> {{.Name}}</p>
+<main class="narrow">
+  <p class="eyebrow"><span class="tag idp">{{.Name}}</span></p>
   {{with .Session}}
-  <h1>Logged in as {{.Username}}</h1>
-  <table class="kv">
-    <tr><th>Authenticated</th><td>{{since .AuthnInstant}}, <code>{{short (print .AuthnContext)}}</code></td></tr>
-    <tr><th>Session index</th><td><code>{{.SessionIndex}}</code></td></tr>
-  </table>
-  <h2>Service providers in this session</h2>
-  {{template "participants" .Participants}}
-  <form hx-boost="false" method="post" action="/idp/{{$.Data.InstanceID}}/logout"><button>Log out of all of them</button></form>
-  <p class="hint">IdP-initiated single logout: the IdP ends this session and sends each service provider a LogoutRequest.</p>
+  <div class="page-head result-head">
+    <div>
+      <h1 class="result-h1">Logged in as {{.Username}}</h1>
+      <p class="meta">Authenticated <time datetime="{{iso .AuthnInstant}}" title="{{rel .AuthnInstant}}">{{clock .AuthnInstant}}</time>.</p>
+    </div>
+    <div class="actions"><form hx-boost="false" method="post" action="/idp/{{$.Data.InstanceID}}/logout" class="inline"><button class="btn">Log out of all of them</button></form></div>
+  </div>
+  <section class="result-sec">
+    <h2 class="sec-h2">Session</h2>
+    <dl class="facts">
+      <div><dt>Authn context</dt><dd class="mono">{{.AuthnContext}}</dd></div>
+      <div><dt>Session index</dt><dd class="mono">{{.SessionIndex}}</dd></div>
+    </dl>
+  </section>
+  <section class="result-sec">
+    <h2 class="sec-h2">Service providers in this session <span class="count">{{len .Participants}}</span></h2>
+    {{template "participants" .Participants}}
+    <p class="help">Logging out is IdP-initiated single logout: the IdP ends this session and sends each service provider a LogoutRequest.</p>
+  </section>
   {{else}}
-  <h1>No session</h1>
-  <p>This browser is not logged in to this IdP.{{if not .Remember}} This IdP is set not to remember logins.{{end}}</p>
+  <h1 class="result-h1">No session</h1>
+  <p class="meta">This browser is not logged in to this IdP.{{if not .Remember}} This IdP is set not to remember logins.{{end}}</p>
   {{end}}
-</section>
+</main>
 {{end}}{{end}}
