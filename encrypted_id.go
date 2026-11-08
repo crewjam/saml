@@ -238,12 +238,22 @@ func decryptWithKeys(encryptedEl *etree.Element, keys []namedDecryptionKey, reci
 	// that the error says no more than it did when only that one was tried.
 	// Key transport is RSA-OAEP only, which fails the same way for every
 	// wrong key, so trying several keys reveals no more than trying one.
+	//
+	// Once a key has unwrapped the content key, the outcome of decrypting
+	// the EncryptedData with it is final: no other candidate is tried. Were
+	// the search to go on after, say, bad CBC padding but stop after good
+	// padding, each further candidate (an attacker may add several, each
+	// costing a private-key operation) would make the time taken tell the
+	// two apart: a padding oracle on an unsigned Response.
 	var errs []error
 	for i, encryptedKeyEl := range encryptedKeyEls {
 		for _, k := range keys {
-			plaintext, keyErr := decryptWithKey(k.key, encryptedEl, encryptedKeyEl, encryptedDataEl)
+			plaintext, unwrapped, keyErr := decryptWithKey(k.key, encryptedEl, encryptedKeyEl, encryptedDataEl)
 			if keyErr == nil {
 				return parsePlaintext(plaintext)
+			}
+			if unwrapped {
+				return nil, keyErr
 			}
 			if i == 0 {
 				errs = append(errs, fmt.Errorf("%s: %w", k.name, keyErr))

@@ -2152,17 +2152,20 @@ func parsePlaintext(plaintextEl []byte) (*etree.Element, error) {
 // decryptWithKey decrypts encryptedDataEl, the EncryptedData child of
 // encryptedEl, with decryptionKey. If encryptedKeyEl is not nil, it is an
 // EncryptedKey, beside the EncryptedData or inside its KeyInfo, that holds
-// the content key wrapped with decryptionKey.
-func decryptWithKey(decryptionKey interface{}, encryptedEl, encryptedKeyEl, encryptedDataEl *etree.Element) ([]byte, error) {
+// the content key wrapped with decryptionKey. unwrapped reports whether
+// that content key was unwrapped, so that a failure is one of the
+// EncryptedData, not of decryptionKey.
+func decryptWithKey(decryptionKey interface{}, encryptedEl, encryptedKeyEl, encryptedDataEl *etree.Element) (plaintext []byte, unwrapped bool, err error) {
 	if encryptedKeyEl == nil {
-		return xmlenc.Decrypt(decryptionKey, encryptedDataEl)
+		plaintext, err = xmlenc.Decrypt(decryptionKey, encryptedDataEl)
+		return plaintext, false, err
 	}
 	key, err := xmlenc.Decrypt(decryptionKey, encryptedKeyEl)
 	if err != nil {
 		if encryptedKeyEl.Parent() == encryptedEl {
-			return nil, classify(fmt.Errorf("failed to decrypt key from response: %w", err), ErrDecryptionFailed)
+			return nil, false, classify(fmt.Errorf("failed to decrypt key from response: %w", err), ErrDecryptionFailed)
 		}
-		return nil, err
+		return nil, false, err
 	}
 	// The block ciphers unwrap an EncryptedKey in KeyInfo themselves, so
 	// hand them the EncryptedData without one, now that the key is known.
@@ -2172,7 +2175,8 @@ func decryptWithKey(decryptionKey interface{}, encryptedEl, encryptedKeyEl, encr
 			el.Parent().RemoveChild(el)
 		}
 	}
-	return xmlenc.Decrypt(key, encryptedDataEl)
+	plaintext, err = xmlenc.Decrypt(key, encryptedDataEl)
+	return plaintext, true, err
 }
 
 func (sp *ServiceProvider) parseAssertion(assertionEl *etree.Element, possibleRequestIDs []string, now time.Time, signatureRequirement signatureRequirement) (*Assertion, error) {
