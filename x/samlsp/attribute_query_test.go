@@ -13,6 +13,7 @@ import (
 	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/attrname"
 	"github.com/crewjam/saml/x/samlsp"
 )
 
@@ -69,9 +70,9 @@ func newAttributeAuthority(t *testing.T, ti *testIDP) *attributeAuthority {
 					AudienceRestrictions: []saml.AudienceRestriction{{Audience: saml.Audience{Value: spEntityID}}},
 				},
 				AttributeStatements: []saml.AttributeStatement{{Attributes: []saml.Attribute{
-					{Name: "urn:oid:0.9.2342.19200300.100.1.3", NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+					{Name: attrname.Mail, NameFormat: attrname.FormatURI,
 						Values: []saml.AttributeValue{{Type: "xs:string", Value: "alice@example.com"}}},
-					{Name: "urn:oid:1.3.6.1.4.1.5923.1.1.1.1", NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+					{Name: attrname.EduPersonAffiliation, NameFormat: attrname.FormatURI,
 						Values: []saml.AttributeValue{{Type: "xs:string", Value: "staff"}, {Type: "xs:string", Value: "member"}}},
 				}}},
 			}
@@ -120,7 +121,7 @@ func TestQueryAttributes(t *testing.T) {
 	alice := saml.NameID{Format: string(saml.EmailAddressNameIDFormat), Value: "alice@example.com"}
 
 	attrs, err := cfg.QueryAttributes(ctx, alice,
-		samlsp.WithQueriedAttributes("urn:oid:0.9.2342.19200300.100.1.3", "urn:oid:1.3.6.1.4.1.5923.1.1.1.1"))
+		samlsp.WithQueriedAttributes(attrname.Mail, attrname.EduPersonAffiliation))
 	if err != nil {
 		t.Fatalf("QueryAttributes: %v (%v)", err, errors.Unwrap(err))
 	}

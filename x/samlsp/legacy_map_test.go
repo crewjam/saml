@@ -5,12 +5,13 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/crewjam/saml/attrname"
 	"github.com/crewjam/saml/x/samlsp"
 )
 
 func TestAttributesLegacyMap(t *testing.T) {
 	attrs := samlsp.Attributes{
-		{Name: "urn:oid:0.9.2342.19200300.100.1.3", FriendlyName: "mail", Values: []string{"alice@example.com"}},
+		{Name: attrname.Mail, FriendlyName: "mail", Values: []string{"alice@example.com"}},
 		{Name: "memberOf", Values: []string{"admins", "users"}},
 		// Another attribute with the same FriendlyName: merged, in order.
 		{Name: "urn:example:mail", FriendlyName: "mail", Values: []string{"a@example.org"}},
@@ -33,7 +34,7 @@ func TestAttributesLegacyMap(t *testing.T) {
 // working through LegacyMap.
 func ExampleAttributes_LegacyMap() {
 	attrs := samlsp.Attributes{
-		{Name: "urn:oid:0.9.2342.19200300.100.1.3", FriendlyName: "mail", Values: []string{"alice@example.com"}},
+		{Name: attrname.Mail, FriendlyName: "mail", Values: []string{"alice@example.com"}},
 	}
 	userAttribute := "mail" // from configuration written for samlsp
 	if v := attrs.LegacyMap()[userAttribute]; len(v) > 0 {

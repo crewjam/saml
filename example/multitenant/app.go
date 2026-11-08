@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/attrname"
 	"github.com/crewjam/saml/x/samlsp"
 	"github.com/crewjam/saml/x/samlsp/slo"
 )
@@ -130,7 +131,7 @@ func (a *App) acs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	email := assertion.Attributes.Get("urn:oid:0.9.2342.19200300.100.1.3")
+	email := assertion.Attributes.Get(attrname.Mail)
 	if email == "" && assertion.NameID.Format == string(saml.EmailAddressNameIDFormat) {
 		email = assertion.Subject
 	}

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crewjam/saml/attrname"
 	"github.com/crewjam/saml/x/samlsp"
 )
 
@@ -266,7 +267,7 @@ func (b *strictBool) UnmarshalSAMLAttribute(attr samlsp.Attribute) error {
 
 func TestDecodeAttributesAttributeUnmarshaler(t *testing.T) {
 	a := &samlsp.Assertion{Attributes: samlsp.Attributes{
-		{Name: "x", NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:uri", Values: []string{"a", "b"}, Types: []string{"xs:string", ""}},
+		{Name: "x", NameFormat: attrname.FormatURI, Values: []string{"a", "b"}, Types: []string{"xs:string", ""}},
 		{Name: "y", Values: []string{"1"}},
 		// A second element with the same Name adds to the values; its
 		// missing Types count as undeclared.
@@ -340,8 +341,8 @@ func TestDecodeAttributesStructure(t *testing.T) {
 		{Name: "mail", Values: []string{"alice@example.com"}},
 		{Name: "groups", Values: []string{"a", "b"}},
 		{Name: "one", Values: []string{"x"}},
-		{Name: "role", NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:basic", Values: []string{"basic-role"}},
-		{Name: "role", NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:uri", Values: []string{"uri-role"}},
+		{Name: "role", NameFormat: attrname.FormatBasic, Values: []string{"basic-role"}},
+		{Name: "role", NameFormat: attrname.FormatURI, Values: []string{"uri-role"}},
 		{Name: "plain", Values: []string{"no format"}},
 	}}
 

@@ -19,6 +19,7 @@ import (
 	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/attrname"
 	"github.com/crewjam/saml/x/samlsp"
 )
 
@@ -88,28 +89,28 @@ var idpFixtures = []idpFixture{
 		response: "TestSPCanHandleEntraIDResponse_assertion_signed",
 		entityID: "https://sp.example.com/saml/metadata", acsURL: "https://sp.example.com/saml/acs",
 		now: time.Date(2025, 6, 2, 15, 4, 6, 0, time.UTC), requestID: "id-4f6e2c9d8a7b1e3f5d0c2b4a6e8f1d3c5b7a9e0f",
-		subject: "alice@contoso.example", attribute: "http://schemas.microsoft.com/identity/claims/displayname", value: "Alice Example",
+		subject: "alice@contoso.example", attribute: attrname.EntraDisplayName, value: "Alice Example",
 	},
 	{
 		name: "Entra ID, response signed", metadata: "TestSPCanHandleEntraIDResponse_IDPMetadata",
 		response: "TestSPCanHandleEntraIDResponse_response_signed",
 		entityID: "https://sp.example.com/saml/metadata", acsURL: "https://sp.example.com/saml/acs",
 		now: time.Date(2025, 6, 2, 15, 4, 6, 0, time.UTC), requestID: "id-4f6e2c9d8a7b1e3f5d0c2b4a6e8f1d3c5b7a9e0f",
-		subject: "alice@contoso.example", attribute: "http://schemas.microsoft.com/identity/claims/displayname", value: "Alice Example",
+		subject: "alice@contoso.example", attribute: attrname.EntraDisplayName, value: "Alice Example",
 	},
 	{
 		name: "Entra ID, response and assertion signed", metadata: "TestSPCanHandleEntraIDResponse_IDPMetadata",
 		response: "TestSPCanHandleEntraIDResponse_response_and_assertion_signed",
 		entityID: "https://sp.example.com/saml/metadata", acsURL: "https://sp.example.com/saml/acs",
 		now: time.Date(2025, 6, 2, 15, 4, 6, 0, time.UTC), requestID: "id-4f6e2c9d8a7b1e3f5d0c2b4a6e8f1d3c5b7a9e0f",
-		subject: "alice@contoso.example", attribute: "http://schemas.microsoft.com/identity/claims/displayname", value: "Alice Example",
+		subject: "alice@contoso.example", attribute: attrname.EntraDisplayName, value: "Alice Example",
 	},
 	{
 		name: "Entra ID, encrypted", metadata: "TestSPCanHandleEntraIDResponse_IDPMetadata",
 		response: "TestSPCanHandleEntraIDResponse_encrypted_assertion_signed",
 		entityID: "https://sp.example.com/saml/metadata", acsURL: "https://sp.example.com/saml/acs",
 		now: time.Date(2025, 6, 2, 15, 4, 6, 0, time.UTC), requestID: "id-4f6e2c9d8a7b1e3f5d0c2b4a6e8f1d3c5b7a9e0f",
-		subject: "alice@contoso.example", attribute: "http://schemas.microsoft.com/identity/claims/displayname", value: "Alice Example",
+		subject: "alice@contoso.example", attribute: attrname.EntraDisplayName, value: "Alice Example",
 		// Entra signs the assertion and encrypts it with AES-CBC.
 		refusedWith: saml.ErrInvalidSignature, relax: allowCBCInUnsignedResponse,
 	},
@@ -118,7 +119,7 @@ var idpFixtures = []idpFixture{
 		response: "TestSPCanHandleEntraIDResponse_idp_initiated",
 		entityID: "https://sp.example.com/saml/metadata", acsURL: "https://sp.example.com/saml/acs",
 		now:     time.Date(2025, 6, 2, 15, 4, 6, 0, time.UTC),
-		subject: "alice@contoso.example", attribute: "http://schemas.microsoft.com/identity/claims/displayname", value: "Alice Example",
+		subject: "alice@contoso.example", attribute: attrname.EntraDisplayName, value: "Alice Example",
 	},
 	{
 		name: "Okta, signed response, encrypted assertion", metadata: "TestSPCanHandleOktaSignedResponseEncryptedAssertion_IDPMetadata",
