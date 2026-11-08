@@ -150,8 +150,8 @@ func New(config *samlidp.Config, store Store, index uint16) (*Binding, error) {
 	if _, err := b.path(); err != nil {
 		return nil, err
 	}
-	if m, ok := store.(*MemoryStore); ok && m.Now == nil {
-		m.Now = config.Now
+	if m, ok := store.(*MemoryStore); ok {
+		m.DefaultNow(config.Now)
 	}
 	return b, nil
 }

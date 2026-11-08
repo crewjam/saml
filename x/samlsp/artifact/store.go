@@ -153,8 +153,10 @@ func (s *MemoryStore) maxEntries() int {
 	return DefaultMaxEntries
 }
 
-// defaultNow makes the store use now if it has no Now.
-func (s *MemoryStore) defaultNow(now func() time.Time) {
+// DefaultNow sets Now to now if Now is nil, under the store's lock, so
+// that it is safe while the store is in use. New calls it, and so does
+// x/samlidp/idpartifact.New.
+func (s *MemoryStore) DefaultNow(now func() time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.Now == nil {

@@ -145,7 +145,7 @@ func New(config *samlsp.Config, store Store, index uint16) (*Binding, error) {
 		return nil, err
 	}
 	if m, ok := store.(*MemoryStore); ok {
-		m.defaultNow(func() time.Time { return clockNow(clock) })
+		m.DefaultNow(func() time.Time { return clockNow(clock) })
 	}
 	return b, nil
 }

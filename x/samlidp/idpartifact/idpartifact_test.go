@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -400,4 +401,23 @@ func TestMemoryStoreClock(t *testing.T) {
 	if store.Len() != 1 {
 		t.Error("the message expired by the system clock")
 	}
+}
+
+// New may be given a MemoryStore that is already in use, such as one
+// shared with another Binding: it sets the store's clock under its lock.
+// Run with -race.
+func TestNewWithStoreInUse(t *testing.T) {
+	w := newWorld(t, nil)
+	store := idpartifact.NewMemoryStore()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := range 50 {
+			_ = store.Save(context.Background(), fmt.Sprint(i), idpartifact.StoredMessage{ExpiresAt: time.Now().Add(time.Minute)})
+		}
+	}()
+	if _, err := idpartifact.New(w.idp, store, 3); err != nil {
+		t.Fatal(err)
+	}
+	<-done
 }
