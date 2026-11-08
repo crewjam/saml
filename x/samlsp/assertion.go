@@ -203,6 +203,9 @@ func (as Attributes) Values(name string) []string {
 // Unlike samlsp, it leaves out null (xsi:nil) values, as Values does, and
 // does not add the session indexes under "SessionIndex"; they are in
 // Assertion.SessionIndexes.
+//
+// Deprecated: LegacyMap exists only to ease the move from samlsp. Name
+// attributes by their Name, and use Get, Values or Decode.
 func (as Attributes) LegacyMap() map[string][]string {
 	m := make(map[string][]string, len(as))
 	for _, a := range as {

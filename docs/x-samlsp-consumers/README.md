@@ -83,7 +83,9 @@ documentation:
    only. Any setting that names an attribute, such as Velociraptor's
    `saml_user_attribute: name` or saml-auth-proxy's `AttributeHeaderMappings`,
    silently stops matching. **Addressed:** `Attributes.LegacyMap` keys them as
-   `samlsp` did, documented as a migration aid; both ports use it.
+   `samlsp` did. It is deprecated from the start, as a migration aid: both
+   ports use it to keep existing configuration working, and should move
+   their settings to attribute Names, which `Get` matches.
 2. **A solicited Response now needs its request ID.** BloodHound called
    `ParseResponse(..., nil)` with `AllowIDPInitiated`. That accepted any
    Response, including one answering an AuthnRequest that some other browser
