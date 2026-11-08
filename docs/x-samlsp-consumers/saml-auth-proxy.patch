@@ -409,16 +409,14 @@ index dac8bde..0000000
 -	return rv
 -}
 diff --git a/server/server.go b/server/server.go
-index 9747373..e528d3d 100644
+index 9747373..a53b204 100644
 --- a/server/server.go
 +++ b/server/server.go
-@@ -3,10 +3,11 @@ package server
+@@ -3,10 +3,9 @@ package server
  import (
  	"context"
  	"crypto"
-+	"crypto/hmac"
 +	"crypto/rsa"
-+	"crypto/sha256"
  	"crypto/tls"
  	"crypto/x509"
 -	"encoding/xml"
@@ -426,7 +424,7 @@ index 9747373..e528d3d 100644
  	"fmt"
  	"log"
  	"net"
-@@ -14,16 +15,14 @@ import (
+@@ -14,16 +13,14 @@ import (
  	"net/url"
  	"os"
  	"strings"
@@ -445,7 +443,7 @@ index 9747373..e528d3d 100644
  func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *Config) error {
  	keyPair, err := tls.LoadX509KeyPair(cfg.SpCertPath, cfg.SpKeyPath)
  	if err != nil {
-@@ -39,12 +38,7 @@ func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *
+@@ -39,12 +36,7 @@ func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *
  		return fmt.Errorf("unsupported SP private key type %T: key must implement crypto.Signer", keyPair.PrivateKey)
  	}
  
@@ -459,7 +457,7 @@ index 9747373..e528d3d 100644
  	if err != nil {
  		return fmt.Errorf("failed to parse base URL: %w", err)
  	}
-@@ -54,74 +48,71 @@ func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *
+@@ -54,74 +46,71 @@ func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *
  		return fmt.Errorf("failed to setup HTTP client: %w", err)
  	}
  
@@ -582,7 +580,7 @@ index 9747373..e528d3d 100644
  	}
  
  	proxy, err := NewProxy(logger, cfg)
-@@ -132,46 +123,17 @@ func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *
+@@ -132,46 +121,17 @@ func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *
  	app := http.HandlerFunc(proxy.handler)
  	if cfg.AuthVerify {
  		if cfg.AuthVerifyRequireLogin {
@@ -635,7 +633,7 @@ index 9747373..e528d3d 100644
  
  	logger.
  		With(zap.String("baseUrl", cfg.BaseUrl)).
-@@ -181,6 +143,52 @@ func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *
+@@ -181,6 +141,50 @@ func Start(ctx context.Context, listener net.Listener, logger *zap.Logger, cfg *
  	return http.Serve(listener, nil)
  }
  
@@ -646,9 +644,7 @@ index 9747373..e528d3d 100644
 +	if err != nil {
 +		return nil, fmt.Errorf("failed to derive the pending login cookie key: %w", err)
 +	}
-+	mac := hmac.New(sha256.New, der)
-+	mac.Write([]byte("saml-auth-proxy pending login cookie"))
-+	return mac.Sum(nil), nil
++	return pending.DeriveKey(der, "saml-auth-proxy pending login")
 +}
 +
 +func nameIDFormat(format string) saml.NameIDFormat {
@@ -688,7 +684,7 @@ index 9747373..e528d3d 100644
  func isNonInteractiveRequest(r *http.Request) bool {
  	// Legacy AJAX signal
  	if strings.EqualFold(r.Header.Get("X-Requested-With"), "XMLHttpRequest") {
-@@ -213,25 +221,6 @@ func isNonInteractiveRequest(r *http.Request) bool {
+@@ -213,25 +217,6 @@ func isNonInteractiveRequest(r *http.Request) bool {
  	return false
  }
  
@@ -714,7 +710,7 @@ index 9747373..e528d3d 100644
  func setupHttpClient(idpCaFile string) (*http.Client, error) {
  	if idpCaFile == "" {
  		return http.DefaultClient, nil
-@@ -261,38 +250,24 @@ func setupHttpClient(idpCaFile string) (*http.Client, error) {
+@@ -261,38 +246,24 @@ func setupHttpClient(idpCaFile string) (*http.Client, error) {
  	return client, nil
  }
  

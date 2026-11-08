@@ -77,7 +77,7 @@ JWT cookie as the OIDC authenticators. It moves `getSignedJWTTokenCookie` off
 `authenticateUserHandle`. It adds `/saml/login` and `/saml/acs` handlers, and
 remembers the request ID with `x/samlsp/pending`, as OIDC does with its
 `oauthstate` cookie. A `saml_user_attribute` that names a FriendlyName keeps
-matching through `Attributes.LegacyMap`. User provisioning moves from every request to once per login. The entity ID and ACS
+matching through `Attributes.LegacyGet`. User provisioning moves from every request to once per login. The entity ID and ACS
 URL stay the same, so the IdP registration does not change.
 
 **saml-auth-proxy.** Removes `request_tracker_cookie.go` and `anonymous.go` and
@@ -152,8 +152,8 @@ replay record. `givenName` and `email` still match by FriendlyName, where IdPs
 send them so.
 
 The four ports that use `x/samlsp/pending` need no new configuration. Each
-derives the tracker's 32-byte key with HMAC-SHA256, under a fixed label, from a
-secret the project already has: Velociraptor's frontend key, BloodHound's JWT
+derives the tracker's key with `pending.DeriveKey`, under a label of its own,
+from a secret the project already has: Velociraptor's frontend key, BloodHound's JWT
 signing key, and the SP private key for saml-auth-proxy (which signed its old
 tracker cookie too) and KubePi. The others keep login state server-side.
 
@@ -207,45 +207,51 @@ documentation:
 
 The second round of ports, Zitadel, Octelium and KubePi, found these:
 
-7. **Two IdPs among the most popular consumers have nothing in `x/samlsp`.**
+7. **Two IdPs among the most popular consumers had nothing in `x/samlsp`.**
    Teleport (1st) and Authorizer (11th) use `samlsp` only for `ParseMetadata`,
-   on the metadata of the SPs they serve. `x/samlsp.ParseMetadata` accepts IdP
-   metadata only, so they must keep the old package, or the library needs a
-   role-neutral parser outside it. Zitadel keeps its own parser too:
-   `ParseMetadata` has no `CharsetReader` for metadata that declares a
-   non-UTF-8 encoding, and refuses an aggregate with several IdPs instead of
-   taking the first.
-8. **Every `pending` port derives its cookie key by hand**, four times with the
-   same HMAC construction. A helper, such as `pending.KeyFrom(secret, label)`,
-   would remove the step most easily got wrong.
-9. **The Name-then-FriendlyName lookup is written twice** (Velociraptor,
-   KubePi), each time building a whole `LegacyMap` for one value. A deprecated
-   `Attributes.LegacyGet(name)` would make it one line.
-10. **`RemoteMetadata` cannot fail fast.** It fetches when first needed, but
+   on the metadata of the SPs they serve, and `x/samlsp.ParseMetadata` accepts
+   IdP metadata only. **Addressed:** `saml.ParseServiceProviderMetadata`, in
+   the core package, parses SP metadata (`samlidp` uses it too); the Teleport
+   and Authorizer patches move to it. **Still stands:** Zitadel keeps its own
+   IdP-metadata parser, because `ParseMetadata` has no `CharsetReader` for
+   metadata that declares a non-UTF-8 encoding, and refuses an aggregate with
+   several IdPs instead of taking the first.
+8. **Every `pending` port derived its cookie key by hand**, four times with the
+   same HMAC construction. **Addressed:** `pending.DeriveKey(secret, label)`.
+9. **The Name-then-FriendlyName lookup was written twice** (Velociraptor,
+   KubePi), each time building a whole `LegacyMap` for one value.
+   **Addressed:** `Attributes.LegacyGet`, deprecated like `LegacyMap`.
+10. **`RemoteMetadata` could not fail fast.** It fetches when first needed, but
     Octelium and KubePi report a bad metadata URL when the IdP is configured,
-    so both call the returned function themselves. That works, but nothing
-    documents it.
+    so both call the returned function themselves. **Addressed:** its docs now
+    say to do exactly that, and to keep one `MetadataFunc` while the IdP is
+    configured so that its cache is kept. (KubePi still makes one per login,
+    as it did before the port.)
 11. **Configs are rebuilt for more reasons than per request.** Octelium rebuilds
     them when its configuration changes, KubePi per login, and Zitadel per
-    request; all three need a shared replay record. `New` documents only the
-    per-request case. KubePi's per-login Config also throws away the metadata
-    cache of its `RemoteMetadata`, so every login fetches the metadata again.
-12. **`Message` hides a POST form's fields.** Zitadel hands the AuthnRequest to
+    request; all three need a shared replay record. **Addressed:** `New`'s
+    docs now cover a Config rebuilt for any reason.
+12. **`Message` hid a POST form's fields.** Zitadel hands the AuthnRequest to
     API clients as a URL and form fields, and writes no HTML itself, so it
-    reimplements the POST binding as a custom `Binding` just to capture the
-    fields. A `Message.Form()` returning the action and fields would replace
-    that. Octelium, which hands back a login URL, cannot use an IdP that offers
-    only HTTP-POST at all.
+    reimplemented the POST binding as a custom `Binding` just to capture the
+    fields. **Addressed:** `Message.FormFields`, which the Zitadel patch now
+    uses. **Still stands:** Octelium hands back only a login URL, so it still
+    cannot use an IdP that offers only HTTP-POST; that is its interface's
+    limit, not the library's.
 13. **Smaller gaps**:
-    - `WithSignatureMethod` refuses SHA-1 even for signing, though Zitadel's
-      admin API offers RSA-SHA1 for AuthnRequests (it works around it with
-      `WithServiceProvider`).
-    - `ForceAuthn` cannot be set from a configuration boolean without a
-      conditional append (Octelium).
-    - `slo` needs the full `saml.NameID` where Zitadel stored only its value.
-    - `WithResponseBinding` refuses HTTP-Redirect, which Zitadel's tests use.
-    - Logging why a Response was refused needs `errors.As` to reach
+    - **Addressed:** `ForceAuthn` can now be set from a configuration boolean,
+      with `WithForceAuthn` (Octelium).
+    - **Addressed:** the package docs say to log `errors.Unwrap(err)` for why
+      a Response was refused, rather than reaching
       `saml.InvalidResponseError.PrivateErr` (Octelium, BloodHound, KubePi).
+    - **Still stands:** `WithSignatureMethod` refuses SHA-1 even for signing,
+      though Zitadel's admin API offers RSA-SHA1 for AuthnRequests (it works
+      around it with `WithServiceProvider`). This is deliberate.
+    - **Still stands:** `slo` needs the full `saml.NameID` where Zitadel
+      stored only its value.
+    - **Still stands:** `WithResponseBinding` refuses HTTP-Redirect, which
+      Zitadel's tests use. The Web Browser SSO profile does not allow it for
+      Responses.
 
 Improvements that came from porting:
 

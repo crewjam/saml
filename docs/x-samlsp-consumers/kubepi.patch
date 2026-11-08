@@ -1,5 +1,5 @@
 diff --git a/internal/api/v1/sso/sso.go b/internal/api/v1/sso/sso.go
-index 2ce7841..3b48ac8 100644
+index 2ce7841..5942422 100644
 --- a/internal/api/v1/sso/sso.go
 +++ b/internal/api/v1/sso/sso.go
 @@ -1,15 +1,18 @@
@@ -54,7 +54,7 @@ index 2ce7841..3b48ac8 100644
  			ctx.Redirect(callbackSaml2, iris.StatusFound)
  		default:
  			ctx.StatusCode(iris.StatusInternalServerError)
-@@ -236,72 +248,133 @@ func (h *Handler) AuthSso() iris.Handler {
+@@ -236,72 +248,120 @@ func (h *Handler) AuthSso() iris.Handler {
  	}
  }
  
@@ -117,13 +117,13 @@ index 2ce7841..3b48ac8 100644
 +		sp := loadSaml2(ctx)
 +		if sp == nil {
 +			return
-+		}
-+		msg, err := sp.config.AuthnRequest(ctx.Request().Context(), rand.Text())
-+		if err == nil {
-+			err = sp.pending.Remember(ctx.ResponseWriter(), msg, "")
  		}
 -		if err == samlsp.ErrNoSession {
 -			saml2Config.HandleStartAuthFlow(ctx.ResponseWriter(), ctx.Request())
++		msg, err := sp.config.AuthnRequest(ctx.Request().Context(), rand.Text())
++		if err == nil {
++			err = sp.pending.Remember(ctx.ResponseWriter(), msg, "")
++		}
 +		if err != nil {
 +			ctx.StatusCode(iris.StatusInternalServerError)
 +			ctx.Values().Set("message", err.Error())
@@ -131,23 +131,7 @@ index 2ce7841..3b48ac8 100644
  		}
 -		saml2Config.OnError(ctx.ResponseWriter(), ctx.Request(), err)
 +		msg.Write(ctx.ResponseWriter())
-+	}
-+}
-+
-+// saml2Attribute returns the first value of the attribute named name.
-+//
-+// samlsp.Middleware keyed attributes by FriendlyName, or by Name when there
-+// was none, and x/samlsp matches Name only. KubePi asks for "givenName" and
-+// "email", which IdPs often send as FriendlyNames, so those keep matching
-+// through LegacyMap.
-+func saml2Attribute(attrs samlsp.Attributes, name string) string {
-+	if v := attrs.Get(name); v != "" {
-+		return v
-+	}
-+	if v := attrs.LegacyMap()[name]; len(v) > 0 {
-+		return v[0]
  	}
-+	return ""
  }
  
  func (h *Handler) Saml2Metadata() iris.Handler {
@@ -195,8 +179,11 @@ index 2ce7841..3b48ac8 100644
 +			language = "en-US"
 +		}
 +
-+		givenName := saml2Attribute(assertion.Attributes, "givenName")
-+		email := saml2Attribute(assertion.Attributes, "email")
++		// samlsp.Middleware keyed attributes by FriendlyName, or by Name
++		// when there was none. IdPs often send "givenName" and "email" as
++		// FriendlyNames, so LegacyGet keeps them matching.
++		givenName := assertion.Attributes.LegacyGet("givenName") //nolint:staticcheck // see above
++		email := assertion.Attributes.LegacyGet("email")         //nolint:staticcheck // see above
 +		userProfile, err := h.ssoService.Saml2(givenName, email, language, common.DBOptions{})
 +		if err != nil {
 +			ctx.StatusCode(iris.StatusInternalServerError)
@@ -234,48 +221,11 @@ index 2ce7841..3b48ac8 100644
  		ctx.Redirect("/", http.StatusFound)
  	}
  }
-diff --git a/internal/api/v1/sso/sso_test.go b/internal/api/v1/sso/sso_test.go
-new file mode 100644
-index 0000000..dd0662b
---- /dev/null
-+++ b/internal/api/v1/sso/sso_test.go
-@@ -0,0 +1,24 @@
-+package sso
-+
-+import (
-+	"testing"
-+
-+	"github.com/crewjam/saml/x/samlsp"
-+)
-+
-+func TestSaml2Attribute(t *testing.T) {
-+	attrs := samlsp.Attributes{
-+		{Name: "email", Values: []string{"by-name@example.com"}},
-+		{Name: "urn:oid:2.5.4.42", FriendlyName: "givenName", Values: []string{"Alice"}},
-+	}
-+	for _, tc := range []struct{ name, want string }{
-+		{"email", "by-name@example.com"},
-+		{"givenName", "Alice"}, // matched by FriendlyName, as samlsp.Middleware did
-+		{"urn:oid:2.5.4.42", "Alice"},
-+		{"sn", ""},
-+	} {
-+		if got := saml2Attribute(attrs, tc.name); got != tc.want {
-+			t.Errorf("saml2Attribute(%q) = %q, want %q", tc.name, got, tc.want)
-+		}
-+	}
-+}
 diff --git a/internal/service/v1/sso/sso.go b/internal/service/v1/sso/sso.go
-index 79e64ab..689ea8d 100644
+index 79e64ab..005338c 100644
 --- a/internal/service/v1/sso/sso.go
 +++ b/internal/service/v1/sso/sso.go
-@@ -2,12 +2,13 @@ package sso
- 
- import (
- 	"context"
-+	"crypto/hmac"
- 	"crypto/rsa"
-+	"crypto/sha256"
- 	"crypto/x509"
+@@ -7,7 +7,6 @@ import (
  	"encoding/pem"
  	"errors"
  	"fmt"
@@ -283,7 +233,7 @@ index 79e64ab..689ea8d 100644
  	"net/url"
  	"time"
  
-@@ -24,7 +25,9 @@ import (
+@@ -24,7 +23,9 @@ import (
  	"github.com/asdine/storm/v3"
  	"github.com/asdine/storm/v3/q"
  	oidc "github.com/coreos/go-oidc/v3/oidc"
@@ -294,7 +244,7 @@ index 79e64ab..689ea8d 100644
  	"github.com/google/uuid"
  	"golang.org/x/oauth2"
  )
-@@ -38,7 +41,7 @@ type Service interface {
+@@ -38,7 +39,7 @@ type Service interface {
  	Status(options common.DBOptions) bool
  	OpenID(openid *v1Sso.OpenID, options common.DBOptions) (v1Session.UserProfile, error)
  	OpenIDConfig(clientId, clientSecret, issuerURL, redirectURL string) (*v1Sso.OpenID, error)
@@ -303,7 +253,7 @@ index 79e64ab..689ea8d 100644
  	Saml2(givenName, email, language string, options common.DBOptions) (v1Session.UserProfile, error)
  }
  
-@@ -305,34 +308,59 @@ func (s *service) localProfile(username, email string) (v1Session.UserProfile, e
+@@ -305,34 +306,57 @@ func (s *service) localProfile(username, email string) (v1Session.UserProfile, e
  	}, nil
  }
  
@@ -355,14 +305,19 @@ index 79e64ab..689ea8d 100644
  	}
 -
 -	baseURL, err := url.Parse(baseUrl)
-+	tracker, err := pending.New(config, saml2PendingKey(key))
++	// The key of the pending-login cookies is derived from the SP private
++	// key, which also signed the request-tracking cookies of
++	// samlsp.Middleware.
++	pendingKey, err := pending.DeriveKey(x509.MarshalPKCS1PrivateKey(key), "kubepi saml2 pending login")
++	if err != nil {
++		return nil, nil, err
++	}
++	tracker, err := pending.New(config, pendingKey)
  	if err != nil {
 -		return nil, errors.New("解析Base URL出错: " + err.Error())
 +		return nil, nil, err
  	}
-+	return config, tracker, nil
-+}
- 
+-
 -	samlSP, err := samlsp.New(samlsp.Options{
 -		URL:         *baseURL,
 -		Key:         key,
@@ -370,13 +325,7 @@ index 79e64ab..689ea8d 100644
 -		IDPMetadata: idpMetadata,
 -	})
 -	return samlSP, err
-+// saml2PendingKey derives the key of the pending-login cookies from the SP
-+// private key, which also signed the request-tracking cookies of
-+// samlsp.Middleware.
-+func saml2PendingKey(key *rsa.PrivateKey) []byte {
-+	mac := hmac.New(sha256.New, x509.MarshalPKCS1PrivateKey(key))
-+	mac.Write([]byte("kubepi saml2 pending login cookie"))
-+	return mac.Sum(nil)
++	return config, tracker, nil
  }
  
  func (s *service) Saml2(givenName, email, language string, options common.DBOptions) (v1Session.UserProfile, error) {

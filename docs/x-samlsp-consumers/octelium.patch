@@ -1,5 +1,5 @@
 diff --git a/cluster/authserver/authserver/providers/saml/saml.go b/cluster/authserver/authserver/providers/saml/saml.go
-index 0ad3c75..07d78ca 100644
+index 0ad3c75..aec3960 100644
 --- a/cluster/authserver/authserver/providers/saml/saml.go
 +++ b/cluster/authserver/authserver/providers/saml/saml.go
 @@ -26,24 +26,30 @@ import (
@@ -131,9 +131,9 @@ index 0ad3c75..07d78ca 100644
 -	authenReq, err := c.sp.MakeAuthenticationRequest(ssoURL, saml.HTTPRedirectBinding, saml.HTTPPostBinding)
 -	if err != nil {
 -		return nil, err
-+	opts := []samlsp.AuthnOption{samlsp.WithBinding(saml.HTTPRedirectBinding)}
-+	if c.forceAuthn {
-+		opts = append(opts, samlsp.ForceAuthn)
++	opts := []samlsp.AuthnOption{
++		samlsp.WithBinding(saml.HTTPRedirectBinding),
++		samlsp.WithForceAuthn(c.forceAuthn),
  	}
  
 -	url, err := authenReq.Redirect(state, c.sp)

@@ -731,7 +731,7 @@ index 1c05277..4ee8951 100644
  	}, nil
  }
 diff --git a/internal/idp/providers/saml/saml_test.go b/internal/idp/providers/saml/saml_test.go
-index 766f4ab..6c8bcd7 100644
+index 766f4ab..17f1086 100644
 --- a/internal/idp/providers/saml/saml_test.go
 +++ b/internal/idp/providers/saml/saml_test.go
 @@ -1,15 +1,20 @@
@@ -783,10 +783,17 @@ index 766f4ab..6c8bcd7 100644
  	}
  	tests := []struct {
  		name   string
-@@ -98,9 +107,32 @@ func TestProvider_BeginAuth(t *testing.T) {
+@@ -98,9 +107,39 @@ func TestProvider_BeginAuth(t *testing.T) {
  			},
  		},
  	}
++	// the IdP supports both bindings, and HTTP-POST is configured
++	configuredPost := tests[0]
++	configuredPost.name = "post binding configured, success"
++	configuredPost.fields.options = append(append([]ProviderOpts{}, configuredPost.fields.options...), WithBinding(saml.HTTPPostBinding))
++	configuredPost.want.authType = &idp.FormAuth{}
++	tests = append(tests, configuredPost)
++
 +	// the same requests, signed
 +	redirect, post := tests[0], tests[1]
 +	for _, signed := range []struct {
@@ -802,7 +809,7 @@ index 766f4ab..6c8bcd7 100644
 +			fields fields
 +			args   args
 +			want   want
-+		}{redirect, post} {
++		}{redirect, post, configuredPost} {
 +			tc.name += ", " + signed.name
 +			tc.fields.options = append(append([]ProviderOpts{}, tc.fields.options...), signed.options...)
 +			tc.want.sigAlg = signed.sigAlg
@@ -816,7 +823,7 @@ index 766f4ab..6c8bcd7 100644
  
  			provider, err := New(
  				tt.fields.name,
-@@ -124,7 +156,8 @@ func TestProvider_BeginAuth(t *testing.T) {
+@@ -124,7 +163,8 @@ func TestProvider_BeginAuth(t *testing.T) {
  				a.NoError(gotErr)
  				a.IsType(tt.want.authType, gotAuth)
  
@@ -826,7 +833,7 @@ index 766f4ab..6c8bcd7 100644
  				switch auth := gotAuth.(type) {
  				case *idp.RedirectAuth:
  					gotRedirect, err := url.Parse(auth.RedirectURL)
-@@ -134,14 +167,41 @@ func TestProvider_BeginAuth(t *testing.T) {
+@@ -134,14 +174,41 @@ func TestProvider_BeginAuth(t *testing.T) {
  					ssoURL = gotRedirect.Scheme + "://" + gotRedirect.Host + gotRedirect.Path
  					relayState = gotQuery.Get("RelayState")
  					samlRequest = gotQuery.Get("SAMLRequest")
@@ -868,7 +875,7 @@ index 766f4ab..6c8bcd7 100644
  			}
  		})
  	}
-@@ -168,7 +228,7 @@ func TestProvider_Options(t *testing.T) {
+@@ -168,7 +235,7 @@ func TestProvider_Options(t *testing.T) {
  		transientMappingAttributeName string
  		withSignedRequest             bool
  		signatureAlgorithm            string
@@ -877,7 +884,7 @@ index 766f4ab..6c8bcd7 100644
  		entityID                      string
  	}
  	tests := []struct {
-@@ -301,10 +361,10 @@ func TestProvider_Options(t *testing.T) {
+@@ -301,10 +368,10 @@ func TestProvider_Options(t *testing.T) {
  				a.Equal(tt.want.binding, provider.binding)
  				a.Equal(tt.want.nameIDFormat, provider.nameIDFormat)
  				a.Equal(tt.want.transientMappingAttributeName, provider.transientMappingAttributeName)
@@ -891,19 +898,28 @@ index 766f4ab..6c8bcd7 100644
  		})
  	}
 diff --git a/internal/idp/providers/saml/session.go b/internal/idp/providers/saml/session.go
-index f49f50f..ea0784d 100644
+index f49f50f..8136d9d 100644
 --- a/internal/idp/providers/saml/session.go
 +++ b/internal/idp/providers/saml/session.go
-@@ -11,7 +11,7 @@ import (
+@@ -2,16 +2,13 @@ package saml
  
- 	"github.com/beevik/etree"
+ import (
+ 	"context"
+-	"encoding/base64"
+ 	"errors"
+ 	"net/http"
+-	"net/url"
+ 	"strings"
+ 	"time"
+ 
+-	"github.com/beevik/etree"
  	"github.com/crewjam/saml"
 -	"github.com/crewjam/saml/samlsp"
 +	"github.com/crewjam/saml/x/samlsp"
  
  	"github.com/zitadel/zitadel/internal/idp"
  	"github.com/zitadel/zitadel/internal/zerrors"
-@@ -21,7 +21,8 @@ var _ idp.Session = (*Session)(nil)
+@@ -21,7 +18,8 @@ var _ idp.Session = (*Session)(nil)
  
  // Session is the [idp.Session] implementation for the SAML provider.
  type Session struct {
@@ -913,7 +929,7 @@ index f49f50f..ea0784d 100644
  	state                         string
  	TransientMappingAttributeName string
  
-@@ -38,6 +39,7 @@ func NewSession(provider *Provider, requestID string, request *http.Request) (*S
+@@ -38,6 +36,7 @@ func NewSession(provider *Provider, requestID string, request *http.Request) (*S
  	}
  	return &Session{
  		ServiceProvider:               sp,
@@ -921,7 +937,7 @@ index f49f50f..ea0784d 100644
  		TransientMappingAttributeName: provider.TransientMappingAttributeName(),
  		RequestID:                     requestID,
  		Request:                       request,
-@@ -46,14 +48,7 @@ func NewSession(provider *Provider, requestID string, request *http.Request) (*S
+@@ -46,14 +45,7 @@ func NewSession(provider *Provider, requestID string, request *http.Request) (*S
  
  // GetAuth implements the [idp.Session] interface.
  func (s *Session) GetAuth(ctx context.Context) (idp.Auth, error) {
@@ -937,7 +953,7 @@ index f49f50f..ea0784d 100644
  }
  
  // PersistentParameters implements the [idp.Session] interface.
-@@ -67,7 +62,7 @@ func (s *Session) FetchUser(ctx context.Context) (user idp.User, err error) {
+@@ -67,7 +59,7 @@ func (s *Session) FetchUser(ctx context.Context) (user idp.User, err error) {
  		return nil, zerrors.ThrowInvalidArgument(nil, "SAML-d09hy0wkex", "Errors.Intent.ResponseInvalid")
  	}
  
@@ -946,7 +962,7 @@ index f49f50f..ea0784d 100644
  	if err != nil {
  		invalidRespErr := new(saml.InvalidResponseError)
  		if errors.As(err, &invalidRespErr) {
-@@ -75,6 +70,7 @@ func (s *Session) FetchUser(ctx context.Context) (user idp.User, err error) {
+@@ -75,6 +67,7 @@ func (s *Session) FetchUser(ctx context.Context) (user idp.User, err error) {
  		}
  		return nil, zerrors.ThrowInvalidArgument(err, "SAML-nuo0vphhh9", "Errors.Intent.ResponseInvalid")
  	}
@@ -954,7 +970,7 @@ index f49f50f..ea0784d 100644
  
  	userMapper := NewUser()
  	// nameID is required, but at least in ADFS it will not be sent unless explicitly configured
-@@ -135,57 +131,71 @@ func (s *Session) transientMappingID() (string, error) {
+@@ -135,57 +128,39 @@ func (s *Session) transientMappingID() (string, error) {
  	return "", zerrors.ThrowInvalidArgument(nil, "SAML-swwg2", "Errors.Intent.MissingSingleMappingAttribute")
  }
  
@@ -965,24 +981,7 @@ index f49f50f..ea0784d 100644
 -	if r.URL.Path == s.ServiceProvider.ServiceProvider.AcsURL.Path {
 -		// should never occur, but was handled in the original method, so we keep it here
 -		return nil, zerrors.ThrowInvalidArgument(nil, "SAML-Eoi24", "don't wrap Middleware with RequireAccount")
-+// auth creates the AuthnRequest and tracks its ID under the state (the RelayState).
-+// Instead of writing the request to an http.ResponseWriter, it returns it as an [idp.Auth].
-+// Without a configured binding, it uses HTTP-Redirect if the IdP supports it, and HTTP-POST otherwise.
-+func (s *Session) auth(ctx context.Context) (idp.Auth, error) {
-+	binding := s.provider.binding
-+	if binding == "" || binding == saml.HTTPRedirectBinding {
-+		msg, err := s.ServiceProvider.AuthnRequest(ctx, s.state, samlsp.WithBinding(saml.HTTPRedirectBinding))
-+		if err == nil {
-+			if err := s.trackRequest(ctx, msg); err != nil {
-+				return nil, err
-+			}
-+			return idp.Redirect(msg.RedirectURL().String())
-+		}
-+		if binding != "" || !errors.Is(err, samlsp.ErrNoEndpoint) {
-+			return nil, err
-+		}
-+		binding = saml.HTTPPostBinding
- 	}
+-	}
 -
 -	var binding, bindingLocation string
 -	if s.ServiceProvider.Binding != "" {
@@ -994,46 +993,28 @@ index f49f50f..ea0784d 100644
 -		if bindingLocation == "" {
 -			binding = saml.HTTPPostBinding
 -			bindingLocation = s.ServiceProvider.ServiceProvider.GetSSOBindingLocation(binding)
-+	if binding == saml.HTTPPostBinding {
-+		form := new(postForm)
-+		msg, err := s.ServiceProvider.AuthnRequest(ctx, s.state, samlsp.WithCustomBinding(form))
-+		if err != nil {
-+			return nil, err
-+		}
-+		if err := s.trackRequest(ctx, msg); err != nil {
-+			return nil, err
- 		}
-+		return idp.Form(msg.Destination, form.fields)
+-		}
++// auth creates the AuthnRequest and tracks its ID under the state (the RelayState).
++// Instead of writing the request to an http.ResponseWriter, it returns it as an [idp.Auth].
++// Without a configured binding, it uses HTTP-Redirect if the IdP supports it, and HTTP-POST otherwise.
++func (s *Session) auth(ctx context.Context) (idp.Auth, error) {
++	var opts []samlsp.AuthnOption
++	switch s.provider.binding {
++	case "":
++	case saml.HTTPRedirectBinding, saml.HTTPPostBinding:
++		opts = append(opts, samlsp.WithBinding(s.provider.binding))
++	default:
++		return nil, zerrors.ThrowInvalidArgument(nil, "SAML-Eoi24", "Errors.Intent.Invalid")
  	}
-+	return nil, zerrors.ThrowInvalidArgument(nil, "SAML-Eoi24", "Errors.Intent.Invalid")
-+}
-+
-+func (s *Session) trackRequest(ctx context.Context, msg *samlsp.Message) error {
-+	if s.provider.requestTracker == nil {
-+		return zerrors.ThrowInternal(nil, "SAML-Ahb5o", "Errors.Intent.IDPInvalid")
-+	}
-+	return s.provider.requestTracker.TrackRequest(ctx, s.state, msg.ID)
-+}
- 
+-
 -	authReq, err := s.ServiceProvider.ServiceProvider.MakeAuthenticationRequest(bindingLocation, binding, s.ServiceProvider.ResponseBinding)
-+// postForm is the HTTP-POST binding, which also keeps the fields of the form,
-+// so that they can be returned as an [idp.FormAuth] instead of being written as an HTML page.
-+type postForm struct {
-+	fields map[string]string
-+}
-+
-+func (f *postForm) URI() string { return saml.HTTPPostBinding }
-+
-+func (f *postForm) Encode(_ context.Context, m *samlsp.OutboundMessage) (*samlsp.Message, error) {
-+	el, err := m.Element()
++	msg, err := s.ServiceProvider.AuthnRequest(ctx, s.state, opts...)
  	if err != nil {
  		return nil, err
  	}
 -	relayState, err := s.ServiceProvider.RequestTracker.TrackRequest(nil, r, authReq.ID)
-+	doc := etree.NewDocument()
-+	doc.SetRoot(el)
-+	buf, err := doc.WriteToBytes()
- 	if err != nil {
+-	if err != nil {
++	if err := s.trackRequest(ctx, msg); err != nil {
  		return nil, err
  	}
 -
@@ -1043,9 +1024,8 @@ index f49f50f..ea0784d 100644
 -			return nil, err
 -		}
 -		return idp.Redirect(redirectURL.String())
-+	f.fields = map[string]string{
-+		m.Param:      base64.StdEncoding.EncodeToString(buf),
-+		"RelayState": m.RelayState,
++	if msg.Binding == saml.HTTPRedirectBinding {
++		return idp.Redirect(msg.RedirectURL().String())
  	}
 -	if binding == saml.HTTPPostBinding {
 -		doc := etree.NewDocument()
@@ -1060,12 +1040,20 @@ index f49f50f..ea0784d 100644
 -				"SAMLRequest": encodedReqBuf,
 -				"RelayState":  relayState,
 -			})
-+	values := make(url.Values, len(f.fields))
-+	for name, value := range f.fields {
-+		values.Set(name, value)
++	formFields := msg.FormFields()
++	fields := make(map[string]string, len(formFields))
++	for name := range formFields {
++		fields[name] = formFields.Get(name)
++	}
++	return idp.Form(msg.Destination, fields)
++}
++
++func (s *Session) trackRequest(ctx context.Context, msg *samlsp.Message) error {
++	if s.provider.requestTracker == nil {
++		return zerrors.ThrowInternal(nil, "SAML-Ahb5o", "Errors.Intent.IDPInvalid")
  	}
 -	return nil, zerrors.ThrowInvalidArgument(nil, "SAML-Eoi24", "Errors.Intent.Invalid")
-+	return m.PostForm(values)
++	return s.provider.requestTracker.TrackRequest(ctx, s.state, msg.ID)
  }
 diff --git a/internal/idp/providers/saml/session_test.go b/internal/idp/providers/saml/session_test.go
 index 8756b3b..b3a4f50 100644
