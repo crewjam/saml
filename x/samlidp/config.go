@@ -25,7 +25,6 @@ import (
 	"github.com/crewjam/saml/internal/signerutil"
 	"github.com/crewjam/saml/internal/timelimit"
 	"github.com/crewjam/saml/x/samlsp/replay"
-	"github.com/crewjam/saml/xmlenc"
 )
 
 // Config is a SAML identity provider (IdP) and the service providers (SPs)
@@ -49,6 +48,8 @@ type Config struct {
 	issueDelay      time.Duration
 	metadataValid   time.Duration
 	affiliated      func(ctx context.Context, serviceProvider, affiliation string) (bool, error)
+	allowCBC        bool // EnableInsecureAESCBC
+	allowSHA1       bool // EnableInsecureRSAOAEPSHA1
 
 	idpOptions    []IdentityProviderOption
 	metadataHooks []func(*saml.EntityDescriptor)
@@ -117,6 +118,9 @@ func New(entityID string, serviceProviders ServiceProviderFunc, opts ...Option) 
 	if c.replayState == nil {
 		c.replayState = &replay.Memory{Now: c.Now}
 	}
+	if err := c.encryption().checkConfigured(c.unrestrictedIdentityProvider(nil)); err != nil {
+		return nil, err
+	}
 	if len(c.checks) > 0 {
 		idp := c.identityProvider(nil)
 		for _, check := range c.checks {
@@ -163,9 +167,6 @@ func harden(idp *saml.IdentityProvider) {
 	// Keep the RelayState of IdP-initiated logins within 80 bytes
 	// (saml-bindings §3.5.3).
 	idp.LimitRelayStateLength = true
-	// Encrypt assertions with AES-256-GCM for SPs whose metadata lists no
-	// block cipher, rather than AES-CBC, which has no integrity protection.
-	idp.DefaultAssertionBlockCipher = xmlenc.AES256GCM
 }
 
 // absoluteURL parses s, which must be an absolute URL with a host.
@@ -526,6 +527,14 @@ func checkSignatureMethod(method string, key crypto.Signer) error {
 // shares no slice with c, so that the options and the caller may change
 // it while other calls use c.
 func (c *Config) identityProvider(opts []IdentityProviderOption) *saml.IdentityProvider {
+	idp := c.unrestrictedIdentityProvider(opts)
+	c.encryption().apply(idp)
+	return idp
+}
+
+// unrestrictedIdentityProvider is identityProvider without the encryption
+// policy of EnableInsecureAESCBC and EnableInsecureRSAOAEPSHA1 applied.
+func (c *Config) unrestrictedIdentityProvider(opts []IdentityProviderOption) *saml.IdentityProvider {
 	method := c.signatureMethod
 	if method == "" {
 		method = signatureMethod(c.key)
@@ -571,6 +580,12 @@ func (c *Config) identityProvider(opts []IdentityProviderOption) *saml.IdentityP
 // does not, such as single logout; the result is a new value, which may be
 // changed. Its ServiceProviderProvider calls the ServiceProviderFunc of New
 // with the context of the http.Request it is given.
+//
+// Its AssertionEncrypterFunc and LogoutNameIDEncrypterFunc enforce the
+// encryption policy of New (see EnableInsecureAESCBC and
+// EnableInsecureRSAOAEPSHA1): an AssertionEncrypter or
+// LogoutNameIDEncrypter set by opts is moved into them, and checked when
+// it is used. One set on the result afterwards is not checked.
 func (c *Config) IdentityProvider(opts ...IdentityProviderOption) *saml.IdentityProvider {
 	return c.identityProvider(opts)
 }

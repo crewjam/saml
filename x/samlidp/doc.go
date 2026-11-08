@@ -42,11 +42,10 @@
 //		}))
 //
 // Assertions are encrypted for SPs whose metadata publishes an encryption
-// certificate, with the strongest block cipher the metadata lists, or
-// AES-256-GCM if it lists none. An SP that cannot decrypt AES-GCM and does
-// not say so needs saml.IdentityProvider's DefaultAssertionBlockCipher, or
-// AssertionEncrypter, set to an AES-CBC cipher; CBC has no integrity
-// protection, so keep the Response signed for it.
+// certificate, only with AES-GCM and with RSA-OAEP key transport using
+// SHA-256: the IdP refuses to encrypt to an SP whose metadata lists only
+// AES-CBC, or only SHA-1 key transport, unless New is passed
+// EnableInsecureAESCBC or EnableInsecureRSAOAEPSHA1.
 //
 // # Web Browser SSO
 //

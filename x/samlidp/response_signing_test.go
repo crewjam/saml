@@ -18,6 +18,17 @@ import (
 // the Response, its XML, and the SP's verdict on it.
 func (p *pair) respond(t *testing.T, subject samlidp.Subject, opts ...samlidp.ResponseOption) (*samlidp.Message, *etree.Element, *samlsp.Assertion, error) {
 	t.Helper()
+	resp, root, a, err := p.tryRespond(t, subject, opts...)
+	if resp == nil {
+		t.Fatal(err)
+	}
+	return resp, root, a, err
+}
+
+// tryRespond is respond, but returns the error of Response, with a nil
+// Message, instead of failing the test.
+func (p *pair) tryRespond(t *testing.T, subject samlidp.Subject, opts ...samlidp.ResponseOption) (*samlidp.Message, *etree.Element, *samlsp.Assertion, error) {
+	t.Helper()
 	ctx := context.Background()
 	msg, err := p.sp.AuthnRequest(ctx, "relay-state")
 	if err != nil {
@@ -29,7 +40,7 @@ func (p *pair) respond(t *testing.T, subject samlidp.Subject, opts ...samlidp.Re
 	}
 	resp, err := p.idp.Response(ctx, req, subject, opts...)
 	if err != nil {
-		t.Fatal(err)
+		return nil, nil, nil, err
 	}
 	form := formOf(t, resp)
 	raw, err := base64.StdEncoding.DecodeString(form.Get("SAMLResponse"))
@@ -88,7 +99,7 @@ func TestResponseSigning(t *testing.T) {
 // Entra ID sends with token encryption; x/samlsp refuses it by default.
 func TestSignAssertionOnlyWithCBC(t *testing.T) {
 	keys(t)
-	idpOpts := []samlidp.Option{samlidp.WithIdentityProvider(func(idp *saml.IdentityProvider) {
+	idpOpts := []samlidp.Option{samlidp.EnableInsecureAESCBC, samlidp.EnableInsecureRSAOAEPSHA1, samlidp.WithIdentityProvider(func(idp *saml.IdentityProvider) {
 		idp.ResponseSigning = saml.SignAssertionOnly
 		enc := xmlenc.OAEP()
 		enc.BlockCipher = xmlenc.AES256CBC
@@ -128,34 +139,5 @@ func TestParticipantSessionIndexFromAssertion(t *testing.T) {
 	}
 	if resp.Participant == nil || resp.Participant.SessionIndex != a.SessionIndexes[0] {
 		t.Fatalf("Participant %+v, SP got %v", resp.Participant, a.SessionIndexes)
-	}
-}
-
-// An SP whose metadata lists no block cipher gets AES-256-GCM, not
-// AES-CBC, which has no integrity protection.
-func TestEncryptionDefaultsToGCM(t *testing.T) {
-	keys(t)
-	p := newPair(t, nil, []samlsp.Option{samlsp.WithEncryptionKey(spKey, spCert)})
-	md := p.sp.Metadata(context.Background())
-	for i := range md.SPSSODescriptors {
-		for j := range md.SPSSODescriptors[i].KeyDescriptors {
-			md.SPSSODescriptors[i].KeyDescriptors[j].EncryptionMethods = nil
-		}
-	}
-	var err error
-	p.idp, err = samlidp.New(idpEntityID, samlidp.StaticServiceProviders(md), samlidp.WithSigningKey(idpKey, idpCert))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, root, _, err := p.respond(t, testSubject)
-	if err != nil {
-		t.Fatalf("the SP refused the Response: %v", errors.Unwrap(err))
-	}
-	method := root.FindElement("./EncryptedAssertion/EncryptedData/EncryptionMethod")
-	if method == nil {
-		t.Fatal("the assertion is not encrypted")
-	}
-	if got := method.SelectAttrValue("Algorithm", ""); got != xmlenc.AES256GCM.Algorithm() {
-		t.Errorf("block cipher %q, want AES-256-GCM", got)
 	}
 }

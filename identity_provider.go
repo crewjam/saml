@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"time"
 
@@ -285,26 +286,23 @@ type IdentityProvider struct {
 	// digest and the strongest block cipher that the service provider's
 	// metadata lists in the EncryptionMethods of its encryption key: AES-GCM
 	// (256, 128 then 192 bit keys) before AES-CBC. If it lists none of
-	// them, DefaultAssertionBlockCipher is used. CBC has no integrity
-	// protection; set AssertionEncrypter to use AES-GCM with service
-	// providers that support it but list only AES-CBC.
+	// them, AES-128-CBC is used, for compatibility with existing service
+	// providers. CBC has no integrity protection; set AssertionEncrypter (or
+	// AssertionEncrypterFunc) to use AES-GCM with service providers that
+	// support it but do not say so.
 	//
 	// It also encrypts the EncryptedID that MakeAssertionEl issues in place
 	// of the Subject's NameID when the AuthnRequest asks for the encrypted
 	// NameID format (saml-core §3.4.1.1, §8.3.9).
 	AssertionEncrypter xmlenc.Encrypter
 
-	// DefaultAssertionBlockCipher, if set, is the block cipher that
-	// assertions (and EncryptedIDs in them) are encrypted with when
-	// AssertionEncrypter is nil and the service provider's metadata lists
-	// none of the block ciphers this package knows. When nil, AES-128-CBC
-	// is used, for compatibility with existing service providers that do
-	// not list their algorithms and cannot decrypt AES-GCM. CBC has no
-	// integrity protection: a service provider that decrypts an assertion
-	// before checking a signature over it can be made to reveal its
-	// plaintext. Set it to xmlenc.AES256GCM where every service provider
-	// supports AES-GCM.
-	DefaultAssertionBlockCipher xmlenc.BlockCipher
+	// AssertionEncrypterFunc, if set and AssertionEncrypter is nil, returns
+	// the Encrypter for a service provider's assertions (and the
+	// EncryptedIDs in them), given the EncryptionMethods its metadata lists
+	// for its encryption key. It may return an error to refuse to encrypt
+	// to that service provider, such as when it lists only algorithms the
+	// identity provider will not use; MakeAssertionEl then returns it.
+	AssertionEncrypterFunc func(methods []EncryptionMethod) (xmlenc.Encrypter, error)
 
 	// ResponseSigning says which elements of a successful Response the IdP
 	// signs: by default, both the Response and the assertion in it (see
@@ -403,6 +401,13 @@ type IdentityProvider struct {
 	// EncryptionMethods of its encryption key: AES-GCM (256, 128 then 192
 	// bit keys) before AES-CBC, or AES-256-GCM if it lists none of them.
 	LogoutNameIDEncrypter xmlenc.Encrypter
+
+	// LogoutNameIDEncrypterFunc, if set and LogoutNameIDEncrypter is nil,
+	// returns the Encrypter for the NameID of a LogoutRequest to a service
+	// provider, given the EncryptionMethods its metadata lists for its
+	// encryption key. It may return an error to refuse to encrypt to that
+	// service provider.
+	LogoutNameIDEncrypterFunc func(methods []EncryptionMethod) (xmlenc.Encrypter, error)
 
 	// ReplayCache, if set, records the ID of each LogoutRequest that
 	// IdpLogoutRequest.Validate (and so ServeSLO) accepts, and refuses a
@@ -1812,13 +1817,10 @@ func (req *IdpAuthnRequest) MakeAssertionEl() error {
 		}
 	}
 
-	var configured xmlenc.Encrypter
-	var fallback xmlenc.BlockCipher
-	if req.IDP != nil {
-		configured = req.IDP.AssertionEncrypter
-		fallback = req.IDP.DefaultAssertionBlockCipher
+	encryptor, err := req.assertionEncrypter(methods)
+	if err != nil {
+		return err
 	}
-	encryptor := assertionEncrypter(configured, methods, fallback)
 	encryptedDataEl, err := encryptor.Encrypt(certBuf, signedAssertionBuf, nil)
 	if err != nil {
 		return err
@@ -1853,13 +1855,11 @@ func (req *IdpAuthnRequest) encryptSubjectNameID() error {
 	} else if err != nil {
 		return err
 	}
-	var configured xmlenc.Encrypter
-	var fallback xmlenc.BlockCipher
-	if req.IDP != nil {
-		configured = req.IDP.AssertionEncrypter
-		fallback = req.IDP.DefaultAssertionBlockCipher
+	encrypter, err := req.assertionEncrypter(methods)
+	if err != nil {
+		return err
 	}
-	encryptedID, err := encryptIdentifier(subject.NameID.Element(), cert, assertionEncrypter(configured, methods, fallback))
+	encryptedID, err := encryptIdentifier(subject.NameID.Element(), cert, encrypter)
 	if err != nil {
 		return fmt.Errorf("cannot encrypt NameID: %w", err)
 	}
@@ -1873,25 +1873,38 @@ func (req *IdpAuthnRequest) encryptSubjectNameID() error {
 // was not called or failed.
 var errNoACSEndpoint = errors.New("the request has no assertion consumer service endpoint: call Validate first")
 
+// assertionEncrypter returns the Encrypter for the assertion of req, and
+// the EncryptedIDs in it, given methods, the EncryptionMethods the service
+// provider lists for its encryption key: IDP.AssertionEncrypter if it is
+// set, else what IDP.AssertionEncrypterFunc returns if that is set, else
+// the default of assertionEncrypter.
+func (req *IdpAuthnRequest) assertionEncrypter(methods []EncryptionMethod) (xmlenc.Encrypter, error) {
+	if req.IDP != nil && req.IDP.AssertionEncrypter == nil && req.IDP.AssertionEncrypterFunc != nil {
+		return req.IDP.AssertionEncrypterFunc(slices.Clone(methods))
+	}
+	var configured xmlenc.Encrypter
+	if req.IDP != nil {
+		configured = req.IDP.AssertionEncrypter
+	}
+	return assertionEncrypter(configured, methods), nil
+}
+
 // assertionEncrypter returns the Encrypter for an assertion: configured, if
 // it is set, and otherwise RSA-OAEP-MGF1P with a SHA-1 digest, which all
 // implementations support, and a block cipher chosen from methods, the
 // EncryptionMethods the service provider's metadata lists for its
 // encryption key: the first of AES-256-GCM, AES-128-GCM, AES-192-GCM,
 // AES-256-CBC, AES-128-CBC and AES-192-CBC that it lists. A service
-// provider that lists none of them gets fallback, or AES-128-CBC if
-// fallback is nil, as before, since many service providers that do not
-// list their algorithms cannot decrypt AES-GCM.
-func assertionEncrypter(configured xmlenc.Encrypter, methods []EncryptionMethod, fallback xmlenc.BlockCipher) xmlenc.Encrypter {
+// provider that lists none of them gets AES-128-CBC, as before, since
+// many service providers that do not list their algorithms cannot decrypt
+// AES-GCM.
+func assertionEncrypter(configured xmlenc.Encrypter, methods []EncryptionMethod) xmlenc.Encrypter {
 	if configured != nil {
 		return configured
 	}
 	encrypter := xmlenc.OAEP()
 	encrypter.DigestMethod = &xmlenc.SHA1
 	encrypter.BlockCipher = xmlenc.AES128CBC
-	if fallback != nil {
-		encrypter.BlockCipher = fallback
-	}
 	listed := make(map[string]bool, len(methods))
 	for _, method := range methods {
 		listed[method.Algorithm] = true
