@@ -3,6 +3,7 @@ package saml
 import (
 	"bytes"
 	"compress/flate"
+	"context"
 	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
@@ -427,10 +428,14 @@ func (state *logoutState) partial() bool {
 func (idp *IdentityProvider) continueLogout(w http.ResponseWriter, r *http.Request, state *logoutState) {
 	state.Current = nil
 	state.RequestID = ""
+	// The SOAP requests made before the browser is answered share one
+	// deadline (see BackChannelLogoutTimeout).
+	soapCtx, cancel := context.WithTimeout(r.Context(), BackChannelLogoutTimeout)
+	defer cancel()
 	for len(state.Pending) > 0 {
 		pending := state.Pending[0]
 		state.Pending = state.Pending[1:]
-		if idp.logoutParticipant(w, r, state, pending) {
+		if idp.logoutParticipant(soapCtx, w, r, state, pending) {
 			return
 		}
 	}
@@ -444,8 +449,9 @@ func (idp *IdentityProvider) continueLogout(w http.ResponseWriter, r *http.Reque
 // with a LogoutRequest, and logoutParticipant returns true: the response
 // has been written, and the logout continues when the participant's
 // LogoutResponse arrives. A participant that cannot be logged out either
-// way is added to state.Failed.
-func (idp *IdentityProvider) logoutParticipant(w http.ResponseWriter, r *http.Request, state *logoutState, pending pendingParticipant) bool {
+// way is added to state.Failed. The SOAP request is bounded by soapCtx; once
+// it is done, the SOAP binding is not tried.
+func (idp *IdentityProvider) logoutParticipant(soapCtx context.Context, w http.ResponseWriter, r *http.Request, state *logoutState, pending pendingParticipant) bool {
 	participant, encryptedID, err := pending.participant()
 	if err != nil {
 		idp.Logger.Printf("cannot send logout request to %s: %s", participant.ServiceProviderID, err)
@@ -462,7 +468,11 @@ func (idp *IdentityProvider) logoutParticipant(w http.ResponseWriter, r *http.Re
 		return false
 	}
 
-	err = idp.logoutParticipantSOAP(r.Context(), metadata, participant, encryptedID)
+	if soapCtx.Err() != nil {
+		err = fmt.Errorf("no time left for the SOAP binding (BackChannelLogoutTimeout): %w", soapCtx.Err())
+	} else {
+		err = idp.logoutParticipantSOAP(soapCtx, metadata, participant, encryptedID)
+	}
 	switch {
 	case err == nil:
 		return false
