@@ -1,0 +1,71 @@
+# Runs the checks on every push to main and, once they all pass, deploys
+# tools/gosaml to gosaml.dev (Fly.io). See "Deploying from GitHub Actions"
+# in tools/gosaml/README.md for the one-time setup of the FLY_API_TOKEN
+# secret.
+#
+# How the token is kept safe:
+#   - It is an *environment* secret of the "gosamldev-production"
+#     environment, not a repository secret, and that environment only lets
+#     the main branch deploy. A workflow run on any other branch, or for
+#     a pull request (from a fork or not), cannot read it, even if it
+#     edits this file.
+#   - It is a Fly deploy token for the gosaml app alone, not an
+#     organization or personal token.
+#   - Only the deploy job uses the environment. The tests and linters,
+#     which run code, run in the test and lint jobs, which have no
+#     secrets. The deploy job only builds (go build runs no code from the
+#     modules) and runs flyctl, and the token is given to that one step.
+#   - There is no pull_request_target or workflow_run trigger, every
+#     action is pinned to a commit, and the GITHUB_TOKEN is read-only and
+#     is not left in the checkout.
+name: merge
+
+on:
+  push:
+    branches: [ 'main' ]
+  # To redeploy by hand. Only main may deploy: the environment refuses
+  # any other branch picked here.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  lint:
+    uses: ./.github/workflows/lint.yml
+
+  deploy:
+    needs: [ test, lint ]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # One deploy at a time, in order; never cancel one halfway.
+    concurrency:
+      group: gosamldev-production
+      cancel-in-progress: false
+    environment:
+      name: gosamldev-production
+      url: https://gosaml.dev
+    defaults:
+      run:
+        working-directory: tools/gosaml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # All of history and its tags, for `git describe` (the version
+          # in the footer).
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tools/gosaml/go.mod
+          cache-dependency-path: tools/gosaml/go.sum
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
+        with:
+          version: 0.5.5
+      - name: build and deploy
+        run: ./deploy.sh deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

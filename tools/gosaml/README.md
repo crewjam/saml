@@ -94,9 +94,11 @@ users of the library. `go.mod` replaces `github.com/crewjam/saml` with
 ```sh
 ./deploy.sh run      # build for this machine and serve http://localhost:8080
 ./deploy.sh build    # just build, into build/gosaml
-./deploy.sh dist     # vet, test, cross-compile for linux/amd64, no deploy
-./deploy.sh          # vet, test, cross-compile for linux/amd64, fly deploy
+./deploy.sh          # cross-compile for linux/amd64, fly deploy
 ```
+
+`deploy.sh` does not run the tests; CI does. Before deploying by hand, run
+`go vet ./... && go test ./...`.
 
 `deploy.sh` compiles the inspector to WebAssembly first, copying the
 matching `wasm_exec.js` from the Go toolchain, so that both are embedded in
@@ -118,10 +120,12 @@ fly certs add gosaml.dev    # then set DNS as `fly certs show gosaml.dev` says
 ### Deploying from GitHub Actions
 
 Each push to `main` is deployed by
-`.github/workflows/gosamldev-production.yml`. It can also be run by hand
-from the Actions tab (main only). A build job with no secrets vets, tests
-and builds (`./deploy.sh dist`); a deploy job then runs `flyctl deploy` on
-that binary. The deploy job is the only place the Fly token is available.
+`.github/workflows/merge.yml`. It can also be run by hand
+from the Actions tab (main only). It first runs the test and lint workflows
+(`test.yml` and `lint.yml`, with no secrets); only if every check passes
+does the deploy job build and deploy in one step (`./deploy.sh deploy
+--remote-only`). The deploy job is the only place the Fly token is
+available.
 
 One-time setup, by a repository admin:
 
