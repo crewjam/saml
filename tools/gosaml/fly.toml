@@ -2,15 +2,13 @@
 # this image is made from.
 #
 # Everything the app stores is temporary by design:
-#   - The SQLite database is on a small volume ([mounts]), so it has
-#     real disk to grow into instead of the root filesystem, but the app
-#     deletes it at startup: every deploy or restart starts from nothing.
 #   - Each test IdP or SP is deleted GOSAML_TTL after it is created.
+#   - The SQLite database is on a small volume ([mounts]), so it survives
+#     restarts and deploys: instances live their full GOSAML_TTL.
 #
 # Since state is on one machine's volume, run exactly one machine
-# (deploy.sh passes --ha=false) and keep it running: if Fly stopped it
-# when idle, everyone's test IdPs and SPs would vanish within minutes,
-# which is sooner than GOSAML_TTL promises.
+# (deploy.sh passes --ha=false). It is kept running so that logins and
+# live logs never wait for a cold start.
 #
 # One-time setup:
 #   fly apps create gosaml

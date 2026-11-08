@@ -510,7 +510,7 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request, kind sto
 func (s *Server) manage(w http.ResponseWriter, r *http.Request) {
 	in, err := s.Store.InstanceBySecret(r.Context(), r.PathValue("secret"))
 	if err != nil {
-		s.fail(w, r, http.StatusNotFound, "This instance does not exist. Instances are deleted "+roundDuration(s.TTL)+" after they are created, and whenever the server restarts.", nil)
+		s.fail(w, r, http.StatusNotFound, "This instance does not exist. Instances are deleted "+roundDuration(s.TTL)+" after they are created.", nil)
 		return
 	}
 	switch in.Kind {

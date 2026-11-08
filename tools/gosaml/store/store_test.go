@@ -151,3 +151,72 @@ func TestCreateInstanceTaken(t *testing.T) {
 		t.Errorf("same secret: %v", err)
 	}
 }
+
+// The database outlives restarts: reopening keeps what was stored, and
+// migrations run once.
+func TestReopenKeepsData(t *testing.T) {
+	ctx := context.Background()
+	path := t.TempDir() + "/gosaml.db"
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	in := &Instance{ID: "a", Secret: "s", Kind: KindSP, Config: []byte(`{}`), CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
+	if err := s.CreateInstance(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddEvent(ctx, &Event{InstanceID: "a", Title: "kept"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close() //nolint:errcheck // test
+	if got, err := s.InstanceBySecret(ctx, "s"); err != nil || got.ID != "a" {
+		t.Fatalf("instance after reopening: %v %v", got, err)
+	}
+	if events, _ := s.Events(ctx, "a"); len(events) != 1 || events[0].Title != "kept" {
+		t.Fatalf("events after reopening: %v", events)
+	}
+	var version int
+	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != len(migrations) {
+		t.Fatalf("user_version = %d, %v; want %d", version, err, len(migrations))
+	}
+}
+
+// A database made before versioning (user_version 0, tables present)
+// keeps its data when migrated; one from a newer server is refused.
+func TestMigrate(t *testing.T) {
+	ctx := context.Background()
+	path := t.TempDir() + "/gosaml.db"
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := s.CreateInstance(ctx, &Instance{ID: "a", Secret: "s", Kind: KindIdP, Config: []byte(`{}`), CreatedAt: now, ExpiresAt: now.Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`PRAGMA user_version = 0`); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	if s, err = Open(path); err != nil {
+		t.Fatalf("unversioned database: %v", err)
+	}
+	if _, err := s.InstanceBySecret(ctx, "s"); err != nil {
+		t.Fatalf("data lost migrating an unversioned database: %v", err)
+	}
+	if _, err := s.db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, len(migrations)+1)); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	if s, err = Open(path); err == nil {
+		_ = s.Close()
+		t.Fatal("a database from a newer server was opened")
+	}
+}

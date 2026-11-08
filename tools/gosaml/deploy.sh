@@ -62,8 +62,8 @@ deploy)
 	build_server linux amd64
 	echo "==> deploying"
 	# One machine only: the SQLite database is on that machine's volume,
-	# so a second machine would have different state. The server deletes
-	# the database when it starts, so a deploy still starts from nothing.
+	# so a second machine would have different state. The database
+	# survives the deploy; instances still expire after GOSAML_TTL.
 	"$fly" deploy --ha=false "$@"
 	;;
 *)

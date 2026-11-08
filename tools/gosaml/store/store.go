@@ -4,8 +4,8 @@
 //
 // Everything in it is temporary. Each instance expires a fixed time after
 // it is created, and Reap deletes it and everything that belongs to it.
-// The database itself is meant to live on a disk that does not outlive
-// the server (see fly.toml), so a restart forgets everything too.
+// The database itself outlives restarts and deploys (see fly.toml), so
+// its schema changes only by migration: see migrations.
 package store
 
 import (
@@ -89,6 +89,18 @@ type Store struct {
 	now func() time.Time
 }
 
+// migrations bring a database's schema up to date. migrations[i] takes a
+// database whose PRAGMA user_version is i to i+1, in one transaction.
+// The database outlives deploys, so never edit or remove a migration that
+// has shipped, and never drop a table with data in it: add a migration
+// that alters what is there.
+var migrations = []string{
+	// 1: the schema as first deployed with a volume. A database made
+	// before versioning has user_version 0 and these tables already;
+	// IF NOT EXISTS leaves them as they are.
+	schema,
+}
+
 const schema = `
 CREATE TABLE IF NOT EXISTS instances (
 	id         TEXT PRIMARY KEY,
@@ -170,11 +182,41 @@ func Open(path string) (*Store, error) {
 	// One connection: SQLite serializes writes anyway, and an in-memory
 	// database exists per connection.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
+	if err := migrate(db); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("cannot create the schema: %w", err)
+		return nil, err
 	}
 	return &Store{db: db, now: time.Now}, nil
+}
+
+// migrate runs the migrations a database has not had yet.
+func migrate(db *sql.DB) error {
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return fmt.Errorf("cannot read the schema version: %w", err)
+	}
+	if version > len(migrations) {
+		return fmt.Errorf("the database has schema version %d, but this server knows only up to %d: it was written by a newer server", version, len(migrations))
+	}
+	for v := version; v < len(migrations); v++ {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(migrations[v]); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("cannot migrate the schema to version %d: %w", v+1, err)
+		}
+		// PRAGMA takes no parameters; v+1 is an int.
+		if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, v+1)); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("cannot migrate the schema to version %d: %w", v+1, err)
+		}
+	}
+	return nil
 }
 
 // Close closes the database.

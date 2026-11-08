@@ -3,8 +3,8 @@
 // inspector that decodes SAML messages in the browser.
 //
 // Everything it stores is temporary: each IdP or SP is deleted a fixed
-// time after it is created (GOSAML_TTL), and the database is deleted and
-// recreated whenever the server starts.
+// time after it is created (GOSAML_TTL). The database is kept across
+// restarts, so a deploy does not delete anyone's instances early.
 //
 // Configuration is by environment variable:
 //
@@ -17,7 +17,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -57,16 +56,17 @@ func run(log *slog.Logger) error {
 	}
 	dbPath := env("GOSAML_DB", filepath.Join(os.TempDir(), "gosaml.db"))
 
-	// Start from nothing every time, even if the disk outlived the last
-	// run: nothing here is meant to be kept.
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		if err := os.Remove(dbPath + suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-	}
+	// The database is kept across restarts and deploys; instances still
+	// expire GOSAML_TTL after they are created. Delete what expired while
+	// the server was down before serving.
 	db, err := store.Open(dbPath)
 	if err != nil {
 		return err
+	}
+	if n, err := db.Reap(context.Background()); err != nil {
+		log.Error("reap", "err", err)
+	} else if n > 0 {
+		log.Info("reaped expired instances", "count", n)
 	}
 	defer db.Close() //nolint:errcheck // exiting
 
