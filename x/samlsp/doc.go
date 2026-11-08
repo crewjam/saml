@@ -7,9 +7,9 @@
 // sessions, see github.com/crewjam/saml/samlsp.
 //
 // The shape of the API follows golang.org/x/oauth2 and
-// github.com/coreos/go-oidc: a plain Config struct, a function that
-// supplies the identity provider's metadata, functional options per
-// message, and verified results as plain structs.
+// github.com/coreos/go-oidc: a Config made once with New, a function that
+// supplies the identity provider's metadata, functional options per call,
+// and verified results as plain structs.
 //
 // # Setup
 //
@@ -26,8 +26,9 @@
 // https://sp.example.com/saml/acs.
 //
 // The first argument is a MetadataFunc that supplies the identity
-// provider's metadata. Every method calls it with its context.
-// RemoteMetadata fetches and caches metadata from a URL, StaticMetadata and
+// provider's metadata. The methods that deal with the IdP call it with
+// their context; those that only describe the SP, such as ServeMetadata,
+// do not. RemoteMetadata fetches and caches metadata from a URL, StaticMetadata and
 // StaticMetadataBytes use metadata the application already has, and an
 // application can supply its own function: for example, one that reads
 // metadata from a database, or picks the IdP for the tenant named in the
@@ -38,31 +39,30 @@
 // method builds. Pass it to New for every call, or to a single call
 // alongside its other options:
 //
-//	config, err := samlsp.New(idp, entityID, samlsp.SignMetadata)
+//	config, err := samlsp.New(idp, entityID, samlsp.WithKey(key, cert), samlsp.SignMetadata)
 //	config.ParseResponse(ctx, r, samlsp.WithRequestID(id), samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
-//		sp.AcceptAssertionBaseID = true
+//		sp.ValidateAudienceRestriction = func(*saml.Assertion) error { return nil }
 //	}))
 //
 // # Hardening
 //
-// The saml.ServiceProvider that each method builds has every check on that
-// package saml leaves off by default for compatibility: authentication
-// context validation, refusal of unknown conditions, of AES-CBC encrypted
-// assertions in unsigned Responses, of SHA-1 signatures, of expired IdP
-// metadata and of non-standard artifacts, and a limit of 80 bytes on
-// RelayState. A ServiceProviderOption can turn one off for an IdP that
-// needs it:
+// The saml.ServiceProvider that each method builds turns on checks that
+// package saml leaves off by default for compatibility. It validates the
+// authentication context, and refuses unknown conditions, AES-CBC
+// encrypted assertions in unsigned Responses, SHA-1 signatures, expired
+// IdP metadata, non-standard artifacts, and requests whose RelayState is
+// longer than the 80 bytes the bindings allow. A ServiceProviderOption can
+// turn one off for an IdP that needs it:
 //
 //	samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
 //		sp.RequireSignedResponseForCBC = false // this IdP signs only assertions
 //	})
 //
-// IdPs that need it: Microsoft Entra ID with token encryption, and Okta
-// configured to sign only the assertion, sign the assertion and encrypt it
-// with AES-CBC, without signing the Response; relax
-// RequireSignedResponseForCBC for them, or have the IdP sign the Response.
-// Older IdPs that sign with SHA-1 need RejectSHA1Signatures relaxed.
-// Responses from Entra ID and Okta otherwise pass with every check on.
+// Microsoft Entra ID with token encryption, and Okta with an encrypted
+// assertion, sign the assertion but not the Response, and encrypt with
+// AES-CBC. Relax RequireSignedResponseForCBC for them, or have the IdP
+// sign the Response. Older IdPs that sign with SHA-1 need
+// RejectSHA1Signatures relaxed.
 //
 // # Replay protection
 //
@@ -71,8 +71,8 @@
 // log cannot be used again. By default the IDs are kept in memory.
 // They need no size limit: an ID is recorded only once the message is fully
 // verified as one the IdP issued for this SP, and only until the message
-// expires, a few minutes after it was issued (saml.MaxIssueDelay). So the
-// memory used follows the rate of real logins, and an attacker cannot add
+// expires, at most saml.MaxIssueDelay after it was issued, plus clock
+// skew. So the memory used follows the rate of real logins, and an attacker cannot add
 // to it.
 //
 // The default protects a single process. Applications served by several
@@ -106,7 +106,7 @@
 // HTTP-POST-SimpleSign and HTTP-Artifact bindings. For HTTP-Artifact it
 // resolves the artifact with the IdP, using the HTTP client of
 // WithHTTPClient. It accepts an unsolicited (IdP-initiated) Response only
-// when AllowUnsolicited is passed.
+// with AllowUnsolicited.
 //
 // # Single Logout and other extensions
 //
@@ -115,8 +115,9 @@
 // github.com/crewjam/saml/x/samlsp/artifact, which sends messages with the
 // HTTP-Artifact binding, it is built only on this package's public API:
 // Send builds and sends any protocol message, WithModify lets a package
-// give its own options, Binding adds bindings, and WithMetadata, WithCheck
-// and ServiceProvider reach the configuration.
+// give its own options, WithCustomBinding adds bindings, SignElement signs
+// with the SP's key, and WithMetadata, WithCheck and ServiceProvider reach
+// the configuration.
 //
 // # Errors
 //

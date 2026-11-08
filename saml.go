@@ -276,7 +276,7 @@
 //
 // ```
 //
-// It turns on every check that the core package leaves off only for compatibility, and refuses replayed assertions by default. It also covers attribute queries, MDQ metadata, requested attributes in the SP metadata, and decoding attributes into typed struct fields. See the [package documentation](https://pkg.go.dev/github.com/crewjam/saml/x/samlsp) and its examples.
+// By default it turns on the checks that the core package leaves off for compatibility, and refuses replayed assertions. It also covers attribute queries, MDQ metadata, requested attributes in the SP metadata, and decoding attributes into typed struct fields. See the [package documentation](https://pkg.go.dev/github.com/crewjam/saml/x/samlsp) and its examples.
 //
 // Optional features are separate packages, built only on the public API of `x/samlsp`:
 //
