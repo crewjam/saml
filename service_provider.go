@@ -1695,16 +1695,25 @@ func (sp *ServiceProvider) parseArtifactResponse(artifactResponseEl *etree.Eleme
 			retErr.PrivateErr = err
 			return nil, retErr
 		}
-		if artifactResponse.Issuer != nil {
-			idpEntityID, err := sp.idpEntityID()
-			if err != nil {
-				retErr.PrivateErr = err
-				return nil, retErr
-			}
-			if artifactResponse.Issuer.Value != idpEntityID {
-				retErr.PrivateErr = classify(fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", idpEntityID), ErrIssuerMismatch)
-				return nil, retErr
-			}
+		// saml-profiles §5.4.2: the Issuer "MUST be present and MUST
+		// contain the unique identifier of the artifact issuer; the Format
+		// attribute MUST be omitted or have a value of ...:entity".
+		if artifactResponse.Issuer == nil {
+			retErr.PrivateErr = classify(errors.New("ArtifactResponse has no Issuer (saml-profiles §5.4.2)"), ErrMissingElement)
+			return nil, retErr
+		}
+		if err := checkIssuerFormat("ArtifactResponse", artifactResponse.Issuer, "saml-profiles §5.4.2"); err != nil {
+			retErr.PrivateErr = err
+			return nil, retErr
+		}
+		idpEntityID, err := sp.idpEntityID()
+		if err != nil {
+			retErr.PrivateErr = err
+			return nil, retErr
+		}
+		if artifactResponse.Issuer.Value != idpEntityID {
+			retErr.PrivateErr = classify(fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", idpEntityID), ErrIssuerMismatch)
+			return nil, retErr
 		}
 		if artifactResponse.Status.StatusCode.Value != StatusSuccess {
 			retErr.PrivateErr = newErrBadStatus(artifactResponse.Status)
@@ -2388,8 +2397,15 @@ func (sp *ServiceProvider) idpEntityID() (string, error) {
 // ErrIssuerMismatch: the IdP is named by its entity ID, so an Issuer of
 // another Format does not name it, whatever its value.
 func checkSSOIssuerFormat(what string, issuer *Issuer) error {
+	return checkIssuerFormat(what, issuer, "saml-profiles §4.1.4.2")
+}
+
+// checkIssuerFormat returns an error matching ErrIssuerMismatch unless the
+// Format of issuer, the Issuer of what, is omitted or entity, as the
+// profile section spec requires.
+func checkIssuerFormat(what string, issuer *Issuer, spec string) error {
 	if issuer.Format != "" && issuer.Format != entityNameIDFormat {
-		return classify(fmt.Errorf("%s Issuer Format %q is not %s (saml-profiles §4.1.4.2)", what, issuer.Format, entityNameIDFormat), ErrIssuerMismatch)
+		return classify(fmt.Errorf("%s Issuer Format %q is not %s (%s)", what, issuer.Format, entityNameIDFormat, spec), ErrIssuerMismatch)
 	}
 	return nil
 }
