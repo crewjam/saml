@@ -37,7 +37,7 @@
 // MetadataFunc. IdentityProviderContext names it for calls that take no
 // such option. A message that carries none of the SP's own state, such as
 // an IdP-initiated Response or an IdP's LogoutRequest, names its IdP only
-// in its Issuer: PeekIssuer reads it, unverified, to choose the IdP that
+// in its Issuer: PeekUnverifiedIssuer reads it, unverified, to choose the IdP that
 // verifies the message. When the SP itself differs per tenant, by entity
 // ID or ACS URL, build a Config per request; New is cheap, but see
 // WithReplayState.

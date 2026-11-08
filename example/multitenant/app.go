@@ -181,7 +181,7 @@ func (a *App) loginInProgress(w http.ResponseWriter, r *http.Request) ([]samlsp.
 	// Not a login of ours: an IdP-initiated one, if the provider allows
 	// them. Its RelayState, if any, is the IdP's (or an attacker's). The
 	// unverified Issuer only chooses the IdP to verify the Response with.
-	issuer, err := samlsp.PeekIssuer(r)
+	issuer, err := samlsp.PeekUnverifiedIssuer(r)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -241,10 +241,10 @@ func (a *App) slo(w http.ResponseWriter, r *http.Request) {
 
 // idpLogout ends the sessions an IdP's LogoutRequest names. The request
 // carries no state of ours, so its IdP is found by its unverified Issuer
-// (samlsp.PeekIssuer), then the request is verified against that IdP's
+// (samlsp.PeekUnverifiedIssuer), then the request is verified against that IdP's
 // metadata.
 func (a *App) idpLogout(w http.ResponseWriter, r *http.Request) {
-	issuer, err := samlsp.PeekIssuer(r)
+	issuer, err := samlsp.PeekUnverifiedIssuer(r)
 	if err != nil {
 		slo.WriteRequestError(w, r)
 		return

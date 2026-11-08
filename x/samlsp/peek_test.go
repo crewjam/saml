@@ -46,9 +46,9 @@ func soapRequest(body string) *http.Request {
 	return r
 }
 
-// PeekIssuer names the IdP of a real Response, which then still verifies
+// PeekUnverifiedIssuer names the IdP of a real Response, which then still verifies
 // against that IdP.
-func TestPeekIssuerResponse(t *testing.T) {
+func TestPeekUnverifiedIssuerResponse(t *testing.T) {
 	ti := newTestIDP(t)
 	cfg := newTestConfigWithIDP(t, ti, nil)
 	msg, err := cfg.AuthnRequest(t.Context(), "s", samlsp.WithIdentityProvider(staticIDP(ti)))
@@ -57,19 +57,19 @@ func TestPeekIssuerResponse(t *testing.T) {
 	}
 	acs := login(t, ti, msg)
 
-	issuer, err := samlsp.PeekIssuer(acs)
+	issuer, err := samlsp.PeekUnverifiedIssuer(acs)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := ti.idp.Metadata().EntityID; issuer != want {
-		t.Fatalf("PeekIssuer = %q, want %q", issuer, want)
+		t.Fatalf("PeekUnverifiedIssuer = %q, want %q", issuer, want)
 	}
 	if _, err := cfg.ParseResponse(t.Context(), acs, samlsp.WithRequestID(msg.ID), samlsp.WithIdentityProvider(staticIDP(ti))); err != nil {
-		t.Fatalf("ParseResponse after PeekIssuer: %v", err)
+		t.Fatalf("ParseResponse after PeekUnverifiedIssuer: %v", err)
 	}
 }
 
-func TestPeekIssuerBindings(t *testing.T) {
+func TestPeekUnverifiedIssuerBindings(t *testing.T) {
 	soapEnvelope := `<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body>` + logoutRequestXML + `</soap:Body></soap:Envelope>`
 	for name, r := range map[string]*http.Request{
 		"HTTP-Redirect LogoutRequest": redirectRequest("SAMLRequest", deflated(t, logoutRequestXML)),
@@ -89,22 +89,22 @@ func TestPeekIssuerBindings(t *testing.T) {
 		"SOAP LogoutRequest": soapRequest(soapEnvelope),
 	} {
 		t.Run(name, func(t *testing.T) {
-			issuer, err := samlsp.PeekIssuer(r)
+			issuer, err := samlsp.PeekUnverifiedIssuer(r)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if issuer != peekIDP {
-				t.Errorf("PeekIssuer = %q, want %q", issuer, peekIDP)
+				t.Errorf("PeekUnverifiedIssuer = %q, want %q", issuer, peekIDP)
 			}
 		})
 	}
 }
 
 // The SOAP body is put back, so that the message can then be verified.
-func TestPeekIssuerSOAPBodyRestored(t *testing.T) {
+func TestPeekUnverifiedIssuerSOAPBodyRestored(t *testing.T) {
 	body := `<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body>` + logoutRequestXML + `</soap:Body></soap:Envelope>`
 	r := soapRequest(body)
-	if _, err := samlsp.PeekIssuer(r); err != nil {
+	if _, err := samlsp.PeekUnverifiedIssuer(r); err != nil {
 		t.Fatal(err)
 	}
 	got, err := io.ReadAll(r.Body)
@@ -112,11 +112,11 @@ func TestPeekIssuerSOAPBodyRestored(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(got) != body {
-		t.Errorf("body after PeekIssuer = %q", got)
+		t.Errorf("body after PeekUnverifiedIssuer = %q", got)
 	}
 }
 
-func TestPeekIssuerRefused(t *testing.T) {
+func TestPeekUnverifiedIssuerRefused(t *testing.T) {
 	b64 := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
 	post := func(v url.Values) *http.Request { return postForm(spACSURL, v) }
 	huge := deflated(t, `<samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol">`+strings.Repeat(" ", 2<<20)+`</samlp:LogoutRequest>`)
@@ -141,9 +141,9 @@ func TestPeekIssuerRefused(t *testing.T) {
 		{"SOAP, not an Envelope", soapRequest(logoutRequestXML), false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			issuer, err := samlsp.PeekIssuer(tt.r)
+			issuer, err := samlsp.PeekUnverifiedIssuer(tt.r)
 			if err == nil {
-				t.Fatalf("PeekIssuer = %q, want an error", issuer)
+				t.Fatalf("PeekUnverifiedIssuer = %q, want an error", issuer)
 			}
 			if errors.Is(err, samlsp.ErrNoIssuer) != tt.noIssuerIs {
 				t.Errorf("err = %v; matches ErrNoIssuer: %v, want %v", err, !tt.noIssuerIs, tt.noIssuerIs)

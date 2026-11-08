@@ -112,7 +112,7 @@ func TestNoIdentityProvider(t *testing.T) {
 // An ACS that accepts IdP-initiated logins for many tenants finds the
 // tenant of an unsolicited Response by its Issuer, then verifies the
 // Response against that tenant's IdP.
-func ExamplePeekIssuer() {
+func ExamplePeekUnverifiedIssuer() {
 	config, err := samlsp.New("https://sp.example.com/saml/metadata", nil)
 	if err != nil {
 		log.Fatal(err)
@@ -122,7 +122,7 @@ func ExamplePeekIssuer() {
 	tenantIDP := func(string) (samlsp.MetadataFunc, bool) { return nil, false }
 
 	http.HandleFunc(config.ACSPath(), func(w http.ResponseWriter, r *http.Request) {
-		issuer, err := samlsp.PeekIssuer(r) // unverified: only chooses the IdP
+		issuer, err := samlsp.PeekUnverifiedIssuer(r) // unverified: only chooses the IdP
 		if err != nil {
 			http.Error(w, "login failed", http.StatusBadRequest)
 			return

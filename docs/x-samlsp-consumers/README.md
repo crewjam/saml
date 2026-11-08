@@ -46,7 +46,7 @@ The patch adds an assertion replay cache, which Supabase did not have, through a
 32-byte `samlsp.ReplayKey` (a hash of the IdP's entity ID and the message ID),
 written with the request's context, so one table safely serves every tenant. Uploaded and stored metadata is checked with
 `samlsp.ParseMetadata`, so the old `samlsp` package is no longer imported. For
-an IdP-initiated Response, `samlsp.PeekIssuer` replaces the hand-written decode
+an IdP-initiated Response, `samlsp.PeekUnverifiedIssuer` replaces the hand-written decode
 of the unverified Issuer. Its separate `Destination` check is dropped: each
 dedicated scope has its own `Config`, whose ACS URL `ParseResponse` checks the
 `Destination` and the assertion's `Recipient` against, as Supabase's comment

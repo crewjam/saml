@@ -250,7 +250,7 @@ index 0fbd72a..e75f6b6 100644
 -		err = xml.Unmarshal(responseXML, &peekResponse) // #nosec G709
 +		// The Response carries no state of ours, so its unverified Issuer
 +		// chooses the SSO provider whose IdP then verifies it.
-+		issuer, err := samlsp.PeekIssuer(r)
++		issuer, err := samlsp.PeekUnverifiedIssuer(r)
  		if err != nil {
 -			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAMLResponse is not a valid XML SAML assertion").WithInternalError(err)
 +			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAMLResponse is missing or is not a SAML Response").WithInternalError(err)

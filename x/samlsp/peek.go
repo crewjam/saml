@@ -14,7 +14,7 @@ import (
 	"github.com/crewjam/saml"
 )
 
-// ErrNoIssuer is returned by PeekIssuer when the request carries no SAML
+// ErrNoIssuer is returned by PeekUnverifiedIssuer when the request carries no SAML
 // message, or one that does not name its issuer.
 var ErrNoIssuer = errors.New("samlsp: no SAML message with an Issuer in the request")
 
@@ -28,7 +28,7 @@ const (
 	peekInflateLimit = 1 << 20
 )
 
-// PeekIssuer returns the entity ID that names the issuer of the SAML
+// PeekUnverifiedIssuer returns the entity ID that names the issuer of the SAML
 // message in r, without verifying the message. Use it only to choose the
 // identity provider whose metadata will verify the message, when nothing
 // of the SP's own, such as a RelayState it chose, says which IdP sent it:
@@ -52,7 +52,7 @@ const (
 // carries no message, carries an HTTP-Artifact (whose issuer is named only
 // by a hash), or names no issuer, and another error for a message it
 // cannot read.
-func PeekIssuer(r *http.Request) (string, error) {
+func PeekUnverifiedIssuer(r *http.Request) (string, error) {
 	data, err := peekMessage(r)
 	if err != nil {
 		return "", err
@@ -88,7 +88,7 @@ func PeekIssuer(r *http.Request) (string, error) {
 	return issuer, nil
 }
 
-// peekedMessage is what PeekIssuer reads of a SAML protocol message.
+// peekedMessage is what PeekUnverifiedIssuer reads of a SAML protocol message.
 type peekedMessage struct {
 	XMLName xml.Name
 	Issuer  string `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`

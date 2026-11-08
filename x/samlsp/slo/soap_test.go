@@ -113,8 +113,8 @@ func TestBackChannelSend(t *testing.T) {
 }
 
 // A multi-tenant SP finds the IdP of a back-channel LogoutRequest with
-// samlsp.PeekIssuer, which leaves the body for ParseRequest to verify.
-func TestBackChannelPeekIssuer(t *testing.T) {
+// samlsp.PeekUnverifiedIssuer, which leaves the body for ParseRequest to verify.
+func TestBackChannelPeekUnverifiedIssuer(t *testing.T) {
 	ti := newTestIDP(t)
 	cfg, _ := newService(t, ti, []slo.EndpointOption{slo.BackChannel})
 	s, err := slo.New(cfg)
@@ -124,19 +124,19 @@ func TestBackChannelPeekIssuer(t *testing.T) {
 	req, buf := idpLogoutRequest(t, ti)
 	r := soapRequest(buf)
 
-	issuer, err := samlsp.PeekIssuer(r)
+	issuer, err := samlsp.PeekUnverifiedIssuer(r)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if issuer != ti.idp.Metadata().EntityID {
-		t.Fatalf("PeekIssuer = %q", issuer)
+		t.Fatalf("PeekUnverifiedIssuer = %q", issuer)
 	}
 	ctx := samlsp.IdentityProviderContext(t.Context(), func(context.Context) (*saml.EntityDescriptor, error) {
 		return ti.idp.Metadata(), nil
 	})
 	got, err := s.ParseRequest(ctx, r)
 	if err != nil {
-		t.Fatalf("ParseRequest after PeekIssuer: %v (%v)", err, errors.Unwrap(err))
+		t.Fatalf("ParseRequest after PeekUnverifiedIssuer: %v (%v)", err, errors.Unwrap(err))
 	}
 	if got.ID != req.ID {
 		t.Errorf("ID = %q", got.ID)
