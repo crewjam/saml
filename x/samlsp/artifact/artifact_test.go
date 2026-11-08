@@ -436,11 +436,11 @@ func TestMemoryStoreTakeRecipient(t *testing.T) {
 	}
 }
 
-// TestMemoryStoreClock checks that messages expire by the store's Clock:
-// a message valid for a minute by a clock set in the past is kept.
-func TestMemoryStoreClock(t *testing.T) {
+// TestMemoryStoreNow checks that messages expire by the store's Now: a
+// message valid for a minute by a time source set in the past is kept.
+func TestMemoryStoreNow(t *testing.T) {
 	past := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-	s := &artifact.MemoryStore{Clock: dsig.NewFakeClockAt(past)}
+	s := &artifact.MemoryStore{Now: func() time.Time { return past }}
 	if err := s.Save(context.Background(), "a", artifact.StoredMessage{ExpiresAt: past.Add(time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
@@ -698,7 +698,7 @@ func TestPath(t *testing.T) {
 }
 
 // TestMemoryStoreClockFromConfig checks that New gives a MemoryStore with
-// no Clock the clock of samlsp.WithClock, by which the Binding sets
+// no Now the clock of samlsp.WithClock, by which the Binding sets
 // ExpiresAt: a message stored by a clock set in the past is kept for its
 // lifetime, not forgotten at once by the system clock.
 func TestMemoryStoreClockFromConfig(t *testing.T) {
@@ -715,8 +715,8 @@ func TestMemoryStoreClockFromConfig(t *testing.T) {
 	}
 	store := artifact.NewMemoryStore()
 	b := newBinding(t, cfg, store)
-	if store.Clock != clock {
-		t.Fatal("New did not set the store's Clock")
+	if store.Now == nil || !store.Now().Equal(clock.Now().UTC()) {
+		t.Fatal("New did not set the store's Now to the clock of the Config")
 	}
 	if _, err := cfg.AuthnRequest(t.Context(), "r", samlsp.WithCustomBinding(b)); err != nil {
 		t.Fatal(err)
@@ -726,12 +726,12 @@ func TestMemoryStoreClockFromConfig(t *testing.T) {
 		t.Error("the message expired by the system clock")
 	}
 
-	// A Clock already set is kept.
-	own := dsig.NewFakeClockAt(past)
-	mine := &artifact.MemoryStore{Clock: own}
+	// A Now already set is kept.
+	own := past.Add(time.Hour)
+	mine := &artifact.MemoryStore{Now: func() time.Time { return own }}
 	newBinding(t, cfg, mine)
-	if mine.Clock != own {
-		t.Error("New replaced the store's Clock")
+	if !mine.Now().Equal(own) {
+		t.Error("New replaced the store's Now")
 	}
 }
 
@@ -746,6 +746,15 @@ func TestResolutionServiceChecks(t *testing.T) {
 		if _, err := samlsp.New(spEntityID, samlsp.StaticMetadata(idp.metadata()), opts...); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+
+	// The check is of the key, not of LogoutSignatureMethod, which a
+	// ServiceProviderOption may change for logout messages only.
+	if _, err := samlsp.New(spEntityID, samlsp.StaticMetadata(idp.metadata()),
+		samlsp.WithSigningKey(key, cert),
+		samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) { sp.LogoutSignatureMethod = "" }),
+		artifact.ResolutionService(arsURL, 1)); err != nil {
+		t.Errorf("a signing key with no LogoutSignatureMethod: %v", err)
 	}
 }
 

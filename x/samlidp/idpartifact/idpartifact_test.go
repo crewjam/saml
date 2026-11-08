@@ -375,7 +375,7 @@ func newBinding(t *testing.T, config *samlidp.Config, store idpartifact.Store, i
 	return b
 }
 
-// TestMemoryStoreClock checks that New gives a MemoryStore with no Clock
+// TestMemoryStoreClock checks that New gives a MemoryStore with no Now
 // the clock of samlidp.WithClock, by which the Binding sets ExpiresAt: a
 // message stored by a clock set in the past is kept for its lifetime, not
 // forgotten at once by the system clock.
@@ -390,8 +390,8 @@ func TestMemoryStoreClock(t *testing.T) {
 	}
 	store := idpartifact.NewMemoryStore()
 	newBinding(t, config, store, 1)
-	if store.Clock != clock {
-		t.Fatal("New did not set the store's Clock")
+	if store.Now == nil || !store.Now().Equal(config.Now()) {
+		t.Fatal("New did not set the store's Now to config.Now")
 	}
 	if err := store.Save(context.Background(), "a", idpartifact.StoredMessage{ExpiresAt: config.Now().Add(time.Minute)}); err != nil {
 		t.Fatal(err)
