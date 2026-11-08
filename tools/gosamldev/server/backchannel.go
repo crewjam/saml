@@ -9,8 +9,8 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/crewjam/saml/tools/gosaml/inspect"
-	"github.com/crewjam/saml/tools/gosaml/store"
+	"github.com/crewjam/saml/tools/gosamldev/inspect"
+	"github.com/crewjam/saml/tools/gosamldev/store"
 	"github.com/crewjam/saml/x/samlsp/artifact"
 )
 

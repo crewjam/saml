@@ -352,7 +352,7 @@
 //
 // # AI Disclosure
 //
-// Since approximately November 1, 2026, AI tools have been used to generate code in this repository. All AI-generated code is reviewed personally by the maintainer, except for the code in tools/gosaml.
+// Since approximately November 1, 2026, AI tools have been used to generate code in this repository. All AI-generated code is reviewed personally by the maintainer, except for the code in tools/gosamldev.
 //
 // # Security Issues
 //

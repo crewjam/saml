@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Builds gosaml and deploys it to Fly.io.
+# Builds gosamldev and deploys it to Fly.io.
 #
 #   ./deploy.sh            build for linux/amd64 and deploy to Fly.io
-#   ./deploy.sh build      build for this machine, into build/gosaml
+#   ./deploy.sh build      build for this machine, into build/gosamldev
 #   ./deploy.sh run        build for this machine and run it at http://localhost:8080
 #
 # Extra arguments after "deploy" are passed to `fly deploy`.
@@ -46,8 +46,8 @@ build_server() {
 	echo "    version: $version"
 	mkdir -p build
 	GOOS="$1" GOARCH="$2" CGO_ENABLED=0 go build -trimpath \
-		-ldflags="-s -w -X github.com/crewjam/saml/tools/gosaml/server.Version=$version" \
-		-o build/gosaml .
+		-ldflags="-s -w -X github.com/crewjam/saml/tools/gosamldev/server.Version=$version" \
+		-o build/gosamldev .
 }
 
 case "$cmd" in
@@ -58,7 +58,7 @@ build)
 run)
 	build_wasm
 	build_server "$(go env GOOS)" "$(go env GOARCH)"
-	exec ./build/gosaml
+	exec ./build/gosamldev
 	;;
 deploy)
 	fly="$(command -v fly || command -v flyctl || true)"

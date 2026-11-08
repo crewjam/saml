@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/crewjam/saml/tools/gosaml/inspect"
-	"github.com/crewjam/saml/tools/gosaml/store"
+	"github.com/crewjam/saml/tools/gosamldev/inspect"
+	"github.com/crewjam/saml/tools/gosamldev/store"
 )
 
 // logEntryPage is the data of the log entry page: one event of an

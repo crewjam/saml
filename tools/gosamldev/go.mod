@@ -1,4 +1,4 @@
-module github.com/crewjam/saml/tools/gosaml
+module github.com/crewjam/saml/tools/gosamldev
 
 go 1.26.0
 

@@ -30,8 +30,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/crewjam/saml/tools/gosaml/server"
-	"github.com/crewjam/saml/tools/gosaml/store"
+	"github.com/crewjam/saml/tools/gosamldev/server"
+	"github.com/crewjam/saml/tools/gosamldev/store"
 )
 
 func main() {

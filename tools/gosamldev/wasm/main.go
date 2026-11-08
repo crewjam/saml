@@ -15,7 +15,7 @@ import (
 	"syscall/js"
 	"time"
 
-	"github.com/crewjam/saml/tools/gosaml/inspect"
+	"github.com/crewjam/saml/tools/gosamldev/inspect"
 )
 
 func main() {

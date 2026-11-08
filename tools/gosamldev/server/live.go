@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/crewjam/saml/tools/gosaml/store"
+	"github.com/crewjam/saml/tools/gosamldev/store"
 )
 
 // Live logs: the management pages follow their instance's log with

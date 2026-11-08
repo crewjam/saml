@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/tools/gosaml/store"
+	"github.com/crewjam/saml/tools/gosamldev/store"
 	"github.com/crewjam/saml/x/samlidp"
 )
 

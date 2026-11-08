@@ -12,7 +12,7 @@ import (
 	"github.com/beevik/etree"
 
 	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/tools/gosaml/store"
+	"github.com/crewjam/saml/tools/gosamldev/store"
 	"github.com/crewjam/saml/x/samlsp"
 	"github.com/crewjam/saml/x/samlsp/artifact"
 	"github.com/crewjam/saml/x/samlsp/pending"

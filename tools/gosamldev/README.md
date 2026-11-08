@@ -93,7 +93,7 @@ users of the library. `go.mod` replaces `github.com/crewjam/saml` with
 
 ```sh
 ./deploy.sh run      # build for this machine and serve http://localhost:8080
-./deploy.sh build    # just build, into build/gosaml
+./deploy.sh build    # just build, into build/gosamldev
 ./deploy.sh          # cross-compile for linux/amd64, fly deploy
 ```
 

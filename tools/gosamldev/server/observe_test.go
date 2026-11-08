@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/crewjam/saml/tools/gosaml/store"
+	"github.com/crewjam/saml/tools/gosamldev/store"
 )
 
 func newTestServer(t *testing.T, cfg Config) *Server {
