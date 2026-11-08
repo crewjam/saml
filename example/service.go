@@ -23,7 +23,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/pem"
-	"encoding/xml"
 	"errors"
 	"flag"
 	"fmt"
@@ -38,7 +37,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/crewjam/saml/samlsp"
+	"github.com/crewjam/saml/x/samlsp"
 )
 
 // linkStore holds the short links. Handlers run concurrently, so every
@@ -58,19 +57,14 @@ type Link struct {
 }
 
 // currentAccount returns the SAML NameID of the signed-in user, which
-// identifies the owner of a link. It is taken from the session samlsp
+// identifies the owner of a link. It is taken from the session that login
 // established, never from a request header a client could set itself.
 func currentAccount(r *http.Request) (string, bool) {
-	switch session := samlsp.SessionFromContext(r.Context()).(type) {
-	case samlsp.JWTSessionClaims:
-		// The default session codec stores the NameID value as the subject.
-		return session.Subject, session.Subject != ""
-	case samlsp.SessionWithSAMLNameID:
-		nameID, ok := session.GetSAMLNameID()
-		return nameID.Value, ok && nameID.Value != ""
-	default:
+	s := sessionFromContext(r.Context())
+	if s == nil || s.assertion.Subject == "" {
 		return "", false
 	}
+	return s.assertion.Subject, true
 }
 
 // newShortLink returns a random, URL-safe short link name.
@@ -157,19 +151,16 @@ func ListLinks(w http.ResponseWriter, r *http.Request) {
 func ServeWhoami(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Type", "text/plain")
 
-	session := samlsp.SessionFromContext(r.Context())
-	if session == nil {
+	s := sessionFromContext(r.Context())
+	if s == nil {
 		fmt.Fprintln(w, "not signed in")
 		return
 	}
-	fmt.Fprintln(w, "signed in")
-	sessionWithAttrs, ok := session.(samlsp.SessionWithAttributes)
-	if ok {
-		fmt.Fprintln(w, "attributes:")
-		for name, values := range sessionWithAttrs.GetAttributes() {
-			for _, value := range values {
-				fmt.Fprintf(w, "%s: %v\n", name, value)
-			}
+	fmt.Fprintln(w, "signed in as", s.assertion.Subject)
+	fmt.Fprintln(w, "attributes:")
+	for _, attribute := range s.assertion.Attributes {
+		for _, value := range attribute.Values {
+			fmt.Fprintf(w, "%s: %v\n", attribute.Name, value)
 		}
 	}
 }
@@ -213,9 +204,11 @@ func newKeyPair() (*rsa.PrivateKey, *x509.Certificate, error) {
 	return key, cert, nil
 }
 
+var config *samlsp.Config
+
 func main() {
 	rootURLstr := flag.String("url", "http://localhost:8000", "The base URL of this service")
-	idpMetadataURLstr := flag.String("idp", "http://localhost:8080/metadata", "The metadata URL for the IDP")
+	idpMetadataURL := flag.String("idp", "http://localhost:8080/metadata", "The metadata URL for the IDP")
 	idpCertPath := flag.String("idp-cert", "idp-cert.pem", "The certificate the IDP signs its metadata with")
 	listenAddr := flag.String("listen", "localhost:8000", "The address to listen on")
 	flag.Parse()
@@ -224,34 +217,17 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	idpMetadataURL, err := url.Parse(*idpMetadataURLstr)
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	idpCert, err := readCertificate(*idpCertPath)
 	if err != nil {
 		log.Fatal(err)
 	}
-	idpMetadata, err := samlsp.FetchSignedMetadata(context.Background(), http.DefaultClient,
-		*idpMetadataURL, []*x509.Certificate{idpCert})
-	if err != nil {
-		log.Fatal(err)
-	}
 
-	rootURL, err := url.Parse(*rootURLstr)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	samlSP, err := samlsp.New(samlsp.Options{
-		URL:               *rootURL,
-		Key:               key,
-		Certificate:       cert,
-		AllowIDPInitiated: true,
-		IDPMetadata:       idpMetadata,
-	})
+	config, err = samlsp.New(
+		// Metadata is accepted only if the IdP's certificate signed it.
+		samlsp.RemoteMetadata(*idpMetadataURL, samlsp.WithMetadataSigners(idpCert)),
+		strings.TrimSuffix(*rootURLstr, "/")+"/saml/metadata",
+		samlsp.WithSigningKey(key, cert),
+		samlsp.WithEncryptionKey(key, cert))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -259,20 +235,17 @@ func main() {
 	// Register with the identity provider. The example IdP accepts this
 	// unauthenticated request because its admin API is meant only for local
 	// development; see example/idp.
-	if err := registerWithIDP(*idpMetadataURL, samlSP); err != nil {
+	if err := registerWithIDP(*idpMetadataURL); err != nil {
 		log.Fatal(err)
 	}
 
 	mux := http.NewServeMux()
-	// The SAML endpoints need both GET (metadata) and POST (the assertion
-	// consumer service). They are registered per method because a bare "/saml/"
-	// pattern would conflict with "GET /" below.
-	mux.Handle("GET /saml/", samlSP)
-	mux.Handle("POST /saml/", samlSP)
+	mux.HandleFunc("GET "+config.MetadataPath(), config.ServeMetadata)
+	mux.HandleFunc("POST "+config.ACSPath(), acs)
 	mux.HandleFunc("GET /{link}", ServeLink)
-	mux.Handle("GET /whoami", samlSP.RequireAccount(http.HandlerFunc(ServeWhoami)))
-	mux.Handle("POST /", samlSP.RequireAccount(http.HandlerFunc(CreateLink)))
-	mux.Handle("GET /", samlSP.RequireAccount(http.HandlerFunc(ListLinks)))
+	mux.Handle("GET /whoami", requireLogin(http.HandlerFunc(ServeWhoami)))
+	mux.Handle("POST /", requireLogin(http.HandlerFunc(CreateLink)))
+	mux.Handle("GET /", requireLogin(http.HandlerFunc(ListLinks)))
 
 	server := &http.Server{
 		Addr:              *listenAddr,
@@ -287,18 +260,21 @@ func main() {
 
 // registerWithIDP uploads the service provider's metadata to the example
 // identity provider's /services API.
-func registerWithIDP(idpMetadataURL url.URL, samlSP *samlsp.Middleware) error {
-	spMetadataBuf, err := xml.MarshalIndent(samlSP.ServiceProvider.Metadata(), "", "  ")
+func registerWithIDP(idpMetadataURL string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	spMetadata, err := config.MetadataXML(ctx)
 	if err != nil {
-		return fmt.Errorf("cannot marshal SP metadata: %w", err)
+		return fmt.Errorf("cannot make the SP metadata: %w", err)
 	}
-	spURL := idpMetadataURL
+	spURL, err := url.Parse(idpMetadataURL)
+	if err != nil {
+		return err
+	}
 	spURL.Path = "/services/sp"
 	spURL.RawQuery = ""
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, spURL.String(), bytes.NewReader(spMetadataBuf))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, spURL.String(), bytes.NewReader(spMetadata))
 	if err != nil {
 		return err
 	}

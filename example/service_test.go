@@ -8,9 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/golang-jwt/jwt/v5"
-
-	"github.com/crewjam/saml/samlsp"
+	"github.com/crewjam/saml/x/samlsp"
 )
 
 func requestAs(method, target, body, account string) *http.Request {
@@ -19,9 +17,7 @@ func requestAs(method, target, body, account string) *http.Request {
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 	if account != "" {
-		r = r.WithContext(samlsp.ContextWithSession(r.Context(), samlsp.JWTSessionClaims{
-			RegisteredClaims: jwt.RegisteredClaims{Subject: account},
-		}))
+		r = r.WithContext(contextWithSession(r.Context(), &session{assertion: &samlsp.Assertion{Subject: account}}))
 	}
 	return r
 }
