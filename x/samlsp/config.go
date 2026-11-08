@@ -5,12 +5,15 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/beevik/etree"
 	dsig "github.com/russellhaering/goxmldsig"
@@ -37,7 +40,7 @@ type Config struct {
 	signRequests           bool
 	acceptBaseID           bool
 	nameIDFormat           saml.NameIDFormat
-	replayState            saml.AssertionReplayCache
+	replayState            ReplayState
 	authnContextComparator func(comparison string, requested []string, got string) bool
 	clock                  *dsig.Clock
 	httpClient             *http.Client
@@ -53,7 +56,9 @@ type Config struct {
 //
 // identityProvider supplies the metadata of the IdP that the SP trusts.
 // It is called with the context of each method. See RemoteMetadata,
-// StaticMetadata and StaticMetadataBytes.
+// StaticMetadata and StaticMetadataBytes. It may be nil when every call
+// names its IdP with WithIdentityProvider (or IdentityProviderContext);
+// a call that does not then fails with ErrNoIdentityProvider.
 //
 // The entity ID is conventionally the URL where the SP serves its metadata
 // (see ServeMetadata), such as "https://sp.example.com/saml/metadata". The
@@ -65,10 +70,16 @@ type Config struct {
 //
 // New returns an error if an argument is missing or a URL is not
 // absolute. It does not call identityProvider.
+//
+// New is cheap: it does no I/O and keeps no state but the replay record.
+// An application whose SP differs per tenant, by entity ID or ACS URL, can
+// build a Config per request. Each Config made without WithReplayState
+// keeps its own replay record, though, which then lasts only for the
+// request and protects nothing: give every such Config the same record
+// with WithReplayState, such as one replay.NewMemory or a database table.
+// When only the IdP differs per tenant, one Config with
+// WithIdentityProvider serves them all.
 func New(identityProvider MetadataFunc, entityID string, opts ...Option) (*Config, error) {
-	if identityProvider == nil {
-		return nil, errors.New("samlsp: the identity provider is nil")
-	}
 	if entityID == "" {
 		return nil, errors.New("samlsp: the entity ID is empty")
 	}
@@ -266,6 +277,67 @@ func WithNameIDFormat(format saml.NameIDFormat) Option {
 	return optionFunc(func(c *Config, _ *configOptions) { c.nameIDFormat = format })
 }
 
+// ReplayState records the messages a Config accepts, so that each is
+// accepted only once. Consume records the message identified by key as
+// accepted until expiresAt, after which the message could no longer be
+// accepted anyway and the record may be dropped. It must fail with
+// saml.ErrAssertionReplayed if key is already recorded with an expiry that
+// has not passed; any other error refuses the message too. It must be safe
+// for concurrent use, and may keep key.
+//
+// key is ReplayKey of the IdP's entity ID and the message's ID: 32 bytes,
+// so a database can keep it in a fixed-size binary column with a unique
+// key. Since each IdP chooses the IDs of its messages, a hostile tenant's
+// IdP could send messages with any IDs it likes; with the IdP in the key,
+// they cannot collide with, and so block, the messages of another tenant's
+// IdP, and one record can safely serve several IdPs and SPs.
+//
+// ctx is that of the Config method that accepts the message, such as
+// ParseResponse, so a record kept in a database can use the request's
+// deadline and values.
+//
+// The messages are assertions, LogoutRequests and resolved artifacts.
+// See replay.Memory for the default.
+type ReplayState interface {
+	Consume(ctx context.Context, key []byte, expiresAt time.Time) error
+}
+
+// replayKeyLabel separates replay keys from other uses of SHA-256.
+const replayKeyLabel = "github.com/crewjam/saml/x/samlsp replay key v1\x00"
+
+// ReplayKey returns the key under which a ReplayState records the message
+// whose ID is id, issued by the IdP whose entity ID is idp: a SHA-256 hash
+// of both. The entity ID is length-prefixed, so no other pair has the same
+// key.
+//
+// idp is the entity ID of the metadata the message was verified with, not
+// a value taken from the message, and it stays the same when the IdP
+// rotates its keys. So an SP that lets tenants register IdPs must not let
+// two of them use the same entity ID. id is the message's ID as package
+// saml records it: that of an assertion, or, with a prefix that keeps them
+// apart, of a LogoutRequest ("LogoutRequest:") or a resolved artifact
+// ("Artifact:").
+func ReplayKey(idp, id string) []byte {
+	h := sha256.New()
+	h.Write([]byte(replayKeyLabel))
+	h.Write(binary.AppendUvarint(nil, uint64(len(idp))))
+	h.Write([]byte(idp))
+	h.Write([]byte(id))
+	return h.Sum(nil)
+}
+
+// replayCache is the saml.AssertionReplayCache of the ServiceProvider of
+// a call: state, with the call's context and IdP.
+type replayCache struct {
+	ctx   context.Context
+	idp   string
+	state ReplayState
+}
+
+func (r replayCache) Consume(id string, expiresAt time.Time) error {
+	return r.state.Consume(r.ctx, ReplayKey(r.idp, id), expiresAt)
+}
+
 // WithReplayState sets where ParseResponse (and the LogoutRequests of
 // x/samlsp/slo) record the IDs of the messages they accept, so that each is
 // accepted only once.
@@ -275,11 +347,9 @@ func WithNameIDFormat(format saml.NameIDFormat) Option {
 // after a restart, is accepted. Pass a replay.NewMemory to share one
 // record between several Configs of a process. Applications served by
 // several processes need state that the processes share, such as a table
-// with a unique key on the ID. Consume must fail with
-// saml.ErrAssertionReplayed for an ID it has recorded with an expiry that
-// has not passed, and may forget an ID once its expiry has passed. Records
-// need no size limit (see replay.Memory).
-func WithReplayState(state saml.AssertionReplayCache) Option {
+// with a unique key on the record's key (see ReplayState). Records need no size
+// limit (see replay.Memory).
+func WithReplayState(state ReplayState) Option {
 	return optionFunc(func(c *Config, _ *configOptions) { c.replayState = state })
 }
 
@@ -402,7 +472,11 @@ func (c *Config) applyServiceProviderOptions(sp *saml.ServiceProvider, extra []S
 // with the identity provider's metadata, and with the
 // ServiceProviderOptions passed to New and then opts applied.
 func (c *Config) serviceProvider(ctx context.Context, opts []ServiceProviderOption) (*saml.ServiceProvider, error) {
-	idpMetadata, err := c.identityProvider(ctx)
+	idp, err := c.identityProviderFor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	idpMetadata, err := idp(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("samlsp: cannot get identity provider metadata: %w", err)
 	}
@@ -411,6 +485,7 @@ func (c *Config) serviceProvider(ctx context.Context, opts []ServiceProviderOpti
 	}
 	sp := c.localServiceProvider()
 	sp.IDPMetadata = idpMetadata
+	sp.ReplayCache = replayCache{ctx, idpMetadata.EntityID, c.replayState}
 	c.applyServiceProviderOptions(sp, opts)
 	return sp, nil
 }
@@ -430,7 +505,6 @@ func (c *Config) localServiceProvider() *saml.ServiceProvider {
 		HTTPClient:            c.httpClient,
 		AcsURL:                c.acsURL,
 		AuthnNameIDFormat:     c.nameIDFormat,
-		ReplayCache:           c.replayState,
 		Clock:                 c.clock,
 
 		KeyOnlySigns: true,

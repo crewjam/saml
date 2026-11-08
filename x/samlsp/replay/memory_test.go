@@ -69,13 +69,13 @@ func TestMemoryReplayState(t *testing.T) {
 		t.Fatal("a timer is set while the state is empty")
 	}
 
-	if err := s.Consume("a", ft.now.Add(90*time.Second)); err != nil {
+	if err := s.Consume(t.Context(), []byte("a"), ft.now.Add(90*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Consume("a", ft.now.Add(90*time.Second)); !errors.Is(err, saml.ErrAssertionReplayed) {
+	if err := s.Consume(t.Context(), []byte("a"), ft.now.Add(90*time.Second)); !errors.Is(err, saml.ErrAssertionReplayed) {
 		t.Fatalf("replay: err = %v", err)
 	}
-	if err := s.Consume("b", ft.now.Add(10*time.Minute)); err != nil {
+	if err := s.Consume(t.Context(), []byte("b"), ft.now.Add(10*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if len(ft.pending) != 1 {
@@ -83,7 +83,7 @@ func TestMemoryReplayState(t *testing.T) {
 	}
 
 	// An earlier expiry moves the timer earlier.
-	if err := s.Consume("c", ft.now.Add(30*time.Second)); err != nil {
+	if err := s.Consume(t.Context(), []byte("c"), ft.now.Add(30*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if len(ft.pending) != 1 {
@@ -92,7 +92,7 @@ func TestMemoryReplayState(t *testing.T) {
 
 	// A record is valid until its expiry, inclusive.
 	ft.advance(30 * time.Second)
-	if err := s.Consume("c", ft.now); !errors.Is(err, saml.ErrAssertionReplayed) {
+	if err := s.Consume(t.Context(), []byte("c"), ft.now); !errors.Is(err, saml.ErrAssertionReplayed) {
 		t.Fatalf("c at its expiry: err = %v", err)
 	}
 	ft.advance(time.Second)
@@ -106,7 +106,7 @@ func TestMemoryReplayState(t *testing.T) {
 	}
 	// An expired ID is accepted again; package saml refuses the expired
 	// message itself.
-	if err := s.Consume("a", ft.now.Add(time.Hour)); err != nil {
+	if err := s.Consume(t.Context(), []byte("a"), ft.now.Add(time.Hour)); err != nil {
 		t.Fatalf("expired ID: %v", err)
 	}
 
@@ -123,16 +123,16 @@ func TestMemoryReplayState(t *testing.T) {
 // recorded again does not remove its new record.
 func TestMemoryReplayStateReRecorded(t *testing.T) {
 	s, ft := newTestReplayState()
-	if err := s.Consume("a", ft.now.Add(time.Second)); err != nil {
+	if err := s.Consume(t.Context(), []byte("a"), ft.now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	// Expired, but its timer has not run yet.
 	ft.now = ft.now.Add(2 * time.Second)
-	if err := s.Consume("a", ft.now.Add(time.Minute)); err != nil {
+	if err := s.Consume(t.Context(), []byte("a"), ft.now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	ft.advance(0)
-	if err := s.Consume("a", ft.now.Add(time.Minute)); !errors.Is(err, saml.ErrAssertionReplayed) {
+	if err := s.Consume(t.Context(), []byte("a"), ft.now.Add(time.Minute)); !errors.Is(err, saml.ErrAssertionReplayed) {
 		t.Fatalf("re-recorded ID: err = %v", err)
 	}
 }
@@ -147,7 +147,7 @@ func TestMemoryReplayStateBounded(t *testing.T) {
 	peak := 0
 	for i := range 100_000 { // ten logins a second for nearly three hours
 		ft.advance(interval)
-		if err := s.Consume(fmt.Sprint(i), ft.now.Add(lifetime)); err != nil {
+		if err := s.Consume(t.Context(), []byte(fmt.Sprint(i)), ft.now.Add(lifetime)); err != nil {
 			t.Fatal(err)
 		}
 		peak = max(peak, s.Len())
@@ -162,7 +162,7 @@ func TestMemoryReplayStateBounded(t *testing.T) {
 
 func TestMemoryReplayStateRealTimer(t *testing.T) {
 	s := NewMemory()
-	if err := s.Consume("a", time.Now().Add(10*time.Millisecond)); err != nil {
+	if err := s.Consume(t.Context(), []byte("a"), time.Now().Add(10*time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
@@ -180,10 +180,10 @@ func TestMemoryReplayStateRealTimer(t *testing.T) {
 func TestMemoryClock(t *testing.T) {
 	past := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 	s := &Memory{Clock: dsig.NewFakeClockAt(past)}
-	if err := s.Consume("a", past.Add(time.Minute)); err != nil {
+	if err := s.Consume(t.Context(), []byte("a"), past.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Consume("a", past.Add(time.Minute)); !errors.Is(err, saml.ErrAssertionReplayed) {
+	if err := s.Consume(t.Context(), []byte("a"), past.Add(time.Minute)); !errors.Is(err, saml.ErrAssertionReplayed) {
 		t.Fatalf("replay: err = %v", err)
 	}
 }

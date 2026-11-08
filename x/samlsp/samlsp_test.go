@@ -397,7 +397,6 @@ func TestNewErrors(t *testing.T) {
 	ti := newTestIDP(t)
 	idp := staticIDP(ti)
 	for name, f := range map[string]func() (*samlsp.Config, error){
-		"no IdP":           func() (*samlsp.Config, error) { return samlsp.New(nil, spEntityID) },
 		"no entity ID":     func() (*samlsp.Config, error) { return samlsp.New(idp, "") },
 		"URN, default ACS": func() (*samlsp.Config, error) { return samlsp.New(idp, "urn:example:sp") },
 		"relative ACS": func() (*samlsp.Config, error) {
@@ -676,12 +675,18 @@ func TestReplayRefusedByDefault(t *testing.T) {
 	}
 }
 
-type recordingReplayState struct{ ids []string }
+type recordingReplayState struct {
+	keys [][]byte
+	ctxs []context.Context
+}
 
-func (s *recordingReplayState) Consume(id string, _ time.Time) error {
-	s.ids = append(s.ids, id)
+func (s *recordingReplayState) Consume(ctx context.Context, key []byte, _ time.Time) error {
+	s.keys = append(s.keys, key)
+	s.ctxs = append(s.ctxs, ctx)
 	return nil
 }
+
+type requestKey struct{}
 
 func TestWithReplayState(t *testing.T) {
 	ti := newTestIDP(t)
@@ -691,12 +696,18 @@ func TestWithReplayState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID(msg.ID))
+	ctx := context.WithValue(t.Context(), requestKey{}, "request-1")
+	a, err := cfg.ParseResponse(ctx, login(t, ti, msg), samlsp.WithRequestID(msg.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(state.ids) != 1 || state.ids[0] != a.ID {
-		t.Errorf("recorded %v, want [%s]", state.ids, a.ID)
+	// The key is that of the IdP's entity ID and the assertion's ID.
+	if want := samlsp.ReplayKey(ti.idp.Metadata().EntityID, a.ID); len(state.keys) != 1 || !bytes.Equal(state.keys[0], want) {
+		t.Errorf("recorded %x, want [%x]", state.keys, want)
+	}
+	// The record is made with the context of the ParseResponse call.
+	if len(state.ctxs) != 1 || state.ctxs[0].Value(requestKey{}) != "request-1" {
+		t.Error("Consume did not get the context of ParseResponse")
 	}
 }
 

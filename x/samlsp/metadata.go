@@ -121,15 +121,33 @@ const metadataRetryInterval = time.Minute
 // data is parsed once, now. If it is not valid metadata, every call of the
 // MetadataFunc returns the error, so every Config method that uses it fails.
 func StaticMetadataBytes(data []byte, opts ...MetadataOption) MetadataFunc {
+	md, err := ParseMetadata(data, opts...)
+	if err != nil {
+		return func(context.Context) (*saml.EntityDescriptor, error) { return nil, err }
+	}
+	return StaticMetadata(md)
+}
+
+// ParseMetadata parses identity provider metadata and checks it as
+// StaticMetadataBytes does, for an application that keeps or validates it
+// itself: for example, to refuse an IdP's metadata when an administrator
+// uploads it, rather than at the next login. The options
+// WithIdentityProviderEntityID and WithMetadataSigners apply; the others
+// are for RemoteMetadata.
+//
+// data may be an EntityDescriptor or an EntitiesDescriptor aggregate; the
+// result is the IdP's EntityDescriptor. It returns an error if data is not
+// metadata, is not signed by one of the WithMetadataSigners certificates,
+// or describes no single identity provider.
+func ParseMetadata(data []byte, opts ...MetadataOption) (*saml.EntityDescriptor, error) {
 	md, err := parseMetadata(data, newMetadataOptions(opts))
 	if err == nil {
 		err = checkIDPMetadata(md)
 	}
 	if err != nil {
-		err = fmt.Errorf("samlsp: invalid identity provider metadata: %w", err)
-		return func(context.Context) (*saml.EntityDescriptor, error) { return nil, err }
+		return nil, fmt.Errorf("samlsp: invalid identity provider metadata: %w", err)
 	}
-	return StaticMetadata(md)
+	return md, nil
 }
 
 func newMetadataOptions(opts []MetadataOption) metadataOptions {

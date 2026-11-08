@@ -16,6 +16,7 @@ type QueryOption interface {
 type queryOptions struct {
 	attributes []saml.Attribute
 	sp         []ServiceProviderOption
+	idp        MetadataFunc
 }
 
 type queryOptionFunc func(*queryOptions)
@@ -56,6 +57,7 @@ func (c *Config) QueryAttributes(ctx context.Context, nameID saml.NameID, opts .
 	for _, opt := range opts {
 		opt.applyQuery(&o)
 	}
+	ctx = IdentityProviderContext(ctx, o.idp)
 	sp, err := c.serviceProvider(ctx, o.sp)
 	if err != nil {
 		return nil, err

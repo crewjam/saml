@@ -201,6 +201,7 @@ type messageOptions struct {
 	scriptNonce string
 	sp          []ServiceProviderOption
 	modify      []func(any) error
+	idp         MetadataFunc
 }
 
 type messageOptionFunc func(*messageOptions)
@@ -264,6 +265,7 @@ func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...Au
 	default:
 		return nil, fmt.Errorf("samlsp: unsupported response binding %q", o.responseBinding)
 	}
+	ctx = IdentityProviderContext(ctx, o.idp)
 	return c.send(ctx, OutgoingMessage{
 		Service:    SingleSignOnService,
 		Param:      "SAMLRequest",
@@ -310,6 +312,7 @@ type responseOptions struct {
 	unsolicited  bool
 	authnContext *saml.RequestedAuthnContext
 	sp           []ServiceProviderOption
+	idp          MetadataFunc
 }
 
 type responseOptionFunc func(*responseOptions)
@@ -357,6 +360,7 @@ func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...Res
 	for _, opt := range opts {
 		opt.applyResponse(&o)
 	}
+	ctx = IdentityProviderContext(ctx, o.idp)
 	sp, err := c.serviceProvider(ctx, o.sp)
 	if err != nil {
 		return nil, err

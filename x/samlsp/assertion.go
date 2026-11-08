@@ -189,6 +189,35 @@ func (as Attributes) Values(name string) []string {
 	return values
 }
 
+// LegacyMap returns the attributes as a map keyed as the sessions of
+// github.com/crewjam/saml/samlsp key them by default: by FriendlyName, or
+// by Name when there is none. Attributes that share a key have their
+// values merged, in order.
+//
+// It is for migrating from samlsp, so that configuration that names
+// attributes by those keys, such as a FriendlyName like "mail", keeps
+// working. Do not use it to decide what a user may do: a FriendlyName does
+// not identify an attribute (saml-core §2.7.3.1), so one attribute can
+// stand in for another. Use Get, Values or Decode, which match Name.
+//
+// Unlike samlsp, it leaves out null (xsi:nil) values, as Values does, and
+// does not add the session indexes under "SessionIndex"; they are in
+// Assertion.SessionIndexes.
+//
+// Deprecated: LegacyMap exists only to ease the move from samlsp. Name
+// attributes by their Name, and use Get, Values or Decode.
+func (as Attributes) LegacyMap() map[string][]string {
+	m := make(map[string][]string, len(as))
+	for _, a := range as {
+		key := a.FriendlyName
+		if key == "" {
+			key = a.Name
+		}
+		m[key] = append(m[key], a.Values...)
+	}
+	return m
+}
+
 // Get returns the first value of the attribute whose Name is name, or "" if
 // there is none. FriendlyName is not matched.
 func (as Attributes) Get(name string) string {

@@ -3,8 +3,10 @@
 //
 // It is a thin layer over saml.ServiceProvider that builds AuthnRequests,
 // verifies Responses, and serves the SP metadata. Single logout is in
-// github.com/crewjam/saml/x/samlsp/slo. For a ready-made middleware with
-// sessions, see github.com/crewjam/saml/samlsp.
+// github.com/crewjam/saml/x/samlsp/slo. Sessions are the application's;
+// github.com/crewjam/saml/x/samlsp/pending keeps the one piece of state
+// every login needs, the ID of the request in progress, in a cookie. For a
+// ready-made middleware with sessions, see github.com/crewjam/saml/samlsp.
 //
 // The shape of the API follows golang.org/x/oauth2 and
 // github.com/coreos/go-oidc: a Config made once with New, a function that
@@ -36,8 +38,17 @@
 // do not. RemoteMetadata fetches and caches metadata from a URL, StaticMetadata and
 // StaticMetadataBytes use metadata the application already has, and an
 // application can supply its own function: for example, one that reads
-// metadata from a database, or picks the IdP for the tenant named in the
-// context.
+// metadata from a database.
+//
+// An SP that serves several IdPs, such as one per tenant, can instead
+// name the IdP per call with WithIdentityProvider, and pass New a nil
+// MetadataFunc. IdentityProviderContext names it for calls that take no
+// such option. A message that carries none of the SP's own state, such as
+// an IdP-initiated Response or an IdP's LogoutRequest, names its IdP only
+// in its Issuer: PeekIssuer reads it, unverified, to choose the IdP that
+// verifies the message. When the SP itself differs per tenant, by entity
+// ID or ACS URL, build a Config per request; New is cheap, but see
+// WithReplayState.
 //
 // Settings that have no Option of their own are reached with a
 // ServiceProviderOption, which adjusts the saml.ServiceProvider that each
@@ -73,22 +84,29 @@
 //
 // ParseResponse accepts each assertion only once (and x/samlsp/slo each
 // LogoutRequest), so that a message copied from a browser's history or a
-// log cannot be used again. By default the IDs are kept in memory, in a
-// replay.Memory of package github.com/crewjam/saml/x/samlsp/replay, which
-// protects a single process. Applications served by several processes
-// share a record with WithReplayState.
+// log cannot be used again. Each message is recorded under a hash of its
+// ID and of the IdP's entity ID (ReplayKey), so the messages of different
+// IdPs never collide, and one record can serve every tenant of an SP. By
+// default the record is kept in memory, in a replay.Memory of package
+// github.com/crewjam/saml/x/samlsp/replay, which protects a single process.
+// Applications served by several processes, or that build a Config per
+// request, share a record with WithReplayState. Its Consume gets the
+// context of the call that accepts the message, so a record kept in a
+// database can use the request's deadline.
 //
 // # Web Browser SSO
 //
 // Login has two steps. First, send the browser to the IdP with an
 // AuthnRequest. The application must remember the request's ID, keyed by
-// the RelayState, until the Response arrives:
+// the RelayState, in this browser, until the Response arrives. Package
+// github.com/crewjam/saml/x/samlsp/pending keeps it in a cookie:
+//
+//	tracker, err := pending.New(config, cookieKey)
 //
 //	func login(w http.ResponseWriter, r *http.Request) {
-//		relayState := rand.Text()
-//		req, err := config.AuthnRequest(r.Context(), relayState)
+//		req, err := config.AuthnRequest(r.Context(), rand.Text())
 //		if err != nil { ... }
-//		rememberPendingRequest(w, relayState, req.ID) // e.g. in a signed cookie
+//		if err := tracker.Remember(w, req, ""); err != nil { ... }
 //		req.Write(w)
 //	}
 //
@@ -96,11 +114,16 @@
 // check that its InResponseTo is the remembered ID:
 //
 //	func acs(w http.ResponseWriter, r *http.Request) {
-//		requestID := takePendingRequest(w, r, r.FormValue("RelayState"))
-//		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(requestID))
+//		login, err := tracker.Take(w, r)
+//		if err != nil { ... }
+//		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
 //		if err != nil { ... }
 //		startSession(w, assertion.NameID, assertion.SessionIndexes, assertion.Attributes)
 //	}
+//
+// An application can keep the ID elsewhere instead, such as in a
+// server-side session. A cookie for it must reach the ACS with the IdP's
+// cross-site POST, so it must be SameSite=None and Secure.
 //
 // ParseResponse returns a verified Assertion. It accepts the HTTP-POST,
 // HTTP-POST-SimpleSign and HTTP-Artifact bindings. For HTTP-Artifact it

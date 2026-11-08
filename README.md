@@ -49,9 +49,13 @@ import (
 	"os"
 
 	"github.com/crewjam/saml/x/samlsp"
+	"github.com/crewjam/saml/x/samlsp/pending"
 )
 
-var config *samlsp.Config
+var (
+	config  *samlsp.Config
+	tracker *pending.Tracker
+)
 
 func main() {
 	keyPair, err := tls.LoadX509KeyPair("myservice.cert", "myservice.key")
@@ -76,6 +80,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Remembers each login in progress in a cookie, authenticated with
+	// this key: 32 or more random bytes, the same on every server.
+	tracker, err = pending.New(config, []byte(os.Getenv("SAML_COOKIE_KEY")))
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	http.HandleFunc(config.MetadataPath(), config.ServeMetadata)
 	http.HandleFunc(config.ACSPath(), acs)
@@ -86,25 +96,25 @@ func main() {
 // login sends the browser to the IDP with an AuthnRequest, and remembers
 // the request's ID in this browser until the IDP answers.
 func login(w http.ResponseWriter, r *http.Request) {
-	relayState := rand.Text()
-	msg, err := config.AuthnRequest(r.Context(), relayState)
+	msg, err := config.AuthnRequest(r.Context(), rand.Text())
+	if err == nil {
+		err = tracker.Remember(w, msg, "")
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "saml_" + relayState, Value: msg.ID,
-		Path: config.ACSPath(), MaxAge: 300, HttpOnly: true})
 	msg.Write(w)
 }
 
 // acs verifies the IDP's Response to the request this browser started.
 func acs(w http.ResponseWriter, r *http.Request) {
-	cookie, err := r.Cookie("saml_" + r.FormValue("RelayState"))
+	login, err := tracker.Take(w, r)
 	if err != nil {
 		http.Error(w, "no login in progress", http.StatusForbidden)
 		return
 	}
-	assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(cookie.Value))
+	assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
 	if err != nil {
 		http.Error(w, "login failed", http.StatusForbidden)
 		return
@@ -115,7 +125,7 @@ func acs(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-Login has two steps. `/login` sends the browser to the IDP with an `AuthnRequest`, and remembers the request's ID in a cookie named after the RelayState. The ACS checks that the Response answers that request, so a Response is accepted only in the browser that asked for it. Over `https`, make that cookie `Secure` and `SameSite=None`, since the IDP's POST to the ACS is a cross-site request. `example/trivial` is a complete version of this program, with sessions and single logout.
+Login has two steps. `/login` sends the browser to the IDP with an `AuthnRequest`, and `x/samlsp/pending` remembers the request's ID in a cookie named after the RelayState. The ACS checks that the Response answers that request, so a Response is accepted only in the browser that asked for it. The cookie is authenticated with `SAML_COOKIE_KEY`, and over `https` it is `Secure` and `SameSite=None`, since the IDP's POST to the ACS is a cross-site request. `example/trivial` is a complete version of this program, with sessions and single logout.
 
 Next we'll have to register our service provider with the identity provider to establish trust from the service provider to the IDP. samltest.dev doesn't take an uploaded metadata file. Instead, set the app's SP ACS URL and SP Entity ID, either under "SAML SP Settings" on `https://www.samltest.dev/apps/<APP_ID>` or with the API:
 
@@ -244,6 +254,7 @@ config, err := samlsp.New(idp, entityID, samlsp.WithSigningKey(key, cert),
 ### More
 
 - `github.com/crewjam/saml/x/samlsp/artifact` sends requests to the IDP with the HTTP-Artifact binding.
+- `example/multitenant` is a multi-tenant SP in the manner of Supabase Auth: each tenant registers its own IDP, one `Config` serves them all with `WithIdentityProvider`, and logins in progress, the replay record and sessions live in a database (a pretend one), with SP- and IDP-initiated login and single logout.
 - The [package documentation](https://pkg.go.dev/github.com/crewjam/saml/x/samlsp) and its examples cover the rest: `AuthnRequest` options such as `ForceAuthn` and `WithAuthnContext`, requested attributes and contacts in the SP metadata, signed metadata, and how to build other messages and bindings on it.
 
 ## The samlsp middleware
