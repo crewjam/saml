@@ -61,7 +61,7 @@ func (n *names) of(kind, id string) string {
 	name := ""
 	switch kind {
 	case "idp":
-		if _, cfg, err := n.s.loadIdP(n.ctx, id); err == nil {
+		if _, cfg, err := n.s.loadIDP(n.ctx, id); err == nil {
 			name = cfg.Name
 		}
 	case "sp":
@@ -117,7 +117,7 @@ func (n *names) row(in *store.Instance, e store.Event) logRow {
 	switch {
 	case e.Direction == "":
 		r.Dir, r.DirClass = "local", "local"
-	case in.Kind == store.KindIdP:
+	case in.Kind == store.KindIDP:
 		r.DirClass = "sp"
 	default:
 		r.DirClass = "idp"
@@ -197,7 +197,7 @@ func certInfo(certPEM string) string {
 }
 
 func init() {
-	funcs["logData"] = func(secret string, rows []logRow, max int) logData { return logData{secret, rows, max} }
+	funcs["logData"] = func(secret string, rows []logRow, limit int) logData { return logData{secret, rows, limit} }
 	funcs["ep"] = func(label, binding, url string) endpoint {
 		return endpoint{Label: label, Binding: binding, URL: url, Plain: strings.HasPrefix(binding, "same as")}
 	}

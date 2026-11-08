@@ -25,9 +25,10 @@ import (
 // Kind is the kind of an Instance.
 type Kind string
 
+// The kinds of Instance.
 const (
-	KindIdP Kind = "idp"
-	KindSP  Kind = "sp"
+	KindIDP Kind = "idp" // a test identity provider
+	KindSP  Kind = "sp"  // a test service provider
 )
 
 // ErrNotFound is returned for an instance, or a pending login, that does
@@ -414,6 +415,7 @@ func (s *Store) RecentEvents(ctx context.Context, instanceIDs []string, limit in
 		args = append(args, id)
 	}
 	args = append(args, limit)
+	//nolint:gosec // G202: only constant columns and "?" placeholders are concatenated
 	rows, err := s.db.QueryContext(ctx, `SELECT `+eventColumns+` FROM events
 		WHERE instance_id IN (`+strings.Join(marks, ",")+`) ORDER BY id DESC LIMIT ?`, args...)
 	if err != nil {
@@ -530,7 +532,7 @@ func (s *Store) Reap(ctx context.Context) (int64, error) {
 		return n, err
 	}
 	for _, table := range []string{"replay", "sessions", "artifacts"} {
-		if _, err := s.db.ExecContext(ctx, `DELETE FROM `+table+` WHERE expires_at <= ?`, now); err != nil {
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM `+table+` WHERE expires_at <= ?`, now); err != nil { //nolint:gosec // G202: table is from a fixed list
 			return n, err
 		}
 	}

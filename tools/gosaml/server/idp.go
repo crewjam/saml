@@ -22,8 +22,8 @@ import (
 	"github.com/crewjam/saml/xmlenc"
 )
 
-// IdPConfig is what a visitor configures about a test IdP.
-type IdPConfig struct {
+// IDPConfig is what a visitor configures about a test IdP.
+type IDPConfig struct {
 	Name string
 
 	// ServiceProviders are the SPs registered by metadata.
@@ -159,24 +159,24 @@ func uriAttr(name, friendly, value string) samlidp.Attribute {
 
 func encodeConfig(v any) (json.RawMessage, error) { return json.Marshal(v) }
 
-func decodeIdPConfig(raw json.RawMessage) (*IdPConfig, error) {
-	var c IdPConfig
+func decodeIDPConfig(raw json.RawMessage) (*IDPConfig, error) {
+	var c IDPConfig
 	err := json.Unmarshal(raw, &c)
 	return &c, err
 }
 
 func (s *Server) idpEntityID(id string) string { return s.BaseURL + "/idp/" + id + "/metadata" }
 
-func (s *Server) newIdP(w http.ResponseWriter, r *http.Request) {
-	s.createInstance(w, r, store.KindIdP, func(id string) any {
-		return newIdPConfig(id, r.FormValue("profile"))
+func (s *Server) newIDP(w http.ResponseWriter, r *http.Request) {
+	s.createInstance(w, r, store.KindIDP, func(id string) any {
+		return newIDPConfig(id, r.FormValue("profile"))
 	})
 }
 
-// newIdPConfig is the configuration of a new IdP with a profile.
-func newIdPConfig(id, profile string) *IdPConfig {
+// newIDPConfig is the configuration of a new IdP with a profile.
+func newIDPConfig(id, profile string) *IDPConfig {
 	p := profileByKey(profile)
-	cfg := &IdPConfig{
+	cfg := &IDPConfig{
 		Name:                "Test IdP",
 		AutoFetchSPMetadata: true,
 		RememberSessions:    true,
@@ -188,18 +188,18 @@ func newIdPConfig(id, profile string) *IdPConfig {
 	return cfg
 }
 
-// loadIdP returns the instance named in the URL and its configuration.
-func (s *Server) loadIdP(ctx context.Context, id string) (*store.Instance, *IdPConfig, error) {
-	in, err := s.Store.Instance(ctx, store.KindIdP, id)
+// loadIDP returns the instance named in the URL and its configuration.
+func (s *Server) loadIDP(ctx context.Context, id string) (*store.Instance, *IDPConfig, error) {
+	in, err := s.Store.Instance(ctx, store.KindIDP, id)
 	if err != nil {
 		return nil, nil, err
 	}
-	cfg, err := decodeIdPConfig(in.Config)
+	cfg, err := decodeIDPConfig(in.Config)
 	return in, cfg, err
 }
 
-// samlIdP builds the x/samlidp configuration of an instance.
-func (s *Server) samlIdP(in *store.Instance, cfg *IdPConfig) (*samlidp.Config, error) {
+// samlIDP builds the x/samlidp configuration of an instance.
+func (s *Server) samlIDP(in *store.Instance, cfg *IDPConfig) (*samlidp.Config, error) {
 	key, cert, err := parseKeyPair(in.KeyPEM, in.CertPEM)
 	if err != nil {
 		return nil, err
@@ -253,6 +253,12 @@ func (s *Server) samlIdP(in *store.Instance, cfg *IdPConfig) (*samlidp.Config, e
 		}))
 	case "cbc", "cbc256", "gcm128":
 		cipher := map[string]xmlenc.BlockCipher{"cbc": xmlenc.AES128CBC, "cbc256": xmlenc.AES256CBC, "gcm128": xmlenc.AES128GCM}[cfg.Encryption]
+		// These imitate IdPs that still use SHA-1 key transport (and,
+		// except for gcm128, AES-CBC), which samlidp refuses unless told.
+		opts = append(opts, samlidp.EnableInsecureRSAOAEPSHA1)
+		if cfg.Encryption != "gcm128" {
+			opts = append(opts, samlidp.EnableInsecureAESCBC)
+		}
 		opts = append(opts, samlidp.WithIdentityProvider(func(idp *saml.IdentityProvider) {
 			enc := xmlenc.OAEP() // RSA-OAEP-MGF1P, SHA-1 digest
 			enc.BlockCipher = cipher
@@ -276,7 +282,7 @@ func (s *Server) samlIdP(in *store.Instance, cfg *IdPConfig) (*samlidp.Config, e
 	return samlidp.New(s.idpEntityIDFor(in.ID, cfg), sps, opts...)
 }
 
-func (s *Server) lookupSP(ctx context.Context, cfg *IdPConfig, entityID string) (*saml.EntityDescriptor, error) {
+func (s *Server) lookupSP(ctx context.Context, cfg *IDPConfig, entityID string) (*saml.EntityDescriptor, error) {
 	for _, sp := range cfg.ServiceProviders {
 		if sp.EntityID == entityID {
 			return samlidp.ParseMetadata([]byte(sp.Metadata))
@@ -315,12 +321,12 @@ func withoutEncryptionKeys(md *saml.EntityDescriptor) *saml.EntityDescriptor {
 }
 
 func (s *Server) idpMetadata(w http.ResponseWriter, r *http.Request) {
-	in, cfg, err := s.loadIdP(r.Context(), r.PathValue("id"))
+	in, cfg, err := s.loadIDP(r.Context(), r.PathValue("id"))
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	c, err := s.samlIdP(in, cfg)
+	c, err := s.samlIDP(in, cfg)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -342,11 +348,11 @@ func (s *Server) localMetadata(ctx context.Context, rawURL string) (b []byte, ok
 	}
 	switch kind {
 	case "idp":
-		in, cfg, err := s.loadIdP(ctx, id)
+		in, cfg, err := s.loadIDP(ctx, id)
 		if err != nil {
 			return nil, true, errors.New("no such IdP on this server (it may have expired)")
 		}
-		c, err := s.samlIdP(in, cfg)
+		c, err := s.samlIDP(in, cfg)
 		if err != nil {
 			return nil, true, err
 		}
@@ -391,7 +397,7 @@ type loginPage struct {
 
 // showLogin keeps req and shows the page where the visitor chooses who to
 // log in as.
-func (s *Server) showLogin(w http.ResponseWriter, r *http.Request, in *store.Instance, cfg *IdPConfig, req *samlidp.AuthnRequest) {
+func (s *Server) showLogin(w http.ResponseWriter, r *http.Request, in *store.Instance, cfg *IDPConfig, req *samlidp.AuthnRequest) {
 	pid := newID()
 	if err := s.Store.PutPending(r.Context(), pid, in.ID, req, time.Hour); err != nil {
 		s.fail(w, r, http.StatusInternalServerError, "Cannot keep the login request.", err)
@@ -462,8 +468,8 @@ func describeAuthnRequest(req *samlidp.AuthnRequest) string {
 	return strings.TrimSpace(b.String())
 }
 
-// sendIdPMessage logs a Response and sends it to the SP.
-func (s *Server) sendIdPMessage(w http.ResponseWriter, r *http.Request, in *store.Instance, msg *samlidp.Message, err error) {
+// sendIDPMessage logs a Response and sends it to the SP.
+func (s *Server) sendIDPMessage(w http.ResponseWriter, r *http.Request, in *store.Instance, msg *samlidp.Message, err error) {
 	if err != nil {
 		s.logEvent(r.Context(), &store.Event{InstanceID: in.ID, Direction: "out", Title: "Cannot make the Response", Detail: errorChain(err)})
 		s.fail(w, r, http.StatusInternalServerError, "The IdP cannot make the Response.", err)
@@ -504,7 +510,7 @@ type idpManagePage struct {
 	Secret      string
 	Max         int
 	Instance    *store.Instance
-	Config      *IdPConfig
+	Config      *IDPConfig
 	EntityID    string
 	SSOURL      string
 	MetadataURL string
@@ -522,8 +528,8 @@ type idpManagePage struct {
 	Current *idpSession
 }
 
-func (s *Server) manageIdP(w http.ResponseWriter, r *http.Request, in *store.Instance) {
-	cfg, err := decodeIdPConfig(in.Config)
+func (s *Server) manageIDP(w http.ResponseWriter, r *http.Request, in *store.Instance) {
+	cfg, err := decodeIDPConfig(in.Config)
 	if err != nil {
 		s.fail(w, r, http.StatusInternalServerError, "Cannot read the configuration.", err)
 		return
@@ -560,7 +566,7 @@ func (s *Server) manageIdP(w http.ResponseWriter, r *http.Request, in *store.Ins
 	s.renderStatus(w, r, http.StatusOK, "idp_manage", cfg.Name, p)
 }
 
-func (s *Server) saveIdPConfig(w http.ResponseWriter, r *http.Request, in *store.Instance, cfg *IdPConfig, msg, anchor string) {
+func (s *Server) saveIDPConfig(w http.ResponseWriter, r *http.Request, in *store.Instance, cfg *IDPConfig, msg, anchor string) {
 	b, err := encodeConfig(cfg)
 	if err == nil {
 		err = s.Store.UpdateConfig(r.Context(), in.ID, b)
@@ -572,9 +578,10 @@ func (s *Server) saveIdPConfig(w http.ResponseWriter, r *http.Request, in *store
 	flash(w, r, in, msg, anchor)
 }
 
+//nolint:gocyclo // one case per form action
 func (s *Server) idpAction(w http.ResponseWriter, r *http.Request, in *store.Instance, action string) {
 	ctx := r.Context()
-	cfg, err := decodeIdPConfig(in.Config)
+	cfg, err := decodeIDPConfig(in.Config)
 	if err != nil {
 		s.fail(w, r, http.StatusInternalServerError, "Cannot read the configuration.", err)
 		return
@@ -593,7 +600,7 @@ func (s *Server) idpAction(w http.ResponseWriter, r *http.Request, in *store.Ins
 		cfg.RememberSessions = r.FormValue("remember_sessions") != ""
 		cfg.BackChannelLogout = r.FormValue("back_channel") != ""
 		cfg.ArtifactForm = r.FormValue("artifact_form") != ""
-		s.saveIdPConfig(w, r, in, cfg, "Settings saved.", "settings")
+		s.saveIDPConfig(w, r, in, cfg, "Settings saved.", "settings")
 
 	case "sp-add":
 		md, err := s.addSP(ctx, cfg, strings.TrimSpace(r.FormValue("metadata_url")), r.FormValue("metadata_xml"))
@@ -601,7 +608,7 @@ func (s *Server) idpAction(w http.ResponseWriter, r *http.Request, in *store.Ins
 			flash(w, r, in, "Cannot add the service provider: "+err.Error(), "sps")
 			return
 		}
-		s.saveIdPConfig(w, r, in, cfg, "Service provider "+md.EntityID+" saved.", "sps")
+		s.saveIDPConfig(w, r, in, cfg, "Service provider "+md.EntityID+" saved.", "sps")
 
 	case "sp-refresh":
 		entityID := r.FormValue("entity_id")
@@ -620,11 +627,11 @@ func (s *Server) idpAction(w http.ResponseWriter, r *http.Request, in *store.Ins
 			cfg.ServiceProviders[i].Metadata = string(data)
 			cfg.ServiceProviders[i].AddedAt = time.Now()
 		}
-		s.saveIdPConfig(w, r, in, cfg, "Metadata refreshed.", "sps")
+		s.saveIDPConfig(w, r, in, cfg, "Metadata refreshed.", "sps")
 
 	case "sp-remove":
 		removeSP(cfg, r.FormValue("entity_id"))
-		s.saveIdPConfig(w, r, in, cfg, "Service provider removed.", "sps")
+		s.saveIDPConfig(w, r, in, cfg, "Service provider removed.", "sps")
 
 	case "user-save":
 		username := strings.TrimSpace(r.FormValue("username"))
@@ -644,11 +651,11 @@ func (s *Server) idpAction(w http.ResponseWriter, r *http.Request, in *store.Ins
 			flash(w, r, in, capitalize(err.Error()), "users")
 			return
 		}
-		s.saveIdPConfig(w, r, in, cfg, "User "+limit(username, 100)+" saved.", "users")
+		s.saveIDPConfig(w, r, in, cfg, "User "+limit(username, 100)+" saved.", "users")
 
 	case "user-remove":
 		removeUser(cfg, r.FormValue("username"))
-		s.saveIdPConfig(w, r, in, cfg, "User removed.", "users")
+		s.saveIDPConfig(w, r, in, cfg, "User removed.", "users")
 
 	case "initiate":
 		run, err := s.idpRun(ctx, in.ID)
@@ -670,12 +677,12 @@ func (s *Server) idpAction(w http.ResponseWriter, r *http.Request, in *store.Ins
 			s.fail(w, r, http.StatusInternalServerError, "The IdP is misconfigured.", err)
 			return
 		}
-		s.startIdPLogout(w, r, run, r.FormValue("session_id"))
+		s.startIDPLogout(w, r, run, r.FormValue("session_id"))
 
 	case "profile":
 		p := profileByKey(r.FormValue("profile"))
 		applyProfile(cfg, in.ID, p.Key)
-		s.saveIdPConfig(w, r, in, cfg, "Profile "+p.Name+" applied: the entity ID, users and encryption are now its. Give your SPs the new metadata.", "profile")
+		s.saveIDPConfig(w, r, in, cfg, "Profile "+p.Name+" applied: the entity ID, users and encryption are now its. Give your SPs the new metadata.", "profile")
 
 	case "session-delete":
 		if err := s.Store.DeleteSession(ctx, r.FormValue("session_id"), in.ID); err != nil {
@@ -698,7 +705,7 @@ func (e errLimit) Error() string { return string(e) }
 // addSP registers an SP with an IdP, from the metadata at source or, if
 // source is empty, from metadataXML. An SP with the same entity ID is
 // replaced.
-func (s *Server) addSP(ctx context.Context, cfg *IdPConfig, source, metadataXML string) (*saml.EntityDescriptor, error) {
+func (s *Server) addSP(ctx context.Context, cfg *IDPConfig, source, metadataXML string) (*saml.EntityDescriptor, error) {
 	var data []byte
 	var err error
 	if source != "" {
@@ -732,7 +739,7 @@ func (s *Server) addSP(ctx context.Context, cfg *IdPConfig, source, metadataXML 
 
 // putUser adds u to an IdP's users, or replaces the user with the same
 // username. A user with no NameID has its username as NameID.
-func putUser(cfg *IdPConfig, u User) error {
+func putUser(cfg *IDPConfig, u User) error {
 	u.Username = limit(strings.TrimSpace(u.Username), 100)
 	if u.Username == "" {
 		return errors.New("a user needs a username")
@@ -758,7 +765,7 @@ func putUser(cfg *IdPConfig, u User) error {
 }
 
 // removeUser removes a user from an IdP. It reports whether there was one.
-func removeUser(cfg *IdPConfig, username string) bool {
+func removeUser(cfg *IDPConfig, username string) bool {
 	var kept []User
 	for _, u := range cfg.Users {
 		if u.Username != username {
@@ -771,7 +778,7 @@ func removeUser(cfg *IdPConfig, username string) bool {
 }
 
 // removeSP removes an SP from an IdP. It reports whether there was one.
-func removeSP(cfg *IdPConfig, entityID string) bool {
+func removeSP(cfg *IDPConfig, entityID string) bool {
 	var kept []RegisteredSP
 	for _, sp := range cfg.ServiceProviders {
 		if sp.EntityID != entityID {

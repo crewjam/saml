@@ -51,7 +51,14 @@ func (h *harness) newBrowser() *harness {
 	return &harness{t: h.t, base: h.base, client: &http.Client{Jar: jar}}
 }
 
-func (h *harness) do(method, path string, form url.Values) (*http.Response, string) {
+// result is what the tests use of a response whose body do has read.
+type result struct {
+	StatusCode int
+	Header     http.Header
+	Request    *http.Request
+}
+
+func (h *harness) do(method, path string, form url.Values) (*result, string) {
 	h.t.Helper()
 	target := path
 	if strings.HasPrefix(path, "/") {
@@ -69,7 +76,7 @@ func (h *harness) do(method, path string, form url.Values) (*http.Response, stri
 	}
 	defer resp.Body.Close() //nolint:errcheck // test
 	b, _ := io.ReadAll(resp.Body)
-	return resp, string(b)
+	return &result{resp.StatusCode, resp.Header, resp.Request}, string(b)
 }
 
 var (
@@ -79,7 +86,7 @@ var (
 
 // submitAutoForm submits the self-submitting SAML form in body, as the
 // browser's script would.
-func (h *harness) submitAutoForm(body string) (*http.Response, string) {
+func (h *harness) submitAutoForm(body string) (*result, string) {
 	h.t.Helper()
 	m := formRe.FindStringSubmatch(body)
 	if m == nil {
@@ -115,7 +122,7 @@ func mustContain(t *testing.T, body string, want ...string) {
 var pendingRe = regexp.MustCompile(`name="pending" value="([^"]+)"`)
 
 // loginAt answers the IdP login page in body.
-func (h *harness) loginAt(idpID, body string, form url.Values) (*http.Response, string) {
+func (h *harness) loginAt(idpID, body string, form url.Values) (*result, string) {
 	h.t.Helper()
 	m := pendingRe.FindStringSubmatch(body)
 	if m == nil {
@@ -296,9 +303,9 @@ func TestBoostedPost(t *testing.T) {
 		t.Fatalf("HX-Push-Url = %q", resp.Header.Get("HX-Push-Url"))
 	}
 	// Without htmx, it is an ordinary redirect.
-	resp, _ = h.do(http.MethodPost, "/manage/"+secret+"/clear-events", url.Values{})
-	if resp.Request.URL.Path != "/manage/"+secret {
-		t.Fatalf("not redirected: %s", resp.Request.URL)
+	res, _ := h.do(http.MethodPost, "/manage/"+secret+"/clear-events", url.Values{})
+	if res.Request.URL.Path != "/manage/"+secret {
+		t.Fatalf("not redirected: %s", res.Request.URL)
 	}
 }
 

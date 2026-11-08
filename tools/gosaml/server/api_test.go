@@ -48,6 +48,7 @@ func (h *harness) apiOK(want int, method, path, body string, out any) {
 	}
 }
 
+//nolint:gocyclo // one request after another
 func TestAPI(t *testing.T) {
 	h := newHarness(t)
 
@@ -59,8 +60,8 @@ func TestAPI(t *testing.T) {
 
 	var idp APIInstance
 	h.apiOK(http.StatusCreated, http.MethodPost, "/api/idps", `{"name": "CI IdP", "remember_sessions": false}`, &idp)
-	if idp.Kind != "idp" || idp.IdP == nil || *idp.IdP.Settings.Name != "CI IdP" || *idp.IdP.Settings.RememberSessions ||
-		len(idp.IdP.Users) != 3 || idp.EntityID != h.base+"/idp/"+idp.ID+"/metadata" || idp.SP != nil {
+	if idp.Kind != "idp" || idp.IDP == nil || *idp.IDP.Settings.Name != "CI IdP" || *idp.IDP.Settings.RememberSessions ||
+		len(idp.IDP.Users) != 3 || idp.EntityID != h.base+"/idp/"+idp.ID+"/metadata" || idp.SP != nil {
 		t.Fatalf("new IdP: %+v", idp)
 	}
 	idpAPI := "/api/manage/" + idp.Secret
@@ -71,7 +72,7 @@ func TestAPI(t *testing.T) {
 
 	var sp APIInstance
 	h.apiOK(http.StatusCreated, http.MethodPost, "/api/sps", `{"idp": {"metadata_url": "`+idp.MetadataURL+`"}, "binding": "post"}`, &sp)
-	if sp.SP == nil || sp.SP.IdP == nil || sp.SP.IdP.EntityID != idp.EntityID || *sp.SP.Settings.Binding != "post" {
+	if sp.SP == nil || sp.SP.IDP == nil || sp.SP.IDP.EntityID != idp.EntityID || *sp.SP.Settings.Binding != "post" {
 		t.Fatalf("new SP: %+v", sp)
 	}
 	spAPI := "/api/manage/" + sp.Secret
@@ -88,7 +89,7 @@ func TestAPI(t *testing.T) {
 	h.apiOK(http.StatusBadRequest, http.MethodPatch, idpAPI, `{"remember_session": true}`, &apiErr)
 	mustContain(t, apiErr.Error, "unknown field")
 	h.apiOK(http.StatusOK, http.MethodGet, idpAPI, "", &got)
-	if *got.IdP.Settings.RememberSessions {
+	if *got.IDP.Settings.RememberSessions {
 		t.Fatal("a refused PATCH changed a setting")
 	}
 	h.apiOK(http.StatusBadRequest, http.MethodPost, "/api/idps", `{"profile": "ping"}`, &apiErr)
@@ -108,7 +109,7 @@ func TestAPI(t *testing.T) {
 		t.Fatalf("user: %+v", user)
 	}
 	h.apiOK(http.StatusOK, http.MethodDelete, idpAPI+"/users/carol", "", &got)
-	if n := len(got.IdP.Users); n != 3 {
+	if n := len(got.IDP.Users); n != 3 {
 		t.Fatalf("%d users", n)
 	}
 	h.apiOK(http.StatusNotFound, http.MethodDelete, idpAPI+"/users/carol", "", &apiErr)
@@ -153,12 +154,12 @@ func TestAPI(t *testing.T) {
 
 	// A profile, then deletion.
 	h.apiOK(http.StatusOK, http.MethodPost, idpAPI+"/profile", `{"profile": "okta"}`, &got)
-	if got.IdP.Profile != "okta" || !strings.HasPrefix(got.EntityID, "http://www.okta.com/exk") {
+	if got.IDP.Profile != "okta" || !strings.HasPrefix(got.EntityID, "http://www.okta.com/exk") {
 		t.Fatalf("profile: %+v", got)
 	}
 	h.apiOK(http.StatusOK, http.MethodDelete, idpAPI+"/service-providers?entity_id="+url.QueryEscape(sp.EntityID), "", &got)
-	if len(got.IdP.ServiceProviders) != 0 {
-		t.Fatalf("SPs: %+v", got.IdP.ServiceProviders)
+	if len(got.IDP.ServiceProviders) != 0 {
+		t.Fatalf("SPs: %+v", got.IDP.ServiceProviders)
 	}
 	if h.api(http.MethodDelete, idpAPI, "", nil) != http.StatusNoContent {
 		t.Fatal("delete")

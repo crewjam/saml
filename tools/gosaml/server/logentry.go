@@ -86,8 +86,8 @@ func (s *Server) logEntry(w http.ResponseWriter, r *http.Request) {
 	n := s.names(ctx)
 	p := &logEntryPage{Kind: in.Kind, Secret: in.Secret, Event: ev, Row: n.row(in, *ev)}
 	switch in.Kind {
-	case store.KindIdP:
-		if _, cfg, err := s.loadIdP(ctx, in.ID); err == nil {
+	case store.KindIDP:
+		if _, cfg, err := s.loadIDP(ctx, in.ID); err == nil {
 			p.InstanceName = cfg.Name
 		}
 	case store.KindSP:

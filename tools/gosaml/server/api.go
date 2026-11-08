@@ -28,17 +28,17 @@ func (s *Server) apiRoutes() {
 			MaxEvents: store.MaxEventsPerInstance, Lifetime: roundDuration(s.TTL),
 		})
 	})
-	m.HandleFunc("POST /api/idps", s.apiNewIdP)
+	m.HandleFunc("POST /api/idps", s.apiNewIDP)
 	m.HandleFunc("POST /api/sps", s.apiNewSP)
 	m.HandleFunc("GET /api/manage/{secret}", s.apiInstance(s.apiGet))
 	m.HandleFunc("PATCH /api/manage/{secret}", s.apiInstance(s.apiPatch))
 	m.HandleFunc("DELETE /api/manage/{secret}", s.apiInstance(s.apiDelete))
-	m.HandleFunc("POST /api/manage/{secret}/profile", s.apiIdP(s.apiSetProfile))
-	m.HandleFunc("PUT /api/manage/{secret}/users/{username}", s.apiIdP(s.apiPutUser))
-	m.HandleFunc("DELETE /api/manage/{secret}/users/{username}", s.apiIdP(s.apiDeleteUser))
-	m.HandleFunc("POST /api/manage/{secret}/service-providers", s.apiIdP(s.apiAddSP))
-	m.HandleFunc("DELETE /api/manage/{secret}/service-providers", s.apiIdP(s.apiDeleteSP))
-	m.HandleFunc("PUT /api/manage/{secret}/idp", s.apiSP(s.apiSetIdP))
+	m.HandleFunc("POST /api/manage/{secret}/profile", s.apiIDP(s.apiSetProfile))
+	m.HandleFunc("PUT /api/manage/{secret}/users/{username}", s.apiIDP(s.apiPutUser))
+	m.HandleFunc("DELETE /api/manage/{secret}/users/{username}", s.apiIDP(s.apiDeleteUser))
+	m.HandleFunc("POST /api/manage/{secret}/service-providers", s.apiIDP(s.apiAddSP))
+	m.HandleFunc("DELETE /api/manage/{secret}/service-providers", s.apiIDP(s.apiDeleteSP))
+	m.HandleFunc("PUT /api/manage/{secret}/idp", s.apiSP(s.apiSetIDP))
 	m.HandleFunc("GET /api/manage/{secret}/events", s.apiInstance(s.apiEvents))
 	m.HandleFunc("DELETE /api/manage/{secret}/events", s.apiInstance(s.apiClearEvents))
 	m.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
@@ -110,15 +110,15 @@ func (s *Server) apiInstance(h func(http.ResponseWriter, *http.Request, *store.I
 	}
 }
 
-// apiIdP wraps a handler of an IdP's configuration, which it saves when
+// apiIDP wraps a handler of an IdP's configuration, which it saves when
 // the handler returns a status below 300.
-func (s *Server) apiIdP(h func(http.ResponseWriter, *http.Request, *store.Instance, *IdPConfig) (int, any)) http.HandlerFunc {
+func (s *Server) apiIDP(h func(http.ResponseWriter, *http.Request, *store.Instance, *IDPConfig) (int, any)) http.HandlerFunc {
 	return s.apiInstance(func(w http.ResponseWriter, r *http.Request, in *store.Instance) {
-		if in.Kind != store.KindIdP {
+		if in.Kind != store.KindIDP {
 			apiError(w, http.StatusConflict, "this endpoint is for identity providers, and this instance is a service provider", nil)
 			return
 		}
-		cfg, err := decodeIdPConfig(in.Config)
+		cfg, err := decodeIDPConfig(in.Config)
 		if err != nil {
 			apiError(w, http.StatusInternalServerError, "cannot read the configuration", err)
 			return
@@ -128,7 +128,7 @@ func (s *Server) apiIdP(h func(http.ResponseWriter, *http.Request, *store.Instan
 	})
 }
 
-// apiSP is apiIdP for SPs.
+// apiSP is apiIDP for SPs.
 func (s *Server) apiSP(h func(http.ResponseWriter, *http.Request, *store.Instance, *SPConfig) (int, any)) http.HandlerFunc {
 	return s.apiInstance(func(w http.ResponseWriter, r *http.Request, in *store.Instance) {
 		if in.Kind != store.KindSP {
@@ -175,12 +175,8 @@ func (s *Server) apiFinish(w http.ResponseWriter, r *http.Request, in *store.Ins
 }
 
 // errorBody is the response body of a failed change.
-func errorBody(msg string, err error) *APIError {
-	e := &APIError{Error: msg}
-	if err != nil {
-		e.Detail = errorChain(err)
-	}
-	return e
+func errorBody(msg string) *APIError {
+	return &APIError{Error: msg}
 }
 
 // APIInstance is an instance as the API shows it. Exactly one of IdP
@@ -197,24 +193,24 @@ type APIInstance struct {
 	Certificate string     `json:"certificate"`
 	CreatedAt   time.Time  `json:"created_at"`
 	ExpiresAt   time.Time  `json:"expires_at"`
-	IdP         *APIIdP    `json:"idp,omitempty"`
+	IDP         *APIIDP    `json:"idp,omitempty"`
 	SP          *APISP     `json:"sp,omitempty"`
 }
 
-// APIIdP is what is particular to an IdP.
-type APIIdP struct {
+// APIIDP is what is particular to an IdP.
+type APIIDP struct {
 	SSOURL           string            `json:"sso_url"`
 	SLOURL           string            `json:"slo_url"`
 	ArtifactURL      string            `json:"artifact_resolution_url"`
-	Settings         APIIdPSettings    `json:"settings"`
+	Settings         APIIDPSettings    `json:"settings"`
 	Profile          string            `json:"profile"`
 	Users            []APIUser         `json:"users"`
 	ServiceProviders []APIRegisteredSP `json:"service_providers"`
 }
 
-// APIIdPSettings are an IdP's settings. In a PATCH, a missing field is
+// APIIDPSettings are an IdP's settings. In a PATCH, a missing field is
 // left as it is.
-type APIIdPSettings struct {
+type APIIDPSettings struct {
 	Name                  *string `json:"name,omitempty"`
 	AutoFetchSPMetadata   *bool   `json:"auto_fetch_sp_metadata,omitempty"`
 	RequireSignedRequests *bool   `json:"require_signed_requests,omitempty"`
@@ -257,7 +253,7 @@ type APISP struct {
 	SLOURL      string        `json:"slo_url"`
 	ArtifactURL string        `json:"artifact_resolution_url"`
 	Settings    APISPSettings `json:"settings"`
-	IdP         *APITrusted   `json:"idp"`
+	IDP         *APITrusted   `json:"idp"`
 }
 
 // APISPSettings are an SP's settings. In a PATCH, a missing field is
@@ -313,16 +309,16 @@ func (s *Server) apiView(in *store.Instance) (*APIInstance, error) {
 		CreatedAt:   in.CreatedAt.UTC(), ExpiresAt: in.ExpiresAt.UTC(),
 	}
 	switch in.Kind {
-	case store.KindIdP:
-		cfg, err := decodeIdPConfig(in.Config)
+	case store.KindIDP:
+		cfg, err := decodeIDPConfig(in.Config)
 		if err != nil {
 			return nil, err
 		}
 		v.EntityID = s.idpEntityIDFor(in.ID, cfg)
-		idp := &APIIdP{
+		idp := &APIIDP{
 			SSOURL: base + "/sso", SLOURL: base + "/slo", ArtifactURL: base + "/artifact",
 			Profile: profileByKey(cfg.Profile).Key,
-			Settings: APIIdPSettings{
+			Settings: APIIDPSettings{
 				Name:                  &cfg.Name,
 				AutoFetchSPMetadata:   &cfg.AutoFetchSPMetadata,
 				RequireSignedRequests: &cfg.RequireSignedRequests,
@@ -344,7 +340,7 @@ func (s *Server) apiView(in *store.Instance) (*APIInstance, error) {
 				EntityID: sp.EntityID, Source: sp.Source, Metadata: sp.Metadata, AddedAt: sp.AddedAt.UTC(),
 			})
 		}
-		v.IdP = idp
+		v.IDP = idp
 	case store.KindSP:
 		cfg, err := decodeSPConfig(in.Config)
 		if err != nil {
@@ -367,8 +363,8 @@ func (s *Server) apiView(in *store.Instance) (*APIInstance, error) {
 				ArtifactForm:         &cfg.ArtifactForm,
 			},
 		}
-		if cfg.IdPMetadata != "" {
-			sp.IdP = &APITrusted{EntityID: cfg.IdPEntityID, Source: cfg.IdPMetadataSource, Metadata: cfg.IdPMetadata}
+		if cfg.IDPMetadata != "" {
+			sp.IDP = &APITrusted{EntityID: cfg.IDPEntityID, Source: cfg.IDPMetadataSource, Metadata: cfg.IDPMetadata}
 		}
 		v.SP = sp
 	}
@@ -405,14 +401,14 @@ func apiUser(u User) APIUser {
 	return out
 }
 
-// apiNewIdPRequest is the body of POST /api/idps.
-type apiNewIdPRequest struct {
+// apiNewIDPRequest is the body of POST /api/idps.
+type apiNewIDPRequest struct {
 	Profile string `json:"profile"`
-	APIIdPSettings
+	APIIDPSettings
 }
 
-func (s *Server) apiNewIdP(w http.ResponseWriter, r *http.Request) {
-	var req apiNewIdPRequest
+func (s *Server) apiNewIDP(w http.ResponseWriter, r *http.Request) {
+	var req apiNewIDPRequest
 	if !readJSON(w, r, &req) {
 		return
 	}
@@ -421,13 +417,13 @@ func (s *Server) apiNewIdP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Check the settings first: they do not depend on the instance.
-	if err := applyIdPSettings(&IdPConfig{}, &req.APIIdPSettings); err != nil {
+	if err := applyIDPSettings(&IDPConfig{}, &req.APIIDPSettings); err != nil {
 		apiError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
-	in, err := s.newInstance(r.Context(), store.KindIdP, func(id string) any {
-		cfg := newIdPConfig(id, req.Profile)
-		_ = applyIdPSettings(cfg, &req.APIIdPSettings)
+	in, err := s.newInstance(r.Context(), store.KindIDP, func(id string) any {
+		cfg := newIDPConfig(id, req.Profile)
+		_ = applyIDPSettings(cfg, &req.APIIDPSettings)
 		return cfg
 	})
 	s.apiCreated(w, in, err)
@@ -435,7 +431,7 @@ func (s *Server) apiNewIdP(w http.ResponseWriter, r *http.Request) {
 
 // apiNewSPRequest is the body of POST /api/sps.
 type apiNewSPRequest struct {
-	IdP *APIMetadata `json:"idp"`
+	IDP *APIMetadata `json:"idp"`
 	APISPSettings
 }
 
@@ -454,8 +450,8 @@ func (s *Server) apiNewSP(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
-	if req.IdP != nil {
-		if _, err := s.setIdP(r.Context(), cfg, strings.TrimSpace(req.IdP.MetadataURL), req.IdP.MetadataXML); err != nil {
+	if req.IDP != nil {
+		if _, err := s.setIDP(r.Context(), cfg, strings.TrimSpace(req.IDP.MetadataURL), req.IDP.MetadataXML); err != nil {
 			apiError(w, http.StatusBadRequest, "cannot use that identity provider: "+err.Error(), nil)
 			return
 		}
@@ -483,7 +479,7 @@ func (s *Server) apiCreated(w http.ResponseWriter, in *store.Instance, err error
 }
 
 func profileKeys() []string {
-	var keys []string
+	keys := make([]string, 0, len(idpProfiles))
 	for _, p := range idpProfiles {
 		keys = append(keys, p.Key)
 	}
@@ -521,7 +517,7 @@ func apiName(dst *string, v *string, def string) {
 	}
 }
 
-func applyIdPSettings(cfg *IdPConfig, p *APIIdPSettings) error {
+func applyIDPSettings(cfg *IDPConfig, p *APIIDPSettings) error {
 	c := *cfg
 	apiName(&c.Name, p.Name, "Test IdP")
 	setBool(&c.AutoFetchSPMetadata, p.AutoFetchSPMetadata)
@@ -551,7 +547,8 @@ func applySPSettings(cfg *SPConfig, p *APISPSettings) error {
 	setBool(&c.BackChannelLogout, p.BackChannelLogout)
 	setBool(&c.ArtifactForm, p.ArtifactForm)
 	binding, responseBinding := apiBindingName(c.Binding), apiResponseBindingName(c.ResponseBinding)
-	formats := []string{""}
+	formats := make([]string, 0, 1+len(nameIDFormats))
+	formats = append(formats, "")
 	for _, f := range nameIDFormats {
 		formats = append(formats, string(f))
 	}
@@ -579,14 +576,14 @@ func (s *Server) apiGet(w http.ResponseWriter, _ *http.Request, in *store.Instan
 
 func (s *Server) apiPatch(w http.ResponseWriter, r *http.Request, in *store.Instance) {
 	switch in.Kind {
-	case store.KindIdP:
-		s.apiIdP(func(w http.ResponseWriter, r *http.Request, _ *store.Instance, cfg *IdPConfig) (int, any) {
-			var p APIIdPSettings
+	case store.KindIDP:
+		s.apiIDP(func(w http.ResponseWriter, r *http.Request, _ *store.Instance, cfg *IDPConfig) (int, any) {
+			var p APIIDPSettings
 			if !readJSON(w, r, &p) {
 				return 0, nil
 			}
-			if err := applyIdPSettings(cfg, &p); err != nil {
-				return http.StatusBadRequest, errorBody(err.Error(), nil)
+			if err := applyIDPSettings(cfg, &p); err != nil {
+				return http.StatusBadRequest, errorBody(err.Error())
 			}
 			return http.StatusOK, nil
 		})(w, r)
@@ -597,7 +594,7 @@ func (s *Server) apiPatch(w http.ResponseWriter, r *http.Request, in *store.Inst
 				return 0, nil
 			}
 			if err := applySPSettings(cfg, &p); err != nil {
-				return http.StatusBadRequest, errorBody(err.Error(), nil)
+				return http.StatusBadRequest, errorBody(err.Error())
 			}
 			return http.StatusOK, nil
 		})(w, r)
@@ -612,7 +609,7 @@ func (s *Server) apiDelete(w http.ResponseWriter, r *http.Request, in *store.Ins
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) apiSetProfile(w http.ResponseWriter, r *http.Request, in *store.Instance, cfg *IdPConfig) (int, any) {
+func (s *Server) apiSetProfile(w http.ResponseWriter, r *http.Request, in *store.Instance, cfg *IDPConfig) (int, any) {
 	var req struct {
 		Profile string `json:"profile"`
 	}
@@ -620,20 +617,20 @@ func (s *Server) apiSetProfile(w http.ResponseWriter, r *http.Request, in *store
 		return 0, nil
 	}
 	if profileByKey(req.Profile).Key != req.Profile {
-		return http.StatusBadRequest, errorBody("unknown profile "+strconv.Quote(req.Profile)+"; use one of "+strings.Join(profileKeys(), ", "), nil)
+		return http.StatusBadRequest, errorBody("unknown profile " + strconv.Quote(req.Profile) + "; use one of " + strings.Join(profileKeys(), ", "))
 	}
 	applyProfile(cfg, in.ID, req.Profile)
 	return http.StatusOK, nil
 }
 
-func (s *Server) apiPutUser(w http.ResponseWriter, r *http.Request, _ *store.Instance, cfg *IdPConfig) (int, any) {
+func (s *Server) apiPutUser(w http.ResponseWriter, r *http.Request, _ *store.Instance, cfg *IDPConfig) (int, any) {
 	var u APIUser
 	if !readJSON(w, r, &u) {
 		return 0, nil
 	}
 	username := r.PathValue("username")
 	if u.Username != "" && u.Username != username {
-		return http.StatusBadRequest, errorBody("the username in the body is not the one in the URL", nil)
+		return http.StatusBadRequest, errorBody("the username in the body is not the one in the URL")
 	}
 	user := User{Username: username, NameID: u.NameID, NameIDFormat: u.NameIDFormat}
 	if user.NameIDFormat == "" {
@@ -641,7 +638,7 @@ func (s *Server) apiPutUser(w http.ResponseWriter, r *http.Request, _ *store.Ins
 	}
 	for _, a := range u.Attributes {
 		if strings.TrimSpace(a.Name) == "" {
-			return http.StatusBadRequest, errorBody("every attribute needs a name", nil)
+			return http.StatusBadRequest, errorBody("every attribute needs a name")
 		}
 		user.Attributes = append(user.Attributes, samlidp.Attribute{
 			Name: a.Name, FriendlyName: a.FriendlyName, NameFormat: a.NameFormat, Values: a.Values,
@@ -651,9 +648,9 @@ func (s *Server) apiPutUser(w http.ResponseWriter, r *http.Request, _ *store.Ins
 	var lim errLimit
 	switch {
 	case errors.As(err, &lim):
-		return http.StatusConflict, errorBody(err.Error(), nil)
+		return http.StatusConflict, errorBody(err.Error())
 	case err != nil:
-		return http.StatusBadRequest, errorBody(err.Error(), nil)
+		return http.StatusBadRequest, errorBody(err.Error())
 	}
 	for _, saved := range cfg.Users {
 		if saved.Username == user.Username {
@@ -663,14 +660,14 @@ func (s *Server) apiPutUser(w http.ResponseWriter, r *http.Request, _ *store.Ins
 	return http.StatusOK, nil
 }
 
-func (s *Server) apiDeleteUser(_ http.ResponseWriter, r *http.Request, _ *store.Instance, cfg *IdPConfig) (int, any) {
+func (s *Server) apiDeleteUser(_ http.ResponseWriter, r *http.Request, _ *store.Instance, cfg *IDPConfig) (int, any) {
 	if !removeUser(cfg, r.PathValue("username")) {
-		return http.StatusNotFound, errorBody("no such user", nil)
+		return http.StatusNotFound, errorBody("no such user")
 	}
 	return http.StatusOK, nil
 }
 
-func (s *Server) apiAddSP(w http.ResponseWriter, r *http.Request, _ *store.Instance, cfg *IdPConfig) (int, any) {
+func (s *Server) apiAddSP(w http.ResponseWriter, r *http.Request, _ *store.Instance, cfg *IDPConfig) (int, any) {
 	var req APIMetadata
 	if !readJSON(w, r, &req) {
 		return 0, nil
@@ -679,9 +676,9 @@ func (s *Server) apiAddSP(w http.ResponseWriter, r *http.Request, _ *store.Insta
 	var lim errLimit
 	switch {
 	case errors.As(err, &lim):
-		return http.StatusConflict, errorBody(err.Error(), nil)
+		return http.StatusConflict, errorBody(err.Error())
 	case err != nil:
-		return http.StatusBadRequest, errorBody("cannot add the service provider: "+err.Error(), nil)
+		return http.StatusBadRequest, errorBody("cannot add the service provider: " + err.Error())
 	}
 	for _, sp := range cfg.ServiceProviders {
 		if sp.EntityID == md.EntityID {
@@ -691,24 +688,24 @@ func (s *Server) apiAddSP(w http.ResponseWriter, r *http.Request, _ *store.Insta
 	return http.StatusOK, nil
 }
 
-func (s *Server) apiDeleteSP(_ http.ResponseWriter, r *http.Request, _ *store.Instance, cfg *IdPConfig) (int, any) {
+func (s *Server) apiDeleteSP(_ http.ResponseWriter, r *http.Request, _ *store.Instance, cfg *IDPConfig) (int, any) {
 	entityID := r.URL.Query().Get("entity_id")
 	if entityID == "" {
-		return http.StatusBadRequest, errorBody("name the service provider with ?entity_id=", nil)
+		return http.StatusBadRequest, errorBody("name the service provider with ?entity_id=")
 	}
 	if !removeSP(cfg, entityID) {
-		return http.StatusNotFound, errorBody("no such service provider", nil)
+		return http.StatusNotFound, errorBody("no such service provider")
 	}
 	return http.StatusOK, nil
 }
 
-func (s *Server) apiSetIdP(w http.ResponseWriter, r *http.Request, _ *store.Instance, cfg *SPConfig) (int, any) {
+func (s *Server) apiSetIDP(w http.ResponseWriter, r *http.Request, _ *store.Instance, cfg *SPConfig) (int, any) {
 	var req APIMetadata
 	if !readJSON(w, r, &req) {
 		return 0, nil
 	}
-	if _, err := s.setIdP(r.Context(), cfg, strings.TrimSpace(req.MetadataURL), req.MetadataXML); err != nil {
-		return http.StatusBadRequest, errorBody("cannot use that identity provider: "+err.Error(), nil)
+	if _, err := s.setIDP(r.Context(), cfg, strings.TrimSpace(req.MetadataURL), req.MetadataXML); err != nil {
+		return http.StatusBadRequest, errorBody("cannot use that identity provider: " + err.Error())
 	}
 	return http.StatusOK, nil
 }

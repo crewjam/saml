@@ -23,11 +23,11 @@ import (
 type SPConfig struct {
 	Name string
 
-	// IdPMetadata is the metadata of the IdP the SP trusts, and
-	// IdPMetadataSource the URL it was fetched from, if any.
-	IdPMetadata       string
-	IdPMetadataSource string
-	IdPEntityID       string
+	// IDPMetadata is the metadata of the IdP the SP trusts, and
+	// IDPMetadataSource the URL it was fetched from, if any.
+	IDPMetadata       string
+	IDPMetadataSource string
+	IDPEntityID       string
 
 	SignAuthnRequests    bool
 	PublishEncryptionKey bool
@@ -97,8 +97,8 @@ func (s *Server) samlSP(in *store.Instance, cfg *SPConfig) (*samlsp.Config, erro
 		return nil, err
 	}
 	var idp samlsp.MetadataFunc
-	if cfg.IdPMetadata != "" {
-		idp = samlsp.StaticMetadataBytes([]byte(cfg.IdPMetadata))
+	if cfg.IDPMetadata != "" {
+		idp = samlsp.StaticMetadataBytes([]byte(cfg.IDPMetadata))
 	}
 	opts := []samlsp.Option{
 		samlsp.WithSigningKey(key, cert),
@@ -171,7 +171,7 @@ func (s *Server) spLogin(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, http.StatusNotFound, "This SP does not exist. Test SPs expire "+roundDuration(s.TTL)+" after they are created.", nil)
 		return
 	}
-	if cfg.IdPMetadata == "" {
+	if cfg.IDPMetadata == "" {
 		s.fail(w, r, http.StatusConflict, "This SP has no identity provider yet. Add the IdP's metadata on the SP's management page.", nil)
 		return
 	}
@@ -425,7 +425,7 @@ type spManagePage struct {
 	SessionURL  string
 	Sessions    []spSessionView
 	Log         []logRow
-	IdPName     string
+	IDPName     string
 	Flash       string
 	Formats     []saml.NameIDFormat
 	Contexts    []saml.AuthnContextClass
@@ -458,8 +458,8 @@ func (s *Server) manageSP(w http.ResponseWriter, r *http.Request, in *store.Inst
 		Log:         s.logRows(r.Context(), in, events), Flash: flashMessage(r), Formats: nameIDFormats, Contexts: authnContexts,
 	}
 	p.Current = s.spSessionFromCookie(r, in)
-	if cfg.IdPEntityID != "" {
-		p.IdPName = s.names(r.Context()).title(cfg.IdPEntityID)
+	if cfg.IDPEntityID != "" {
+		p.IDPName = s.names(r.Context()).title(cfg.IDPEntityID)
 	}
 	p.Sessions, err = s.spSessionViews(r.Context(), in)
 	if err != nil {
@@ -467,7 +467,7 @@ func (s *Server) manageSP(w http.ResponseWriter, r *http.Request, in *store.Inst
 		return
 	}
 	for _, m := range s.myInstances(r) {
-		if m.Kind == store.KindIdP {
+		if m.Kind == store.KindIDP {
 			p.Others = append(p.Others, m)
 		}
 	}
@@ -518,9 +518,9 @@ func (s *Server) spAction(w http.ResponseWriter, r *http.Request, in *store.Inst
 	case "idp-set", "idp-refresh":
 		source := strings.TrimSpace(r.FormValue("metadata_url"))
 		if action == "idp-refresh" {
-			source = cfg.IdPMetadataSource
+			source = cfg.IDPMetadataSource
 		}
-		md, err := s.setIdP(ctx, cfg, source, r.FormValue("metadata_xml"))
+		md, err := s.setIDP(ctx, cfg, source, r.FormValue("metadata_xml"))
 		if err != nil {
 			flash(w, r, in, "Cannot use that identity provider: "+err.Error(), "idp")
 			return
@@ -540,9 +540,9 @@ func (s *Server) spAction(w http.ResponseWriter, r *http.Request, in *store.Inst
 	}
 }
 
-// setIdP makes an SP trust the IdP whose metadata is at source or, if
+// setIDP makes an SP trust the IdP whose metadata is at source or, if
 // source is empty, in metadataXML.
-func (s *Server) setIdP(ctx context.Context, cfg *SPConfig, source, metadataXML string) (*saml.EntityDescriptor, error) {
+func (s *Server) setIDP(ctx context.Context, cfg *SPConfig, source, metadataXML string) (*saml.EntityDescriptor, error) {
 	var data []byte
 	var err error
 	if source != "" {
@@ -560,6 +560,6 @@ func (s *Server) setIdP(ctx context.Context, cfg *SPConfig, source, metadataXML 
 	if err != nil {
 		return nil, err
 	}
-	cfg.IdPMetadata, cfg.IdPMetadataSource, cfg.IdPEntityID = string(data), source, md.EntityID
+	cfg.IDPMetadata, cfg.IDPMetadataSource, cfg.IDPEntityID = string(data), source, md.EntityID
 	return md, nil
 }

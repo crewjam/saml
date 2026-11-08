@@ -20,7 +20,7 @@ func TestStore(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	s.now = func() time.Time { return now }
 
-	in := &Instance{ID: "a", Secret: "s", Kind: KindIdP, Config: []byte(`{}`), CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
+	in := &Instance{ID: "a", Secret: "s", Kind: KindIDP, Config: []byte(`{}`), CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
 	if err := s.CreateInstance(ctx, in); err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestSessionsAndArtifacts(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	s.now = func() time.Time { return now }
 	for _, id := range []string{"a", "b"} {
-		if err := s.CreateInstance(ctx, &Instance{ID: id, Secret: id, Kind: KindIdP, Config: []byte(`{}`), CreatedAt: now, ExpiresAt: now.Add(time.Hour)}); err != nil {
+		if err := s.CreateInstance(ctx, &Instance{ID: id, Secret: id, Kind: KindIDP, Config: []byte(`{}`), CreatedAt: now, ExpiresAt: now.Add(time.Hour)}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -136,7 +136,7 @@ func TestCreateInstanceTaken(t *testing.T) {
 	}
 	defer s.Close() //nolint:errcheck // test
 	now := time.Now()
-	in := &Instance{ID: "comic-krill", Secret: "wholly-blessed-mammoth", Kind: KindIdP, Config: []byte(`{}`), CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
+	in := &Instance{ID: "comic-krill", Secret: "wholly-blessed-mammoth", Kind: KindIDP, Config: []byte(`{}`), CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
 	if err := s.CreateInstance(ctx, in); err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestMigrate(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	if err := s.CreateInstance(ctx, &Instance{ID: "a", Secret: "s", Kind: KindIdP, Config: []byte(`{}`), CreatedAt: now, ExpiresAt: now.Add(time.Hour)}); err != nil {
+	if err := s.CreateInstance(ctx, &Instance{ID: "a", Secret: "s", Kind: KindIDP, Config: []byte(`{}`), CreatedAt: now, ExpiresAt: now.Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.Exec(`PRAGMA user_version = 0`); err != nil {
