@@ -1,21 +1,26 @@
 // Package slo adds SAML single logout (saml-profiles §4.4) to a service
 // provider made with github.com/crewjam/saml/x/samlsp.
 //
-// It is built only on that package's public API. Configure the SP's single
-// logout service with Endpoint when making the Config, then use a Service:
+// Configure the SP's single logout service with Endpoint when making the
+// Config, then use a Service:
 //
 //	config, err := samlsp.New(idp, entityID, samlsp.WithSigningKey(key, cert),
 //		slo.Endpoint("https://sp.example.com/saml/slo"))
 //	logout, err := slo.New(config)
+//	http.HandleFunc(logout.Path(), sloHandler)
 //
 // Logout started by the SP sends the browser to the IdP with Request, and
 // verifies the IdP's answer with ParseResponse. Logout started by the IdP
 // arrives as a request that ParseRequest verifies and Response answers.
+// The IdP's requests and responses both arrive at the SLO URL; IsRequest
+// and IsResponse tell them apart.
 // With BackChannel, the IdP and the SP can also exchange logout messages
 // directly, server to server (SendRequest, and SOAP requests to
 // ParseRequest).
 //
-// Ending the application's own sessions is up to the caller.
+// Logout messages are signed with the key of samlsp.WithSigningKey. The
+// single logout profile requires signatures with the browser bindings
+// (saml-profiles §4.4.3), and many IdPs enforce it.
 package slo
 
 import (
@@ -72,8 +77,8 @@ var AcceptBaseID EndpointOption = func(o *endpointOptions) { o.acceptBaseID = tr
 
 // Endpoint configures the SP's single logout service at location, an
 // absolute URL, for samlsp.New: the SP metadata advertises it with the
-// HTTP-Redirect and HTTP-POST bindings (and SOAP with BackChannel). The
-// handler at location calls ParseRequest and ParseResponse.
+// HTTP-Redirect and HTTP-POST bindings (and SOAP with BackChannel). Serve
+// the handler that calls ParseRequest and ParseResponse at Service.Path.
 func Endpoint(location string, opts ...EndpointOption) samlsp.Option {
 	var o endpointOptions
 	for _, opt := range opts {
@@ -202,12 +207,12 @@ func unsigned(sp *saml.ServiceProvider) {
 // WithNotOnOrAfter and the samlsp.MessageOptions, such as
 // samlsp.WithBinding.
 //
-// Ending the local session is up to the caller. Do that first, so that the
-// user is logged out of this SP even if the IdP never replies. If the IdP
-// does not support single logout, Request returns an error matching
-// samlsp.ErrNoEndpoint.
+// End the local session first, so that the user is logged out of this SP
+// even if the IdP never replies. If the IdP does not support single
+// logout, Request returns an error matching samlsp.ErrNoEndpoint.
 //
-// The request is signed if the SP has a key that can sign.
+// The request is signed with the key of samlsp.WithSigningKey, if there is
+// one.
 func (s *Service) Request(ctx context.Context, nameID saml.NameID, relayState string, opts ...samlsp.MessageOption) (*samlsp.Message, error) {
 	return s.config.Send(ctx, samlsp.OutgoingMessage{
 		Service:    samlsp.SingleLogoutService,
@@ -235,8 +240,8 @@ func (s *Service) Request(ctx context.Context, nameID saml.NameID, relayState st
 	}, opts...)
 }
 
-// Request is a verified logout request from the identity provider, which
-// ends the user's session at this SP.
+// Request is a verified logout request from the identity provider, asking
+// this SP to end the user's sessions.
 type Request struct {
 	// ID is the ID of the request. Response answers it.
 	ID string
@@ -256,8 +261,9 @@ type Request struct {
 	// sends it back.
 	RelayState string
 
-	// Binding is the binding the request came with. For saml.SOAPBinding
-	// (see BackChannel), Response answers with SOAP too.
+	// Binding is the binding the request came with: saml.HTTPRedirectBinding,
+	// HTTPPostBinding, HTTPPostSimpleSignBinding or, with BackChannel,
+	// SOAPBinding, which Response answers with SOAP too.
 	Binding string
 
 	// Raw is the request as package saml returned it.
@@ -322,9 +328,13 @@ func (s *Service) ParseRequest(ctx context.Context, r *http.Request, opts ...sam
 			return nil, err
 		}
 		out.RelayState = r.FormValue("RelayState")
-		out.Binding = saml.HTTPPostBinding
-		if r.URL.Query().Get("SAMLRequest") != "" {
+		switch {
+		case r.URL.Query().Get("SAMLRequest") != "":
 			out.Binding = saml.HTTPRedirectBinding
+		case r.PostForm.Has("SigAlg") || r.PostForm.Has("Signature"):
+			out.Binding = saml.HTTPPostSimpleSignBinding
+		default:
+			out.Binding = saml.HTTPPostBinding
 		}
 	}
 	out.ID = req.ID
