@@ -40,6 +40,7 @@ import (
 	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/internal/xmlroundtrip"
 	"github.com/crewjam/saml/x/samlsp"
 )
 
@@ -67,6 +68,11 @@ type Binding struct {
 	// §3.6.3). A form keeps the artifact and RelayState out of the URL,
 	// and so out of logs and the Referer header.
 	Form bool
+
+	// OnError, if not nil, is called with each ArtifactResolve request
+	// that ServeHTTP refuses, and why, before it answers with a SOAP
+	// fault, which does not say why. Use it to log the error.
+	OnError func(r *http.Request, err error)
 }
 
 var (
@@ -244,10 +250,18 @@ func newArtifact(entityID string, index uint16) (string, error) {
 // fresh. A message is given only once, and only to the IdP it was sent to;
 // an artifact that is unknown, expired, already resolved or meant for
 // another party is answered with no message (saml-core §3.5.3). A request
-// that is refused is answered with a SOAP fault.
+// that is refused is answered with a SOAP fault, and passed to OnError.
+//
+// The request is checked as package saml checks the SOAP messages it
+// receives: it must be XML that encoding/xml reads as written, a SOAP 1.1
+// Envelope whose Body holds only the ArtifactResolve, with no header that
+// the SOAP envelope marks mustUnderstand.
 func (b *Binding) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	resp, err := b.resolve(r)
 	if err != nil {
+		if b.OnError != nil {
+			b.OnError(r, err)
+		}
 		_ = saml.WriteSOAPFault(w, "invalid artifact resolution request")
 		return
 	}
@@ -262,60 +276,119 @@ func (b *Binding) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = doc.WriteTo(w)
 }
 
-// errRefused is returned by resolve for a request it does not answer.
-var errRefused = errors.New("artifact: refused")
-
 func (b *Binding) resolve(r *http.Request) (*etree.Element, error) {
 	if !saml.IsSOAPRequest(r) {
-		return nil, errRefused
+		return nil, errors.New("artifact: not a SOAP request: expected a POST with Content-Type text/xml")
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxResolveSize+1))
-	if err != nil || len(body) > maxResolveSize {
-		return nil, errRefused
+	if err != nil {
+		return nil, fmt.Errorf("artifact: cannot read the request: %w", err)
 	}
-	doc := etree.NewDocument()
-	if err := doc.ReadFromBytes(body); err != nil {
-		return nil, errRefused
+	if len(body) > maxResolveSize {
+		return nil, fmt.Errorf("artifact: the request is larger than %d bytes", maxResolveSize)
 	}
-	el := doc.FindElement("/Envelope/Body/ArtifactResolve")
-	if el == nil || el.NamespaceURI() != "urn:oasis:names:tc:SAML:2.0:protocol" {
-		return nil, errRefused
+	el, err := readArtifactResolve(body)
+	if err != nil {
+		return nil, err
 	}
 
-	sp, err := b.config.ServiceProvider(r.Context())
+	ctx := r.Context()
+	sp, err := b.config.ServiceProvider(ctx)
 	if err != nil {
 		return nil, err
 	}
 	signed, err := sp.ValidateIDPSignedElement(el)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("artifact: the ArtifactResolve: %w", err)
 	}
 	var req saml.ArtifactResolve
 	if err := unmarshal(signed, &req); err != nil {
-		return nil, errRefused
+		return nil, fmt.Errorf("artifact: cannot read the ArtifactResolve: %w", err)
 	}
-	if req.ID == "" || req.Issuer == nil || req.Issuer.Value != sp.IDPMetadata.EntityID {
-		return nil, errRefused
+	if req.ID == "" {
+		return nil, errors.New("artifact: the ArtifactResolve has no ID")
+	}
+	if req.Issuer == nil || req.Issuer.Value != sp.IDPMetadata.EntityID {
+		return nil, fmt.Errorf("artifact: the ArtifactResolve is not issued by the IdP %s", sp.IDPMetadata.EntityID)
 	}
 	t := now(sp)
 	if req.IssueInstant.After(t.Add(saml.MaxClockSkew)) || t.After(req.IssueInstant.Add(saml.MaxIssueDelay)) {
-		return nil, errRefused
+		return nil, fmt.Errorf("artifact: the ArtifactResolve was issued at %s, which is not current", req.IssueInstant)
 	}
 
 	var message *etree.Element
-	stored, err := b.store.Take(r.Context(), req.Artifact, req.Issuer.Value)
+	stored, err := b.store.Take(ctx, req.Artifact, req.Issuer.Value)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("artifact: cannot take the message from the store: %w", err)
 	}
 	// The recipient is checked again, in case the Store does not.
 	if stored != nil && stored.Recipient == req.Issuer.Value && !t.After(stored.ExpiresAt) {
 		msgDoc := etree.NewDocument()
 		if err := msgDoc.ReadFromBytes(stored.XML); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("artifact: cannot read the stored message: %w", err)
 		}
 		message = msgDoc.Root()
 	}
-	return b.artifactResponse(sp, req.ID, t, message)
+	resp, err := b.artifactResponse(sp, req.ID, t, message)
+	if err != nil && message != nil {
+		// Keep the message, which the IdP did not get, for another try.
+		_ = b.store.Save(ctx, req.Artifact, *stored)
+	}
+	return resp, err
+}
+
+const (
+	soapEnvelopeNamespace = "http://schemas.xmlsoap.org/soap/envelope/"
+	samlProtocolNamespace = "urn:oasis:names:tc:SAML:2.0:protocol"
+)
+
+// readArtifactResolve returns the samlp:ArtifactResolve that must be the
+// only element of the Body of body, a SOAP 1.1 Envelope, as package saml
+// reads the SOAP messages it receives: body must be XML that encoding/xml
+// reads as written, each element is matched by its namespace, and a header
+// entry with mustUnderstand="1" is refused, since none is understood (SOAP
+// 1.1 §4.2.3).
+func readArtifactResolve(body []byte) (*etree.Element, error) {
+	if err := xmlroundtrip.Validate(body); err != nil {
+		return nil, fmt.Errorf("artifact: invalid XML: %w", err)
+	}
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(body); err != nil {
+		return nil, fmt.Errorf("artifact: the request is not XML: %w", err)
+	}
+	root := doc.Root()
+	if root == nil || root.Tag != "Envelope" || root.NamespaceURI() != soapEnvelopeNamespace {
+		return nil, errors.New("artifact: the request is not a SOAP 1.1 Envelope")
+	}
+	var soapBody *etree.Element
+	for _, child := range root.ChildElements() {
+		if child.NamespaceURI() != soapEnvelopeNamespace {
+			continue
+		}
+		switch child.Tag {
+		case "Header":
+			for _, entry := range child.ChildElements() {
+				for _, attr := range entry.Attr {
+					if attr.Key == "mustUnderstand" && attr.NamespaceURI() == soapEnvelopeNamespace && attr.Value == "1" {
+						return nil, fmt.Errorf("artifact: cannot understand the mandatory SOAP header %s", entry.FullTag())
+					}
+				}
+			}
+		case "Body":
+			if soapBody != nil {
+				return nil, errors.New("artifact: the SOAP Envelope has more than one Body")
+			}
+			soapBody = child
+		}
+	}
+	if soapBody == nil {
+		return nil, errors.New("artifact: the SOAP Envelope has no Body")
+	}
+	children := soapBody.ChildElements()
+	if len(children) != 1 || children[0].Tag != "ArtifactResolve" || children[0].NamespaceURI() != samlProtocolNamespace {
+		return nil, errors.New("artifact: the SOAP Body does not hold just a samlp:ArtifactResolve")
+	}
+	return children[0], nil
 }
 
 // artifactResponse returns a signed ArtifactResponse to the request
