@@ -169,7 +169,7 @@
 //		return err
 //	}
 //
-// Attributes are looked up by their Name, never by FriendlyName, which is only a hint for people. The IDP decides which attributes it sends and what they are called, so if one you expect is missing, check the IDP's attribute release settings; listing every attribute as above shows exactly what you received. DecodeAttributes parses values by the XML Schema rules into strings, bools, numbers, times, durations, bytes and URLs, and calls UnmarshalSAMLAttribute or UnmarshalText on types that have them.
+// Attributes are looked up by their Name, never by FriendlyName, which is only a hint for people. The IDP decides which attributes it sends and what they are called, so if one you expect is missing, check the IDP's attribute release settings; listing every attribute as above shows exactly what you received. DecodeAttributes parses values by the XML Schema rules into strings, bools, numbers, times, durations, bytes and URLs, and calls UnmarshalSAMLAttribute or UnmarshalText on types that have them. A field that holds one value is not filled from an attribute with several, whose order the IDP decides: it returns an error instead, unless the tag says ,first. Use a slice for attributes such as groups.
 //
 // Attributes the IDP encrypts (EncryptedAttribute) are decrypted with the key of WithEncryptionKey, like an encrypted assertion, and read like the others. An assertion whose Subject identifies the user with a BaseID rather than a NameID is refused unless the Config is made with samlsp.AcceptBaseID; Assertion.BaseID then holds the element, which your code must interpret.
 //
