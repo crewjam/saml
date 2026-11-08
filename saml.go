@@ -266,6 +266,7 @@
 // ### More
 //
 // - `github.com/crewjam/saml/x/samlsp/artifact` sends requests to the IDP with the HTTP-Artifact binding.
+// - `example/multitenant` is a multi-tenant SP in the manner of Supabase Auth: each tenant registers its own IDP, one `Config` serves them all with `WithIdentityProvider`, and logins in progress, the replay record and sessions live in a database (a pretend one), with SP- and IDP-initiated login and single logout.
 // - The [package documentation](https://pkg.go.dev/github.com/crewjam/saml/x/samlsp) and its examples cover the rest: `AuthnRequest` options such as `ForceAuthn` and `WithAuthnContext`, requested attributes and contacts in the SP metadata, signed metadata, and how to build other messages and bindings on it.
 //
 // # The samlsp middleware
