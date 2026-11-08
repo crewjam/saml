@@ -363,8 +363,24 @@ func newRemote(metadataURL string, o metadataOptions) *samlmd.Remote {
 }
 
 // checkIDPMetadata returns an error if md does not describe an identity
-// provider.
+// provider: an entity with an IDPSSODescriptor or, for QueryAttributes
+// only, an AttributeAuthorityDescriptor. The methods that need an
+// IDPSSODescriptor fail without one: AuthnRequest and Send with an error
+// matching ErrNoEndpoint, and ParseResponse with checkIDPSSO's.
 func checkIDPMetadata(md *saml.EntityDescriptor) error {
+	if md == nil {
+		return errors.New("samlsp: nil identity provider metadata")
+	}
+	if len(md.IDPSSODescriptors) == 0 && len(md.AttributeAuthorityDescriptors) == 0 {
+		return fmt.Errorf("samlsp: metadata for %q has no IDPSSODescriptor or AttributeAuthorityDescriptor", md.EntityID)
+	}
+	return nil
+}
+
+// checkIDPSSO returns an error if md has no IDPSSODescriptor, as the
+// metadata of an attribute authority alone, which checkIDPMetadata
+// accepts, has not.
+func checkIDPSSO(md *saml.EntityDescriptor) error {
 	if md == nil {
 		return errors.New("samlsp: nil identity provider metadata")
 	}

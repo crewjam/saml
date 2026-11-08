@@ -316,6 +316,72 @@ func TestAssertionInResponseTo(t *testing.T) {
 	}
 }
 
+// otherRecipientMaker makes the assertions of saml.DefaultAssertionMaker,
+// with first a bearer confirmation for the request inResponseTo at
+// another ACS, which package saml does not accept.
+type otherRecipientMaker struct{ inResponseTo string }
+
+func (m otherRecipientMaker) MakeAssertion(req *saml.IdpAuthnRequest, session *saml.Session) error {
+	if err := (saml.DefaultAssertionMaker{}).MakeAssertion(req, session); err != nil {
+		return err
+	}
+	s := req.Assertion.Subject
+	s.SubjectConfirmations = append([]saml.SubjectConfirmation{{
+		Method: "urn:oasis:names:tc:SAML:2.0:cm:bearer",
+		SubjectConfirmationData: &saml.SubjectConfirmationData{
+			InResponseTo: m.inResponseTo,
+			Recipient:    "https://other.example.com/saml/acs",
+			NotOnOrAfter: time.Now().Add(time.Hour),
+		},
+	}}, s.SubjectConfirmations...)
+	return nil
+}
+
+// InResponseTo comes from the bearer confirmation that package saml
+// accepted, not from another that names another pending request.
+func TestAssertionInResponseToFromAcceptedConfirmation(t *testing.T) {
+	ti := newTestIDP(t)
+	cfg := newTestConfig(t, ti)
+	other, err := cfg.AuthnRequest(t.Context(), "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := cfg.AuthnRequest(t.Context(), "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ti.idp.AssertionMaker = otherRecipientMaker{inResponseTo: other.ID}
+	a, err := cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID(other.ID), samlsp.WithRequestID(msg.ID))
+	if err != nil {
+		t.Fatalf("ParseResponse: %v (%v)", err, errors.Unwrap(err))
+	}
+	if a.InResponseTo != msg.ID {
+		t.Errorf("InResponseTo = %q, want %q", a.InResponseTo, msg.ID)
+	}
+}
+
+// Assertion.InResponseTo judges the confirmation by package saml's clock,
+// saml.TimeNow when there is no WithClock, as package saml did.
+func TestAssertionInResponseToTimeNow(t *testing.T) {
+	past := time.Now().Add(-24 * time.Hour)
+	restore := saml.TimeNow                         //nolint:staticcheck // the deprecated fallback is what is tested
+	saml.TimeNow = func() time.Time { return past } //nolint:staticcheck // as above
+	defer func() { saml.TimeNow = restore }()       //nolint:staticcheck // as above
+	ti := newTestIDP(t)
+	cfg := newTestConfig(t, ti)
+	msg, err := cfg.AuthnRequest(t.Context(), "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID(msg.ID))
+	if err != nil {
+		t.Fatalf("ParseResponse: %v (%v)", err, errors.Unwrap(err))
+	}
+	if a.InResponseTo != msg.ID {
+		t.Errorf("InResponseTo = %q, want %q", a.InResponseTo, msg.ID)
+	}
+}
+
 // WithMaxAuthnAge refuses an assertion whose AuthnInstant is older than
 // it allows, beyond saml.MaxClockSkew.
 func TestWithMaxAuthnAge(t *testing.T) {
@@ -741,6 +807,41 @@ func TestAuthnContextChecked(t *testing.T) {
 	}
 	if _, err := cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID(msg.ID), minimum); err != nil {
 		t.Errorf("minimum with comparator: %v", err)
+	}
+}
+
+// A WithAuthnContext passed to ParseResponse is enforced even when a
+// ServiceProviderOption of New turned ValidateAuthnContextClassRef off.
+func TestAuthnContextEnforcedDespiteServiceProvider(t *testing.T) {
+	ti := newTestIDP(t) // authenticates with PasswordProtectedTransport
+	cfg := newTestConfig(t, ti, samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
+		sp.ValidateAuthnContextClassRef = false
+	}))
+	requireX509 := samlsp.WithAuthnContext(saml.AuthnContextComparisonExact, saml.AuthnContextX509)
+	msg, err := cfg.AuthnRequest(t.Context(), "s", requireX509)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID(msg.ID), requireX509); !errors.Is(err, saml.ErrAuthnContextMismatch) {
+		t.Errorf("err = %v, want ErrAuthnContextMismatch", err)
+	}
+}
+
+// WithAuthnContext without a class is refused: a RequestedAuthnContext
+// needs one (saml-core §3.3.2.2.1), and none would be checked.
+func TestAuthnContextNeedsClass(t *testing.T) {
+	ti := newTestIDP(t)
+	cfg := newTestConfig(t, ti)
+	none := samlsp.WithAuthnContext(saml.AuthnContextComparisonExact)
+	if _, err := cfg.AuthnRequest(t.Context(), "s", none); err == nil {
+		t.Error("AuthnRequest accepted WithAuthnContext without a class")
+	}
+	msg, err := cfg.AuthnRequest(t.Context(), "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID(msg.ID), none); err == nil {
+		t.Error("ParseResponse accepted WithAuthnContext without a class")
 	}
 }
 

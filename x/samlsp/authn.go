@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -40,6 +39,7 @@ type authnOptions struct {
 	isPassive       bool
 	authnContext    *saml.RequestedAuthnContext
 	acsIndex        *int
+	attributeIndex  *int
 }
 
 type authnOptionFunc func(*authnOptions)
@@ -70,12 +70,16 @@ func WithForceAuthn(force bool) AuthnOption {
 }
 
 // WithAuthnContext asks the IdP to authenticate the user with one of
-// classes, compared as comparison says.
+// classes, compared as comparison says. At least one class is required
+// (saml-core §3.3.2.2.1): without one, AuthnRequest and ParseResponse
+// return an error.
 //
 // The IdP may answer with another class: the class is enforced only if the
 // same option is passed to ParseResponse too, which then refuses an
 // assertion whose AuthnContextClassRef does not satisfy it, with an error
-// matching saml.ErrAuthnContextMismatch. A comparison other than saml.AuthnContextComparisonExact
+// matching saml.ErrAuthnContextMismatch, even if a ServiceProviderOption
+// turned the saml.ServiceProvider's ValidateAuthnContextClassRef off.
+// A comparison other than saml.AuthnContextComparisonExact
 // needs WithAuthnContextComparator, since the order of the classes is
 // up to each deployment; without it, ParseResponse refuses every
 // assertion.
@@ -99,6 +103,16 @@ type AuthnContextOption struct {
 
 func (a AuthnContextOption) applyAuthn(o *authnOptions)       { o.authnContext = a.rac }
 func (a AuthnContextOption) applyResponse(o *responseOptions) { o.authnContext = a.rac }
+
+// checkAuthnContext returns an error if rac, from WithAuthnContext, names
+// no class: a RequestedAuthnContext needs at least one (saml-core
+// §3.3.2.2.1), and package saml checks an assertion against none.
+func checkAuthnContext(rac *saml.RequestedAuthnContext) error {
+	if rac != nil && len(rac.AuthnContextClassRefs) == 0 {
+		return errors.New("samlsp: WithAuthnContext needs at least one class")
+	}
+	return nil
+}
 
 // WithAuthnRequest calls modify with the AuthnRequest before it is signed
 // and sent, to set fields that have no option of their own. Options run in
@@ -157,15 +171,10 @@ func WithProviderName(name string) AuthnOption {
 
 // WithAttributeConsumingServiceIndex asks the IdP to send the attributes
 // that the SP metadata lists in the AttributeConsumingService with this
-// index (see WithRequestedAttributes).
+// index (see WithRequestedAttributes). AuthnRequest returns an error if
+// the SP metadata, as ServeMetadata publishes it, has no such index.
 func WithAttributeConsumingServiceIndex(index int) AuthnOption {
-	return WithAuthnRequest(func(req *saml.AuthnRequest) error {
-		if index < 0 || index > math.MaxUint16 {
-			return fmt.Errorf("samlsp: AttributeConsumingServiceIndex %d is not between 0 and %d", index, math.MaxUint16)
-		}
-		req.AttributeConsumingServiceIndex = strconv.Itoa(index)
-		return nil
-	})
+	return authnOptionFunc(func(o *authnOptions) { o.attributeIndex = &index })
 }
 
 // WithAllowCreate sets the AllowCreate of the NameIDPolicy, which is true
@@ -293,6 +302,9 @@ func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...Au
 	default:
 		return nil, fmt.Errorf("samlsp: unsupported response binding %q", o.responseBinding)
 	}
+	if err := checkAuthnContext(o.authnContext); err != nil {
+		return nil, err
+	}
 	ctx = IdentityProviderContext(ctx, o.idp)
 	return c.send(ctx, OutgoingMessage{
 		Service:    SingleSignOnService,
@@ -321,6 +333,9 @@ func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...Au
 				// not checked, to spare building the metadata.
 				return nil, fmt.Errorf("samlsp: the SP metadata has no AssertionConsumerService at %s with the binding %s; list it in the saml.ServiceProvider's AssertionConsumerServiceBindings", acsURL, o.responseBinding)
 			}
+			if o.attributeIndex != nil && !hasAttributeConsumingServiceIndex(c.Metadata(ctx), *o.attributeIndex) {
+				return nil, fmt.Errorf("samlsp: the SP metadata has no AttributeConsumingService with index %d", *o.attributeIndex)
+			}
 			// The binding argument "" makes no signature; Send signs.
 			req, err := sp.MakeAuthenticationRequest(destination, "", o.responseBinding)
 			if err != nil {
@@ -329,6 +344,9 @@ func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...Au
 			if o.isPassive {
 				t := true
 				req.IsPassive = &t
+			}
+			if o.attributeIndex != nil {
+				req.AttributeConsumingServiceIndex = strconv.Itoa(*o.attributeIndex)
 			}
 			if err := modify(req); err != nil {
 				return nil, err
@@ -425,16 +443,25 @@ func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...Res
 			opt.applyResponse(&o)
 		}
 	}
+	if err := checkAuthnContext(o.authnContext); err != nil {
+		return nil, err
+	}
 	ctx = IdentityProviderContext(ctx, o.idp)
 	sp, err := c.serviceProvider(ctx, o.sp)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkIDPSSO(sp.IDPMetadata); err != nil {
 		return nil, err
 	}
 	if o.unsolicited {
 		sp.AllowIDPInitiated = true
 	}
 	if o.authnContext != nil {
+		// The option is passed to enforce the class, whatever a
+		// ServiceProviderOption set.
 		sp.RequestedAuthnContext = o.authnContext
+		sp.ValidateAuthnContextClassRef = true
 	}
 	if len(o.requestIDs) == 0 && !sp.AllowIDPInitiated {
 		return nil, ErrNoRequestID
@@ -447,20 +474,23 @@ func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...Res
 	// saml does only with SignatureMethod: the IdP must authenticate the
 	// SP before it hands over the Response (saml-bindings §3.6.3).
 	c.signWithGeneralMethod(sp)
+	// The times between which package saml checked the confirmations,
+	// by its clock: that of WithClock, or else saml.TimeNow.
+	start := clockNow(sp.Clock)
 	a, err := sp.ParseResponse(r.WithContext(ctx), o.requestIDs)
 	if err != nil {
 		return nil, err
 	}
+	now := clockNow(sp.Clock)
+	skew := timelimit.SPClockSkew(sp)
 	if o.maxAuthnAge > 0 {
-		now := sp.Clock.Now() // the real time if Clock is nil
-		if err := checkAuthnAge(a, o.maxAuthnAge, timelimit.SPClockSkew(sp), now); err != nil {
+		if err := checkAuthnAge(a, o.maxAuthnAge, skew, now); err != nil {
 			return nil, &saml.InvalidResponseError{PrivateErr: err, Now: now}
 		}
 	}
-	return newAssertion(a, o.requestIDs), nil
+	return newAssertion(a, o.requestIDs, bearerCheck{recipient: sp.AcsURL.String(), skew: skew, start: start, end: now}), nil
 }
 
-// hasACSIndex reports whether md has an AssertionConsumerService with index.
 // hasACS reports whether md, SP metadata, lists an
 // AssertionConsumerService at location with binding.
 func hasACS(md *saml.EntityDescriptor, location, binding string) bool {
@@ -474,10 +504,24 @@ func hasACS(md *saml.EntityDescriptor, location, binding string) bool {
 	return false
 }
 
+// hasACSIndex reports whether md has an AssertionConsumerService with index.
 func hasACSIndex(md *saml.EntityDescriptor, index int) bool {
 	for _, d := range md.SPSSODescriptors {
 		for _, acs := range d.AssertionConsumerServices {
 			if acs.Index == index {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasAttributeConsumingServiceIndex reports whether md has an
+// AttributeConsumingService with index.
+func hasAttributeConsumingServiceIndex(md *saml.EntityDescriptor, index int) bool {
+	for _, d := range md.SPSSODescriptors {
+		for _, svc := range d.AttributeConsumingServices {
+			if svc.Index == index {
 				return true
 			}
 		}

@@ -11,7 +11,11 @@ import (
 
 func TestAuthnRequestFieldOptions(t *testing.T) {
 	ti := newTestIDP(t)
-	cfg := newTestConfig(t, ti)
+	cfg := newTestConfig(t, ti, samlsp.WithAttributeConsumingService(saml.AttributeConsumingService{
+		Index:               3,
+		ServiceNames:        []saml.LocalizedName{{Lang: "en", Value: "Example"}},
+		RequestedAttributes: []saml.RequestedAttribute{{Attribute: saml.Attribute{Name: "urn:oid:0.9.2342.19200300.100.1.3"}}},
+	}))
 	proxyCount := 2
 
 	msg, err := cfg.AuthnRequest(t.Context(), "s",
@@ -55,6 +59,9 @@ func TestAuthnRequestFieldOptions(t *testing.T) {
 	}
 	if _, err := cfg.AuthnRequest(t.Context(), "s", samlsp.WithAttributeConsumingServiceIndex(70000)); err == nil {
 		t.Error("an out-of-range AttributeConsumingServiceIndex was accepted")
+	}
+	if _, err := cfg.AuthnRequest(t.Context(), "s", samlsp.WithAttributeConsumingServiceIndex(4)); err == nil {
+		t.Error("an AttributeConsumingServiceIndex that is not in the metadata was accepted")
 	}
 }
 

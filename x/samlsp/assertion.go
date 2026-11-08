@@ -71,9 +71,27 @@ type Assertion struct {
 // bearerMethod is the Method of a bearer SubjectConfirmation.
 const bearerMethod = "urn:oasis:names:tc:SAML:2.0:cm:bearer" //nolint:gosec // a URI, not a credential
 
+// bearerCheck is what package saml checks of a bearer
+// SubjectConfirmationData besides its InResponseTo (saml-profiles
+// §4.1.4.3): its Recipient, and its validity period, allowing skew, at
+// the moment of the check, which was between start and end.
+type bearerCheck struct {
+	recipient  string
+	skew       time.Duration
+	start, end time.Time
+}
+
+// passes reports whether d passes c.
+func (c bearerCheck) passes(d *saml.SubjectConfirmationData) bool {
+	return d.Recipient == c.recipient &&
+		!d.NotBefore.Add(-c.skew).After(c.end) &&
+		c.start.Before(d.NotOnOrAfter.Add(c.skew))
+}
+
 // newAssertion returns the Assertion for a, which package saml verified
-// as answering one of requestIDs, or as unsolicited.
-func newAssertion(a *saml.Assertion, requestIDs []string) *Assertion {
+// as answering one of requestIDs, or as unsolicited, by a bearer
+// confirmation that passes check.
+func newAssertion(a *saml.Assertion, requestIDs []string, check bearerCheck) *Assertion {
 	out := &Assertion{
 		ID:     a.ID,
 		Issuer: a.Issuer.Value,
@@ -86,10 +104,13 @@ func newAssertion(a *saml.Assertion, requestIDs []string) *Assertion {
 		}
 		out.BaseID = a.Subject.BaseID
 		// Package saml accepted a bearer confirmation that answers one
-		// of requestIDs, or none; report the request it answers.
+		// of requestIDs, or none; report the request it answers. Another
+		// confirmation, which package saml did not accept, may name
+		// another request.
 		for _, sc := range a.Subject.SubjectConfirmations {
 			if sc.Method == bearerMethod && sc.SubjectConfirmationData != nil &&
-				slices.Contains(requestIDs, sc.SubjectConfirmationData.InResponseTo) {
+				slices.Contains(requestIDs, sc.SubjectConfirmationData.InResponseTo) &&
+				check.passes(sc.SubjectConfirmationData) {
 				out.InResponseTo = sc.SubjectConfirmationData.InResponseTo
 				break
 			}

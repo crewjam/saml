@@ -35,6 +35,7 @@ func TestParseMetadata(t *testing.T) {
 		{"aggregate, not chosen", agg, nil, ""},
 		{"SP metadata", []byte(`<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://sp.example.com/saml/metadata"><SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"/></EntityDescriptor>`), nil, ""},
 		{"not XML", []byte("not metadata"), nil, ""},
+		{"attribute authority only", []byte(`<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://aa.example.com/metadata"><AttributeAuthorityDescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"><AttributeService Binding="urn:oasis:names:tc:SAML:2.0:bindings:SOAP" Location="https://aa.example.com/aa"/></AttributeAuthorityDescriptor></EntityDescriptor>`), nil, "https://aa.example.com/metadata"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			md, err := samlsp.ParseMetadata(tt.data, tt.opts...)
@@ -106,5 +107,5 @@ func ExampleParseMetadata() {
 	fmt.Println(err)
 	// Output:
 	// https://idp.example.com/metadata
-	// samlsp: invalid identity provider metadata: samlsp: metadata for "https://sp.example.com/saml/metadata" has no IDPSSODescriptor
+	// samlsp: invalid identity provider metadata: samlsp: metadata for "https://sp.example.com/saml/metadata" has no IDPSSODescriptor or AttributeAuthorityDescriptor
 }
