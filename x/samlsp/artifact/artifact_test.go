@@ -561,3 +561,27 @@ func TestResolveFailures(t *testing.T) {
 		t.Errorf("metadata unavailable: %d", w.Code)
 	}
 }
+
+func TestPath(t *testing.T) {
+	_, cfg, b, _, _ := setup(t)
+	if got := b.Path(); got != "/saml/artifact" {
+		t.Errorf("Path = %q", got)
+	}
+	if got := artifact.New(cfg, artifact.NewMemoryStore(), 9).Path(); got != "" {
+		t.Errorf("Path for an index not advertised = %q", got)
+	}
+}
+
+func TestResolutionServiceChecks(t *testing.T) {
+	idp := &fakeIDP{}
+	idp.key, idp.cert = keyPair(t)
+	key, cert := keyPair(t)
+	for name, opts := range map[string][]samlsp.Option{
+		"no signing key": {artifact.ResolutionService(arsURL, 1)},
+		"relative URL":   {samlsp.WithSigningKey(key, cert), artifact.ResolutionService("/saml/artifact", 1)},
+	} {
+		if _, err := samlsp.New(samlsp.StaticMetadata(idp.metadata()), spEntityID, opts...); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
