@@ -2,3 +2,6 @@
 /build/
 /web/static/parser.wasm
 /web/static/wasm_exec.js
+
+# Built by `go build .` in this directory.
+/gosaml
