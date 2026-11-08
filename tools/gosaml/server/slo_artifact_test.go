@@ -169,6 +169,10 @@ func TestLogEntry(t *testing.T) {
 	h := newHarness(t)
 	_, idpID, spSecrets, spIDs := pair(h, 1)
 	h.loginAs(idpID, spIDs[0], "alice")
+	// The AuthnRequest's entry says where the redirect went, not the
+	// whole encoded URL (that is in the HTTP response pane).
+	mustContain(t, h.logEntries(spSecrets[0]),
+		`302 Found, redirected to <span class="mono">…/idp/`+idpID+`/sso</span> with a SAMLRequest in the query`)
 
 	_, body := h.do(http.MethodGet, "/manage/"+spSecrets[0], nil)
 	m := regexp.MustCompile(`href="(/manage/[^"]+/log/(\d+))">\s*<time[^>]*>[^<]*</time>\s*<span class="log-title">Logged in alice@example.com`).FindStringSubmatch(body)

@@ -27,8 +27,13 @@ type logEntryPage struct {
 	Verb, Binding, Outcome string
 
 	// RequestLine and Answered describe the exchange, if there is one.
-	RequestLine  string
+	RequestLine string
+	// Answered is the response's status and what it did; RedirectTo, if
+	// it redirected, where to (shortened when it is this site), and
+	// RedirectWith what SAML parameter the redirect carries.
 	Answered     string
+	RedirectTo   string
+	RedirectWith string
 	Checks       []inspect.ViewCheck
 	HTTPRequest  string
 	HTTPResponse string
@@ -111,7 +116,7 @@ func (s *Server) logEntry(w http.ResponseWriter, r *http.Request) {
 	if ev.ExchangeID != 0 {
 		if x, err := s.Store.GetExchange(ctx, in.ID, ev.ExchangeID); err == nil {
 			p.HTTPRequest, p.HTTPResponse = x.Request, x.Response
-			s.describeExchange(p, x)
+			s.describeExchange(p, x, n)
 			if inspectInput == "" {
 				inspectInput = x.Request
 			}
@@ -196,7 +201,7 @@ func lastCause(detail string) string {
 }
 
 // describeExchange fills in what the page says about an exchange.
-func (s *Server) describeExchange(p *logEntryPage, x *store.Exchange) {
+func (s *Server) describeExchange(p *logEntryPage, x *store.Exchange, n *names) {
 	req, resp := splitRaw(x.Request), splitRaw(x.Response)
 	method, uri, _ := strings.Cut(req.StartLine, " ")
 	uri, _, _ = strings.Cut(uri, " ")
@@ -246,7 +251,20 @@ func (s *Server) describeExchange(p *logEntryPage, x *store.Exchange) {
 	p.Answered = status
 	switch loc := resp.Header.Get("Location"); {
 	case loc != "":
-		p.Answered += ", redirected to " + loc
+		// The full Location, with its encoded message, is in the HTTP
+		// response pane: here, just where it goes and what it carries.
+		p.RedirectTo = loc
+		if u, err := url.Parse(loc); err == nil {
+			q := u.Query()
+			for _, k := range []string{"SAMLRequest", "SAMLResponse", "SAMLart"} {
+				if q.Get(k) != "" {
+					p.RedirectWith = "with a " + k + " in the query"
+					break
+				}
+			}
+			u.RawQuery, u.Fragment = "", ""
+			p.RedirectTo = n.short(u.String())
+		}
 	case strings.Contains(resp.Body, `name="SAMLResponse"`) || strings.Contains(resp.Body, `name="SAMLRequest"`) || strings.Contains(resp.Body, `name="SAMLart"`):
 		p.Answered += ", with a form the browser posts on"
 	case strings.Contains(resp.Header.Get("Content-Type"), "xml"):

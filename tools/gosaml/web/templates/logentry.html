@@ -19,7 +19,7 @@
     <h2 class="sec-h2">{{if .RequestLine}}Request{{else}}Event{{end}}</h2>
     <dl class="dl">
       {{if .RequestLine}}<dt>Request</dt><dd class="mono">{{.RequestLine}}</dd>
-      <dt>Answered</dt><dd>{{.Answered}}</dd>{{end}}
+      <dt>Answered</dt><dd>{{.Answered}}{{with .RedirectTo}}, redirected to <span class="mono">{{.}}</span>{{end}}{{with .RedirectWith}} {{.}}{{end}}</dd>{{end}}
       {{with .Checks}}<dt>Checks</dt><dd><ul class="checks">{{range .}}<li class="{{.Level}}">{{if eq .Level "ok"}}✓{{else if eq .Level "warn"}}!{{else}}✗{{end}} {{.Text}}</li>{{end}}</ul></dd>{{end}}
       {{with .Event.Detail}}<dt>Detail</dt><dd><pre class="pane entry-detail">{{.}}</pre></dd>{{end}}
     </dl>
