@@ -419,7 +419,7 @@ func TestSpecCore_2_4_1_AnyBearerSubjectConfirmationSuffices(t *testing.T) {
 		bearer(func(d *SubjectConfirmationData) { d.NotOnOrAfter = now.Add(time.Minute) }),
 		bearer(func(d *SubjectConfirmationData) { d.NotOnOrAfter = now.Add(2 * time.Minute) }),
 	}
-	assert.Check(t, is.DeepEqual(now.Add(2*time.Minute+MaxClockSkew), acceptableUntil(a)))
+	assert.Check(t, is.DeepEqual(now.Add(2*time.Minute+MaxClockSkew), timeLimits{}.acceptableUntil(a)))
 }
 
 // saml-core §2.4.1.2 (lines 719-732): NotBefore is "A time instant before
@@ -494,7 +494,7 @@ func TestSpecCore_2_5_1_2_UnspecifiedNotOnOrAfterHasNoExpiry(t *testing.T) {
 	a.Conditions.NotOnOrAfter = time.Time{}
 	assert.Check(t, sp.validateAssertion(a, []string{"id-1"}, now))
 	// Here the issue deadline is the earliest one left.
-	assert.Check(t, is.DeepEqual(now.Add(MaxIssueDelay), acceptableUntil(a)))
+	assert.Check(t, is.DeepEqual(now.Add(MaxIssueDelay), timeLimits{}.acceptableUntil(a)))
 
 	// The SubjectConfirmationData NotOnOrAfter still applies.
 	a.Subject.SubjectConfirmations[0].SubjectConfirmationData.NotOnOrAfter = now.Add(-MaxClockSkew - time.Minute)

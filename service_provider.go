@@ -366,6 +366,17 @@ type ServiceProvider struct {
 	// concurrently, for example in parallel tests.
 	Clock *dsig.Clock
 
+	// MaxClockSkew, if not zero, replaces the package-level MaxClockSkew for
+	// this ServiceProvider: the leeway allowed for the IDP's clock when
+	// checking IssueInstant, NotBefore and NotOnOrAfter times.
+	MaxClockSkew time.Duration
+
+	// MaxIssueDelay, if not zero, replaces the package-level MaxIssueDelay
+	// for this ServiceProvider: the longest allowed time between a
+	// message's IssueInstant and its receipt, which also bounds how long
+	// replay records are kept.
+	MaxIssueDelay time.Duration
+
 	// IgnoreCertificateExpiry, if true, disables the check that the IDP's
 	// signing certificate is within its validity period (NotBefore and
 	// NotAfter) when validating XML and HTTP-Redirect binding signatures.
@@ -537,6 +548,19 @@ func (sp *ServiceProvider) now() time.Time {
 	return clockNow(sp.Clock)
 }
 
+// limits returns the clock skew and issue delay this ServiceProvider allows.
+func (sp *ServiceProvider) limits() timeLimits {
+	return timeLimits{clockSkew: sp.MaxClockSkew, issueDelay: sp.MaxIssueDelay}
+}
+
+// maxClockSkew returns MaxClockSkew, or the package-level MaxClockSkew if it
+// is zero.
+func (sp *ServiceProvider) maxClockSkew() time.Duration { return sp.limits().skew() }
+
+// maxIssueDelay returns MaxIssueDelay, or the package-level MaxIssueDelay if
+// it is zero.
+func (sp *ServiceProvider) maxIssueDelay() time.Duration { return sp.limits().delay() }
+
 // dsigClock returns the clock to use for signature validation. It may be
 // nil, in which case dsig uses the real clock.
 func (sp *ServiceProvider) dsigClock() *dsig.Clock {
@@ -552,6 +576,28 @@ var MaxIssueDelay = time.Second * 90
 // MaxClockSkew allows for leeway for clock skew between the IDP and SP when
 // validating assertions. It defaults to 180 seconds (matches shibboleth).
 var MaxClockSkew = time.Second * 180
+
+// timeLimits is the clock skew and issue delay a provider allows. A zero
+// field means the package-level MaxClockSkew or MaxIssueDelay, read when it
+// is used.
+type timeLimits struct {
+	clockSkew  time.Duration
+	issueDelay time.Duration
+}
+
+func (l timeLimits) skew() time.Duration {
+	if l.clockSkew != 0 {
+		return l.clockSkew
+	}
+	return MaxClockSkew
+}
+
+func (l timeLimits) delay() time.Duration {
+	if l.issueDelay != 0 {
+		return l.issueDelay
+	}
+	return MaxIssueDelay
+}
 
 // MaxArtifactResponseSize is the largest SOAP response body, in bytes, that
 // the service provider reads from the IDP's ArtifactResolutionService when it
@@ -1564,7 +1610,7 @@ func (sp *ServiceProvider) parseArtifactResponse(artifactResponseEl *etree.Eleme
 			retErr.PrivateErr = classify(fmt.Errorf("`InResponseTo` does not match the artifact request ID (expected %s)", artifactRequestID), ErrRequestIDMismatch)
 			return nil, retErr
 		}
-		if err := checkIssueInstant("response IssueInstant", artifactResponse.IssueInstant, now); err != nil {
+		if err := sp.limits().checkIssueInstant("response IssueInstant", artifactResponse.IssueInstant, now); err != nil {
 			retErr.PrivateErr = err
 			return nil, retErr
 		}
@@ -1796,7 +1842,7 @@ func (sp *ServiceProvider) parseReceivedResponse(responseEl, receivedEl *etree.E
 			assertionRequestIDs = []string{response.InResponseTo}
 		}
 
-		if err := checkIssueInstant("response IssueInstant", response.IssueInstant, now); err != nil {
+		if err := sp.limits().checkIssueInstant("response IssueInstant", response.IssueInstant, now); err != nil {
 			return nil, err
 		}
 		if response.Issuer != nil && response.Issuer.Value != sp.IDPMetadata.EntityID {
@@ -2231,10 +2277,10 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if err := checkVersion("assertion", assertion.Version); err != nil {
 		return err
 	}
-	if issueDeadline(assertion).Before(now) {
-		return classify(fmt.Errorf("expired on %s", issueDeadline(assertion)), ErrExpired)
+	if sp.limits().issueDeadline(assertion).Before(now) {
+		return classify(fmt.Errorf("expired on %s", sp.limits().issueDeadline(assertion)), ErrExpired)
 	}
-	if assertion.IssueInstant.Add(-MaxClockSkew).After(now) {
+	if assertion.IssueInstant.Add(-sp.maxClockSkew()).After(now) {
 		return classify(fmt.Errorf("assertion IssueInstant %s is in the future", assertion.IssueInstant), ErrNotYetValid)
 	}
 	if assertion.Issuer.Value != sp.IDPMetadata.EntityID {
@@ -2260,13 +2306,13 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if len(assertion.AuthnStatements) == 0 {
 		return classify(fmt.Errorf("assertion has no AuthnStatement"), ErrMissingElement)
 	}
-	if assertion.Conditions.NotBefore.Add(-MaxClockSkew).After(now) {
+	if assertion.Conditions.NotBefore.Add(-sp.maxClockSkew()).After(now) {
 		return classify(fmt.Errorf("assertion Conditions is not yet valid"), ErrNotYetValid)
 	}
 	// An omitted Conditions NotOnOrAfter means no expiry (saml-core
 	// §2.5.1.2); the assertion is still bounded by MaxIssueDelay and the
 	// SubjectConfirmationData NotOnOrAfter.
-	if !assertion.Conditions.NotOnOrAfter.IsZero() && pastDeadline(assertion.Conditions.NotOnOrAfter, now) {
+	if !assertion.Conditions.NotOnOrAfter.IsZero() && sp.limits().pastDeadline(assertion.Conditions.NotOnOrAfter, now) {
 		return classify(fmt.Errorf("assertion Conditions is expired"), ErrExpired)
 	}
 	if err := sp.validateUnknownConditions(assertion); err != nil {
@@ -2376,15 +2422,15 @@ func (sp *ServiceProvider) validateAssertionInResponseTo(inResponseTo string, po
 
 // issueDeadline is the last moment validateAssertion accepts assertion by its
 // IssueInstant.
-func issueDeadline(assertion *Assertion) time.Time {
-	return issueInstantDeadline(assertion.IssueInstant)
+func (l timeLimits) issueDeadline(assertion *Assertion) time.Time {
+	return l.issueInstantDeadline(assertion.IssueInstant)
 }
 
 // issueInstantDeadline is the last moment a message issued at issueInstant
 // is accepted: MaxIssueDelay later. MaxIssueDelay already allows for some
 // clock drift.
-func issueInstantDeadline(issueInstant time.Time) time.Time {
-	return issueInstant.Add(MaxIssueDelay)
+func (l timeLimits) issueInstantDeadline(issueInstant time.Time) time.Time {
+	return issueInstant.Add(l.delay())
 }
 
 // checkIssueInstant refuses a message whose IssueInstant is more than
@@ -2392,11 +2438,11 @@ func issueInstantDeadline(issueInstant time.Time) time.Time {
 // the future. A message dated in the future would otherwise stay acceptable
 // by its IssueInstant for as long as the issuer liked. what names the
 // message in the error.
-func checkIssueInstant(what string, issueInstant, now time.Time) error {
-	if deadline := issueInstantDeadline(issueInstant); deadline.Before(now) {
+func (l timeLimits) checkIssueInstant(what string, issueInstant, now time.Time) error {
+	if deadline := l.issueInstantDeadline(issueInstant); deadline.Before(now) {
 		return classify(fmt.Errorf("%s expired at %s", what, deadline), ErrExpired)
 	}
-	if issueInstant.Add(-MaxClockSkew).After(now) {
+	if issueInstant.Add(-l.skew()).After(now) {
 		return classify(fmt.Errorf("%s %s is in the future", what, issueInstant), ErrNotYetValid)
 	}
 	return nil
@@ -2404,16 +2450,16 @@ func checkIssueInstant(what string, issueInstant, now time.Time) error {
 
 // skewedDeadline is a NotOnOrAfter time moved later by the allowed clock
 // skew: the moment from which validateAssertion refuses it.
-func skewedDeadline(notOnOrAfter time.Time) time.Time {
-	return notOnOrAfter.Add(MaxClockSkew)
+func (l timeLimits) skewedDeadline(notOnOrAfter time.Time) time.Time {
+	return notOnOrAfter.Add(l.skew())
 }
 
 // pastDeadline reports whether now is at or after notOnOrAfter, allowing for
 // clock skew. NotOnOrAfter is exclusive: it is "the time instant at which the
 // validity interval has ended" (saml-core §2.5.1.2), so a message is no
 // longer valid at that instant itself.
-func pastDeadline(notOnOrAfter, now time.Time) bool {
-	return !now.Before(skewedDeadline(notOnOrAfter))
+func (l timeLimits) pastDeadline(notOnOrAfter, now time.Time) bool {
+	return !now.Before(l.skewedDeadline(notOnOrAfter))
 }
 
 // acceptableUntil returns the moment after which validateAssertion refuses
@@ -2421,10 +2467,10 @@ func pastDeadline(notOnOrAfter, now time.Time) bool {
 // NotOnOrAfter deadline is exclusive (the assertion is already refused at
 // it); the MaxIssueDelay deadline is inclusive. An omitted Conditions
 // NotOnOrAfter sets no deadline.
-func acceptableUntil(assertion *Assertion) time.Time {
-	deadline := issueDeadline(assertion)
+func (l timeLimits) acceptableUntil(assertion *Assertion) time.Time {
+	deadline := l.issueDeadline(assertion)
 	if assertion.Conditions != nil && !assertion.Conditions.NotOnOrAfter.IsZero() {
-		deadline = earliest(deadline, skewedDeadline(assertion.Conditions.NotOnOrAfter))
+		deadline = earliest(deadline, l.skewedDeadline(assertion.Conditions.NotOnOrAfter))
 	}
 	// One valid bearer confirmation is enough, so the assertion stays
 	// acceptable until the latest bearer NotOnOrAfter. Confirmations with
@@ -2435,7 +2481,7 @@ func acceptableUntil(assertion *Assertion) time.Time {
 			if confirmation.Method != bearerSubjectConfirmationMethod || confirmation.SubjectConfirmationData == nil {
 				continue
 			}
-			if d := skewedDeadline(confirmation.SubjectConfirmationData.NotOnOrAfter); d.After(confirmationDeadline) {
+			if d := l.skewedDeadline(confirmation.SubjectConfirmationData.NotOnOrAfter); d.After(confirmationDeadline) {
 				confirmationDeadline = d
 			}
 		}
@@ -2462,7 +2508,7 @@ func (sp *ServiceProvider) consumeAssertion(assertion *Assertion) error {
 	if assertion.ID == "" {
 		return classify(errors.New("assertion has no ID to check for replay"), ErrMissingElement)
 	}
-	if err := sp.ReplayCache.Consume(assertion.ID, acceptableUntil(assertion)); err != nil {
+	if err := sp.ReplayCache.Consume(assertion.ID, sp.limits().acceptableUntil(assertion)); err != nil {
 		return fmt.Errorf("assertion %q: %w", assertion.ID, err)
 	}
 	return nil
@@ -2477,24 +2523,24 @@ const logoutRequestReplayKeyPrefix = "LogoutRequest:"
 // logoutRequestAcceptableUntil returns the moment after which a LogoutRequest
 // is refused: IssueInstant plus MaxIssueDelay or, if it is earlier, the
 // NotOnOrAfter time allowing for clock skew.
-func logoutRequestAcceptableUntil(req *LogoutRequest) time.Time {
-	deadline := issueInstantDeadline(req.IssueInstant)
+func (l timeLimits) logoutRequestAcceptableUntil(req *LogoutRequest) time.Time {
+	deadline := l.issueInstantDeadline(req.IssueInstant)
 	if req.NotOnOrAfter != nil {
-		deadline = earliest(deadline, skewedDeadline(*req.NotOnOrAfter))
+		deadline = earliest(deadline, l.skewedDeadline(*req.NotOnOrAfter))
 	}
 	return deadline
 }
 
 // consumeLogoutRequest records the ID of req in cache, if cache is not nil,
 // refusing req if it was recorded before. req must already be validated.
-func consumeLogoutRequest(cache AssertionReplayCache, req *LogoutRequest) error {
+func consumeLogoutRequest(cache AssertionReplayCache, req *LogoutRequest, l timeLimits) error {
 	if cache == nil {
 		return nil
 	}
 	if req.ID == "" {
 		return classify(errors.New("logout request has no ID to check for replay"), ErrMissingElement)
 	}
-	if err := cache.Consume(logoutRequestReplayKeyPrefix+req.ID, logoutRequestAcceptableUntil(req)); err != nil {
+	if err := cache.Consume(logoutRequestReplayKeyPrefix+req.ID, l.logoutRequestAcceptableUntil(req)); err != nil {
 		return fmt.Errorf("logout request %q: %w", req.ID, err)
 	}
 	return nil
@@ -2550,13 +2596,13 @@ func (sp *ServiceProvider) validateBearerSubjectConfirmationData(data *SubjectCo
 	// NOT carry NotBefore, but some IdPs send one anyway; accept it as
 	// long as it is not in the future (saml-core §2.4.1.2). An omitted
 	// NotBefore is the zero time, which always passes.
-	if data.NotBefore.Add(-MaxClockSkew).After(now) {
+	if data.NotBefore.Add(-sp.maxClockSkew()).After(now) {
 		return classify(fmt.Errorf("assertion SubjectConfirmationData is not yet valid"), ErrNotYetValid)
 	}
 	// A bearer SubjectConfirmationData MUST carry NotOnOrAfter
 	// (saml-profiles §4.1.4.2): an omitted one is the zero time, which
 	// has always passed.
-	if pastDeadline(data.NotOnOrAfter, now) {
+	if sp.limits().pastDeadline(data.NotOnOrAfter, now) {
 		return classify(fmt.Errorf("assertion SubjectConfirmationData is expired"), ErrExpired)
 	}
 	return nil
@@ -3581,7 +3627,7 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 	}
 
 	now := sp.now()
-	if err := checkIssueInstant("issueInstant", resp.IssueInstant, now); err != nil {
+	if err := sp.limits().checkIssueInstant("issueInstant", resp.IssueInstant, now); err != nil {
 		return err
 	}
 	if resp.Issuer == nil || resp.Issuer.Value != sp.IDPMetadata.EntityID {
@@ -3718,7 +3764,7 @@ func (sp *ServiceProvider) unmarshalAndValidateLogoutRequest(root *etree.Element
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
-	if err := consumeLogoutRequest(sp.ReplayCache, &req); err != nil {
+	if err := consumeLogoutRequest(sp.ReplayCache, &req, sp.limits()); err != nil {
 		retErr.PrivateErr = err
 		return nil, retErr
 	}
@@ -3745,10 +3791,10 @@ func (sp *ServiceProvider) validateLogoutRequest(req *LogoutRequest) error {
 // Destination.
 func (sp *ServiceProvider) validateLogoutRequestFields(req *LogoutRequest) error {
 	now := sp.now()
-	if err := checkIssueInstant("issueInstant", req.IssueInstant, now); err != nil {
+	if err := sp.limits().checkIssueInstant("issueInstant", req.IssueInstant, now); err != nil {
 		return err
 	}
-	if req.NotOnOrAfter != nil && !now.Before(req.NotOnOrAfter.Add(MaxClockSkew)) {
+	if req.NotOnOrAfter != nil && !now.Before(req.NotOnOrAfter.Add(sp.maxClockSkew())) {
 		return classify(fmt.Errorf("request expired at %s", req.NotOnOrAfter), ErrExpired)
 	}
 	if req.Issuer == nil || req.Issuer.Value != sp.IDPMetadata.EntityID {

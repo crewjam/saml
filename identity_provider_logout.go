@@ -232,7 +232,7 @@ func (req *IdpLogoutRequest) Validate() error {
 
 	// Record the request last, so that only a request that is otherwise
 	// valid uses up its ID.
-	if err := consumeLogoutRequest(req.IDP.ReplayCache, &req.Request); err != nil {
+	if err := consumeLogoutRequest(req.IDP.ReplayCache, &req.Request, req.IDP.limits()); err != nil {
 		return fmt.Errorf("cannot accept logout request from %s: %w", serviceProviderID, err)
 	}
 	return nil
@@ -309,13 +309,13 @@ func (req *IdpLogoutRequest) validateFields() error {
 		return err
 	}
 
-	if r.IssueInstant.Add(MaxIssueDelay).Before(req.Now) {
-		return fmt.Errorf("logout request expired at %s", r.IssueInstant.Add(MaxIssueDelay))
+	if r.IssueInstant.Add(req.IDP.maxIssueDelay()).Before(req.Now) {
+		return fmt.Errorf("logout request expired at %s", r.IssueInstant.Add(req.IDP.maxIssueDelay()))
 	}
-	if r.IssueInstant.Add(-MaxClockSkew).After(req.Now) {
+	if r.IssueInstant.Add(-req.IDP.maxClockSkew()).After(req.Now) {
 		return fmt.Errorf("logout request IssueInstant %s is in the future", r.IssueInstant)
 	}
-	if r.NotOnOrAfter != nil && !req.Now.Before(r.NotOnOrAfter.Add(MaxClockSkew)) {
+	if r.NotOnOrAfter != nil && !req.Now.Before(r.NotOnOrAfter.Add(req.IDP.maxClockSkew())) {
 		return fmt.Errorf("logout request expired at %s", r.NotOnOrAfter)
 	}
 	if err := resolveLogoutRequestNameID(r, req.IDP.decryptElement, req.IDP.AcceptLogoutRequestBaseID); err != nil {

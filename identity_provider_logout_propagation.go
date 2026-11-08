@@ -759,7 +759,7 @@ func (idp *IdentityProvider) validateLogoutResponseFields(resp *LogoutResponse, 
 	if resp.InResponseTo == "" || !slices.Contains(requestIDs, resp.InResponseTo) {
 		return fmt.Errorf("logout response InResponseTo %q does not match the outstanding request", resp.InResponseTo)
 	}
-	if err := validateLogoutResponseAnswer(resp, resp.InResponseTo, idp.now()); err != nil {
+	if err := validateLogoutResponseAnswer(resp, resp.InResponseTo, idp.now(), idp.limits()); err != nil {
 		return err
 	}
 	if resp.Destination != idp.LogoutURL.String() {
@@ -770,16 +770,16 @@ func (idp *IdentityProvider) validateLogoutResponseFields(resp *LogoutResponse, 
 
 // validateLogoutResponseAnswer checks the fields of an authenticated
 // LogoutResponse, other than its Issuer and Destination, as an answer to the
-// LogoutRequest requestID, at the time now.
-func validateLogoutResponseAnswer(resp *LogoutResponse, requestID string, now time.Time) error {
+// LogoutRequest requestID, at the time now, allowing the time limits l.
+func validateLogoutResponseAnswer(resp *LogoutResponse, requestID string, now time.Time, l timeLimits) error {
 	switch {
 	case resp.InResponseTo != requestID:
 		return fmt.Errorf("logout response InResponseTo %q does not match the outstanding request", resp.InResponseTo)
 	case resp.Version != "2.0":
 		return fmt.Errorf("expected SAML response version 2.0 got %v", resp.Version)
-	case resp.IssueInstant.Add(MaxIssueDelay).Before(now):
-		return fmt.Errorf("logout response expired at %s", resp.IssueInstant.Add(MaxIssueDelay))
-	case resp.IssueInstant.Add(-MaxClockSkew).After(now):
+	case resp.IssueInstant.Add(l.delay()).Before(now):
+		return fmt.Errorf("logout response expired at %s", resp.IssueInstant.Add(l.delay()))
+	case resp.IssueInstant.Add(-l.skew()).After(now):
 		return fmt.Errorf("logout response IssueInstant %s is in the future", resp.IssueInstant)
 	}
 	return nil

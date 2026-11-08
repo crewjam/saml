@@ -207,7 +207,7 @@ func (idp *IdentityProvider) parseSOAPLogoutResponse(body []byte, serviceProvide
 		return nil, fmt.Errorf("signed logout response is not from %s", serviceProviderID)
 	}
 
-	if err := validateLogoutResponseAnswer(&resp, requestID, idp.now()); err != nil {
+	if err := validateLogoutResponseAnswer(&resp, requestID, idp.now(), idp.limits()); err != nil {
 		return nil, err
 	}
 	switch resp.Destination {

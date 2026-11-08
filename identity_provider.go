@@ -190,6 +190,18 @@ type IdentityProvider struct {
 	// concurrently, for example in parallel tests.
 	Clock *dsig.Clock
 
+	// MaxClockSkew, if not zero, replaces the package-level MaxClockSkew for
+	// this IdentityProvider: the leeway allowed for a service provider's
+	// clock when checking IssueInstant and NotOnOrAfter times, and how far
+	// back an assertion's validity period starts.
+	MaxClockSkew time.Duration
+
+	// MaxIssueDelay, if not zero, replaces the package-level MaxIssueDelay
+	// for this IdentityProvider: the longest allowed time between a
+	// request's IssueInstant and its receipt, which also bounds how long
+	// replay records are kept and how long issued assertions are valid.
+	MaxIssueDelay time.Duration
+
 	// SimpleSignResponseFormTemplate, if set, replaces the default
 	// auto-submitting HTML form used to send responses to ACS endpoints with
 	// the HTTP-POST-SimpleSign binding. It is executed with an
@@ -509,6 +521,23 @@ type IdentityProvider struct {
 	// If nil, DefaultAuthnContextClassStrengths is used.
 	AuthnContextClassStrengths map[string]int
 }
+
+// limits returns the clock skew and issue delay this IdentityProvider
+// allows. idp may be nil, in which case the package-level values are used.
+func (idp *IdentityProvider) limits() timeLimits {
+	if idp == nil {
+		return timeLimits{}
+	}
+	return timeLimits{clockSkew: idp.MaxClockSkew, issueDelay: idp.MaxIssueDelay}
+}
+
+// maxClockSkew returns MaxClockSkew, or the package-level MaxClockSkew if it
+// is zero.
+func (idp *IdentityProvider) maxClockSkew() time.Duration { return idp.limits().skew() }
+
+// maxIssueDelay returns MaxIssueDelay, or the package-level MaxIssueDelay if
+// it is zero.
+func (idp *IdentityProvider) maxIssueDelay() time.Duration { return idp.limits().delay() }
 
 // now returns the current time as seen by this IdentityProvider. idp may be
 // nil, in which case the default clock is used.
@@ -1046,7 +1075,7 @@ func (req *IdpAuthnRequest) consume() error {
 		issuer = req.Request.Issuer.Value
 	}
 	key := authnRequestReplayKeyPrefix + issuer + " " + req.Request.ID
-	if err := req.IDP.ReplayCache.Consume(key, req.Request.IssueInstant.Add(MaxIssueDelay)); err != nil {
+	if err := req.IDP.ReplayCache.Consume(key, req.Request.IssueInstant.Add(req.IDP.maxIssueDelay())); err != nil {
 		return fmt.Errorf("authn request %q: %w", req.Request.ID, err)
 	}
 	return nil
@@ -1136,13 +1165,13 @@ func (req *IdpAuthnRequest) validateFields() error {
 		}
 	}
 
-	if req.Request.IssueInstant.Add(MaxIssueDelay).Before(req.Now) {
+	if req.Request.IssueInstant.Add(req.IDP.maxIssueDelay()).Before(req.Now) {
 		return classify(fmt.Errorf("request expired at %s",
-			req.Request.IssueInstant.Add(MaxIssueDelay)), ErrExpired)
+			req.Request.IssueInstant.Add(req.IDP.maxIssueDelay())), ErrExpired)
 	}
 	// As for LogoutRequests, an IssueInstant later than the clock skew
 	// allows is refused rather than trusted.
-	if req.Request.IssueInstant.Add(-MaxClockSkew).After(req.Now) {
+	if req.Request.IssueInstant.Add(-req.IDP.maxClockSkew()).After(req.Now) {
 		return classify(fmt.Errorf("request IssueInstant %s is in the future", req.Request.IssueInstant), ErrNotYetValid)
 	}
 	if req.Request.Version != "2.0" {
@@ -1584,18 +1613,18 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 	// issuer's apparent clock, but never start the validity period after
 	// now: the request's IssueInstant comes from the service provider, and
 	// a later one would postdate the assertion.
-	notBefore := req.Now.Add(-1 * MaxClockSkew)
-	notOnOrAfterAfter := req.Now.Add(MaxIssueDelay)
+	notBefore := req.Now.Add(-1 * req.IDP.maxClockSkew())
+	notOnOrAfterAfter := req.Now.Add(req.IDP.maxIssueDelay())
 	if notBefore.Before(req.Request.IssueInstant) {
 		notBefore = req.Request.IssueInstant
 		if notBefore.After(req.Now) {
 			notBefore = req.Now
 		}
-		notOnOrAfterAfter = notBefore.Add(MaxIssueDelay)
+		notOnOrAfterAfter = notBefore.Add(req.IDP.maxIssueDelay())
 	}
 	// The subject confirmation window SHOULD fall within the assertion's
 	// (saml-core §2.4.1.2), so it ends no later than the Conditions.
-	confirmationNotOnOrAfter := req.Now.Add(MaxIssueDelay)
+	confirmationNotOnOrAfter := req.Now.Add(req.IDP.maxIssueDelay())
 	if notOnOrAfterAfter.Before(confirmationNotOnOrAfter) {
 		confirmationNotOnOrAfter = notOnOrAfterAfter
 	}
