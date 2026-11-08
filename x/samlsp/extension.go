@@ -22,9 +22,10 @@ import (
 // other packages to add bindings, extend the SP metadata, and handle SAML
 // messages this package does not.
 
-// Binding sends an OutboundMessage to the IdP. AuthnRequest, LogoutRequest
-// and LogoutResponse use one passed with WithCustomBinding instead of the
-// bindings built in (HTTP-Redirect, HTTP-POST and HTTP-POST-SimpleSign).
+// Binding sends an OutboundMessage to the IdP. AuthnRequest and Send (and
+// so the packages built on it) use one passed with WithCustomBinding
+// instead of the bindings built in (HTTP-Redirect, HTTP-POST and
+// HTTP-POST-SimpleSign).
 type Binding interface {
 	// URI is the binding's URI, such as saml.HTTPArtifactBinding. The
 	// message is addressed to the IdP endpoint that has this binding in

@@ -1,7 +1,6 @@
 package samlsp_test
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -39,31 +38,25 @@ func exampleIDP() samlsp.MetadataFunc {
 // The entity ID is usually the URL of the SP metadata, and the other
 // ACS is beside it unless WithACSURL says otherwise.
 func ExampleNew() {
-	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
-		samlsp.WithSLOURL("https://sp.example.com/saml/slo"))
+	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata")
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println(config.ACSURL())
-	fmt.Println(config.SLOURL())
 	// Output:
 	// https://sp.example.com/saml/acs
-	// https://sp.example.com/saml/slo
 }
 
 // Use WithACSURL when the ACS is elsewhere.
 func ExampleNew_customURLs() {
 	config, err := samlsp.New(exampleIDP(), "https://sp.example.com/saml/metadata",
-		samlsp.WithACSURL("https://sp.example.com/auth/saml/callback"),
-		samlsp.WithSLOURL("https://sp.example.com/auth/saml/logout"))
+		samlsp.WithACSURL("https://sp.example.com/auth/saml/callback"))
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println(config.ACSURL())
-	fmt.Println(config.SLOURL())
 	// Output:
 	// https://sp.example.com/auth/saml/callback
-	// https://sp.example.com/auth/saml/logout
 }
 
 // An entity ID that is not a URL, such as a URN, needs WithACSURL.
@@ -143,15 +136,8 @@ func ExampleServiceProviderOption_perCall() {
 // The application's own session and pending-request storage, which this
 // package leaves to it. The examples use these stand-ins.
 
-func takePendingRequest(_ *http.Request) string                  { return "" }
-func startSession(_ http.ResponseWriter, _ *samlsp.Assertion)    {}
-func endSession(_ http.ResponseWriter, _ *http.Request)          {}
-func endSessionsOf(_ context.Context, _ saml.NameID, _ []string) {}
-
-// currentSession returns what the application kept from the user's login.
-func currentSession(_ *http.Request) (nameID saml.NameID, sessionIndexes []string, ok bool) {
-	return saml.NameID{}, nil, false
-}
+func takePendingRequest(_ *http.Request) string               { return "" }
+func startSession(_ http.ResponseWriter, _ *samlsp.Assertion) {}
 
 // sqlReplayState records accepted message IDs in a database table that
 // every process shares:

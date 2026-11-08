@@ -26,7 +26,6 @@ type Config struct {
 	identityProvider MetadataFunc
 	entityID         string
 	acsURL           url.URL
-	sloURL           url.URL
 
 	key                    crypto.Signer
 	certificate            *x509.Certificate
@@ -35,8 +34,6 @@ type Config struct {
 	encryptionKey          *rsa.PrivateKey
 	encryptionCert         *x509.Certificate
 	signRequests           bool
-	backChannel            bool
-	encryptLogoutNameID    bool
 	acceptBaseID           bool
 	nameIDFormat           saml.NameIDFormat
 	replayState            saml.AssertionReplayCache
@@ -94,21 +91,8 @@ func New(identityProvider MetadataFunc, entityID string, opts ...Option) (*Confi
 		}
 		c.acsURL = *u.ResolveReference(&url.URL{Path: "acs"})
 	}
-	if o.sloURL != "" {
-		if c.sloURL, err = absoluteURL("SLO URL", o.sloURL); err != nil {
-			return nil, err
-		}
-	}
 	if c.replayState == nil {
 		c.replayState = newMemoryReplayState(c.clock.Now)
-	}
-	if c.backChannel {
-		if c.sloURL.String() == "" {
-			return nil, errors.New("samlsp: BackChannelLogout needs WithSLOURL")
-		}
-		if signatureMethod(c.key) == "" {
-			return nil, errors.New("samlsp: BackChannelLogout needs an RSA or ECDSA key (see WithKey) to sign SOAP messages")
-		}
 	}
 	if c.encryptionKey != nil || c.encryptionCert != nil {
 		if c.encryptionKey == nil || c.encryptionCert == nil {
@@ -181,7 +165,6 @@ type Option interface {
 // configOptions holds options that New validates after applying them.
 type configOptions struct {
 	acsURL string
-	sloURL string
 }
 
 type optionFunc func(c *Config, o *configOptions)
@@ -195,47 +178,16 @@ func WithACSURL(acsURL string) Option {
 	return optionFunc(func(_ *Config, o *configOptions) { o.acsURL = acsURL })
 }
 
-// WithSLOURL sets the absolute URL of the SP's single logout service. The
-// handler at this URL calls ParseLogoutRequest and ParseLogoutResponse.
-// Without it, the SP metadata advertises no single logout service.
-func WithSLOURL(sloURL string) Option {
-	return optionFunc(func(_ *Config, o *configOptions) { o.sloURL = sloURL })
-}
-
-// AcceptBaseID makes ParseResponse accept an assertion, and
-// ParseLogoutRequest a LogoutRequest, that identifies the user with a
-// saml:BaseID instead of a NameID (saml-core §2.2.3). A BaseID's content is
-// defined by its xsi:type, which this package does not interpret: it is
-// given as Assertion.BaseID or LogoutRequest.BaseID, and NameID is zero.
-// Without it, such messages are refused.
+// AcceptBaseID makes ParseResponse accept an assertion that identifies the
+// user with a saml:BaseID instead of a NameID (saml-core §2.2.3). A
+// BaseID's content is defined by its xsi:type, which this package does not
+// interpret: it is given as Assertion.BaseID, and NameID is zero. Without
+// it, such assertions are refused. (For LogoutRequests, see
+// x/samlsp/slo.AcceptBaseID.)
 var AcceptBaseID Option = optionFunc(func(c *Config, _ *configOptions) { c.acceptBaseID = true })
-
-// EncryptLogoutNameID makes LogoutRequest and SendLogoutRequest identify the
-// user with an EncryptedID, encrypted to the IdP's encryption certificate,
-// instead of a NameID, so that the browser carrying the request does not
-// see it (saml-core §3.7.1). Some IdPs require it. Sending a LogoutRequest
-// fails if the IdP metadata has no encryption certificate.
-var EncryptLogoutNameID Option = optionFunc(func(c *Config, _ *configOptions) { c.encryptLogoutNameID = true })
-
-// BackChannelLogout enables single logout with the SAML SOAP binding, in
-// which the IdP and the SP exchange LogoutRequests and LogoutResponses
-// directly, server to server, without the user's browser (saml-profiles
-// §4.4). The SP metadata then advertises a SOAP SingleLogoutService at the
-// SLO URL, ParseLogoutRequest accepts SOAP LogoutRequests there, and
-// SendLogoutRequest can be used.
-//
-// Enable it only if the application can end a user's sessions on the
-// server, by NameID and SessionIndex: a SOAP LogoutRequest comes without
-// the browser, so deleting a session cookie does not end anything. It
-// needs WithSLOURL and WithKey, which signs the SOAP messages.
-var BackChannelLogout Option = optionFunc(func(c *Config, _ *configOptions) { c.backChannel = true })
 
 // ACSURL returns the URL of the SP's assertion consumer service.
 func (c *Config) ACSURL() string { return c.acsURL.String() }
-
-// SLOURL returns the URL of the SP's single logout service, or "" if there
-// is none.
-func (c *Config) SLOURL() string { return c.sloURL.String() }
 
 // WithKey sets the SP's private key and its certificate, which is published
 // in the SP metadata, with any intermediates of its chain. The key always
@@ -281,8 +233,9 @@ func WithNameIDFormat(format saml.NameIDFormat) Option {
 	return optionFunc(func(c *Config, _ *configOptions) { c.nameIDFormat = format })
 }
 
-// WithReplayState sets where ParseResponse and ParseLogoutRequest record
-// the IDs of the messages they accept, so that each is accepted only once.
+// WithReplayState sets where ParseResponse (and the LogoutRequests of
+// x/samlsp/slo) record the IDs of the messages they accept, so that each is
+// accepted only once.
 //
 // By default, a Config records them in memory, which protects one process
 // only: a Response replayed to another process, or after a restart, is
@@ -375,7 +328,7 @@ func (c *Config) EntityID() string { return c.entityID }
 // ServiceProviderOption customizes the saml.ServiceProvider that a Config
 // method builds and uses, for settings that have no Option of their own.
 // Pass it to New to apply it to every call, or to a single method: it is
-// an Option, an AuthnOption, a ResponseOption and a LogoutOption. The
+// an Option, a MessageOption and a ResponseOption. The
 // options of a call are applied after those passed to New.
 type ServiceProviderOption func(sp *saml.ServiceProvider)
 
@@ -384,7 +337,6 @@ func (f ServiceProviderOption) applyConfig(c *Config, _ *configOptions) {
 }
 func (f ServiceProviderOption) applyAuthn(o *authnOptions)       { o.sp = append(o.sp, f) }
 func (f ServiceProviderOption) applyMessage(o *messageOptions)   { o.sp = append(o.sp, f) }
-func (f ServiceProviderOption) applyLogout(o *logoutOptions)     { o.sp = append(o.sp, f) }
 func (f ServiceProviderOption) applyResponse(o *responseOptions) { o.sp = append(o.sp, f) }
 
 // WithServiceProvider returns a ServiceProviderOption that calls fn.
@@ -441,23 +393,14 @@ func (c *Config) localServiceProvider() *saml.ServiceProvider {
 		EncryptionCertificate: c.encryptionCert,
 		HTTPClient:            c.httpClient,
 		AcsURL:                c.acsURL,
-		SloURL:                c.sloURL,
 		AuthnNameIDFormat:     c.nameIDFormat,
 		ReplayCache:           c.replayState,
 		Clock:                 c.clock,
 
 		AuthnContextClassRefComparator: c.authnContextComparator,
-		EncryptLogoutNameID:            c.encryptLogoutNameID,
 		AcceptAssertionBaseID:          c.acceptBaseID,
-		AcceptLogoutRequestBaseID:      c.acceptBaseID,
 	}
 	harden(sp)
-	if c.sloURL.String() != "" {
-		sp.LogoutBindings = []string{saml.HTTPRedirectBinding, saml.HTTPPostBinding}
-		if c.backChannel {
-			sp.LogoutBindings = append(sp.LogoutBindings, saml.SOAPBinding)
-		}
-	}
 	method := c.signatureMethod
 	if method == "" {
 		method = signatureMethod(c.key)

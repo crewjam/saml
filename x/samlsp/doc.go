@@ -18,11 +18,9 @@
 //		samlsp.RemoteMetadata("https://idp.example.com/metadata"),
 //		"https://sp.example.com/saml/metadata", // the SP's entity ID
 //		samlsp.WithKey(key, cert),
-//		samlsp.WithSLOURL("https://sp.example.com/saml/slo"),
 //	)
 //	http.HandleFunc("/saml/metadata", config.ServeMetadata)
-//	http.HandleFunc("/saml/acs", acs)       // config.ACSURL()
-//	http.HandleFunc("/saml/slo", slo)       // config.SLOURL()
+//	http.HandleFunc("/saml/acs", acs) // config.ACSURL()
 //
 // The entity ID is conventionally the URL of the SP metadata. Unless
 // WithACSURL says otherwise, the ACS is beside it, at "acs": here,
@@ -69,9 +67,9 @@
 //
 // # Replay protection
 //
-// ParseResponse accepts each assertion only once, and ParseLogoutRequest
-// each LogoutRequest, so that a message copied from a browser's history
-// or a log cannot be used again. By default the IDs are kept in memory.
+// ParseResponse accepts each assertion only once (and x/samlsp/slo each
+// LogoutRequest), so that a message copied from a browser's history or a
+// log cannot be used again. By default the IDs are kept in memory.
 // They need no size limit: an ID is recorded only once the message is fully
 // verified as one the IdP issued for this SP, and only until the message
 // expires, a few minutes after it was issued (saml.MaxIssueDelay). So the
@@ -111,13 +109,15 @@
 // WithHTTPClient. It accepts an unsolicited (IdP-initiated) Response only
 // when AllowUnsolicited is passed.
 //
-// # Single Logout
+// # Single Logout and other extensions
 //
-// LogoutRequest starts single logout at the IdP, and ParseLogoutResponse
-// verifies the IdP's LogoutResponse. When the IdP starts logout instead,
-// ParseLogoutRequest verifies its LogoutRequest and LogoutResponse builds
-// the reply. All of these are sent through the browser. The SOAP binding
-// (back-channel logout) is not supported yet.
+// Single logout is in a separate package, github.com/crewjam/saml/x/samlsp/slo,
+// so that SPs that do not need it do not carry it. Like
+// github.com/crewjam/saml/x/samlsp/artifact, which sends messages with the
+// HTTP-Artifact binding, it is built only on this package's public API:
+// Send builds and sends any protocol message, WithModify lets a package
+// give its own options, Binding adds bindings, and WithMetadata, WithCheck
+// and ServiceProvider reach the configuration.
 //
 // # Errors
 //

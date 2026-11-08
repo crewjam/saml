@@ -8,7 +8,6 @@ import (
 
 	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/x/samlsp"
 )
 
@@ -28,15 +27,6 @@ func TestWithSignatureMethod(t *testing.T) {
 	}
 	if _, err := cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID(msg.ID)); err != nil {
 		t.Fatal(err)
-	}
-
-	// LogoutRequest.
-	msg, err = cfg.LogoutRequest(t.Context(), saml.NameID{Value: "alice"}, "s")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := msg.RedirectURL().Query().Get("SigAlg"); got != dsig.RSASHA512SignatureMethod {
-		t.Errorf("LogoutRequest SigAlg = %s", got)
 	}
 
 	// Signed metadata.

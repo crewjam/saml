@@ -25,6 +25,7 @@ import (
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/x/samlsp"
 	"github.com/crewjam/saml/x/samlsp/artifact"
+	"github.com/crewjam/saml/x/samlsp/slo"
 )
 
 const (
@@ -162,7 +163,7 @@ func setup(t *testing.T) (*fakeIDP, *samlsp.Config, *artifact.Binding, *artifact
 	spKey, spCert := keyPair(t)
 	cfg, err := samlsp.New(samlsp.StaticMetadata(idp.metadata()), spEntityID,
 		samlsp.WithKey(spKey, spCert), samlsp.SignAuthnRequests,
-		samlsp.WithSLOURL("https://sp.example.com/saml/slo"),
+		slo.Endpoint("https://sp.example.com/saml/slo"),
 		artifact.ResolutionService(arsURL, 3))
 	if err != nil {
 		t.Fatal(err)
@@ -219,7 +220,11 @@ func TestAuthnRequestByArtifact(t *testing.T) {
 func TestLogoutByArtifact(t *testing.T) {
 	idp, cfg, b, _, spCert := setup(t)
 
-	msg, err := cfg.LogoutRequest(t.Context(), saml.NameID{Value: "alice"}, "r", samlsp.WithCustomBinding(b))
+	logout, err := slo.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := logout.Request(t.Context(), saml.NameID{Value: "alice"}, "r", samlsp.WithCustomBinding(b))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +232,7 @@ func TestLogoutByArtifact(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 
-	msg, err = cfg.LogoutResponse(t.Context(), &samlsp.LogoutRequest{ID: "id-idp-logout"}, samlsp.WithCustomBinding(b))
+	msg, err = logout.Response(t.Context(), &slo.Request{ID: "id-idp-logout"}, samlsp.WithCustomBinding(b))
 	if err != nil {
 		t.Fatal(err)
 	}
