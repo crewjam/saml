@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/crewjam/saml/x/samlsp"
+	"github.com/crewjam/saml/x/samlsp/saferedirect"
 )
 
 // This file holds what x/samlsp leaves to the application: remembering the
@@ -96,10 +97,10 @@ func acs(w http.ResponseWriter, r *http.Request) {
 	startSession(w, assertion)
 
 	returnTo := pending.Get("to")
-	if !samlsp.IsSafeRedirectPath(returnTo) {
+	if !saferedirect.IsSafe(returnTo) {
 		returnTo = "/"
 	}
-	http.Redirect(w, r, returnTo, http.StatusFound) //nolint:gosec // G710: returnTo passed IsSafeRedirectPath
+	http.Redirect(w, r, returnTo, http.StatusFound) //nolint:gosec // G710: returnTo passed saferedirect.IsSafe
 }
 
 func startSession(w http.ResponseWriter, a *samlsp.Assertion) {

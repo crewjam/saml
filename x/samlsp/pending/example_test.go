@@ -9,6 +9,7 @@ import (
 
 	"github.com/crewjam/saml/x/samlsp"
 	"github.com/crewjam/saml/x/samlsp/pending"
+	"github.com/crewjam/saml/x/samlsp/saferedirect"
 )
 
 // A login handler remembers each AuthnRequest in a cookie, with where to
@@ -60,10 +61,10 @@ func Example() {
 		// The data came from the login request, so check it as such: a
 		// path on this site, not one that browsers read as another host.
 		next := login.Data
-		if !samlsp.IsSafeRedirectPath(next) {
+		if !saferedirect.IsSafe(next) {
 			next = "/"
 		}
-		http.Redirect(w, r, next, http.StatusFound) //nolint:gosec // G710: next is checked by IsSafeRedirectPath
+		http.Redirect(w, r, next, http.StatusFound) //nolint:gosec // G710: next is checked by saferedirect.IsSafe
 	})
 }
 

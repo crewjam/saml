@@ -13,6 +13,7 @@ import (
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/attrname"
 	"github.com/crewjam/saml/x/samlsp"
+	"github.com/crewjam/saml/x/samlsp/saferedirect"
 	"github.com/crewjam/saml/x/samlsp/slo"
 )
 
@@ -157,10 +158,10 @@ func (a *App) acs(w http.ResponseWriter, r *http.Request) {
 	a.db.AddSession(s)
 	a.setCookie(w, sessionCookie, s.ID, "/", int(time.Until(expires)/time.Second), false)
 
-	if !samlsp.IsSafeRedirectPath(redirectTo) {
+	if !saferedirect.IsSafe(redirectTo) {
 		redirectTo = "/"
 	}
-	http.Redirect(w, r, redirectTo, http.StatusFound) //nolint:gosec // G710: redirectTo passed IsSafeRedirectPath
+	http.Redirect(w, r, redirectTo, http.StatusFound) //nolint:gosec // G710: redirectTo passed saferedirect.IsSafe
 }
 
 // loginInProgress returns the options that ParseResponse needs for the

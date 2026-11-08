@@ -2,7 +2,7 @@ diff --git a/apps/login/acceptance/samlsp/main.go b/apps/login/acceptance/samlsp
 index 9dcfd13..0bdc2d2 100644
 --- a/apps/login/acceptance/samlsp/main.go
 +++ b/apps/login/acceptance/samlsp/main.go
-@@ -3,25 +3,26 @@ package main
+@@ -3,25 +3,27 @@ package main
  import (
  	"bytes"
  	"context"
@@ -29,10 +29,11 @@ index 9dcfd13..0bdc2d2 100644
 -	"github.com/crewjam/saml/samlsp"
 +	"github.com/crewjam/saml/x/samlsp"
 +	"github.com/crewjam/saml/x/samlsp/pending"
++	"github.com/crewjam/saml/x/samlsp/saferedirect"
  )
  
  var keyPair = func() tls.Certificate {
-@@ -86,8 +87,86 @@ FHHEZ+dR4eMaJp6PhNm8hu2O
+@@ -86,8 +88,86 @@ FHHEZ+dR4eMaJp6PhNm8hu2O
  	return kp
  }()
  
@@ -114,14 +115,14 @@ index 9dcfd13..0bdc2d2 100644
 +		SameSite: http.SameSiteLaxMode,
 +	})
 +	redirect := login.Data
-+	if !samlsp.IsSafeRedirectPath(redirect) {
++	if !saferedirect.IsSafe(redirect) {
 +		redirect = "/"
 +	}
 +	http.Redirect(w, r, redirect, http.StatusFound)
  }
  
  func main() {
-@@ -99,37 +178,37 @@ func main() {
+@@ -99,37 +179,37 @@ func main() {
  	host := os.Getenv("HOST")
  	port := os.Getenv("PORT")
  
@@ -176,7 +177,7 @@ index 9dcfd13..0bdc2d2 100644
  	go func() {
  		if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
  			log.Fatalf("HTTP server error: %v", err)
-@@ -137,7 +216,7 @@ func main() {
+@@ -137,7 +217,7 @@ func main() {
  		log.Println("Stopped serving new connections.")
  	}()
  

@@ -34,6 +34,7 @@ import (
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/x/samlsp"
 	"github.com/crewjam/saml/x/samlsp/pending"
+	"github.com/crewjam/saml/x/samlsp/saferedirect"
 	"github.com/crewjam/saml/x/samlsp/slo"
 )
 
@@ -171,10 +172,10 @@ func acs(w http.ResponseWriter, r *http.Request) {
 	startSession(w, assertion)
 
 	returnTo := login.Data
-	if !samlsp.IsSafeRedirectPath(returnTo) {
+	if !saferedirect.IsSafe(returnTo) {
 		returnTo = "/hello"
 	}
-	http.Redirect(w, r, returnTo, http.StatusFound) //nolint:gosec // G710: returnTo passed IsSafeRedirectPath
+	http.Redirect(w, r, returnTo, http.StatusFound) //nolint:gosec // G710: returnTo passed saferedirect.IsSafe
 }
 
 // startLogout ends the local session, then sends the browser to the IdP to
