@@ -61,7 +61,7 @@
 <footer class="footer">
   <div class="footer-inner">
     <span>Deleted {{.Data.Lifetime}} after creation. Do not use real credentials or personal data.</span>
-    <span>Built on <a href="https://github.com/crewjam/saml">crewjam/saml</a></span>
+    <span>Built on <a href="https://github.com/crewjam/saml">crewjam/saml</a> · <span class="mono">{{.Build.Version}}{{with .Build.Commit}} (<a href="https://github.com/crewjam/saml/commit/{{.}}" title="{{.}}">{{$.Build.Short}}</a>{{if $.Build.Modified}}, modified{{end}}){{end}}</span></span>
   </div>
 </footer>
 {{end}}
