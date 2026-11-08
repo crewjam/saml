@@ -191,13 +191,17 @@ type CustomBindingOption struct{ b Binding }
 
 // WithCustomBinding lets ParseAuthnRequest accept an AuthnRequest whose
 // assertion consumer service has the binding of b, and makes Response and
-// ErrorResponse send to such a service with b. Pass it to all three.
+// ErrorResponse send to such a service with b. Pass it to all three, and
+// to IDPInitiated, which then chooses the SP's default ACS among those
+// with b's binding as well as those a Response can be posted to.
 //
 // An AuthnRequest that names its ACS by index gets that ACS. One that
 // names it by URL and asks for b's binding (ProtocolBinding) gets the ACS
-// with that binding at that URL, if the SP lists one. Without
-// WithCustomBinding, an ACS with b's binding is answered with
-// StatusUnsupportedBinding at the SP's default ACS.
+// with that binding at that URL, if the SP lists one; one that names none
+// and asks for b's binding gets the SP's default ACS with that binding
+// (saml-metadata §2.2.3), if it lists one. Without WithCustomBinding, an
+// ACS with b's binding is answered with StatusUnsupportedBinding at the
+// SP's default ACS.
 func WithCustomBinding(b Binding) CustomBindingOption { return CustomBindingOption{b} }
 
 func (o CustomBindingOption) applyParse(p *parseOptions)       { p.custom = o.b }
