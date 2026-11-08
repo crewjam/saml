@@ -90,15 +90,14 @@ func TestConformanceDeviation_EncryptedAssertionAlgorithms(t *testing.T) {
 	assert.Check(t, parse(encrypted(t, aes)), "AES-256-CBC with RSA-OAEP is accepted")
 }
 
-// saml-core §1.3.3 requires SAML time values in UTC with the zone
-// designator "Z". Protocol messages and assertions are held to it
-// (TestRelaxedTimeRequiresUTC), but the validUntil of metadata is read
-// leniently: a time with no zone is read as UTC, and one with an offset is
-// converted to UTC. Metadata in the wild is written without a zone
-// (testdata/TestCanParseMetadata_metadata.xml), and refusing it would
-// make the whole document unreadable. See metadataTime.
-func TestConformanceDeviation_MetadataTimeZone(t *testing.T) {
+// saml-core §1.3.3 says SAML time values "MUST be expressed in UTC form,
+// with no time zone component". Implementations write them with no zone
+// designator (the literal reading) or with a trailing "Z", so both are read
+// as UTC, in metadata, protocol messages and assertions alike. A time with
+// a numeric offset is also accepted and converted to UTC. See RelaxedTime.
+func TestConformanceDeviation_TimeZone(t *testing.T) {
 	for in, want := range map[string]time.Time{
+		"2030-01-02T03:04:05.678Z":  time.Date(2030, 1, 2, 3, 4, 5, 678000000, time.UTC),
 		"2030-01-02T03:04:05.678":   time.Date(2030, 1, 2, 3, 4, 5, 678000000, time.UTC),
 		"2030-01-02T05:04:05+02:00": time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
 	} {
@@ -108,7 +107,7 @@ func TestConformanceDeviation_MetadataTimeZone(t *testing.T) {
 		assert.Check(t, ed.ValidUntil.Equal(want), "%s: %s", in, ed.ValidUntil)
 
 		var a Assertion
-		err := xml.Unmarshal([]byte(`<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion" IssueInstant="`+in+`"/>`), &a)
-		assert.Check(t, is.ErrorContains(err, "is not in UTC"), in)
+		assert.Check(t, xml.Unmarshal([]byte(`<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion" IssueInstant="`+in+`"/>`), &a), in)
+		assert.Check(t, a.IssueInstant.Equal(want), "%s: %s", in, a.IssueInstant)
 	}
 }

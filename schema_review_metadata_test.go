@@ -62,7 +62,7 @@ func TestEndpointLocationWhitespace(t *testing.T) {
 // MarshalXML as they are by Element.
 func TestSubjectConfirmationDataNotBeforeRelaxed(t *testing.T) {
 	const in = `<SubjectConfirmationData xmlns="urn:oasis:names:tc:SAML:2.0:assertion" ` +
-		`NotBefore="2030-01-01T00:00:00.000Z" NotOnOrAfter="2030-01-01T00:05:00Z" Recipient="https://sp.example.com/acs"/>`
+		`NotBefore="2030-01-01T00:00:00" NotOnOrAfter="2030-01-01T00:05:00" Recipient="https://sp.example.com/acs"/>`
 	var scd SubjectConfirmationData
 	assert.NilError(t, xml.Unmarshal([]byte(in), &scd))
 	assert.Check(t, scd.NotBefore.Equal(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)))
