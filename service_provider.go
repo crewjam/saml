@@ -1609,7 +1609,7 @@ func (sp *ServiceProvider) parseResponseHTTP(req *http.Request, possibleRequestI
 		return nil, retErr
 	}
 	if simpleSign != nil {
-		return sp.parseSimpleSignResponse(simpleSign, possibleRequestIDs, *req.URL)
+		return sp.parseSimpleSignResponse(simpleSign, possibleRequestIDs, sp.receivedURL(req))
 	}
 
 	rawResponseBuf, err := base64.StdEncoding.DecodeString(req.PostForm.Get("SAMLResponse"))
@@ -1618,11 +1618,26 @@ func (sp *ServiceProvider) parseResponseHTTP(req *http.Request, possibleRequestI
 		return nil, retErr
 	}
 
-	assertion, err := sp.ParseXMLResponse(rawResponseBuf, possibleRequestIDs, *req.URL)
+	assertion, err := sp.ParseXMLResponse(rawResponseBuf, possibleRequestIDs, sp.receivedURL(req))
 	if err != nil {
 		return nil, err
 	}
 	return assertion, nil
+}
+
+// receivedURL returns the URL at which req, a request to the ACS, was
+// received, for the check of a Response's Destination: the path and query
+// of req.URL at the scheme and host of AcsURL. The scheme and host of
+// req.URL itself are the client's to choose (Go's server takes them from an
+// absolute-form request-target, "POST https://other-sp.example/acs
+// HTTP/1.1", and routes by path all the same), so they would let a Response
+// addressed to another service provider pass the check.
+func (sp *ServiceProvider) receivedURL(req *http.Request) url.URL {
+	u := *req.URL
+	u.Scheme = sp.AcsURL.Scheme
+	u.Host = sp.AcsURL.Host
+	u.User = nil
+	return u
 }
 
 // ParseXMLArtifactResponse validates the SAML Artifact resolver response
