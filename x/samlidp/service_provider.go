@@ -146,7 +146,7 @@ func WithServiceProviderEntityID(entityID string) MetadataOption {
 }
 
 // WithMetadataSigners makes metadata acceptable only if it carries a valid
-// XML signature by one of certs. Use it whenever the metadata comes over a
+// XML signature by one of certs, made without SHA-1. Use it whenever the metadata comes over a
 // channel that is not otherwise trusted.
 func WithMetadataSigners(certs ...*x509.Certificate) MetadataOption {
 	return metadataOptionFunc(func(o *metadataOptions) { o.certs = append(o.certs, certs...) })
@@ -183,7 +183,7 @@ func ParseMetadata(data []byte, opts ...MetadataOption) (*saml.EntityDescriptor,
 
 func parseMetadata(data []byte, o metadataOptions) (*saml.EntityDescriptor, error) {
 	if len(o.certs) > 0 {
-		signed, err := saml.VerifyMetadataSignature(data, o.certs)
+		signed, err := saml.VerifyMetadataSignatureRejectSHA1(data, o.certs)
 		if err != nil {
 			return nil, err
 		}

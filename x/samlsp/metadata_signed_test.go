@@ -4,6 +4,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/xml"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -35,6 +36,12 @@ func signedIDPMetadata(t *testing.T, ti *testIDP) []byte {
 // signedAggregate returns an EntitiesDescriptor of entities, signed with key.
 func signedAggregate(t *testing.T, key *rsa.PrivateKey, cert *x509.Certificate, entities ...*saml.EntityDescriptor) []byte {
 	t.Helper()
+	return signedAggregateWith(t, dsig.RSASHA256SignatureMethod, key, cert, entities...)
+}
+
+// signedAggregateWith is signedAggregate, signed with method.
+func signedAggregateWith(t *testing.T, method string, key *rsa.PrivateKey, cert *x509.Certificate, entities ...*saml.EntityDescriptor) []byte {
+	t.Helper()
 	id := "id-aggregate"
 	agg := saml.EntitiesDescriptor{ID: &id}
 	for _, e := range entities {
@@ -50,7 +57,7 @@ func signedAggregate(t *testing.T, key *rsa.PrivateKey, cert *x509.Certificate, 
 	}
 	signer := dsig.NewDefaultSigningContext(dsig.TLSCertKeyStore{PrivateKey: key, Certificate: [][]byte{cert.Raw}})
 	signer.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList("")
-	if err := signer.SetSignatureMethod(dsig.RSASHA256SignatureMethod); err != nil {
+	if err := signer.SetSignatureMethod(method); err != nil {
 		t.Fatal(err)
 	}
 	signed, err := signer.SignEnveloped(doc.Root())
@@ -151,5 +158,24 @@ func TestSignedAggregate(t *testing.T) {
 	_, err = samlsp.StaticMetadataBytes(agg, samlsp.WithMetadataSigners(fedCert))(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "WithIdentityProviderEntityID") {
 		t.Errorf("the error for several IdPs does not name the option: %v", err)
+	}
+}
+
+// Metadata signed with SHA-1 is refused, as protocol messages signed with
+// it are.
+func TestSignedMetadataRefusesSHA1(t *testing.T) {
+	ti := newTestIDP(t)
+	key, cert := newKeyPair(t, "federation")
+	sha1 := signedAggregateWith(t, dsig.RSASHA1SignatureMethod, key, cert, ti.idp.Metadata())
+	if !strings.Contains(string(sha1), dsig.RSASHA1SignatureMethod) {
+		t.Fatal("the test did not sign with SHA-1")
+	}
+	_, err := samlsp.ParseMetadata(sha1, samlsp.WithMetadataSigners(cert))
+	if !errors.Is(err, saml.ErrUnsupported) {
+		t.Fatalf("got %v, want saml.ErrUnsupported", err)
+	}
+	sha256 := signedAggregateWith(t, dsig.RSASHA256SignatureMethod, key, cert, ti.idp.Metadata())
+	if _, err := samlsp.ParseMetadata(sha256, samlsp.WithMetadataSigners(cert)); err != nil {
+		t.Fatal(err)
 	}
 }
