@@ -68,9 +68,11 @@ func endSession(http.ResponseWriter, *http.Request) {}
 // IdP that issued it.
 func endSessionsOf(context.Context, string, saml.NameID, []string) {}
 
-// currentSession returns what the application kept from the user's login.
-func currentSession(*http.Request) (nameID saml.NameID, sessionIndexes []string, ok bool) {
-	return saml.NameID{}, nil, false
+// currentSession returns what the application kept from the user's login:
+// the IdP's entity ID (the assertion's Issuer), the NameID and the
+// SessionIndexes.
+func currentSession(*http.Request) (issuer string, nameID saml.NameID, sessionIndexes []string, ok bool) {
+	return "", saml.NameID{}, nil, false
 }
 
 // Endpoint adds the SP's single logout service to the Config, and New
@@ -109,7 +111,7 @@ func ExampleService_Request() {
 	}
 
 	http.HandleFunc("POST /logout", func(w http.ResponseWriter, r *http.Request) {
-		nameID, sessionIndexes, ok := currentSession(r)
+		_, nameID, sessionIndexes, ok := currentSession(r)
 		endSession(w, r)
 		if !ok {
 			http.Redirect(w, r, "/", http.StatusFound)
@@ -154,7 +156,11 @@ func ExampleService_ParseRequest() {
 				return
 			}
 			// End the sessions it names, in this browser and elsewhere.
-			endSession(w, r)
+			// Anyone can make a browser deliver a request for another
+			// user, so end this browser's session only if it is named.
+			if issuer, nameID, sessionIndexes, ok := currentSession(r); ok && req.Matches(issuer, nameID, sessionIndexes) {
+				endSession(w, r)
+			}
 			endSessionsOf(r.Context(), req.Issuer, req.NameID, req.SessionIndexes)
 
 			msg, err := logout.Response(r.Context(), req)
@@ -233,7 +239,7 @@ func ExampleService_SendRequest() {
 	}
 
 	http.HandleFunc("POST /admin/users/{id}/disable", func(w http.ResponseWriter, r *http.Request) {
-		nameID, sessionIndexes, _ := currentSession(r) // the disabled user's, from the application's store
+		_, nameID, sessionIndexes, _ := currentSession(r) // the disabled user's, from the application's store
 		endSessionsOf(r.Context(), "https://idp.example.com/metadata", nameID, sessionIndexes)
 
 		_, err := logout.SendRequest(r.Context(), nameID,

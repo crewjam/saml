@@ -308,6 +308,33 @@ type Request struct {
 	Raw *saml.LogoutRequest
 }
 
+// Matches reports whether a session of the user nameID of the IdP issuer,
+// with sessionIndexes (as samlsp.Assertion gave them at login), is one the
+// request names: issuer must be the request's Issuer, nameID's value must
+// be that of the request's NameID, and if the request names
+// SessionIndexes, one of sessionIndexes must be among them.
+//
+// Use it before ending the session of the browser that delivered the
+// request. Anyone can make a browser deliver one: a user who starts a
+// logout of their own account at the IdP can stop at the redirect to the
+// SP and send the victim's browser there instead, within the request's
+// lifetime. Ending the browser's own session unconditionally would then
+// log the victim out.
+func (req *Request) Matches(issuer string, nameID saml.NameID, sessionIndexes []string) bool {
+	if req.Issuer == "" || issuer != req.Issuer || req.NameID.Value == "" || nameID.Value != req.NameID.Value {
+		return false
+	}
+	if len(req.SessionIndexes) == 0 {
+		return true
+	}
+	for _, index := range req.SessionIndexes {
+		if slices.Contains(sessionIndexes, index) {
+			return true
+		}
+	}
+	return false
+}
+
 // IsRequest reports whether r, sent to the SLO URL, carries a
 // LogoutRequest from the IdP, for ParseRequest: one sent through the
 // browser (a SAMLRequest parameter) or with the SOAP binding.
@@ -341,6 +368,9 @@ func WriteRequestError(w http.ResponseWriter, r *http.Request) {
 //
 // The caller then ends the sessions that the request names and answers
 // with Response, or, if the request is refused, with WriteRequestError.
+// It ends the session of the browser that delivered the request only if
+// the request names it (see Request.Matches): anyone can make a browser
+// deliver a valid request for another user.
 func (s *Service) ParseRequest(ctx context.Context, r *http.Request, opts ...samlsp.ServiceProviderOption) (*Request, error) {
 	sp, err := s.config.ServiceProvider(ctx, opts...)
 	if err != nil {
