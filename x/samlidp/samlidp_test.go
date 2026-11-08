@@ -98,6 +98,13 @@ type pair struct {
 
 func newPair(t *testing.T, idpOpts []samlidp.Option, spOpts []samlsp.Option) *pair {
 	t.Helper()
+	return newPairWithMetadata(t, idpOpts, spOpts, nil)
+}
+
+// newPairWithMetadata is newPair, with the SP metadata that the IdP sees
+// changed by edit, if it is not nil.
+func newPairWithMetadata(t *testing.T, idpOpts []samlidp.Option, spOpts []samlsp.Option, edit func(*saml.EntityDescriptor)) *pair {
+	t.Helper()
 	keys(t)
 	p := &pair{}
 	idpMetadata := func(context.Context) (*saml.EntityDescriptor, error) { return p.idp.Metadata(), nil }
@@ -106,7 +113,11 @@ func newPair(t *testing.T, idpOpts []samlidp.Option, spOpts []samlsp.Option) *pa
 	if err != nil {
 		t.Fatal(err)
 	}
-	sps := samlidp.StaticServiceProviders(p.sp.Metadata(context.Background()))
+	spMetadata := p.sp.Metadata(context.Background())
+	if edit != nil {
+		edit(spMetadata)
+	}
+	sps := samlidp.StaticServiceProviders(spMetadata)
 	p.idp, err = samlidp.New(idpEntityID, sps, append([]samlidp.Option{samlidp.WithSigningKey(idpKey, idpCert)}, idpOpts...)...)
 	if err != nil {
 		t.Fatal(err)
