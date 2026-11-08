@@ -1,6 +1,7 @@
 package server
 
 import (
+	"github.com/crewjam/saml/x/samlidp"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -82,5 +83,19 @@ func TestProfiles(t *testing.T) {
 			_, body = h.do(http.MethodPost, "/manage/"+idpSecret+"/profile", url.Values{"profile": {"generic"}})
 			mustContain(t, body, "Profile Generic applied", h.base+"/idp/"+idpID+"/metadata")
 		})
+	}
+}
+
+// A pairwise-id is stable for a user at an SP, and different at each SP.
+func TestPairwiseIDPerSP(t *testing.T) {
+	attrs := []samlidp.Attribute{{Name: pairwiseIDName, Values: []string{"per-sp@x.gosaml.dev"}}, {Name: "mail", Values: []string{"a@b"}}}
+	a1 := pairwiseAttributes(attrs, "idp", "alice", "https://sp1")
+	a1again := pairwiseAttributes(attrs, "idp", "alice", "https://sp1")
+	a2 := pairwiseAttributes(attrs, "idp", "alice", "https://sp2")
+	if a1[0].Values[0] != a1again[0].Values[0] || a1[0].Values[0] == a2[0].Values[0] {
+		t.Fatalf("%v %v %v", a1[0].Values, a1again[0].Values, a2[0].Values)
+	}
+	if !strings.HasSuffix(a1[0].Values[0], "@x.gosaml.dev") || a1[1].Values[0] != "a@b" || attrs[0].Values[0] != "per-sp@x.gosaml.dev" {
+		t.Fatalf("%+v (input %+v)", a1, attrs)
 	}
 }

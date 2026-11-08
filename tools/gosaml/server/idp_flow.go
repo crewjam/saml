@@ -228,6 +228,8 @@ func buildSubject(req *samlidp.AuthnRequest, user *User, format string, authnCon
 func (s *Server) respond(w http.ResponseWriter, r *http.Request, run *idpRun, req *samlidp.AuthnRequest,
 	subject samlidp.Subject, sess *idpSession, sessID string) {
 	ctx := r.Context()
+	// A pairwise-id is different for each SP.
+	subject.Attributes = pairwiseAttributes(subject.Attributes, run.in.ID, sess.Username, req.ServiceProvider)
 	opts := []samlidp.ResponseOption{samlidp.WithScriptNonce(nonce(r)), run.binding()}
 	respOpts := opts
 	if o := profileByKey(run.cfg.Profile).assertionOption(); o != nil {

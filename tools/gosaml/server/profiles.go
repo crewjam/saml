@@ -186,7 +186,9 @@ func profileUsers(profile string, cfg *IdPConfig, id string) []User {
 			}
 			u = User{Username: p.username, NameID: p.username, NameIDFormat: string(saml.TransientNameIDFormat), Attributes: []samlidp.Attribute{
 				uriAttr("urn:oid:1.3.6.1.4.1.5923.1.1.1.6", "eduPersonPrincipalName", p.username+"@"+scope),
-				uriAttr("urn:oasis:names:tc:SAML:attribute:pairwise-id", "pairwise-id", pairwiseID(id, p.username)+"@"+scope),
+				// Its value is made for each SP when a Response is (see
+				// pairwiseAttributes); this one is a placeholder.
+				uriAttr(pairwiseIDName, "pairwise-id", "per-sp@"+scope),
 				uriAttr("urn:oid:0.9.2342.19200300.100.1.1", "uid", p.username),
 				uriAttr("urn:oid:0.9.2342.19200300.100.1.3", "mail", mail),
 				uriAttr("urn:oid:2.5.4.42", "givenName", p.given),
@@ -273,9 +275,33 @@ func formatGUID(b []byte) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-// pairwiseID is a SAML pairwise-id value: opaque and stable for the user
-// at this IdP.
-func pairwiseID(id, username string) string {
-	sum := sha256.Sum256([]byte("pairwise\x00" + id + "\x00" + username))
+// pairwiseIDName is the SAML pairwise-id attribute
+// (saml-subject-id-attr-v1.0 §3.4).
+const pairwiseIDName = "urn:oasis:names:tc:SAML:attribute:pairwise-id"
+
+// pairwiseID is the unique part of a pairwise-id value: opaque, stable
+// for the user at this IdP, and different for each SP, so that SPs cannot
+// correlate a user by it.
+func pairwiseID(idpID, username, sp string) string {
+	sum := sha256.Sum256([]byte("pairwise\x00" + idpID + "\x00" + username + "\x00" + sp))
 	return strings.ToUpper(hex.EncodeToString(sum[:16]))
+}
+
+// pairwiseAttributes returns attrs with the value of a pairwise-id
+// attribute, if any, made for the SP sp: its scope (after the "@") is
+// kept, and the part before it computed.
+func pairwiseAttributes(attrs []samlidp.Attribute, idpID, username, sp string) []samlidp.Attribute {
+	out := make([]samlidp.Attribute, len(attrs))
+	copy(out, attrs)
+	for i, a := range out {
+		if a.Name != pairwiseIDName || len(a.Values) == 0 {
+			continue
+		}
+		scope := a.Values[0]
+		if at := strings.LastIndex(scope, "@"); at >= 0 {
+			scope = scope[at+1:]
+		}
+		out[i].Values = []string{pairwiseID(idpID, username, sp) + "@" + scope}
+	}
+	return out
 }
