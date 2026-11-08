@@ -444,7 +444,9 @@ func TestSpecProfile_4_1_4_2_AuthnStatementRequired(t *testing.T) {
 // saml-profiles §4.1.4.2: "The <Issuer> element MAY be omitted, but if
 // present it MUST contain the unique identifier of the issuing identity
 // provider" and "Each assertion's <Issuer> element MUST contain the unique
-// identifier of the issuing identity provider".
+// identifier of the issuing identity provider". "If the <Response> message
+// is signed or if an enclosed assertion is encrypted, then the <Issuer>
+// element MUST be present."
 func TestSpecProfile_4_1_4_2_IssuerMustBeTheIdP(t *testing.T) {
 	e := spcovSetup(t)
 
@@ -455,7 +457,25 @@ func TestSpecProfile_4_1_4_2_IssuerMustBeTheIdP(t *testing.T) {
 	assert.Check(t, errors.Is(err, ErrIssuerMismatch), "assertion Issuer: got %v", err)
 
 	_, err = specProfParse(t, e, []string{spcovRequestID}, nil, func(r *Response) { r.Issuer = nil })
-	assert.Check(t, err, "the Response Issuer MAY be omitted")
+	assert.Check(t, errors.Is(err, ErrMissingElement), "a signed Response must have an Issuer: got %v", err)
+	assert.Check(t, is.ErrorContains(spcovPrivateErr(t, err), "saml-profiles §4.1.4.2"))
+
+	// An unsigned Response carrying a signed, unencrypted assertion may
+	// omit its Issuer.
+	r := e.response()
+	r.Issuer = nil
+	el := r.Element()
+	el.AddChild(e.idpSign(t, e.assertion().Element()))
+	_, err = e.sp.ParseXMLResponse(spcovSerialize(t, el), []string{spcovRequestID}, e.sp.AcsURL)
+	assert.Check(t, err, "an unsigned Response with a plaintext assertion may omit its Issuer")
+
+	// One carrying an EncryptedAssertion may not.
+	r = e.response()
+	r.Issuer = nil
+	el = r.Element()
+	el.AddChild(e.encryptedAssertion(t, spcovSerialize(t, e.idpSign(t, e.assertion().Element()))))
+	_, err = e.sp.ParseXMLResponse(spcovSerialize(t, el), []string{spcovRequestID}, e.sp.AcsURL)
+	assert.Check(t, errors.Is(err, ErrMissingElement), "a Response with an EncryptedAssertion must have an Issuer: got %v", err)
 }
 
 // saml-profiles §4.1.4.2: "If the identity provider wishes to return an

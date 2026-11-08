@@ -1930,6 +1930,11 @@ func (sp *ServiceProvider) parseReceivedResponse(responseEl, receivedEl *etree.E
 		return nil, err
 	}
 
+	encryptedAssertionEls, err := findChildren(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "EncryptedAssertion")
+	if err != nil {
+		return nil, err
+	}
+
 	// assertionRequestIDs are the request IDs an assertion may answer.
 	assertionRequestIDs := possibleRequestIDs
 
@@ -1968,17 +1973,8 @@ func (sp *ServiceProvider) parseReceivedResponse(responseEl, receivedEl *etree.E
 		if err := sp.limits().checkIssueInstant("response IssueInstant", response.IssueInstant, now); err != nil {
 			return nil, err
 		}
-		if response.Issuer != nil {
-			idpEntityID, err := sp.idpEntityID()
-			if err != nil {
-				return nil, err
-			}
-			if response.Issuer.Value != idpEntityID {
-				return nil, classify(fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", idpEntityID), ErrIssuerMismatch)
-			}
-			if err := checkSSOIssuerFormat("response", response.Issuer); err != nil {
-				return nil, err
-			}
+		if err := sp.checkResponseIssuer(response.Issuer, responseHasSignature || len(encryptedAssertionEls) > 0); err != nil {
+			return nil, err
 		}
 		if response.Status.StatusCode.Value != StatusSuccess {
 			return nil, newErrBadStatus(response.Status)
@@ -1990,10 +1986,6 @@ func (sp *ServiceProvider) parseReceivedResponse(responseEl, receivedEl *etree.E
 		signatureRequirement = signatureNotRequired
 	}
 
-	encryptedAssertionEls, err := findChildren(responseEl, "urn:oasis:names:tc:SAML:2.0:assertion", "EncryptedAssertion")
-	if err != nil {
-		return nil, err
-	}
 	assertionEls, receivedAssertionEls, err := receivedChildren(responseEl, receivedEl, "urn:oasis:names:tc:SAML:2.0:assertion", "Assertion")
 	if err != nil {
 		return nil, err
@@ -2053,6 +2045,29 @@ func (sp *ServiceProvider) parseReceivedResponse(responseEl, receivedEl *etree.E
 		return nil, err
 	}
 	return &assertions[0], nil
+}
+
+// checkResponseIssuer checks issuer, the Issuer of a Response of the Web
+// Browser SSO profile. It may be omitted unless required, which it is when
+// the Response is signed or carries an EncryptedAssertion: "If the
+// <Response> message is signed or if an enclosed assertion is encrypted,
+// then the <Issuer> element MUST be present" (saml-profiles §4.1.4.2). If
+// present, it must name the IdP, with no Format or the entity Format.
+func (sp *ServiceProvider) checkResponseIssuer(issuer *Issuer, required bool) error {
+	if issuer == nil {
+		if required {
+			return classify(errors.New("response has no Issuer, which a signed Response or one with an EncryptedAssertion must have (saml-profiles §4.1.4.2)"), ErrMissingElement)
+		}
+		return nil
+	}
+	idpEntityID, err := sp.idpEntityID()
+	if err != nil {
+		return err
+	}
+	if issuer.Value != idpEntityID {
+		return classify(fmt.Errorf("response Issuer does not match the IDP metadata (expected %q)", idpEntityID), ErrIssuerMismatch)
+	}
+	return checkSSOIssuerFormat("response", issuer)
 }
 
 func (sp *ServiceProvider) validateRequestID(response Response, possibleRequestIDs []string) error {
