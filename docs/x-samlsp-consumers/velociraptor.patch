@@ -1,0 +1,358 @@
+diff --git a/api/authenticators/provider.go b/api/authenticators/provider.go
+index b1c7520..7a1489a 100644
+--- a/api/authenticators/provider.go
++++ b/api/authenticators/provider.go
+@@ -86,7 +86,18 @@ func (self *Provider) GetJWT(
+ func (self *Provider) getSignedJWTTokenCookie(
+ 	config_obj *config_proto.Config,
+ 	claims *Claims) (*http.Cookie, error) {
+-	expiry_min := self.authenticator.DefaultSessionExpiryMin
++	self.Debug("getSignedJWTTokenCookie: Creating JWT with claims: %#v", claims)
++	return getSignedJWTTokenCookie(config_obj, self.authenticator, claims)
++}
++
++// getSignedJWTTokenCookie makes the VelociraptorAuth session cookie that
++// every browser authenticator (OIDC, SAML) issues once the user is
++// authenticated.
++func getSignedJWTTokenCookie(
++	config_obj *config_proto.Config,
++	authenticator *config_proto.Authenticator,
++	claims *Claims) (*http.Cookie, error) {
++	expiry_min := authenticator.DefaultSessionExpiryMin
+ 	if expiry_min == 0 {
+ 		expiry_min = 60 * 24 // 1 Day by default
+ 	}
+@@ -101,7 +112,6 @@ func (self *Provider) getSignedJWTTokenCookie(
+ 
+ 	// Make a JWT and sign it.
+ 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+-	self.Debug("getSignedJWTTokenCookie: Creating JWT with claims: %#v", claims)
+ 
+ 	tokenString, err := token.SignedString([]byte(config_obj.Frontend.PrivateKey))
+ 	if err != nil {
+diff --git a/api/authenticators/saml.go b/api/authenticators/saml.go
+index 9689cbb..19406ac 100644
+--- a/api/authenticators/saml.go
++++ b/api/authenticators/saml.go
+@@ -2,34 +2,35 @@ package authenticators
+ 
+ import (
+ 	"context"
++	"crypto/rand"
++	"errors"
+ 	"fmt"
+ 	"net/http"
+-	"net/url"
+-	"time"
++	"strings"
+ 
+ 	"github.com/Velocidex/ordereddict"
+-	"github.com/crewjam/saml/samlsp"
+-	"github.com/gorilla/csrf"
++	"github.com/crewjam/saml/x/samlsp"
+ 	"www.velocidex.com/golang/velociraptor/acls"
+ 	acl_proto "www.velocidex.com/golang/velociraptor/acls/proto"
+ 	api_proto "www.velocidex.com/golang/velociraptor/api/proto"
+ 	api_utils "www.velocidex.com/golang/velociraptor/api/utils"
+ 	config_proto "www.velocidex.com/golang/velociraptor/config/proto"
+-	"www.velocidex.com/golang/velociraptor/constants"
+ 	crypto_utils "www.velocidex.com/golang/velociraptor/crypto/utils"
+-	"www.velocidex.com/golang/velociraptor/json"
+ 	"www.velocidex.com/golang/velociraptor/logging"
+ 	"www.velocidex.com/golang/velociraptor/services"
+ 	"www.velocidex.com/golang/velociraptor/utils"
+ )
+ 
+-var samlMiddleware *samlsp.Middleware
+-
++// The SAML authenticator verifies the IdP's assertion once, at the ACS,
++// and then issues the same VelociraptorAuth cookie as the OIDC
++// authenticators, so every request after login is checked by
++// authenticateUserHandle and /app/logoff.html ends the session.
+ type SamlAuthenticator struct {
+ 	config_obj     *config_proto.Config
+ 	user_attribute string
+ 	authenticator  *config_proto.Authenticator
+ 	user_roles     []string
++	sp             *samlsp.Config
+ }
+ 
+ func (self *SamlAuthenticator) IsPasswordLess() bool {
+@@ -58,50 +59,31 @@ func (self *SamlAuthenticator) AddHandlers(mux *api_utils.ServeMux) error {
+ 		return fmt.Errorf("SamlAuthenticator: %w", err)
+ 	}
+ 
+-	idpMetadataURL, err := url.Parse(self.authenticator.SamlIdpMetadataUrl)
+-	if err != nil {
+-		return fmt.Errorf("SamlAuthenticator: %w", err)
+-	}
+-
+-	rootURL, err := url.Parse(self.authenticator.SamlRootUrl)
+-	if err != nil {
+-		return fmt.Errorf("SamlAuthenticator: %w", err)
+-	}
++	// The IdP metadata is fetched when first needed and refreshed as
++	// its cacheDuration says, so a rotated IdP certificate is picked up
++	// without a restart.
++	idpMetadata := samlsp.RemoteMetadata(self.authenticator.SamlIdpMetadataUrl)
+ 
+-	idpMetadata, err := samlsp.FetchMetadata(
+-		context.Background(),
+-		http.DefaultClient,
+-		*idpMetadataURL)
++	// The same entity ID and ACS URL that samlsp.Middleware derived from
++	// saml_root_url, so the registration at the IdP does not change.
++	rootURL := strings.TrimSuffix(self.authenticator.SamlRootUrl, "/")
++	self.sp, err = samlsp.New(idpMetadata, rootURL+"/saml/metadata",
++		samlsp.WithKey(key, cert))
+ 	if err != nil {
+ 		return fmt.Errorf("SamlAuthenticator: %w", err)
+ 	}
+ 
+-	opts := samlsp.Options{
+-		IDPMetadata:       idpMetadata,
+-		URL:               *rootURL,
+-		Key:               key,
+-		Certificate:       cert,
+-		AllowIDPInitiated: self.authenticator.SamlAllowIdpInitiated,
+-	}
+-	samlMiddleware, err = samlsp.New(opts)
+-	if err != nil {
++	// Fail at startup if the IdP metadata cannot be fetched, as before.
++	if _, err := idpMetadata(context.Background()); err != nil {
+ 		return fmt.Errorf("SamlAuthenticator: %w", err)
+ 	}
+ 
+-	expiry_min := self.authenticator.DefaultSessionExpiryMin
+-	if expiry_min == 0 {
+-		expiry_min = 60 * 24 // 1 Day by default
+-	}
+-	maxAge := time.Minute * time.Duration(expiry_min)
+-	jwtSessionCodec := samlsp.DefaultSessionCodec(opts)
+-	jwtSessionCodec.MaxAge = maxAge
+-	cookieSessionProvider := samlsp.DefaultSessionProvider(opts)
+-	cookieSessionProvider.MaxAge = maxAge
+-	cookieSessionProvider.Codec = jwtSessionCodec
+-	samlMiddleware.Session = cookieSessionProvider
+-
+-	mux.Handle(api_utils.GetBasePath(self.config_obj, "/saml/"),
+-		IpFilter(self.config_obj, samlMiddleware))
++	mux.Handle(api_utils.GetBasePath(self.config_obj, "/saml/metadata"),
++		IpFilter(self.config_obj, http.HandlerFunc(self.sp.ServeMetadata)))
++	mux.Handle(api_utils.GetBasePath(self.config_obj, "/saml/login"),
++		IpFilter(self.config_obj, self.samlLogin()))
++	mux.Handle(api_utils.GetBasePath(self.config_obj, "/saml/acs"),
++		IpFilter(self.config_obj, self.samlAcs()))
+ 	logger.Info("Authentication via SAML enabled")
+ 	return nil
+ }
+@@ -115,44 +97,92 @@ func (self *SamlAuthenticator) AuthenticateUserHandler(
+ 	parent http.Handler,
+ 	permission acls.ACL_PERMISSION,
+ ) http.Handler {
++	return authenticateUserHandle(
++		self.config_obj, permission,
++		func(w http.ResponseWriter, r *http.Request, err error, username string) {
++			reject_with_username(self.config_obj, w, r, err, username,
++				"/saml/login", "SAML", "")
++		},
++		parent)
++}
+ 
+-	reject_handler := samlMiddleware.RequireAccount(parent)
++const samlRequestCookiePrefix = "samlrequest_"
+ 
+-	logger := GetLoggingHandler(self.config_obj)(parent)
++// samlLogin sends the browser to the IdP. Like the oauthstate cookie of
++// OIDC, a cookie named after the RelayState remembers the AuthnRequest's
++// ID, which the ACS requires the Response to answer.
++func (self *SamlAuthenticator) samlLogin() http.Handler {
++	return api_utils.HandlerFunc(nil,
++		func(w http.ResponseWriter, r *http.Request) {
++			relayState := rand.Text()
++			msg, err := self.sp.AuthnRequest(r.Context(), relayState)
++			if err != nil {
++				self.Error("SamlAuthenticator: %v", err)
++				RedirectWithError(w, r, api_utils.Homepage(self.config_obj), err)
++				return
++			}
++			http.SetCookie(w, &http.Cookie{
++				Name:     samlRequestCookiePrefix + relayState,
++				Value:    msg.ID,
++				Path:     api_utils.GetBasePath(self.config_obj, "/saml/acs"),
++				MaxAge:   600,
++				Secure:   true,
++				HttpOnly: true,
++				// Browsers do not send a Lax cookie with the
++				// IdP's cross-site POST to the ACS.
++				SameSite: http.SameSiteNoneMode,
++			})
++			msg.Write(w)
++		})
++}
+ 
+-	return api_utils.HandlerFunc(parent,
++// samlAcs verifies the IdP's Response, provisions the user and issues the
++// VelociraptorAuth cookie.
++func (self *SamlAuthenticator) samlAcs() http.Handler {
++	return api_utils.HandlerFunc(nil,
+ 		func(w http.ResponseWriter, r *http.Request) {
+-			w.Header().Set("X-CSRF-Token", csrf.Token(r))
++			var opts []samlsp.ResponseOption
++			name := samlRequestCookiePrefix + r.FormValue("RelayState")
++			if cookie, err := r.Cookie(name); err == nil {
++				opts = append(opts, samlsp.WithRequestID(cookie.Value))
++				http.SetCookie(w, &http.Cookie{
++					Name:   name,
++					Path:   api_utils.GetBasePath(self.config_obj, "/saml/acs"),
++					MaxAge: -1,
++				})
++			}
++			if self.authenticator.SamlAllowIdpInitiated {
++				opts = append(opts, samlsp.AllowUnsolicited)
++			}
+ 
+-			session, err := samlMiddleware.Session.GetSession(r)
+-			if session == nil || err != nil {
+-				reject_handler.ServeHTTP(w, r)
++			assertion, err := self.sp.ParseResponse(r.Context(), r, opts...)
++			if err != nil {
++				self.Error("SamlAuthenticator: %v", err)
++				RedirectWithError(w, r, api_utils.Homepage(self.config_obj),
++					errors.New("SAML login failed"))
+ 				return
+ 			}
+ 
+-			sa, ok := session.(samlsp.SessionWithAttributes)
+-			if !ok {
+-				reject_handler.ServeHTTP(w, r)
++			username := samlAttribute(assertion.Attributes, self.user_attribute)
++			if username == "" {
++				self.Error("SamlAuthenticator: assertion has no %q attribute",
++					self.user_attribute)
++				RedirectWithError(w, r, api_utils.Homepage(self.config_obj),
++					fmt.Errorf("SAML assertion has no %q attribute", self.user_attribute))
+ 				return
+ 			}
+ 
+-			username := sa.GetAttributes().Get(self.user_attribute)
+-
+-			user_record, err := self.MaybeCreateUser(r.Context(), username, r.RemoteAddr)
++			// Provisioning used to run on every request; it is
++			// idempotent, so once per login is enough.
++			_, err = self.MaybeCreateUser(r.Context(), username, r.RemoteAddr)
+ 			if err != nil {
+-				err := services.LogAudit(r.Context(),
++				_ = services.LogAudit(r.Context(),
+ 					self.config_obj, username, "Authorization Failed",
+ 					ordereddict.NewDict().
+ 						Set("error", err).
+ 						Set("username", username).
+ 						Set("roles", self.user_roles).
+ 						Set("remote", r.RemoteAddr))
+-				if err != nil {
+-					logger := logging.GetLogger(self.config_obj, &logging.GUIComponent)
+-					logger.Error("<red>Authorization failed</> %v %v %v",
+-						username, err, r.RemoteAddr)
+-				}
+-
+ 				http.Error(w,
+ 					fmt.Sprintf("authorization failed: %v", err),
+ 					http.StatusUnauthorized)
+@@ -160,56 +190,63 @@ func (self *SamlAuthenticator) AuthenticateUserHandler(
+ 			}
+ 			err = self.MaybeAssignRoles(r.Context(), username)
+ 			if err != nil {
+-				err := services.LogAudit(r.Context(),
++				_ = services.LogAudit(r.Context(),
+ 					self.config_obj, username, "Role Assignment Failed",
+ 					ordereddict.NewDict().
+ 						Set("username", username).
+ 						Set("roles", self.user_roles).
+ 						Set("remote", r.RemoteAddr))
+-				if err != nil {
+-					logger := logging.GetLogger(self.config_obj, &logging.GUIComponent)
+-					logger.Error("<red>Role Assignment Failed</> %v %v",
+-						username, r.RemoteAddr)
+-				}
+-
+ 				http.Error(w,
+ 					fmt.Sprintf("authorization failed: role assignment failed: %v", err),
+ 					http.StatusUnauthorized)
+ 				return
+ 			}
+ 
+-			// Does the user have access to the specified org?
+-			err = CheckOrgAccess(self.config_obj, r, user_record, permission)
++			err = services.LogAudit(r.Context(),
++				self.config_obj, username, "Login",
++				ordereddict.NewDict().
++					Set("remote", r.RemoteAddr).
++					Set("authenticator", self.authenticator.Type).
++					Set("url", r.URL.Path))
+ 			if err != nil {
+-				err := services.LogAudit(r.Context(),
+-					self.config_obj, username, "authorization failed: user not registered and no saml_user_roles set",
+-					ordereddict.NewDict().
+-						Set("username", username).
+-						Set("roles", self.user_roles).
+-						Set("remote", r.RemoteAddr).
+-						Set("status", http.StatusUnauthorized))
+-				if err != nil {
+-					logger := logging.GetLogger(self.config_obj, &logging.GUIComponent)
+-					logger.Error("<red>no saml_user_roles set</> %v %v",
+-						username, r.RemoteAddr)
+-				}
++				self.Error("SamlAuthenticator LogAudit: Login %v %v",
++					username, r.RemoteAddr)
++			}
+ 
+-				http.Error(w,
+-					fmt.Sprintf("authorization failed: user not registered - contact your system administrator: %v", err),
+-					http.StatusUnauthorized)
++			cookie, err := getSignedJWTTokenCookie(self.config_obj,
++				self.authenticator, &Claims{Username: username})
++			if err != nil {
++				self.Error("SamlAuthenticator: %v", err)
++				RedirectWithError(w, r, api_utils.Homepage(self.config_obj), err)
+ 				return
+ 			}
++			http.SetCookie(w, cookie)
++			http.Redirect(w, r, api_utils.Homepage(self.config_obj), http.StatusFound)
++		})
++}
+ 
+-			user_info := &api_proto.VelociraptorUser{
+-				Name: user_record.Name,
+-			}
++// samlAttribute returns the first value of the attribute named name.
++//
++// samlsp.Middleware keyed session attributes by FriendlyName (or by Name
++// when there was none), and x/samlsp looks attributes up by Name only.
++// A saml_user_attribute that names a FriendlyName, such as "name" or
++// "mail", keeps working through the fallback; new configurations should
++// use the attribute's Name.
++func samlAttribute(attrs samlsp.Attributes, name string) string {
++	if v := attrs.Get(name); v != "" {
++		return v
++	}
++	for _, a := range attrs {
++		if a.FriendlyName == name && len(a.Values) > 0 {
++			return a.Values[0]
++		}
++	}
++	return ""
++}
+ 
+-			serialized, _ := json.Marshal(user_info)
+-			ctx := context.WithValue(
+-				r.Context(), constants.GRPC_USER_CONTEXT,
+-				string(serialized))
+-			logger.ServeHTTP(w, r.WithContext(ctx))
+-		}).AddChild("GetLoggingHandler")
++func (self *SamlAuthenticator) Error(message string, args ...interface{}) {
++	logging.GetLogger(self.config_obj, &logging.GUIComponent).
++		Error(message, args...)
+ }
+ 
+ func (self *SamlAuthenticator) MaybeCreateUser(ctx context.Context, username string, remote string) (*api_proto.VelociraptorUser, error) {

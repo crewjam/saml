@@ -1,0 +1,672 @@
+diff --git a/internal/api/saml.go b/internal/api/saml.go
+index 5eb762b..48f72cd 100644
+--- a/internal/api/saml.go
++++ b/internal/api/saml.go
+@@ -1,21 +1,22 @@
+ package api
+ 
+ import (
+-	"crypto/rsa"
+-	"crypto/x509"
++	"context"
+ 	"encoding/base64"
+ 	"encoding/xml"
++	"errors"
+ 	"net/http"
+ 	"net/url"
+ 	"strings"
+ 	"time"
+ 
+ 	"github.com/crewjam/saml"
+-	"github.com/crewjam/saml/samlsp"
++	"github.com/crewjam/saml/x/samlsp"
+ 	"github.com/go-chi/chi/v5"
+ 	"github.com/gofrs/uuid"
+ 	"github.com/supabase/auth/internal/api/apierrors"
+ 	"github.com/supabase/auth/internal/models"
++	"github.com/supabase/auth/internal/storage"
+ )
+ 
+ // loadSAMLDedicatedScopeID reads the optional {sso_provider_id} route
+@@ -48,22 +49,43 @@ func (a *API) loadSAMLDedicatedScopeID(r *http.Request) (*uuid.UUID, error) {
+ 	return &ssoProvider.ID, nil
+ }
+ 
+-// newSAMLServiceProvider constructs a ServiceProvider for the given IdP
+-// metadata, using the provided key/cert pair.  Callers are responsible for
+-// passing the correct pair (primary or rotation fallback).
++type samlSSOProviderKey struct{}
++
++// withSAMLProvider names the SSO provider that SAML calls made with ctx
++// talk to.
++func withSAMLProvider(ctx context.Context, p *models.SSOProvider) context.Context {
++	return context.WithValue(ctx, samlSSOProviderKey{}, p)
++}
++
++// samlIdentityProvider is the samlsp.MetadataFunc of every SAML config: the
++// metadata of the SSO provider that withSAMLProvider put in the context.
++func samlIdentityProvider(ctx context.Context) (*saml.EntityDescriptor, error) {
++	p, ok := ctx.Value(samlSSOProviderKey{}).(*models.SSOProvider)
++	if !ok || p == nil {
++		return nil, errors.New("saml: no SSO provider in context")
++	}
++	return p.SAMLProvider.EntityDescriptor()
++}
++
++// samlConfig returns the SAML service provider that GoTrue presents to
++// every IdP. Calls made with it must carry the IdP's SSO provider in their
++// context (withSAMLProvider).
+ //
+ // When dedicatedScopeID is not nil, the ACS URL (and, by extension, the
+-// entity ID GoTrue presents to the IdP, which defaults to its metadata URL)
+-// are scoped to that SSO provider's ID instead of using the URLs shared by
++// entity ID GoTrue presents to the IdP, which is its metadata URL) are
++// scoped to that SSO provider's ID instead of using the URLs shared by
+ // every SAML provider. The same key/cert pair is still used.
+-func (a *API) newSAMLServiceProvider(identityProvider *saml.EntityDescriptor, idpInitiated bool, key *rsa.PrivateKey, cert *x509.Certificate, dedicatedScopeID *uuid.UUID) *saml.ServiceProvider {
++//
++// During key rotation, RSAPrivateKeyNext also decrypts assertions, since
++// the IdP may have cached the next certificate from the metadata.
++func (a *API) samlConfig(dedicatedScopeID *uuid.UUID) (*samlsp.Config, error) {
+ 	raw := a.config.SAML.ExternalURL
+ 	if raw == "" {
+ 		raw = a.config.API.ExternalURL
+ 	}
+ 	u, err := url.ParseRequestURI(raw)
+ 	if err != nil {
+-		panic(err)
++		return nil, err
+ 	}
+ 	if !strings.HasSuffix(u.Path, "/") {
+ 		u.Path += "/"
+@@ -73,54 +95,35 @@ func (a *API) newSAMLServiceProvider(identityProvider *saml.EntityDescriptor, id
+ 		u.Path += dedicatedScopeID.String() + "/"
+ 	}
+ 
+-	provider := samlsp.DefaultServiceProvider(samlsp.Options{
+-		URL:               *u,
+-		Key:               key,
+-		Certificate:       cert,
+-		SignRequest:       true,
+-		AllowIDPInitiated: idpInitiated,
+-		IDPMetadata:       identityProvider,
+-	})
+-
+-	provider.AuthnNameIDFormat = saml.PersistentNameIDFormat
+-
+-	return &provider
+-}
+-
+-// SAMLMetadata serves GoTrue's SAML Service Provider metadata file.
+-func (a *API) SAMLMetadata(w http.ResponseWriter, r *http.Request) error {
+-	dedicatedScopeID, err := a.loadSAMLDedicatedScopeID(r)
+-	if err != nil {
+-		return err
++	cfg := a.config.SAML
++	opts := []samlsp.Option{
++		samlsp.WithKey(cfg.RSAPrivateKey, cfg.Certificate),
++		samlsp.SignAuthnRequests,
++		samlsp.WithNameIDFormat(saml.PersistentNameIDFormat),
++		// advertize the requested NameID formats (either persistent or email address)
++		samlsp.WithNameIDFormats(saml.EmailAddressNameIDFormat),
++		// accept each assertion once, across every instance
++		samlsp.WithReplayState(samlReplayState{a.db}),
++		samlsp.WithMetadata(a.adjustSAMLMetadata),
+ 	}
+-
+-	serviceProvider := a.newSAMLServiceProvider(nil, true, a.config.SAML.RSAPrivateKey, a.config.SAML.Certificate, dedicatedScopeID)
+-
+-	metadata := serviceProvider.Metadata()
+-
+-	if r.FormValue("download") == "true" {
+-		// 5 year expiration, comparable to what GSuite does
+-		metadata.ValidUntil = time.Now().UTC().AddDate(5, 0, 0)
++	if cfg.RSAPrivateKeyNext != nil {
++		opts = append(opts, samlsp.WithDecryptionKeys(cfg.RSAPrivateKeyNext))
+ 	}
+ 
+-	for i := range metadata.SPSSODescriptors {
+-		// we set this to false since the IdP initiated flow can only
+-		// sign the Assertion, and not the full Request
+-		// unfortunately this is hardcoded in the crewjam library if
+-		// signatures (instead of encryption) are supported
+-		// https://github.com/crewjam/saml/blob/v0.4.8/service_provider.go#L217
+-		metadata.SPSSODescriptors[i].AuthnRequestsSigned = nil
+-
+-		// advertize the requested NameID formats (either persistent or email address)
+-		metadata.SPSSODescriptors[i].NameIDFormats = []saml.NameIDFormat{
+-			saml.EmailAddressNameIDFormat,
+-			saml.PersistentNameIDFormat,
+-		}
+-	}
++	// The metadata is at <base>/sso/[<id>/]saml/metadata and the ACS
++	// beside it at .../saml/acs, as samlsp.DefaultServiceProvider had them.
++	return samlsp.New(samlIdentityProvider, u.String()+"saml/metadata", opts...)
++}
+ 
++// adjustSAMLMetadata adjusts GoTrue's SP metadata.
++func (a *API) adjustSAMLMetadata(metadata *saml.EntityDescriptor) {
+ 	for i := range metadata.SPSSODescriptors {
+ 		spd := &metadata.SPSSODescriptors[i]
+ 
++		// we set this to false since the IdP initiated flow can only
++		// sign the Assertion, and not the full Request
++		spd.AuthnRequestsSigned = nil
++
+ 		var keyDescriptors []saml.KeyDescriptor
+ 
+ 		for _, kd := range spd.KeyDescriptors {
+@@ -155,11 +158,43 @@ func (a *API) SAMLMetadata(w http.ResponseWriter, r *http.Request) error {
+ 		spd.KeyDescriptors = keyDescriptors
+ 	}
+ 
+-	// Reduce cache aggressiveness during key rotation so IdPs and CDNs pick
+-	// up the updated metadata before we promote the next key.
+-	cacheControl := "public, max-age=600"
++	// Reduce cache aggressiveness during key rotation so IdPs pick up the
++	// updated metadata before we promote the next key.
+ 	if a.config.SAML.CertificateNext != nil {
+ 		metadata.CacheDuration = time.Hour
++	}
++}
++
++// samlReplayState records accepted SAML message IDs in the database.
++type samlReplayState struct {
++	db *storage.Connection
++}
++
++func (s samlReplayState) Consume(id string, expiresAt time.Time) error {
++	return models.ConsumeSAMLID(s.db, id, expiresAt)
++}
++
++// SAMLMetadata serves GoTrue's SAML Service Provider metadata file.
++func (a *API) SAMLMetadata(w http.ResponseWriter, r *http.Request) error {
++	dedicatedScopeID, err := a.loadSAMLDedicatedScopeID(r)
++	if err != nil {
++		return err
++	}
++
++	config, err := a.samlConfig(dedicatedScopeID)
++	if err != nil {
++		return err
++	}
++
++	metadata := config.Metadata(r.Context())
++
++	if r.FormValue("download") == "true" {
++		// 5 year expiration, comparable to what GSuite does
++		metadata.ValidUntil = time.Now().UTC().AddDate(5, 0, 0)
++	}
++
++	cacheControl := "public, max-age=600"
++	if a.config.SAML.CertificateNext != nil {
+ 		cacheControl = "public, max-age=60"
+ 	}
+ 
+diff --git a/internal/api/samlacs.go b/internal/api/samlacs.go
+index 0fbd72a..fc2f61e 100644
+--- a/internal/api/samlacs.go
++++ b/internal/api/samlacs.go
+@@ -5,11 +5,13 @@ import (
+ 	"encoding/base64"
+ 	"encoding/json"
+ 	"encoding/xml"
++	"errors"
+ 	"net/http"
+ 	"net/url"
+ 	"time"
+ 
+ 	"github.com/crewjam/saml"
++	"github.com/crewjam/saml/x/samlsp"
+ 	"github.com/fatih/structs"
+ 	"github.com/go-chi/chi/v5"
+ 	"github.com/gofrs/uuid"
+@@ -217,7 +219,10 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
+ 		}
+ 	}
+ 
+-	serviceProvider := a.newSAMLServiceProvider(idpMetadata, initiatedBy == "idp", config.SAML.RSAPrivateKey, config.SAML.Certificate, dedicatedScopeID)
++	samlConfig, err := a.samlConfig(dedicatedScopeID)
++	if err != nil {
++		return err
++	}
+ 
+ 	// SECURITY: ACS confusion check. The SAML spec makes Destination
+ 	// optional on a Response (many real IdPs omit it, especially for
+@@ -225,45 +230,38 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
+ 	// violation and must not block the flow. But when an IdP does declare
+ 	// one, it must name the exact ACS URL of the endpoint this request was
+ 	// actually POSTed to -- whether that's the global, shared ACS URL or a
+-	// provider's dedicated-scope one. The global ACS endpoint is not a
+-	// catch-all for every provider's assertions: without this check, a
+-	// Response built for (or replayed against) one endpoint could otherwise
+-	// be accepted on another, relying solely on crewjam/saml's internal
+-	// SubjectConfirmationData.Recipient check (nested inside the assertion,
+-	// enforced later in ParseResponse) to catch the mismatch. That check is
+-	// unconditional and would in fact already catch this once Recipient is
+-	// present, but we assert the invariant explicitly and up front here, as
+-	// our own first-class defense, rather than depending entirely on a
+-	// third-party library's internal behavior.
+-	if initiatedBy == "idp" && peekDestination != "" && peekDestination != serviceProvider.AcsURL.String() {
++	// provider's dedicated-scope one. ParseResponse checks Destination and
++	// the SubjectConfirmationData.Recipient too; we assert the invariant
++	// explicitly and up front here, as our own first-class defense.
++	if initiatedBy == "idp" && peekDestination != "" && peekDestination != samlConfig.ACSURL() {
+ 		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Response Destination does not match this SSO Provider's ACS URL")
+ 	}
+ 
+-	spAssertion, err := serviceProvider.ParseResponse(r, requestIds)
+-	if err != nil {
+-		// During a key-rotation window the IdP may have cached the old (next)
+-		// certificate from metadata and used it to encrypt the assertion.
+-		// Retry with the old key in primary position to keep decryption working
+-		// for the overlap period.  Only attempt this when encrypted assertions
+-		// are enabled, because only then can the IdP send encrypted payloads.
+-		// If the retry also fails we return the original error so the operator
+-		// sees a consistent diagnostic.
+-		if config.SAML.AllowEncryptedAssertions && config.SAML.RSAPrivateKeyNext != nil {
+-			fallbackSP := a.newSAMLServiceProvider(idpMetadata, initiatedBy == "idp", config.SAML.RSAPrivateKeyNext, config.SAML.CertificateNext, dedicatedScopeID)
+-			if spAssertion2, retryErr := fallbackSP.ParseResponse(r, requestIds); retryErr == nil {
+-				spAssertion = spAssertion2
+-				err = nil
+-			}
++	// A Response to our AuthnRequest must answer it; an IdP-initiated
++	// Response answers none. During a key-rotation window the IdP may have
++	// encrypted the assertion to the next certificate, which samlConfig
++	// also decrypts with. Each assertion is accepted only once.
++	responseOptions := []samlsp.ResponseOption{samlsp.AllowUnsolicited}
++	if initiatedBy == "sp" {
++		responseOptions = nil
++		for _, id := range requestIds {
++			responseOptions = append(responseOptions, samlsp.WithRequestID(id))
+ 		}
++	}
+ 
+-		if err != nil {
+-			if ire, ok := err.(*saml.InvalidResponseError); ok {
+-				return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion is not valid %s", ire.Response).WithInternalError(ire.PrivateErr)
+-			}
+-
+-			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion is not valid").WithInternalError(err)
++	verified, err := samlConfig.ParseResponse(withSAMLProvider(ctx, ssoProvider), r, responseOptions...)
++	if err != nil {
++		if errors.Is(err, saml.ErrAssertionReplayed) {
++			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion has already been used")
++		}
++		var ire *saml.InvalidResponseError
++		if errors.As(err, &ire) {
++			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion is not valid %s", ire.Response).WithInternalError(ire.PrivateErr)
+ 		}
++
++		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion is not valid").WithInternalError(err)
+ 	}
++	spAssertion := verified.Raw
+ 
+ 	// Only now that the assertion has been cryptographically validated do we
+ 	// check that ssoProvider is actually allowed to use the scope this
+diff --git a/internal/api/samlacs_test.go b/internal/api/samlacs_test.go
+index 072b1e5..9f9e368 100644
+--- a/internal/api/samlacs_test.go
++++ b/internal/api/samlacs_test.go
+@@ -1,7 +1,7 @@
+ package api
+ 
+ import (
+-	"crypto/x509"
++	"encoding/base64"
+ 	tst "testing"
+ 
+ 	"github.com/crewjam/saml"
+@@ -9,134 +9,83 @@ import (
+ 	"github.com/stretchr/testify/require"
+ )
+ 
+-// TestNewSAMLServiceProvider verifies that newSAMLServiceProvider uses whichever
+-// key/cert pair it is given, and that distinct pairs produce distinct providers.
+-func TestNewSAMLServiceProvider(t *tst.T) {
+-	api, err := newSAMLTestAPI(t, samlTestPrimaryKey, samlTestNextKey, false)
++// TestSAMLConfig_KeyRotation verifies that the SP metadata advertises the
++// primary certificate and, during rotation, the next one, so that IdPs can
++// cache it before it is promoted. The next key decrypts assertions in the
++// same ParseResponse (samlsp.WithDecryptionKeys), with no retry.
++func TestSAMLConfig_KeyRotation(t *tst.T) {
++	api, err := newSAMLTestAPI(t, samlTestPrimaryKey, samlTestNextKey, true)
+ 	require.NoError(t, err)
+ 
+ 	cfg := api.config.SAML
+-	require.NotNil(t, cfg.RSAPrivateKey)
+-	require.NotNil(t, cfg.Certificate)
+ 	require.NotNil(t, cfg.RSAPrivateKeyNext)
+-	require.NotNil(t, cfg.CertificateNext)
+-
+-	primary := api.newSAMLServiceProvider(nil, false, cfg.RSAPrivateKey, cfg.Certificate, nil)
+-	require.Same(t, cfg.RSAPrivateKey, primary.Key)
+-	require.Equal(t, cfg.Certificate.Raw, primary.Certificate.Raw)
+ 
+-	next := api.newSAMLServiceProvider(nil, false, cfg.RSAPrivateKeyNext, cfg.CertificateNext, nil)
+-	require.Same(t, cfg.RSAPrivateKeyNext, next.Key)
+-	require.Equal(t, cfg.CertificateNext.Raw, next.Certificate.Raw)
+-
+-	require.NotSame(t, primary.Key, next.Key)
+-	require.NotEqual(t, primary.Certificate.Raw, next.Certificate.Raw)
+-}
+-
+-// TestSAMLDecryptionFallback_NoRetryWithoutNextKey verifies that when
+-// RSAPrivateKeyNext is nil the retry path is not reached; a parse failure
+-// must return an error immediately (not panic or deadlock).
+-func TestSAMLDecryptionFallback_NoRetryWithoutNextKey(t *tst.T) {
+-	// Build API with only a primary key (no next key).
+-	api, err := newSAMLTestAPI(t, samlTestPrimaryKey, "", true)
++	config, err := api.samlConfig(nil)
+ 	require.NoError(t, err)
+ 
+-	require.Nil(t, api.config.SAML.RSAPrivateKeyNext,
+-		"no next key should be configured")
+-
+-	// The guard condition evaluated during retry must be false.
+-	cfg := api.config.SAML
+-	retryEligible := cfg.AllowEncryptedAssertions && cfg.RSAPrivateKeyNext != nil
+-	require.False(t, retryEligible,
+-		"retry must not be attempted when RSAPrivateKeyNext is nil")
++	certs := map[string][]string{}
++	for _, spd := range config.Metadata(t.Context()).SPSSODescriptors {
++		require.Nil(t, spd.AuthnRequestsSigned)
++		for _, kd := range spd.KeyDescriptors {
++			for _, c := range kd.KeyInfo.X509Data.X509Certificates {
++				certs[kd.Use] = append(certs[kd.Use], c.Data)
++			}
++		}
++	}
++	primary := base64.StdEncoding.EncodeToString(cfg.Certificate.Raw)
++	next := base64.StdEncoding.EncodeToString(cfg.CertificateNext.Raw)
++	require.Contains(t, certs["signing"], primary)
++	require.Contains(t, certs["signing"], next)
++	require.Contains(t, certs["encryption"], primary)
++	require.Contains(t, certs["encryption"], next)
+ }
+ 
+-// TestSAMLDecryptionFallback_NoRetryWhenEncryptionDisabled verifies the guard
+-// condition is false when AllowEncryptedAssertions is false, even with a next
+-// key configured.  Encrypted assertions can only be sent when the IdP knows
+-// the SP supports them, which requires AllowEncryptedAssertions = true in
+-// metadata.
+-func TestSAMLDecryptionFallback_NoRetryWhenEncryptionDisabled(t *tst.T) {
++// TestSAMLConfig_NoEncryptionKeys verifies that no key is advertised for
++// encryption unless encrypted assertions are allowed.
++func TestSAMLConfig_NoEncryptionKeys(t *tst.T) {
+ 	api, err := newSAMLTestAPI(t, samlTestPrimaryKey, samlTestNextKey, false)
+ 	require.NoError(t, err)
+ 
+-	cfg := api.config.SAML
+-	require.False(t, cfg.AllowEncryptedAssertions)
+-	require.NotNil(t, cfg.RSAPrivateKeyNext)
+-
+-	retryEligible := cfg.AllowEncryptedAssertions && cfg.RSAPrivateKeyNext != nil
+-	require.False(t, retryEligible,
+-		"retry must not be attempted when AllowEncryptedAssertions is false")
+-}
+-
+-// TestSAMLDecryptionFallback_RetryCondition verifies that the guard condition
+-// is true when both AllowEncryptedAssertions is true AND RSAPrivateKeyNext is
+-// set — i.e., that the code will attempt the retry path.
+-func TestSAMLDecryptionFallback_RetryCondition(t *tst.T) {
+-	api, err := newSAMLTestAPI(t, samlTestPrimaryKey, samlTestNextKey, true)
+-	require.NoError(t, err)
+-
+-	cfg := api.config.SAML
+-	require.True(t, cfg.AllowEncryptedAssertions)
+-	require.NotNil(t, cfg.RSAPrivateKeyNext)
+-
+-	retryEligible := cfg.AllowEncryptedAssertions && cfg.RSAPrivateKeyNext != nil
+-	require.True(t, retryEligible,
+-		"retry should be eligible when AllowEncryptedAssertions=true and RSAPrivateKeyNext is set")
+-}
+-
+-// TestNewSAMLServiceProvider_SameURLBase verifies that both key pairs produce
+-// a ServiceProvider with the same ACS URL — wrong ACS URL would prevent
+-// assertion validation during the rotation fallback.
+-func TestNewSAMLServiceProvider_SameURLBase(t *tst.T) {
+-	api, err := newSAMLTestAPI(t, samlTestPrimaryKey, samlTestNextKey, true)
++	config, err := api.samlConfig(nil)
+ 	require.NoError(t, err)
+ 
+-	cfg := api.config.SAML
+-
+-	primary := api.newSAMLServiceProvider(nil, false, cfg.RSAPrivateKey, cfg.Certificate, nil)
+-	withKey := api.newSAMLServiceProvider(nil, false, cfg.RSAPrivateKeyNext, cfg.CertificateNext, nil)
+-
+-	// ACS URLs must be the same — rotation must not change the endpoint.
+-	primaryACS := acsURLsFrom(primary)
+-	withKeyACS := acsURLsFrom(withKey)
+-	require.Equal(t, primaryACS, withKeyACS,
+-		"ACS URLs must be identical regardless of which key is used")
++	for _, spd := range config.Metadata(t.Context()).SPSSODescriptors {
++		for _, kd := range spd.KeyDescriptors {
++			require.Equal(t, "signing", kd.Use)
++		}
++	}
+ }
+ 
+-// TestNewSAMLServiceProvider_DedicatedScope verifies that passing a dedicated
+-// scope ID scopes the ACS URL (and therefore the entity ID, which defaults
+-// to the metadata URL) to that ID, while the key/cert pair is unaffected.
+-func TestNewSAMLServiceProvider_DedicatedScope(t *tst.T) {
++// TestSAMLConfig_DedicatedScope verifies that passing a dedicated scope ID
++// scopes the ACS URL and the entity ID to that ID.
++func TestSAMLConfig_DedicatedScope(t *tst.T) {
+ 	api, err := newSAMLTestAPI(t, samlTestPrimaryKey, samlTestNextKey, false)
+ 	require.NoError(t, err)
+ 
+-	cfg := api.config.SAML
+-
+ 	scopeID, err := uuid.NewV4()
+ 	require.NoError(t, err)
+ 
+-	global := api.newSAMLServiceProvider(nil, false, cfg.RSAPrivateKey, cfg.Certificate, nil)
+-	scoped := api.newSAMLServiceProvider(nil, false, cfg.RSAPrivateKey, cfg.Certificate, &scopeID)
+-
+-	globalACS := acsURLsFrom(global)
+-	scopedACS := acsURLsFrom(scoped)
++	global, err := api.samlConfig(nil)
++	require.NoError(t, err)
++	scoped, err := api.samlConfig(&scopeID)
++	require.NoError(t, err)
+ 
+-	require.NotEqual(t, globalACS, scopedACS, "dedicated scope must change the ACS URL")
+-	for _, u := range scopedACS {
+-		require.Contains(t, u, scopeID.String(), "scoped ACS URL must contain the provider ID")
++	require.NotEqual(t, global.ACSURL(), scoped.ACSURL(), "dedicated scope must change the ACS URL")
++	require.Contains(t, scoped.ACSURL(), scopeID.String(), "scoped ACS URL must contain the provider ID")
++	for _, u := range acsURLsFrom(t, scoped.Metadata(t.Context())) {
++		require.Equal(t, scoped.ACSURL(), u, "the metadata must list only the scoped ACS URL")
+ 	}
+ 
+-	require.NotEqual(t, global.Metadata().EntityID, scoped.Metadata().EntityID,
++	require.NotEqual(t, global.EntityID(), scoped.EntityID(),
+ 		"dedicated scope must also change the entity ID presented to the IdP")
+-
+-	require.Equal(t, scoped.Key, global.Key, "the signing key must be unchanged by isolated scope")
++	require.Contains(t, scoped.EntityID(), scopeID.String())
+ }
+ 
+-// acsURLsFrom collects all AssertionConsumerService Location strings from a SP.
+-func acsURLsFrom(sp *saml.ServiceProvider) []string {
++// acsURLsFrom collects all AssertionConsumerService Location strings from
++// SP metadata.
++func acsURLsFrom(t *tst.T, meta *saml.EntityDescriptor) []string {
++	t.Helper()
+ 	var urls []string
+-	meta := sp.Metadata()
+ 	for _, spd := range meta.SPSSODescriptors {
+ 		for _, acs := range spd.AssertionConsumerServices {
+ 			urls = append(urls, acs.Location)
+@@ -144,6 +93,3 @@ func acsURLsFrom(sp *saml.ServiceProvider) []string {
+ 	}
+ 	return urls
+ }
+-
+-// Compile-time check: x509.Certificate.Raw is the field we compare.
+-var _ = (*x509.Certificate)(nil)
+diff --git a/internal/api/sso.go b/internal/api/sso.go
+index 2f8cb59..cdb40cb 100644
+--- a/internal/api/sso.go
++++ b/internal/api/sso.go
+@@ -4,6 +4,7 @@ import (
+ 	"net/http"
+ 
+ 	"github.com/crewjam/saml"
++	"github.com/crewjam/saml/x/samlsp"
+ 	"github.com/gofrs/uuid"
+ 	"github.com/supabase/auth/internal/api/apierrors"
+ 	"github.com/supabase/auth/internal/models"
+@@ -100,34 +101,44 @@ func (a *API) SingleSignOn(w http.ResponseWriter, r *http.Request) error {
+ 	}
+ 	flowStateID := &flowState.ID
+ 
+-	entityDescriptor, err := ssoProvider.SAMLProvider.EntityDescriptor()
+-	if err != nil {
+-		return apierrors.NewInternalServerError("Error parsing SAML Metadata for SAML provider").WithInternalError(err)
+-	}
+-
+ 	var dedicatedScopeID *uuid.UUID
+ 	if ssoProvider.HasDedicatedScope() {
+ 		dedicatedScopeID = &ssoProvider.ID
+ 	}
+ 
+-	serviceProvider := a.newSAMLServiceProvider(entityDescriptor, false /* <- idpInitiated */, a.config.SAML.RSAPrivateKey, a.config.SAML.Certificate, dedicatedScopeID)
+-
+-	authnRequest, err := serviceProvider.MakeAuthenticationRequest(
+-		serviceProvider.GetSSOBindingLocation(saml.HTTPRedirectBinding),
+-		saml.HTTPRedirectBinding,
+-		saml.HTTPPostBinding,
+-	)
++	samlConfig, err := a.samlConfig(dedicatedScopeID)
+ 	if err != nil {
+-		return apierrors.NewInternalServerError("Error creating SAML Authentication Request").WithInternalError(err)
++		return apierrors.NewInternalServerError("Error creating SAML service provider").WithInternalError(err)
+ 	}
+ 
++	authnOptions := []samlsp.AuthnOption{samlsp.WithBinding(saml.HTTPRedirectBinding)}
++
+ 	// Some IdPs do not support the use of the `persistent` NameID format,
+ 	// and require a different format to be sent to work.
+-	if ssoProvider.SAMLProvider.NameIDFormat != nil {
+-		authnRequest.NameIDPolicy.Format = ssoProvider.SAMLProvider.NameIDFormat
++	if nameIDFormat := ssoProvider.SAMLProvider.NameIDFormat; nameIDFormat != nil {
++		authnOptions = append(authnOptions, samlsp.WithAuthnRequest(func(req *saml.AuthnRequest) error {
++			if req.NameIDPolicy == nil {
++				req.NameIDPolicy = &saml.NameIDPolicy{}
++			}
++			req.NameIDPolicy.Format = nameIDFormat
++			return nil
++		}))
++	}
++
++	// The relay state's ID is the RelayState of the request, so it is
++	// chosen before the request is made.
++	relayStateID, err := uuid.NewV4()
++	if err != nil {
++		return apierrors.NewInternalServerError("Error creating SAML relay state").WithInternalError(err)
++	}
++
++	authnRequest, err := samlConfig.AuthnRequest(withSAMLProvider(ctx, ssoProvider), relayStateID.String(), authnOptions...)
++	if err != nil {
++		return apierrors.NewInternalServerError("Error creating SAML Authentication Request").WithInternalError(err)
+ 	}
+ 
+ 	relayState := models.SAMLRelayState{
++		ID:            relayStateID,
+ 		SSOProviderID: ssoProvider.ID,
+ 		RequestID:     authnRequest.ID,
+ 		RedirectTo:    params.RedirectTo,
+@@ -144,10 +155,7 @@ func (a *API) SingleSignOn(w http.ResponseWriter, r *http.Request) error {
+ 		return err
+ 	}
+ 
+-	ssoRedirectURL, err := authnRequest.Redirect(relayState.ID.String(), serviceProvider)
+-	if err != nil {
+-		return apierrors.NewInternalServerError("Error creating SAML authentication request redirect URL").WithInternalError(err)
+-	}
++	ssoRedirectURL := authnRequest.RedirectURL()
+ 
+ 	skipHTTPRedirect := false
+ 
+diff --git a/internal/models/cleanup.go b/internal/models/cleanup.go
+index 27d52ad..dd62de1 100644
+--- a/internal/models/cleanup.go
++++ b/internal/models/cleanup.go
+@@ -37,6 +37,7 @@ func NewCleanup(config *conf.GlobalConfiguration) *Cleanup {
+ 	tableRefreshTokens := RefreshToken{}.TableName()
+ 	tableSessions := Session{}.TableName()
+ 	tableRelayStates := SAMLRelayState{}.TableName()
++	tableSAMLConsumedIDs := SAMLConsumedID{}.TableName()
+ 	tableFlowStates := FlowState{}.TableName()
+ 	tableMFAChallenges := Challenge{}.TableName()
+ 	tableMFAFactors := Factor{}.TableName()
+@@ -57,6 +58,7 @@ func NewCleanup(config *conf.GlobalConfiguration) *Cleanup {
+ 		// overwork the database
+ 		fmt.Sprintf("delete from %q where id in (select id from %q where not_after < now() - interval '72 hours' limit 10 for update skip locked);", tableSessions, tableSessions),
+ 		fmt.Sprintf("delete from %q where id in (select id from %q where created_at < now() - interval '24 hours' limit 100 for update skip locked);", tableRelayStates, tableRelayStates),
++		fmt.Sprintf("delete from %q where id in (select id from %q where expires_at < now() limit 100 for update skip locked);", tableSAMLConsumedIDs, tableSAMLConsumedIDs),
+ 		fmt.Sprintf("delete from %q where id in (select id from %q where created_at < now() - interval '24 hours' limit 100 for update skip locked);", tableFlowStates, tableFlowStates),
+ 		fmt.Sprintf("delete from %q where id in (select id from %q where created_at < now() - interval '24 hours' limit 100 for update skip locked);", tableOAuthClientStates, tableOAuthClientStates),
+ 		fmt.Sprintf("delete from %q where id in (select id from %q where created_at < now() - interval '24 hours' limit 100 for update skip locked);", tableMFAChallenges, tableMFAChallenges),
+diff --git a/internal/models/saml_consumed_id.go b/internal/models/saml_consumed_id.go
+new file mode 100644
+index 0000000..535ced2
+--- /dev/null
++++ b/internal/models/saml_consumed_id.go
+@@ -0,0 +1,37 @@
++package models
++
++import (
++	"fmt"
++	"time"
++
++	"github.com/crewjam/saml"
++	"github.com/supabase/auth/internal/storage"
++)
++
++// SAMLConsumedID is the ID of a SAML message that has been accepted, kept
++// until the message could no longer be accepted anyway.
++type SAMLConsumedID struct {
++	ID        string    `db:"id"`
++	ExpiresAt time.Time `db:"expires_at"`
++}
++
++func (SAMLConsumedID) TableName() string {
++	return "saml_consumed_ids"
++}
++
++// ConsumeSAMLID records id as accepted until expiresAt. It returns
++// saml.ErrAssertionReplayed if id is already recorded and not expired.
++func ConsumeSAMLID(tx *storage.Connection, id string, expiresAt time.Time) error {
++	table := SAMLConsumedID{}.TableName()
++	n, err := tx.RawQuery(fmt.Sprintf(`
++		insert into %q (id, expires_at) values (?, ?)
++		on conflict (id) do update set expires_at = excluded.expires_at
++		where %q.expires_at < now()`, table, table), id, expiresAt).ExecWithCount()
++	if err != nil {
++		return err
++	}
++	if n == 0 {
++		return saml.ErrAssertionReplayed
++	}
++	return nil
++}
+diff --git a/migrations/20261108120000_add_saml_consumed_ids.up.sql b/migrations/20261108120000_add_saml_consumed_ids.up.sql
+new file mode 100644
+index 0000000..774a6bf
+--- /dev/null
++++ b/migrations/20261108120000_add_saml_consumed_ids.up.sql
+@@ -0,0 +1,10 @@
++/* auth_migration: 20261108120000 */
++-- IDs of the SAML assertions and LogoutRequests accepted, so that each is
++-- accepted once across every instance (see models.ConsumeSAMLID).
++create table if not exists {{ index .Options "Namespace" }}.saml_consumed_ids (
++    id text not null primary key,
++    expires_at timestamptz not null
++);
++
++create index if not exists saml_consumed_ids_expires_at_idx
++    on {{ index .Options "Namespace" }}.saml_consumed_ids (expires_at);
