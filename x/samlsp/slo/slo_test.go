@@ -248,6 +248,22 @@ func TestIDPInitiatedLogout(t *testing.T) {
 		t.Fatalf("unexpected request %+v", got)
 	}
 
+	// The same request with the HTTP-POST-SimpleSign binding.
+	idpSigner := &saml.ServiceProvider{Key: ti.key, Certificate: ti.cert}
+	simpleReq := *req
+	simpleReq.ID = "id-logout-simplesign"
+	fields, err := idpSigner.SimpleSignValues("SAMLRequest", simpleReq.Element(), "idp-state", dsig.RSASHA256SignatureMethod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	simple, err := s.ParseRequest(t.Context(), postForm(spSLOURL, fields))
+	if err != nil {
+		t.Fatalf("ParseRequest, SimpleSign: %v (%v)", err, errors.Unwrap(err))
+	}
+	if simple.Binding != saml.HTTPPostSimpleSignBinding || simple.RelayState != "idp-state" {
+		t.Errorf("SimpleSign request: %+v", simple)
+	}
+
 	msg, err := s.Response(t.Context(), got)
 	if err != nil {
 		t.Fatal(err)
