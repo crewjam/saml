@@ -12,6 +12,7 @@ import (
 	"github.com/beevik/etree"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/internal/timelimit"
 )
 
 // ErrNoEndpoint is returned when the identity provider's metadata lists no
@@ -367,7 +368,7 @@ var AllowUnsolicited ResponseOption = responseOptionFunc(func(o *responseOptions
 
 // WithMaxAuthnAge refuses an assertion whose AuthnStatement says the IdP
 // authenticated the user more than maxAge ago (its AuthnInstant), allowing
-// saml.MaxClockSkew, with an error matching ErrAuthnTooOld. Use it with
+// the clock skew (see WithClockSkew), with an error matching ErrAuthnTooOld. Use it with
 // ForceAuthn, which an IdP may ignore, to require a fresh authentication:
 // for example, with maxAge as long as a login may take. Without it, an
 // assertion is accepted however long ago the user was authenticated.
@@ -376,12 +377,12 @@ func WithMaxAuthnAge(maxAge time.Duration) ResponseOption {
 }
 
 // checkAuthnAge returns an error if an AuthnStatement of a is older than
-// maxAge at now, or if a has none.
-func checkAuthnAge(a *saml.Assertion, maxAge time.Duration, now time.Time) error {
+// maxAge, allowing skew, at now, or if a has none.
+func checkAuthnAge(a *saml.Assertion, maxAge, skew time.Duration, now time.Time) error {
 	if len(a.AuthnStatements) == 0 {
 		return fmt.Errorf("%w: the assertion has no AuthnStatement", ErrAuthnTooOld)
 	}
-	oldest := now.Add(-maxAge - saml.MaxClockSkew)
+	oldest := now.Add(-maxAge - skew)
 	for _, s := range a.AuthnStatements {
 		if s.AuthnInstant.Before(oldest) {
 			return fmt.Errorf("%w: AuthnInstant %s is more than %s before %s", ErrAuthnTooOld,
@@ -441,7 +442,7 @@ func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...Res
 	}
 	if o.maxAuthnAge > 0 {
 		now := sp.Clock.Now() // the real time if Clock is nil
-		if err := checkAuthnAge(a, o.maxAuthnAge, now); err != nil {
+		if err := checkAuthnAge(a, o.maxAuthnAge, timelimit.SPClockSkew(sp), now); err != nil {
 			return nil, &saml.InvalidResponseError{PrivateErr: err, Now: now}
 		}
 	}

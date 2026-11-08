@@ -331,7 +331,7 @@ func (b *Binding) resolve(r *http.Request) (*etree.Element, error) {
 		return nil, fmt.Errorf("idpartifact: the ArtifactResolve is not issued by the SP %s", md.EntityID)
 	}
 	t := b.config.Now()
-	if req.IssueInstant.After(t.Add(saml.MaxClockSkew)) || t.After(req.IssueInstant.Add(saml.MaxIssueDelay)) {
+	if req.IssueInstant.After(t.Add(b.config.ClockSkew())) || t.After(req.IssueInstant.Add(b.config.MaxIssueDelay())) {
 		return nil, fmt.Errorf("idpartifact: the ArtifactResolve was issued at %s, which is not current", req.IssueInstant)
 	}
 

@@ -134,7 +134,7 @@ func WithScriptNonce(nonce string) ResponseOption {
 // matches *saml.StatusError; send it to the SP with ErrorResponse.
 //
 // If req.ForceAuthn is set, subject.AuthnInstant must not be before
-// req.IssueInstant, give or take saml.MaxClockSkew: Response returns an
+// req.IssueInstant, give or take the clock skew (see WithClockSkew): Response returns an
 // error otherwise.
 //
 // Response does not prevent req from being answered twice: once it is
@@ -147,7 +147,7 @@ func (c *Config) Response(ctx context.Context, req *AuthnRequest, subject Subjec
 	if subject.AuthnInstant.IsZero() {
 		return nil, errors.New("samlidp: the subject has no AuthnInstant")
 	}
-	if req != nil && req.ForceAuthn && subject.AuthnInstant.Before(req.IssueInstant.Add(-saml.MaxClockSkew)) {
+	if req != nil && req.ForceAuthn && subject.AuthnInstant.Before(req.IssueInstant.Add(-c.ClockSkew())) {
 		return nil, fmt.Errorf("samlidp: the request asks for a new authentication (ForceAuthn), but the subject's AuthnInstant %s is before the request was issued, at %s",
 			subject.AuthnInstant.UTC().Format(time.RFC3339), req.IssueInstant.UTC().Format(time.RFC3339))
 	}

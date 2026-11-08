@@ -21,6 +21,7 @@ import (
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/internal/signerutil"
+	"github.com/crewjam/saml/internal/timelimit"
 	"github.com/crewjam/saml/x/samlsp/replay"
 )
 
@@ -44,6 +45,8 @@ type Config struct {
 	replayState            ReplayState
 	authnContextComparator func(comparison string, requested []string, got string) bool
 	clock                  *dsig.Clock
+	clockSkew              time.Duration
+	issueDelay             time.Duration
 	httpClient             *http.Client
 	signatureMethod        string
 
@@ -438,6 +441,51 @@ func (o ClockOption) applyConfig(c *Config, _ *configOptions) { c.clock = o.cloc
 
 func (o ClockOption) applyMetadata(m *metadataOptions) { m.clock = o.clock }
 
+// WithClockSkew sets how far the IdP's clock may be from the SP's: the
+// leeway allowed when checking IssueInstant, NotBefore and NotOnOrAfter
+// times, and the AuthnInstant of WithMaxAuthnAge. It sets
+// saml.ServiceProvider.MaxClockSkew, so it applies to this Config only.
+// Zero, the default, means saml.MaxClockSkew.
+func WithClockSkew(d time.Duration) Option {
+	return optionFunc(func(c *Config, _ *configOptions) {
+		c.clockSkew = d
+		c.checks = append(c.checks, checkTimeLimits)
+	})
+}
+
+// WithMaxIssueDelay sets the longest allowed time between the IssueInstant
+// of a message from the IdP and its receipt, which also bounds how long
+// replay records are kept. It sets saml.ServiceProvider.MaxIssueDelay, so
+// it applies to this Config only. Zero, the default, means
+// saml.MaxIssueDelay.
+func WithMaxIssueDelay(d time.Duration) Option {
+	return optionFunc(func(c *Config, _ *configOptions) {
+		c.issueDelay = d
+		c.checks = append(c.checks, checkTimeLimits)
+	})
+}
+
+// checkTimeLimits refuses a negative clock skew or issue delay.
+func checkTimeLimits(sp *saml.ServiceProvider) error {
+	if sp.MaxClockSkew < 0 || sp.MaxIssueDelay < 0 {
+		return errors.New("samlsp: WithClockSkew and WithMaxIssueDelay need a duration that is not negative")
+	}
+	return nil
+}
+
+// ClockSkew returns the clock skew the SP allows: that of WithClockSkew
+// (or of a ServiceProviderOption passed to New), or saml.MaxClockSkew.
+func (c *Config) ClockSkew() time.Duration {
+	return timelimit.SPClockSkew(c.spForMetadata(nil))
+}
+
+// MaxIssueDelay returns the issue delay the SP allows: that of
+// WithMaxIssueDelay (or of a ServiceProviderOption passed to New), or
+// saml.MaxIssueDelay.
+func (c *Config) MaxIssueDelay() time.Duration {
+	return timelimit.SPIssueDelay(c.spForMetadata(nil))
+}
+
 // EntityID returns the entityID of the service provider.
 func (c *Config) EntityID() string { return c.entityID }
 
@@ -518,6 +566,8 @@ func (c *Config) localServiceProvider() *saml.ServiceProvider {
 		AcsURL:                c.acsURL,
 		AuthnNameIDFormat:     c.nameIDFormat,
 		Clock:                 c.clock,
+		MaxClockSkew:          c.clockSkew,
+		MaxIssueDelay:         c.issueDelay,
 
 		KeyOnlySigns: true,
 

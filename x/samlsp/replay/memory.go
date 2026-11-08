@@ -24,7 +24,8 @@ import (
 // an ID only after the message is fully verified: signed by the IdP,
 // addressed to this SP, answering a request of this SP (unless unsolicited
 // responses are allowed), and fresh. The expiry it records is at most
-// saml.MaxIssueDelay after the message's IssueInstant. So the record holds
+// the issue delay (saml.MaxIssueDelay, unless the provider sets its own)
+// after the message's IssueInstant. So the record holds
 // only messages the IdP really issued in the last few minutes, and grows
 // with the rate of logins, not with anything an attacker can send.
 //

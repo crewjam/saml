@@ -52,6 +52,7 @@ import (
 	"github.com/beevik/etree"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/internal/timelimit"
 	"github.com/crewjam/saml/x/samlidp"
 )
 
@@ -330,7 +331,7 @@ func (s *Service) ParseRequest(ctx context.Context, r *http.Request, opts ...sam
 	}
 	q := &ireq.Request
 	sp := ireq.ServiceProviderMetadata.EntityID
-	if err := s.config.Consume(ctx, sp, logoutRequestReplayPrefix+q.ID, q.IssueInstant.Add(saml.MaxIssueDelay)); err != nil {
+	if err := s.config.Consume(ctx, sp, logoutRequestReplayPrefix+q.ID, q.IssueInstant.Add(timelimit.IDPIssueDelay(idp))); err != nil {
 		return nil, fmt.Errorf("idpslo: logout request %q from %s: %w", q.ID, sp, err)
 	}
 
@@ -629,7 +630,7 @@ func (s *Service) ParseResponse(ctx context.Context, r *http.Request, servicePro
 	if resp.ID == "" {
 		return nil, fmt.Errorf("idpslo: the logout response from %s has no ID", serviceProvider)
 	}
-	if err := s.config.Consume(ctx, serviceProvider, logoutResponseReplayPrefix+resp.ID, resp.IssueInstant.Add(saml.MaxIssueDelay)); err != nil {
+	if err := s.config.Consume(ctx, serviceProvider, logoutResponseReplayPrefix+resp.ID, resp.IssueInstant.Add(timelimit.IDPIssueDelay(idp))); err != nil {
 		return nil, fmt.Errorf("idpslo: logout response %q from %s: %w", resp.ID, serviceProvider, err)
 	}
 	if code := resp.Status.StatusCode.Value; code != saml.StatusSuccess {

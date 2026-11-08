@@ -10,6 +10,7 @@ import (
 	"github.com/beevik/etree"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/internal/timelimit"
 )
 
 // bearerMethod is the bearer SubjectConfirmation method, the only one the
@@ -254,7 +255,7 @@ func (c *Config) ParseAuthnRequest(ctx context.Context, r *http.Request, opts ..
 
 	if isSigned(ireq) {
 		key := ReplayKey(req.ServiceProvider, req.ID)
-		if err := c.replayState.Consume(ctx, key, req.IssueInstant.Add(saml.MaxIssueDelay)); err != nil {
+		if err := c.replayState.Consume(ctx, key, req.IssueInstant.Add(timelimit.IDPIssueDelay(idp))); err != nil {
 			return nil, fmt.Errorf("samlidp: authn request %q: %w", req.ID, err)
 		}
 	}
