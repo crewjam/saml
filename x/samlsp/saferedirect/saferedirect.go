@@ -42,9 +42,20 @@ import (
 // It does not limit the length of p: a return path kept in a cookie should
 // be checked for length too.
 func IsSafe(p string) bool {
-	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.HasPrefix(p, "/\\") {
+	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.HasPrefix(p, "/\\") || !isPlain(p) {
 		return false
 	}
+	u, err := url.Parse(p)
+	return err == nil && u.Scheme == "" && u.Host == "" && u.User == nil && u.Opaque == "" &&
+		strings.HasPrefix(u.Path, "/")
+}
+
+// isPlain reports whether p is valid UTF-8 with no backslash, control or
+// format character or white space, and no "//" in its path (before any
+// query or fragment). IsSafe keeps its own checks of the start of p, in
+// the form static analyzers recognize as guarding a redirect, and leaves
+// the rest to isPlain.
+func isPlain(p string) bool {
 	if !utf8.ValidString(p) || strings.ContainsRune(p, '\\') {
 		return false
 	}
@@ -57,10 +68,5 @@ func IsSafe(p string) bool {
 	if i := strings.IndexAny(path, "?#"); i >= 0 {
 		path = path[:i]
 	}
-	if strings.Contains(path, "//") {
-		return false
-	}
-	u, err := url.Parse(p)
-	return err == nil && u.Scheme == "" && u.Host == "" && u.User == nil && u.Opaque == "" &&
-		strings.HasPrefix(u.Path, "/")
+	return !strings.Contains(path, "//")
 }
