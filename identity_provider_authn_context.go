@@ -62,13 +62,24 @@ func (req *IdpAuthnRequest) authnContextClassRef(session *Session) (string, erro
 
 // checkRequestedAuthnContext returns a *StatusError if the authentication
 // context class achieved does not satisfy the request's
-// RequestedAuthnContext. A request without one, or one that names no
-// AuthnContextClassRef (only declarations, which are not evaluated), is
-// always satisfied.
+// RequestedAuthnContext. A request without one is always satisfied. One
+// that names only declarations (AuthnContextDeclRef) is never: the IdP
+// asserts classes, and cannot tell whether one satisfies a declaration,
+// so it answers NoAuthnContext (saml-core §3.3.2.2.1).
 func (req *IdpAuthnRequest) checkRequestedAuthnContext(achieved string) error {
 	requested := req.Request.RequestedAuthnContext
-	if requested == nil || len(requested.ClassRefs()) == 0 {
+	if requested == nil {
 		return nil
+	}
+	if len(requested.ClassRefs()) == 0 {
+		if len(requested.AuthnContextDeclRefs) == 0 {
+			return nil
+		}
+		return &StatusError{
+			TopLevel:    StatusResponder,
+			SecondLevel: StatusNoAuthnContext,
+			Message:     "requested authentication context declarations are not supported",
+		}
 	}
 	ok, known := authnContextSatisfies(requested.Comparison, requested.ClassRefs(), achieved, req.IDP.authnContextClassStrengths())
 	if !known {

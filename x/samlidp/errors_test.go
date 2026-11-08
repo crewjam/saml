@@ -134,6 +134,27 @@ func TestAuthnContext(t *testing.T) {
 	_ = asStatus(t, err, saml.StatusResponder, saml.StatusNoAuthnContext)
 }
 
+// A RequestedAuthnContext of declarations only cannot be satisfied by the
+// classes the IdP asserts (saml-core §3.3.2.2.1).
+func TestAuthnContextDeclRef(t *testing.T) {
+	p := newPair(t, nil, nil)
+	_, req, err := p.parse(t, samlsp.WithModify(func(r *saml.AuthnRequest) error {
+		r.RequestedAuthnContext = &saml.RequestedAuthnContext{
+			Comparison:           string(saml.AuthnContextComparisonExact),
+			AuthnContextDeclRefs: []string{"urn:example:decl:mfa"},
+		}
+		return nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.AuthnContextDecls) != 1 || req.AuthnContextDecls[0] != "urn:example:decl:mfa" || len(req.AuthnContextClasses) != 0 {
+		t.Fatalf("AuthnContextDecls %v, AuthnContextClasses %v", req.AuthnContextDecls, req.AuthnContextClasses)
+	}
+	_, err = p.idp.Response(context.Background(), req, testSubject)
+	_ = asStatus(t, err, saml.StatusResponder, saml.StatusNoAuthnContext)
+}
+
 func TestRequestedSubject(t *testing.T) {
 	p := newPair(t, nil, nil)
 	_, req, err := p.parse(t, samlsp.WithSubject(saml.NameID{Value: "someone-else"}))
@@ -317,5 +338,24 @@ func TestWithAssertion(t *testing.T) {
 	_, err = p.idp.Response(context.Background(), req, testSubject, samlidp.WithAssertion(func(*saml.Assertion) error { return boom }))
 	if !errors.Is(err, boom) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// ParseAuthnRequest leaves the caller's request with its form parsed, so
+// that the application can read its own fields of the same POST.
+func TestParseAuthnRequestKeepsForm(t *testing.T) {
+	p := newPair(t, nil, nil)
+	msg, err := p.sp.AuthnRequest(context.Background(), "rs", samlsp.WithBinding(saml.HTTPPostBinding))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := formOf(t, msg)
+	fields.Set("remember", "yes")
+	r := postForm(t, msg.Destination, fields)
+	if _, err := p.idp.ParseAuthnRequest(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.FormValue("remember"); got != "yes" {
+		t.Fatalf("remember = %q", got)
 	}
 }
