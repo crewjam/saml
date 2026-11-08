@@ -411,8 +411,42 @@ func TestMemoryStoreExpires(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if m, err := s.Take(ctx, "a"); m != nil || err != nil {
+	if m, err := s.Take(ctx, "a", ""); m != nil || err != nil {
 		t.Errorf("Take = %v, %v", m, err)
+	}
+}
+
+// TestMemoryStoreTakeRecipient checks that only the recipient can take a
+// message, and that another party's attempt leaves it in place.
+func TestMemoryStoreTakeRecipient(t *testing.T) {
+	var s artifact.MemoryStore // the zero value is ready to use
+	ctx := context.Background()
+	m := artifact.StoredMessage{XML: []byte("<x/>"), Recipient: "https://idp.example.com", ExpiresAt: time.Now().Add(time.Minute)}
+	if err := s.Save(ctx, "a", m); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Take(ctx, "a", "https://other.example.com"); got != nil || err != nil {
+		t.Errorf("another party took the message: %v, %v", got, err)
+	}
+	if got, err := s.Take(ctx, "a", m.Recipient); err != nil || got == nil || string(got.XML) != "<x/>" {
+		t.Errorf("the recipient's Take = %v, %v", got, err)
+	}
+	if got, _ := s.Take(ctx, "a", m.Recipient); got != nil {
+		t.Error("a message was given out twice")
+	}
+}
+
+// TestMemoryStoreClock checks that messages expire by the store's Clock:
+// a message valid for a minute by a clock set in the past is kept.
+func TestMemoryStoreClock(t *testing.T) {
+	past := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	s := &artifact.MemoryStore{Clock: dsig.NewFakeClockAt(past)}
+	if err := s.Save(context.Background(), "a", artifact.StoredMessage{ExpiresAt: past.Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if s.Len() != 1 {
+		t.Error("the message expired by the system clock")
 	}
 }
 
@@ -481,11 +515,11 @@ type brokenStore struct {
 	corrupt bool
 }
 
-func (s brokenStore) Take(ctx context.Context, art string) (*artifact.StoredMessage, error) {
+func (s brokenStore) Take(ctx context.Context, art, recipient string) (*artifact.StoredMessage, error) {
 	if s.takeErr != nil {
 		return nil, s.takeErr
 	}
-	m, err := s.Store.Take(ctx, art)
+	m, err := s.Store.Take(ctx, art, recipient)
 	if m != nil && s.corrupt {
 		m.XML = []byte("<not xml")
 	}
