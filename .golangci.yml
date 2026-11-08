@@ -52,12 +52,6 @@ linters:
     rules:
       - path: (.+)\.go$
         text: G104 # 'Errors unhandled. (gosec)
-      # gosaml fetches the metadata URLs visitors give it, through a client
-      # whose dialer refuses non-public addresses (see guard in fetch.go).
-      - path: tools/gosaml/server/fetch\.go$
-        linters:
-          - gosec
-        text: G704
       # Tests may still replace the deprecated saml.TimeNow, saml.Clock,
       # saml.RandReader and xmlenc.RandReader, which remain the fallback when
       # no Clock or Rand field is set.
