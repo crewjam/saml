@@ -227,7 +227,7 @@ func TestCookieAttributes(t *testing.T) {
 // these do not share one.
 func TestRelayStates(t *testing.T) {
 	cfg, _ := newConfig(t)
-	tr := newTracker(t, cfg, pending.WithSlots(pending.MaxSlots))
+	tr := newTracker(t, cfg, pending.WithSlots(pending.MaxSlots), pending.WithMaxCookiesSize(pending.MaxSlots*512))
 	states := []string{"", "a", "https://sp.example.com/next?x=1&y=2", "with space; and=equals"}
 	browser := httptest.NewRecorder()
 	ids := map[string]string{}
@@ -463,7 +463,7 @@ func TestSameSlot(t *testing.T) {
 func TestManyAbandoned(t *testing.T) {
 	cfg, _ := newConfig(t)
 	for _, slots := range []int{1, 4, pending.DefaultSlots, pending.MaxSlots} {
-		tr := newTracker(t, cfg, pending.WithSlots(slots))
+		tr := newTracker(t, cfg, pending.WithSlots(slots), pending.WithMaxCookiesSize(pending.MaxSlots*512))
 		browser := jar{}
 		var last *samlsp.Message
 		for i := range 1000 {
@@ -537,7 +537,7 @@ func TestTakeClears(t *testing.T) {
 // WithSlots is still found.
 func TestChangeSlots(t *testing.T) {
 	cfg, _ := newConfig(t)
-	msg, w := remember(t, cfg, newTracker(t, cfg, pending.WithSlots(pending.MaxSlots)), "s", "")
+	msg, w := remember(t, cfg, newTracker(t, cfg, pending.WithSlots(pending.MaxSlots), pending.WithMaxCookiesSize(pending.MaxSlots*512)), "s", "")
 	browser := jar{}
 	browser.set(w)
 	login, err := newTracker(t, cfg, pending.WithSlots(1)).Take(httptest.NewRecorder(), browser.request("s"))
@@ -583,6 +583,12 @@ func TestNewErrors(t *testing.T) {
 		"no slots": func() (*pending.Tracker, error) { return pending.New(cfg, testKey, pending.WithSlots(0)) },
 		"too many slots": func() (*pending.Tracker, error) {
 			return pending.New(cfg, testKey, pending.WithSlots(pending.MaxSlots+1))
+		},
+		"too many slots for the cookie budget": func() (*pending.Tracker, error) {
+			return pending.New(cfg, testKey, pending.WithSlots(pending.MaxSlots))
+		},
+		"cookie budget too small": func() (*pending.Tracker, error) {
+			return pending.New(cfg, testKey, pending.WithMaxCookiesSize(1000))
 		},
 	} {
 		if _, err := f(); err == nil {
@@ -639,5 +645,47 @@ func TestDeriveKey(t *testing.T) {
 	}
 	if _, err := pending.DeriveKey(secret, ""); err == nil {
 		t.Error("an empty label was accepted")
+	}
+}
+
+// However large the data that forced logins pass to Remember, the slot
+// cookies together never take more of the Cookie header than the budget,
+// so the ACS stays reachable.
+func TestCookiesSizeBounded(t *testing.T) {
+	cfg, _ := newConfig(t)
+	tr := newTracker(t, cfg)
+	browser := jar{}
+	// A short return path fits.
+	msg := &samlsp.Message{ID: "id-ok", RelayState: rand.Text()}
+	w := httptest.NewRecorder()
+	if err := tr.Remember(w, msg, "/a/return/path?with=query"); err != nil {
+		t.Fatal(err)
+	}
+	browser.set(w)
+	// Long data, as an attacker's "next" parameter, is refused.
+	for i := range 200 {
+		w := httptest.NewRecorder()
+		err := tr.Remember(w, &samlsp.Message{ID: fmt.Sprintf("id-%d", i), RelayState: rand.Text()}, "/"+strings.Repeat("x", 300))
+		if err == nil {
+			t.Fatal("data of 300 bytes accepted")
+		}
+		browser.set(w)
+	}
+	// Fill every slot with the largest data each accepts.
+	for i := range 200 {
+		m := &samlsp.Message{ID: fmt.Sprintf("id-big-%d", i), RelayState: rand.Text()}
+		data := strings.Repeat("y", 400)
+		for data != "" {
+			w := httptest.NewRecorder()
+			if tr.Remember(w, m, data) == nil {
+				browser.set(w)
+				break
+			}
+			data = data[1:]
+		}
+	}
+	header := browser.request("x").Header.Get("Cookie")
+	if len(header) > pending.DefaultMaxCookiesSize {
+		t.Fatalf("Cookie header of %d bytes, more than %d", len(header), pending.DefaultMaxCookiesSize)
 	}
 }
