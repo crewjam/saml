@@ -33,7 +33,10 @@ package artifact
 
 import (
 	"context"
+	"crypto"
+	"crypto/ecdsa"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha1" //nolint:gosec // SAML type 0x0004 artifacts identify their source by SHA-1 (saml-bindings §3.6.4)
 	"crypto/x509"
 	"encoding/base64"
@@ -50,6 +53,7 @@ import (
 	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/internal/signerutil"
 	"github.com/crewjam/saml/internal/timelimit"
 	"github.com/crewjam/saml/internal/xmlroundtrip"
 	"github.com/crewjam/saml/x/samlsp"
@@ -131,8 +135,9 @@ var (
 // has no ArtifactResolutionService with the SOAP binding and that index,
 // since the IdP could then resolve none of the Binding's artifacts.
 //
-// If store is a *MemoryStore with no Clock, New sets its Clock to that of
-// config (see samlsp.WithClock), by which the Binding's messages expire.
+// If store is a *MemoryStore with no Now, New sets its Now to the time
+// source of config (see samlsp.WithClock), by which the Binding's messages
+// expire.
 func New(config *samlsp.Config, store Store, index uint16) (*Binding, error) {
 	var clock *dsig.Clock
 	md := config.Metadata(context.Background(), func(sp *saml.ServiceProvider) { clock = sp.Clock })
@@ -141,7 +146,7 @@ func New(config *samlsp.Config, store Store, index uint16) (*Binding, error) {
 		return nil, err
 	}
 	if m, ok := store.(*MemoryStore); ok {
-		m.defaultClock(clock)
+		m.defaultNow(func() time.Time { return clockNow(clock) })
 	}
 	return b, nil
 }
@@ -167,7 +172,7 @@ func ResolutionService(location string, index uint16) samlsp.Option {
 			}
 		}),
 		samlsp.WithCheck(func(sp *saml.ServiceProvider) error {
-			if sp.LogoutSignatureMethod == "" {
+			if !canSign(sp.Key) {
 				return errors.New("artifact: ResolutionService needs an RSA or ECDSA key (see samlsp.WithSigningKey) to sign ArtifactResponses")
 			}
 			return nil
@@ -270,7 +275,30 @@ func (b *Binding) lifetime() time.Duration {
 	return DefaultLifetime
 }
 
-func now(sp *saml.ServiceProvider) time.Time { return sp.Clock.Now() }
+// now returns the current time by the clock of sp.
+func now(sp *saml.ServiceProvider) time.Time { return clockNow(sp.Clock) }
+
+// clockNow returns the current time in UTC from clock or, if it is nil,
+// from saml.TimeNow, as package saml does.
+func clockNow(clock *dsig.Clock) time.Time {
+	if clock != nil {
+		return clock.Now().UTC()
+	}
+	return saml.TimeNow() //nolint:staticcheck // package saml's fallback when no Clock is set
+}
+
+// canSign reports whether key can sign the ArtifactResponses: it is an
+// RSA or ECDSA key, the kinds XML signatures support here.
+func canSign(key crypto.Signer) bool {
+	if signerutil.IsNil(key) {
+		return false
+	}
+	switch key.Public().(type) {
+	case *rsa.PublicKey, *ecdsa.PublicKey:
+		return true
+	}
+	return false
+}
 
 // newArtifact returns a new type 0x0004 artifact (saml-bindings §3.6.4):
 // the type code, the endpoint index, the SHA-1 hash of the issuer's
