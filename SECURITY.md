@@ -17,3 +17,7 @@ We'll respond in the advisory, work with you on a fix, and publish the advisory 
 ## Supported versions
 
 Fixes are made on `main` and included in the next release.
+
+## Maintainer
+
+The primary maintainer of this repository is Ross Kinder <ross@kndr.org>
