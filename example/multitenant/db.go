@@ -67,7 +67,7 @@ type Provider struct {
 	Domain            string
 	EntityID          string
 	MetadataXML       []byte
-	AllowIdPInitiated bool
+	AllowIDPInitiated bool
 }
 
 // IdentityProvider returns the provider's IdP metadata for samlsp. It

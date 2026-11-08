@@ -99,7 +99,7 @@ func acs(w http.ResponseWriter, r *http.Request) {
 	if !isLocalURL(returnTo) {
 		returnTo = "/"
 	}
-	http.Redirect(w, r, returnTo, http.StatusFound)
+	http.Redirect(w, r, returnTo, http.StatusFound) //nolint:gosec // G710: returnTo passed isLocalURL
 }
 
 func startSession(w http.ResponseWriter, a *samlsp.Assertion) {
@@ -111,7 +111,7 @@ func startSession(w http.ResponseWriter, a *samlsp.Assertion) {
 	sessions.Lock()
 	sessions.m[id] = &session{assertion: a, expires: expires}
 	sessions.Unlock()
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: Secure whenever the SP is served over https
 		Name: sessionCookie, Value: id, Path: "/", Expires: expires,
 		HttpOnly: true, Secure: secure(), SameSite: http.SameSiteLaxMode,
 	})
@@ -141,7 +141,7 @@ func secure() bool { return strings.HasPrefix(config.ACSURL(), "https:") }
 // SameSite=None; over plain http, which is for development, browsers send
 // a cookie without SameSite on a cross-site POST shortly after it was set.
 func setTempCookie(w http.ResponseWriter, name, path, value string) {
-	c := &http.Cookie{Name: name, Value: value, Path: path, MaxAge: 300, HttpOnly: true}
+	c := &http.Cookie{Name: name, Value: value, Path: path, MaxAge: 300, HttpOnly: true} //nolint:gosec // G124: Secure and SameSite=None over https, below
 	if secure() {
 		c.Secure, c.SameSite = true, http.SameSiteNoneMode
 	}
@@ -149,7 +149,7 @@ func setTempCookie(w http.ResponseWriter, name, path, value string) {
 }
 
 func deleteCookie(w http.ResponseWriter, name, path string) {
-	http.SetCookie(w, &http.Cookie{Name: name, Path: path, MaxAge: -1, HttpOnly: true, Secure: secure()})
+	http.SetCookie(w, &http.Cookie{Name: name, Path: path, MaxAge: -1, HttpOnly: true, Secure: secure()}) //nolint:gosec // G124: deletes the cookie
 }
 
 // isLocalURL reports whether p is a URL path on this site, safe to redirect

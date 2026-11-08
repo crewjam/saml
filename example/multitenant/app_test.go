@@ -72,7 +72,7 @@ func newTestIDP(t *testing.T, app *App, host, email string) *testIDP {
 
 func (ti *testIDP) entityID() string { return ti.idp.Metadata().EntityID }
 
-func (ti *testIDP) GetServiceProvider(r *http.Request, id string) (*saml.EntityDescriptor, error) {
+func (ti *testIDP) GetServiceProvider(r *http.Request, _ string) (*saml.EntityDescriptor, error) {
 	return ti.app.config.Metadata(r.Context()), nil
 }
 
@@ -85,6 +85,7 @@ func (ti *testIDP) GetSession(http.ResponseWriter, *http.Request, *saml.IdpAuthn
 	}
 }
 
+//nolint:unparam // implements saml.SessionInvalidator
 func (ti *testIDP) InvalidateSession(http.ResponseWriter, *http.Request, *saml.IdpLogoutRequest) error {
 	ti.loggedOut = true
 	return nil
@@ -209,8 +210,8 @@ func metadataXML(t *testing.T, ti *testIDP) string {
 // login logs b in through ti, the IdP of domain, and checks where it lands.
 func login(t *testing.T, b *browser, ti *testIDP, domain string) {
 	t.Helper()
-	toIdP := b.get(spBase + "/sso?domain=" + domain + "&redirect_to=/reports")
-	w := b.post(spBase+"/saml/acs", idpSSO(t, ti, toIdP))
+	redirect := b.get(spBase + "/sso?domain=" + domain + "&redirect_to=/reports")
+	w := b.post(spBase+"/saml/acs", idpSSO(t, ti, redirect))
 	if w.Code != http.StatusFound || w.Header().Get("Location") != "/reports" {
 		t.Fatalf("ACS: %d %s %s", w.Code, w.Header().Get("Location"), w.Body.String())
 	}
@@ -328,12 +329,12 @@ func TestSPInitiatedLogout(t *testing.T) {
 	b := newBrowser(t, app)
 	login(t, b, acme, "acme.example")
 
-	toIdP := b.post(spBase+"/logout", nil)
+	redirect := b.post(spBase+"/logout", nil)
 	if b.loggedInAs() != "" {
 		t.Fatal("the local session survived")
 	}
 	w := httptest.NewRecorder()
-	acme.idp.ServeSLO(w, toIDP(t, toIdP))
+	acme.idp.ServeSLO(w, toIDP(t, redirect))
 	if !acme.loggedOut {
 		t.Fatalf("the IdP did not log out: %d %s", w.Code, w.Body.String())
 	}

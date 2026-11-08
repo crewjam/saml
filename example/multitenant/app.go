@@ -58,11 +58,11 @@ func idp(p *Provider) samlsp.IdentityProviderOption {
 func (a *App) home(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if s, ok := a.session(r); ok {
-		fmt.Fprintf(w, `<p>Hello, %s!</p><form method="post" action="/logout"><button>Log out</button></form>`,
+		_, _ = fmt.Fprintf(w, `<p>Hello, %s!</p><form method="post" action="/logout"><button>Log out</button></form>`,
 			html.EscapeString(s.Email))
 		return
 	}
-	fmt.Fprint(w, `<form action="/sso"><input name="domain" placeholder="example.com"><button>Log in with SSO</button></form>`)
+	_, _ = fmt.Fprint(w, `<form action="/sso"><input name="domain" placeholder="example.com"><button>Log in with SSO</button></form>`)
 }
 
 // addProvider registers a tenant's IdP from an uploaded metadata document.
@@ -78,14 +78,14 @@ func (a *App) addProvider(w http.ResponseWriter, r *http.Request) {
 		Domain:            r.FormValue("domain"),
 		EntityID:          md.EntityID,
 		MetadataXML:       metadataXML,
-		AllowIdPInitiated: r.FormValue("allow_idp_initiated") == "true",
+		AllowIDPInitiated: r.FormValue("allow_idp_initiated") == "true",
 	}
 	if err := a.db.AddProvider(p); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
-	fmt.Fprintln(w, p.ID)
+	_, _ = fmt.Fprintln(w, p.ID)
 }
 
 // startLogin sends the browser to the IdP of the domain's tenant.
@@ -136,7 +136,7 @@ func (a *App) acs(w http.ResponseWriter, r *http.Request) {
 	}
 	if !strings.HasSuffix(strings.ToLower(email), "@"+strings.ToLower(p.Domain)) {
 		// A tenant's IdP vouches only for its own domain.
-		log.Printf("ACS, provider %s: email %q is not in its domain", p.ID, email)
+		log.Printf("ACS, provider %s: email %q is not in its domain", p.ID, email) //nolint:gosec // G706: %q quotes the email
 		http.Error(w, "login failed", http.StatusForbidden)
 		return
 	}
@@ -159,7 +159,7 @@ func (a *App) acs(w http.ResponseWriter, r *http.Request) {
 	if !isLocalURL(redirectTo) {
 		redirectTo = "/"
 	}
-	http.Redirect(w, r, redirectTo, http.StatusFound)
+	http.Redirect(w, r, redirectTo, http.StatusFound) //nolint:gosec // G710: redirectTo passed isLocalURL
 }
 
 // loginInProgress returns the options that ParseResponse needs for the
@@ -189,7 +189,7 @@ func (a *App) loginInProgress(w http.ResponseWriter, r *http.Request) ([]samlsp.
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("no provider for IdP %q", issuer)
 	}
-	if !p.AllowIdPInitiated {
+	if !p.AllowIDPInitiated {
 		return nil, nil, "", fmt.Errorf("provider %s does not allow IdP-initiated login", p.ID)
 	}
 	return []samlsp.ResponseOption{samlsp.AllowUnsolicited}, p, relayState, nil

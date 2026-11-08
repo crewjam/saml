@@ -63,7 +63,7 @@ func main() {
 		if !ok {
 			log.Fatalf("-provider %q: want domain=metadata-file", p)
 		}
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) //nolint:gosec // G304: the path is a command-line flag chosen by the operator
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -71,7 +71,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("%s: %v", path, err)
 		}
-		if err := db.AddProvider(&Provider{Domain: domain, EntityID: md.EntityID, MetadataXML: data, AllowIdPInitiated: true}); err != nil {
+		if err := db.AddProvider(&Provider{Domain: domain, EntityID: md.EntityID, MetadataXML: data, AllowIDPInitiated: true}); err != nil {
 			log.Fatalf("%s: %v", path, err)
 		}
 	}
