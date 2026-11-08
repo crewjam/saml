@@ -246,7 +246,8 @@ func TestLogoutErrorKinds(t *testing.T) {
 		t.Run("Status", func(t *testing.T) {
 			r := e.logoutResponse()
 			r.Status.StatusCode.Value = "urn:oasis:names:tc:SAML:2.0:status:Requester"
-			err := e.sp.validateLogoutResponse(r)
+			assert.NilError(t, e.sp.validateLogoutResponse(r))
+			err := logoutResponseStatusError(r)
 			assert.Error(t, err, "status code was not "+StatusSuccess)
 			var badStatus ErrBadStatus
 			assert.Assert(t, errors.As(err, &badStatus))
