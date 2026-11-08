@@ -207,6 +207,12 @@ func fetchMetadata(ctx context.Context, metadataURL url.URL, o metadataOptions) 
 // Fetches are not cancelled with the context of the call that started
 // them, since other calls may be waiting for them, but time out after two
 // minutes. A caller that stops waiting gets its context's error.
+//
+// To report a bad URL when the IdP is configured, rather than at the first
+// login, call the returned MetadataFunc once and check its error: the
+// metadata it fetches is cached for the calls that follow. Keep the
+// MetadataFunc as long as the IdP is configured, rather than making a new
+// one with each Config, so that its cache is kept too.
 func RemoteMetadata(metadataURL string, opts ...MetadataOption) MetadataFunc {
 	o := newMetadataOptions(opts)
 	r := &remoteMetadata{url: metadataURL, opts: o, now: o.clock.Now}

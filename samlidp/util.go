@@ -2,13 +2,10 @@ package samlidp
 
 import (
 	"crypto/x509"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-
-	"github.com/crewjam/saml/internal/xmlroundtrip"
 
 	"github.com/crewjam/saml"
 )
@@ -87,43 +84,5 @@ func verifiedSPMetadata(data []byte, certs []*x509.Certificate) (*saml.EntityDes
 // parseSPMetadata parses the metadata document data as getSPMetadata does,
 // without checking any signature.
 func parseSPMetadata(data []byte) (*saml.EntityDescriptor, error) {
-	if err := xmlroundtrip.Validate(data); err != nil {
-		return nil, err
-	}
-
-	spMetadata := &saml.EntityDescriptor{}
-	if err := xml.Unmarshal(data, spMetadata); err != nil {
-		if err.Error() != "expected element type <EntityDescriptor> but have <EntitiesDescriptor>" {
-			return nil, err
-		}
-		entities := &saml.EntitiesDescriptor{}
-		if err := xml.Unmarshal(data, entities); err != nil {
-			return nil, err
-		}
-		sps := spEntities(entities)
-		switch len(sps) {
-		case 0:
-			return nil, errors.New("metadata contained no service provider metadata")
-		case 1:
-			return sps[0], nil
-		default:
-			return nil, fmt.Errorf("metadata holds %d entities with an SPSSODescriptor; register them one at a time", len(sps))
-		}
-	}
-	return spMetadata, nil
-}
-
-// spEntities returns the entities with an SPSSODescriptor in entities and
-// in any EntitiesDescriptor nested in it.
-func spEntities(entities *saml.EntitiesDescriptor) []*saml.EntityDescriptor {
-	var rv []*saml.EntityDescriptor
-	for i := range entities.EntityDescriptors {
-		if len(entities.EntityDescriptors[i].SPSSODescriptors) > 0 {
-			rv = append(rv, &entities.EntityDescriptors[i])
-		}
-	}
-	for i := range entities.EntitiesDescriptors {
-		rv = append(rv, spEntities(&entities.EntitiesDescriptors[i])...)
-	}
-	return rv
+	return saml.ParseServiceProviderMetadata(data)
 }

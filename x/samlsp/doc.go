@@ -142,6 +142,11 @@
 // with a status other than Success, such as NoPassive for an IsPassive
 // request, use errors.As with saml.ErrBadStatus.
 //
+// A Response that does not verify gives a *saml.InvalidResponseError,
+// whose message reveals nothing an attacker could use ("Authentication
+// failed"), so it can be shown to the user. Log errors.Unwrap(err), which
+// says what was wrong.
+//
 // # Stability
 //
 // This package is under x/ and its API may change.

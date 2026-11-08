@@ -41,7 +41,8 @@ func (f authnOptionFunc) applyAuthn(o *authnOptions) { f(o) }
 
 var (
 	// ForceAuthn asks the IdP to authenticate the user again, even if the
-	// IdP already has a session for them (ForceAuthn="true").
+	// IdP already has a session for them (ForceAuthn="true"). See
+	// WithForceAuthn to set it from a setting.
 	ForceAuthn AuthnOption = authnOptionFunc(func(o *authnOptions) { o.forceAuthn = true })
 
 	// IsPassive asks the IdP not to interact with the user. If it cannot
@@ -49,6 +50,12 @@ var (
 	// that matches saml.ErrBadStatus with the status NoPassive.
 	IsPassive AuthnOption = authnOptionFunc(func(o *authnOptions) { o.isPassive = true })
 )
+
+// WithForceAuthn is ForceAuthn when force is true, and no option
+// otherwise, for an application that sets it from configuration.
+func WithForceAuthn(force bool) AuthnOption {
+	return authnOptionFunc(func(o *authnOptions) { o.forceAuthn = o.forceAuthn || force })
+}
 
 // WithAuthnContext asks the IdP to authenticate the user with one of
 // classes, compared as comparison says.

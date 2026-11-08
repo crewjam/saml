@@ -39,7 +39,7 @@ func TestGetSPMetadataRequiresSingleSPInAggregate(t *testing.T) {
 	}
 	_, err := getSPMetadata(strings.NewReader(`<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata">` +
 		sp("https://evil.example.com/") + `<EntitiesDescriptor>` + sp("https://sp.example.com/") + `</EntitiesDescriptor></EntitiesDescriptor>`))
-	assert.Check(t, is.Error(err, "metadata holds 2 entities with an SPSSODescriptor; register them one at a time"))
+	assert.Check(t, is.Error(err, "saml: the metadata describes 2 service providers; register them one at a time"))
 
 	md, err := getSPMetadata(strings.NewReader(`<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata"><EntitiesDescriptor>` +
 		sp("https://sp.example.com/") + `</EntitiesDescriptor></EntitiesDescriptor>`))

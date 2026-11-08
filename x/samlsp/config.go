@@ -73,11 +73,13 @@ type Config struct {
 // absolute. It does not call identityProvider.
 //
 // New is cheap: it does no I/O and keeps no state but the replay record.
-// An application whose SP differs per tenant, by entity ID or ACS URL, can
-// build a Config per request. Each Config made without WithReplayState
-// keeps its own replay record, though, which then lasts only for the
-// request and protects nothing: give every such Config the same record
-// with WithReplayState, such as one replay.NewMemory or a database table.
+// An application can build a Config per request (when its SP differs per
+// tenant, by entity ID or ACS URL), per login, or again whenever its
+// configuration changes. Each Config made without WithReplayState keeps
+// its own replay record, though, which is lost with the Config: a message
+// accepted by one Config would be accepted again by the next. Give every
+// such Config the same record with WithReplayState, such as one
+// replay.NewMemory kept for the life of the process, or a database table.
 // When only the IdP differs per tenant, one Config with
 // WithIdentityProvider serves them all.
 func New(entityID string, identityProvider MetadataFunc, opts ...Option) (*Config, error) {

@@ -218,6 +218,27 @@ func (as Attributes) LegacyMap() map[string][]string {
 	return m
 }
 
+// LegacyGet returns the first value of the attribute whose Name is name,
+// or, if there is none, of the first attribute whose FriendlyName is name.
+// It returns "" if neither has a value. It is LegacyMap for one attribute,
+// with Name first: a setting written for samlsp, which named attributes by
+// FriendlyName, keeps matching, and one that names attributes by Name
+// matches as Get does.
+//
+// Deprecated: LegacyGet exists only to ease the move from samlsp. Name
+// attributes by their Name, and use Get.
+func (as Attributes) LegacyGet(name string) string {
+	if v := as.Get(name); v != "" {
+		return v
+	}
+	for _, a := range as {
+		if a.FriendlyName == name && len(a.Values) > 0 {
+			return a.Values[0]
+		}
+	}
+	return ""
+}
+
 // Get returns the first value of the attribute whose Name is name, or "" if
 // there is none. FriendlyName is not matched.
 func (as Attributes) Get(name string) string {

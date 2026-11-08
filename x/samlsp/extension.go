@@ -99,11 +99,20 @@ func (m *OutboundMessage) PostForm(fields url.Values) (*Message, error) {
 	}
 	return &Message{
 		ID: m.ID, Binding: m.Binding, Destination: m.Destination, RelayState: m.RelayState,
-		form: buf.Bytes(), scriptHash: postFormScriptHash,
+		formFields: cloneValues(fields), form: buf.Bytes(), scriptHash: postFormScriptHash,
 	}, nil
 }
 
 type formField struct{ Name, Value string }
+
+// cloneValues returns a copy of v that shares no slices with it.
+func cloneValues(v url.Values) url.Values {
+	out := make(url.Values, len(v))
+	for name, values := range v {
+		out[name] = append([]string(nil), values...)
+	}
+	return out
+}
 
 func sortedFields(fields url.Values) []formField {
 	names := slices.Sorted(maps.Keys(fields))
