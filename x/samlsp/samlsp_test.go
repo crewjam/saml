@@ -58,7 +58,8 @@ type testIDP struct {
 	cert      *x509.Certificate
 	spMeta    *saml.EntityDescriptor
 	loggedOut bool
-	noSession bool // answer an IsPassive request with NoPassive
+	noSession bool          // answer an IsPassive request with NoPassive
+	authnAge  time.Duration // how long ago the session authenticated the user
 }
 
 func (ti *testIDP) GetServiceProvider(_ *http.Request, id string) (*saml.EntityDescriptor, error) {
@@ -78,7 +79,7 @@ func (ti *testIDP) GetSession(w http.ResponseWriter, _ *http.Request, req *saml.
 	return &saml.Session{
 		ID:           "session-1",
 		Index:        "index-1",
-		CreateTime:   time.Now(),
+		CreateTime:   time.Now().Add(-ti.authnAge),
 		ExpireTime:   time.Now().Add(time.Hour),
 		NameID:       "alice@example.com",
 		NameIDFormat: string(saml.EmailAddressNameIDFormat),
@@ -312,6 +313,33 @@ func TestAssertionInResponseTo(t *testing.T) {
 	}
 	if a.InResponseTo != msg.ID {
 		t.Errorf("solicited: InResponseTo = %q, want %q", a.InResponseTo, msg.ID)
+	}
+}
+
+// WithMaxAuthnAge refuses an assertion whose AuthnInstant is older than
+// it allows, beyond saml.MaxClockSkew.
+func TestWithMaxAuthnAge(t *testing.T) {
+	for _, tc := range []struct {
+		authnAge, maxAge time.Duration
+		wantErr          bool
+	}{
+		{0, 10 * time.Minute, false},
+		{10*time.Minute + saml.MaxClockSkew - time.Minute, 10 * time.Minute, false},
+		{time.Hour, 10 * time.Minute, true},
+		{time.Hour, 2 * time.Hour, false},
+	} {
+		ti := newTestIDP(t)
+		ti.authnAge = tc.authnAge
+		cfg := newTestConfig(t, ti)
+		msg, err := cfg.AuthnRequest(t.Context(), "s", samlsp.ForceAuthn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = cfg.ParseResponse(t.Context(), login(t, ti, msg), samlsp.WithRequestID(msg.ID), samlsp.WithMaxAuthnAge(tc.maxAge))
+		var invalid *saml.InvalidResponseError
+		if tc.wantErr && (!errors.Is(err, samlsp.ErrAuthnTooOld) || !errors.As(err, &invalid)) || !tc.wantErr && err != nil {
+			t.Errorf("authenticated %s ago, max %s: err = %v (%v)", tc.authnAge, tc.maxAge, err, errors.Unwrap(err))
+		}
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/beevik/etree"
 
@@ -20,6 +21,11 @@ var ErrNoEndpoint = errors.New("samlsp: the identity provider has no endpoint fo
 // ErrNoRequestID is returned by ParseResponse when it is called with
 // neither WithRequestID nor AllowUnsolicited.
 var ErrNoRequestID = errors.New("samlsp: no request ID to match InResponseTo against")
+
+// ErrAuthnTooOld is returned by ParseResponse, through a
+// *saml.InvalidResponseError, for an assertion whose AuthnInstant is older
+// than WithMaxAuthnAge allows.
+var ErrAuthnTooOld = errors.New("samlsp: the user was authenticated too long ago")
 
 // AuthnOption customizes an AuthnRequest.
 type AuthnOption interface {
@@ -42,7 +48,9 @@ func (f authnOptionFunc) applyAuthn(o *authnOptions) { f(o) }
 var (
 	// ForceAuthn asks the IdP to authenticate the user again, even if the
 	// IdP already has a session for them (ForceAuthn="true"). See
-	// WithForceAuthn to set it from a setting.
+	// WithForceAuthn to set it from a setting. An IdP may ignore it; pass
+	// ParseResponse WithMaxAuthnAge to refuse an authentication that is
+	// not fresh.
 	ForceAuthn AuthnOption = authnOptionFunc(func(o *authnOptions) { o.forceAuthn = true })
 
 	// IsPassive asks the IdP not to interact with the user. If it cannot
@@ -63,9 +71,10 @@ func WithForceAuthn(force bool) AuthnOption {
 // WithAuthnContext asks the IdP to authenticate the user with one of
 // classes, compared as comparison says.
 //
-// Pass the same option to ParseResponse, which then refuses an assertion
-// whose AuthnContextClassRef does not satisfy it, with an error matching
-// saml.ErrAuthnContextMismatch. A comparison other than saml.AuthnContextComparisonExact
+// The IdP may answer with another class: the class is enforced only if the
+// same option is passed to ParseResponse too, which then refuses an
+// assertion whose AuthnContextClassRef does not satisfy it, with an error
+// matching saml.ErrAuthnContextMismatch. A comparison other than saml.AuthnContextComparisonExact
 // needs WithAuthnContextComparator, since the order of the classes is
 // up to each deployment; without it, ParseResponse refuses every
 // assertion.
@@ -323,6 +332,7 @@ type ResponseOption interface {
 }
 
 type responseOptions struct {
+	maxAuthnAge  time.Duration
 	requestIDs   []string
 	unsolicited  bool
 	authnContext *saml.RequestedAuthnContext
@@ -354,6 +364,32 @@ func WithRequestID(id string) ResponseOption {
 // The RelayState of an unsolicited response is chosen by the IdP or by the
 // attacker. Never redirect to it without checking it.
 var AllowUnsolicited ResponseOption = responseOptionFunc(func(o *responseOptions) { o.unsolicited = true })
+
+// WithMaxAuthnAge refuses an assertion whose AuthnStatement says the IdP
+// authenticated the user more than maxAge ago (its AuthnInstant), allowing
+// saml.MaxClockSkew, with an error matching ErrAuthnTooOld. Use it with
+// ForceAuthn, which an IdP may ignore, to require a fresh authentication:
+// for example, with maxAge as long as a login may take. Without it, an
+// assertion is accepted however long ago the user was authenticated.
+func WithMaxAuthnAge(maxAge time.Duration) ResponseOption {
+	return responseOptionFunc(func(o *responseOptions) { o.maxAuthnAge = maxAge })
+}
+
+// checkAuthnAge returns an error if an AuthnStatement of a is older than
+// maxAge at now, or if a has none.
+func checkAuthnAge(a *saml.Assertion, maxAge time.Duration, now time.Time) error {
+	if len(a.AuthnStatements) == 0 {
+		return fmt.Errorf("%w: the assertion has no AuthnStatement", ErrAuthnTooOld)
+	}
+	oldest := now.Add(-maxAge - saml.MaxClockSkew)
+	for _, s := range a.AuthnStatements {
+		if s.AuthnInstant.Before(oldest) {
+			return fmt.Errorf("%w: AuthnInstant %s is more than %s before %s", ErrAuthnTooOld,
+				s.AuthnInstant.Format(time.RFC3339), maxAge, now.Format(time.RFC3339))
+		}
+	}
+	return nil
+}
 
 // ParseResponse verifies the identity provider's Response in r, sent to
 // the ACS URL, and returns its assertion. Call it from the handler at
@@ -402,6 +438,12 @@ func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...Res
 	a, err := sp.ParseResponse(r.WithContext(ctx), o.requestIDs)
 	if err != nil {
 		return nil, err
+	}
+	if o.maxAuthnAge > 0 {
+		now := sp.Clock.Now() // the real time if Clock is nil
+		if err := checkAuthnAge(a, o.maxAuthnAge, now); err != nil {
+			return nil, &saml.InvalidResponseError{PrivateErr: err, Now: now}
+		}
 	}
 	return newAssertion(a, o.requestIDs), nil
 }
