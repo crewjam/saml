@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
-	dsig "github.com/russellhaering/goxmldsig"
 )
 
 // StoredMessage is a message waiting for its artifact to be resolved.
@@ -49,31 +48,45 @@ const DefaultMaxEntries = 10000
 var ErrStoreFull = errors.New("artifact: the store is full")
 
 // MemoryStore is a Store in memory, for a single process. Each message is
-// forgotten when it expires. It is safe for concurrent use. The zero value
-// is ready to use.
+// forgotten when it expires by Now. It is safe for concurrent use. The
+// zero value is ready to use.
+//
+// A message's timer waits until its expiry, but at most maxTimerDelay by
+// the system clock, and then checks again by Now, so that messages are
+// still forgotten when Now is not the system clock. Save also forgets the
+// expired messages when the store is full.
 //
 // Anyone who can start a login can make a Binding store a message, so the
 // store keeps at most MaxEntries of them: while it is full, Save, and so
 // the Binding's Encode, fail with ErrStoreFull, until messages are
 // resolved or expire.
 type MemoryStore struct {
-	// Clock is the time source by which messages expire; nil means the
-	// system clock. It must be the clock by which ExpiresAt is set: New,
+	// Now is the time source by which messages expire; nil means
+	// time.Now. It must be the time source by which ExpiresAt is set: New,
 	// and New of github.com/crewjam/saml/x/samlidp/idpartifact, set it to
-	// the clock of the Config if it is nil. Set it before the first Save.
-	Clock *dsig.Clock
+	// that of the Config if it is nil (see samlsp.WithClock and
+	// samlidp.WithClock). Set it before the first Save.
+	Now func() time.Time
 
 	// MaxEntries is how many messages the store keeps at most. If zero,
 	// DefaultMaxEntries is used.
 	MaxEntries int
 
+	afterFunc func(d time.Duration, f func()) (stop func() bool) // for tests; time.AfterFunc if nil
+
 	mu       sync.Mutex
 	messages map[string]memoryEntry
 }
 
+// maxTimerDelay bounds how long a message's timer waits, by the system
+// clock, before it checks again whether the message has expired by Now.
+// Now may run apart from the system clock, so a timer set for an expiry
+// by Now could otherwise fire long after it, or long before.
+const maxTimerDelay = time.Minute
+
 type memoryEntry struct {
 	message StoredMessage
-	timer   *time.Timer
+	stop    func() bool
 }
 
 // NewMemoryStore returns an empty MemoryStore.
@@ -87,19 +100,50 @@ func (s *MemoryStore) Save(_ context.Context, artifact string, m StoredMessage) 
 	defer s.mu.Unlock()
 	old, replaced := s.messages[artifact]
 	if !replaced && len(s.messages) >= s.maxEntries() {
-		return ErrStoreFull
+		s.removeExpired(s.now())
+		if len(s.messages) >= s.maxEntries() {
+			return ErrStoreFull
+		}
 	}
 	if replaced {
-		old.timer.Stop()
+		old.stop()
 	}
 	if s.messages == nil {
 		s.messages = map[string]memoryEntry{}
 	}
-	// The timer runs on the system clock, for as long as m has left by
-	// s.Clock.
-	timer := time.AfterFunc(m.ExpiresAt.Sub(s.Clock.Now()), func() { s.forget(artifact, m.ExpiresAt) })
-	s.messages[artifact] = memoryEntry{message: m, timer: timer}
+	s.messages[artifact] = memoryEntry{message: m, stop: s.arm(artifact, m.ExpiresAt, s.now())}
 	return nil
+}
+
+func (s *MemoryStore) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
+}
+
+// arm starts the timer that forgets the message under artifact, which
+// expires at expiresAt. s.mu must be held.
+func (s *MemoryStore) arm(artifact string, expiresAt, now time.Time) func() bool {
+	// A message is resolvable until its expiry inclusive, so fire just
+	// after.
+	d := min(max(expiresAt.Sub(now)+time.Nanosecond, 0), maxTimerDelay)
+	f := func() { s.expire(artifact, expiresAt) }
+	if s.afterFunc != nil {
+		return s.afterFunc(d, f)
+	}
+	return time.AfterFunc(d, f).Stop
+}
+
+// removeExpired forgets every message that has expired by now. s.mu must
+// be held.
+func (s *MemoryStore) removeExpired(now time.Time) {
+	for artifact, e := range s.messages {
+		if now.After(e.message.ExpiresAt) {
+			e.stop()
+			delete(s.messages, artifact)
+		}
+	}
 }
 
 func (s *MemoryStore) maxEntries() int {
@@ -109,12 +153,12 @@ func (s *MemoryStore) maxEntries() int {
 	return DefaultMaxEntries
 }
 
-// defaultClock makes the store use clock if it has no Clock.
-func (s *MemoryStore) defaultClock(clock *dsig.Clock) {
+// defaultNow makes the store use now if it has no Now.
+func (s *MemoryStore) defaultNow(now func() time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.Clock == nil {
-		s.Clock = clock
+	if s.Now == nil {
+		s.Now = now
 	}
 }
 
@@ -126,19 +170,28 @@ func (s *MemoryStore) Take(_ context.Context, artifact, recipient string) (*Stor
 	if !ok || e.message.Recipient != recipient {
 		return nil, nil
 	}
-	e.timer.Stop()
+	e.stop()
 	delete(s.messages, artifact)
 	return &e.message, nil
 }
 
-// forget removes the message under artifact, if it is the one that
-// expires at expiresAt.
-func (s *MemoryStore) forget(artifact string, expiresAt time.Time) {
+// expire forgets the message under artifact, if it is the one that
+// expires at expiresAt and it has expired by Now, and otherwise sets its
+// timer again.
+func (s *MemoryStore) expire(artifact string, expiresAt time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if e, ok := s.messages[artifact]; ok && e.message.ExpiresAt.Equal(expiresAt) {
-		delete(s.messages, artifact)
+	e, ok := s.messages[artifact]
+	if !ok || !e.message.ExpiresAt.Equal(expiresAt) {
+		return
 	}
+	now := s.now()
+	if now.After(expiresAt) {
+		delete(s.messages, artifact)
+		return
+	}
+	e.stop = s.arm(artifact, expiresAt, now)
+	s.messages[artifact] = e
 }
 
 // Len returns the number of messages kept.

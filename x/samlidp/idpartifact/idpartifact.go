@@ -143,15 +143,16 @@ var (
 // binding and that index, since the SPs could then resolve none of the
 // Binding's artifacts.
 //
-// If store is a *MemoryStore with no Clock, New sets its Clock to that of
-// config (see samlidp.WithClock), by which the Binding's messages expire.
+// If store is a *MemoryStore with no Now, New sets its Now to
+// config.Now (see samlidp.WithClock), by which the Binding's messages
+// expire.
 func New(config *samlidp.Config, store Store, index uint16) (*Binding, error) {
 	b := &Binding{config: config, store: store, index: index}
 	if _, err := b.path(); err != nil {
 		return nil, err
 	}
-	if m, ok := store.(*MemoryStore); ok && m.Clock == nil {
-		m.Clock = config.IdentityProvider().Clock
+	if m, ok := store.(*MemoryStore); ok && m.Now == nil {
+		m.Now = config.Now
 	}
 	return b, nil
 }
