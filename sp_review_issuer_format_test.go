@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	dsig "github.com/russellhaering/goxmldsig"
 	"gotest.tools/v3/assert"
 	is "gotest.tools/v3/assert/cmp"
 )
@@ -53,4 +54,40 @@ func TestSPIssuerFormatArtifactResponse(t *testing.T) {
 		ar.Response.Issuer.Format = "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
 	})
 	assert.Check(t, errors.Is(err, ErrIssuerMismatch), "%v", err)
+}
+
+// saml-profiles §4.4.4.1 and §4.4.4.2: the Issuer of a LogoutRequest and of
+// a LogoutResponse "MUST" have no Format or the entity Format. One with
+// another Format, even with the IdP's entity ID as its value, is refused
+// with ErrIssuerMismatch.
+func TestSPLogoutIssuerFormat(t *testing.T) {
+	e := spcovSetup(t)
+	request := func(format string) error {
+		req := e.logoutRequest()
+		req.Issuer.Format = format
+		q := redirectQuery{param: "SAMLRequest", xml: spcovSerialize(t, req.Element()), sigAlg: dsig.RSASHA256SignatureMethod, key: e.idpKey}
+		_, err := e.sp.ValidateLogoutRequest(redirectRequest(e.sp, q.build(t)))
+		return err
+	}
+	response := func(format string) error {
+		resp := e.logoutResponse()
+		resp.Issuer.Format = format
+		q := redirectQuery{param: "SAMLResponse", xml: spcovSerialize(t, resp.Element()), sigAlg: dsig.RSASHA256SignatureMethod, key: e.idpKey}
+		_, err := e.sp.ParseLogoutResponse(redirectRequest(e.sp, q.build(t)), []string{resp.InResponseTo})
+		return err
+	}
+
+	for _, format := range []string{"", entityNameIDFormat} {
+		assert.Check(t, request(format), "LogoutRequest Issuer Format %q", format)
+		assert.Check(t, response(format), "LogoutResponse Issuer Format %q", format)
+	}
+
+	const persistent = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
+	err := request(persistent)
+	assert.Check(t, errors.Is(err, ErrIssuerMismatch), "%v", err)
+	assert.Check(t, is.ErrorContains(spcovPrivateErr(t, err), "saml-profiles §4.4.4.1"))
+
+	err = response(persistent)
+	assert.Check(t, errors.Is(err, ErrIssuerMismatch), "%v", err)
+	assert.Check(t, is.ErrorContains(spcovPrivateErr(t, err), "saml-profiles §4.4.4.2"))
 }

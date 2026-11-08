@@ -388,6 +388,9 @@ func (sp *ServiceProvider) validateSOAPLogoutResponse(resp *LogoutResponse, req 
 	if resp.Issuer == nil || resp.Issuer.Value != sp.IDPMetadata.EntityID {
 		return classify(fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
 	}
+	if err := checkIssuerFormat("LogoutResponse", resp.Issuer, "saml-profiles §4.4.4.2"); err != nil {
+		return err
+	}
 	switch resp.Destination {
 	case "", sp.SloURL.String(), sp.entityID():
 	default:

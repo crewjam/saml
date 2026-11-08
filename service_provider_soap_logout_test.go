@@ -177,6 +177,7 @@ func TestValidateSOAPLogoutRequestRejects(t *testing.T) {
 		}, ErrInvalidSignature, ""},
 		{"wrong issuer", post(func(req *LogoutRequest) { req.Issuer.Value = "https://evil.example.com/" }), ErrIssuerMismatch, ""},
 		{"no issuer", post(func(req *LogoutRequest) { req.Issuer = nil }), ErrIssuerMismatch, ""},
+		{"issuer Format not entity", post(func(req *LogoutRequest) { req.Issuer.Format = string(PersistentNameIDFormat) }), ErrIssuerMismatch, "saml-profiles §4.4.4.1"},
 		{"wrong Destination", post(func(req *LogoutRequest) { req.Destination = "https://other.example.com/slo" }), ErrDestinationMismatch, ""},
 		{"expired", post(func(req *LogoutRequest) { req.IssueInstant = spcovNow.Add(-time.Hour) }), ErrExpired, ""},
 		{"issued in the future", post(func(req *LogoutRequest) { req.IssueInstant = spcovNow.Add(time.Hour) }), ErrNotYetValid, ""},
@@ -437,6 +438,9 @@ func TestSendSOAPLogoutRequestRejects(t *testing.T) {
 		{"wrong issuer", func(t *testing.T, e *spcovEnv, req *LogoutRequest) []byte {
 			return e.idpSOAPLogoutResponse(t, req, true, func(resp *LogoutResponse) { resp.Issuer.Value = "https://evil.example.com/" })
 		}, ErrIssuerMismatch, ""},
+		{"issuer Format not entity", func(t *testing.T, e *spcovEnv, req *LogoutRequest) []byte {
+			return e.idpSOAPLogoutResponse(t, req, true, func(resp *LogoutResponse) { resp.Issuer.Format = string(PersistentNameIDFormat) })
+		}, ErrIssuerMismatch, "saml-profiles §4.4.4.2"},
 		{"wrong Destination", func(t *testing.T, e *spcovEnv, req *LogoutRequest) []byte {
 			return e.idpSOAPLogoutResponse(t, req, true, func(resp *LogoutResponse) { resp.Destination = "https://other.example.com/" })
 		}, ErrDestinationMismatch, ""},

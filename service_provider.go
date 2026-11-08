@@ -3834,7 +3834,7 @@ func (sp *ServiceProvider) validateLogoutResponse(resp *LogoutResponse) error {
 	if resp.Issuer == nil || resp.Issuer.Value != sp.IDPMetadata.EntityID {
 		return classify(fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
 	}
-	return nil
+	return checkIssuerFormat("LogoutResponse", resp.Issuer, "saml-profiles §4.4.4.2")
 }
 
 // logoutResponseStatusError returns an error that matches ErrBadStatus if
@@ -4005,6 +4005,9 @@ func (sp *ServiceProvider) validateLogoutRequestFields(req *LogoutRequest) error
 	}
 	if req.Issuer == nil || req.Issuer.Value != sp.IDPMetadata.EntityID {
 		return classify(fmt.Errorf("issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID), ErrIssuerMismatch)
+	}
+	if err := checkIssuerFormat("LogoutRequest", req.Issuer, "saml-profiles §4.4.4.1"); err != nil {
+		return err
 	}
 	return resolveLogoutRequestNameID(req, sp.decryptElement, sp.AcceptLogoutRequestBaseID)
 }
