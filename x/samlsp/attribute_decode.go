@@ -64,9 +64,11 @@ import (
 //
 // The fields of an embedded struct without a saml tag are decoded as if
 // they were fields of the outer struct, as encoding/json does; an embedded
-// pointer to a struct is allocated only if one of its fields is set. A pointer field is allocated, so a *bool or a
-// *time.Time tells an absent attribute from a zero value. A field whose
-// attribute is absent, or has only null values, is left unchanged.
+// pointer to a struct is allocated only if one of its fields is set. A
+// pointer field, such as a *bool, a *time.Time or a *[]string, is
+// allocated only if its attribute is present, so it tells an absent
+// attribute from a zero value. A field whose attribute is absent, or has
+// only null values, is left unchanged.
 //
 // DecodeAttributes returns an error, naming the attribute and the field,
 // if a value cannot be parsed or a field has a type it cannot fill.
@@ -290,6 +292,15 @@ func decodeField(field reflect.Value, attr Attribute) error {
 	t := field.Type()
 	if unmarshalsAttribute(t) {
 		return decodeValue(field, attr)
+	}
+	if t.Kind() == reflect.Pointer {
+		// A pointer, such as *[]string, to what the attribute fills.
+		p := reflect.New(t.Elem())
+		if err := decodeField(p.Elem(), attr); err != nil {
+			return err
+		}
+		field.Set(p)
+		return nil
 	}
 	n := len(attr.Values)
 	switch {
