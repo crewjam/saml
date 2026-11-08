@@ -23,6 +23,7 @@ import (
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/internal/signerutil"
+	"github.com/crewjam/saml/internal/timelimit"
 	"github.com/crewjam/saml/x/samlsp/replay"
 )
 
@@ -43,6 +44,8 @@ type Config struct {
 	nameIDFormats   []saml.NameIDFormat
 	replayState     ReplayState
 	clock           *dsig.Clock
+	clockSkew       time.Duration
+	issueDelay      time.Duration
 	metadataValid   time.Duration
 	affiliated      func(ctx context.Context, serviceProvider, affiliation string) (bool, error)
 
@@ -269,6 +272,52 @@ func (o ClockOption) applyConfig(c *Config, _ *configOptions) { c.clock = o.cloc
 
 func (o ClockOption) applyMetadata(m *metadataOptions) { m.clock = o.clock }
 
+// WithClockSkew sets how far a service provider's clock may be from the
+// IdP's: the leeway allowed when checking IssueInstant and NotOnOrAfter
+// times and the AuthnInstant of a ForceAuthn request, and how far back
+// the validity period of an assertion starts. It sets
+// saml.IdentityProvider.MaxClockSkew, so it applies to this Config only.
+// Zero, the default, means saml.MaxClockSkew.
+func WithClockSkew(d time.Duration) Option {
+	return optionFunc(func(c *Config, _ *configOptions) {
+		c.clockSkew = d
+		c.checks = append(c.checks, checkTimeLimits)
+	})
+}
+
+// WithMaxIssueDelay sets the longest allowed time between the IssueInstant
+// of a request from a service provider and its receipt, which also bounds
+// how long replay records are kept and how long an issued assertion is
+// valid. It sets saml.IdentityProvider.MaxIssueDelay, so it applies to
+// this Config only. Zero, the default, means saml.MaxIssueDelay.
+func WithMaxIssueDelay(d time.Duration) Option {
+	return optionFunc(func(c *Config, _ *configOptions) {
+		c.issueDelay = d
+		c.checks = append(c.checks, checkTimeLimits)
+	})
+}
+
+// checkTimeLimits refuses a negative clock skew or issue delay.
+func checkTimeLimits(idp *saml.IdentityProvider) error {
+	if idp.MaxClockSkew < 0 || idp.MaxIssueDelay < 0 {
+		return errors.New("samlidp: WithClockSkew and WithMaxIssueDelay need a duration that is not negative")
+	}
+	return nil
+}
+
+// ClockSkew returns the clock skew the IdP allows: that of WithClockSkew
+// (or of an IdentityProviderOption passed to New), or saml.MaxClockSkew.
+func (c *Config) ClockSkew() time.Duration {
+	return timelimit.IDPClockSkew(c.identityProvider(nil))
+}
+
+// MaxIssueDelay returns the issue delay the IdP allows: that of
+// WithMaxIssueDelay (or of an IdentityProviderOption passed to New), or
+// saml.MaxIssueDelay.
+func (c *Config) MaxIssueDelay() time.Duration {
+	return timelimit.IDPIssueDelay(c.identityProvider(nil))
+}
+
 // WithAffiliation sets how the IdP decides whether the service provider
 // serviceProvider is a member of the affiliation affiliation, an
 // SPNameQualifier other than its own entity ID that its NameIDPolicy asks
@@ -481,6 +530,8 @@ func (c *Config) identityProvider(opts []IdentityProviderOption) *saml.IdentityP
 		SignatureMethod:         method,
 		NameIDFormats:           slices.Clone(c.nameIDFormats),
 		Clock:                   c.clock,
+		MaxClockSkew:            c.clockSkew,
+		MaxIssueDelay:           c.issueDelay,
 		ServiceProviderProvider: serviceProviderProvider{c.serviceProviders, c.clock},
 		// Package saml logs what it refuses and ignores; this package
 		// returns errors instead.

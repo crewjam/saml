@@ -379,7 +379,7 @@ func (sp *ServiceProvider) validateAttributeQueryResponse(response *Response, qu
 	if response.InResponseTo != query.ID {
 		return classify(fmt.Errorf("`InResponseTo` %q does not match the attribute query ID %q", response.InResponseTo, query.ID), ErrRequestIDMismatch)
 	}
-	if err := checkIssueInstant("response IssueInstant", response.IssueInstant, now); err != nil {
+	if err := sp.limits().checkIssueInstant("response IssueInstant", response.IssueInstant, now); err != nil {
 		return err
 	}
 	if response.Issuer == nil {
@@ -502,10 +502,10 @@ func (sp *ServiceProvider) validateAttributeQueryAssertion(assertion *Assertion,
 	if err := checkVersion("assertion", assertion.Version); err != nil {
 		return err
 	}
-	if issueDeadline(assertion).Before(now) {
-		return classify(fmt.Errorf("expired on %s", issueDeadline(assertion)), ErrExpired)
+	if sp.limits().issueDeadline(assertion).Before(now) {
+		return classify(fmt.Errorf("expired on %s", sp.limits().issueDeadline(assertion)), ErrExpired)
 	}
-	if assertion.IssueInstant.Add(-MaxClockSkew).After(now) {
+	if assertion.IssueInstant.Add(-sp.maxClockSkew()).After(now) {
 		return classify(fmt.Errorf("assertion IssueInstant %s is in the future", assertion.IssueInstant), ErrNotYetValid)
 	}
 	if assertion.Issuer.Value != sp.IDPMetadata.EntityID {
@@ -518,16 +518,16 @@ func (sp *ServiceProvider) validateAttributeQueryAssertion(assertion *Assertion,
 		return fmt.Errorf("assertion Subject NameID %q does not match the queried NameID %q",
 			assertion.Subject.NameID.Value, query.Subject.NameID.Value)
 	}
-	if err := validateQuerySubjectConfirmations(assertion.Subject, query.ID, now); err != nil {
+	if err := validateQuerySubjectConfirmations(assertion.Subject, query.ID, now, sp.limits()); err != nil {
 		return err
 	}
 	if assertion.Conditions == nil {
 		return classify(errors.New("assertion has no Conditions"), ErrMissingElement)
 	}
-	if assertion.Conditions.NotBefore.Add(-MaxClockSkew).After(now) {
+	if assertion.Conditions.NotBefore.Add(-sp.maxClockSkew()).After(now) {
 		return classify(errors.New("assertion Conditions is not yet valid"), ErrNotYetValid)
 	}
-	if !assertion.Conditions.NotOnOrAfter.IsZero() && pastDeadline(assertion.Conditions.NotOnOrAfter, now) {
+	if !assertion.Conditions.NotOnOrAfter.IsZero() && sp.limits().pastDeadline(assertion.Conditions.NotOnOrAfter, now) {
 		return classify(errors.New("assertion Conditions is expired"), ErrExpired)
 	}
 	if err := sp.validateUnknownConditions(assertion); err != nil {
@@ -538,7 +538,7 @@ func (sp *ServiceProvider) validateAttributeQueryAssertion(assertion *Assertion,
 
 // validateQuerySubjectConfirmations checks the SubjectConfirmationData of
 // subject, if any, against the time and the ID of the attribute query.
-func validateQuerySubjectConfirmations(subject *Subject, queryID string, now time.Time) error {
+func validateQuerySubjectConfirmations(subject *Subject, queryID string, now time.Time, l timeLimits) error {
 	for _, subjectConfirmation := range subject.SubjectConfirmations {
 		data := subjectConfirmation.SubjectConfirmationData
 		if data == nil {
@@ -547,10 +547,10 @@ func validateQuerySubjectConfirmations(subject *Subject, queryID string, now tim
 		if data.InResponseTo != "" && data.InResponseTo != queryID {
 			return classify(fmt.Errorf("assertion SubjectConfirmationData InResponseTo %q is not the attribute query ID", data.InResponseTo), ErrRequestIDMismatch)
 		}
-		if data.NotBefore.Add(-MaxClockSkew).After(now) {
+		if data.NotBefore.Add(-l.skew()).After(now) {
 			return classify(errors.New("assertion SubjectConfirmationData is not yet valid"), ErrNotYetValid)
 		}
-		if !data.NotOnOrAfter.IsZero() && pastDeadline(data.NotOnOrAfter, now) {
+		if !data.NotOnOrAfter.IsZero() && l.pastDeadline(data.NotOnOrAfter, now) {
 			return classify(errors.New("assertion SubjectConfirmationData is expired"), ErrExpired)
 		}
 	}

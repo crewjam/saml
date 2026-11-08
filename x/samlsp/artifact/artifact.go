@@ -50,6 +50,7 @@ import (
 	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/internal/timelimit"
 	"github.com/crewjam/saml/internal/xmlroundtrip"
 	"github.com/crewjam/saml/x/samlsp"
 )
@@ -368,7 +369,7 @@ func (b *Binding) resolve(r *http.Request) (*etree.Element, error) {
 		return nil, fmt.Errorf("artifact: the ArtifactResolve is not issued by the IdP %s", sp.IDPMetadata.EntityID)
 	}
 	t := now(sp)
-	if req.IssueInstant.After(t.Add(saml.MaxClockSkew)) || t.After(req.IssueInstant.Add(saml.MaxIssueDelay)) {
+	if req.IssueInstant.After(t.Add(timelimit.SPClockSkew(sp))) || t.After(req.IssueInstant.Add(timelimit.SPIssueDelay(sp))) {
 		return nil, fmt.Errorf("artifact: the ArtifactResolve was issued at %s, which is not current", req.IssueInstant)
 	}
 

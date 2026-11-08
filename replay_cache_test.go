@@ -77,7 +77,7 @@ func TestParseResponseRefusesReplay(t *testing.T) {
 	assert.Check(t, is.Len(cache, 1))
 	expiresAt, recorded := cache[assertion.ID]
 	assert.Check(t, recorded)
-	assert.Check(t, is.Equal(acceptableUntil(assertion), expiresAt))
+	assert.Check(t, is.Equal(timeLimits{}.acceptableUntil(assertion), expiresAt))
 
 	_, err = parse(oneloginRequestID)
 	assert.Check(t, errors.Is(replayPrivateErr(t, err), ErrAssertionReplayed), "got %v", err)
@@ -149,7 +149,7 @@ func TestAcceptableUntil(t *testing.T) {
 			sp := requiredConditionsSP()
 			a := validAssertion(now)
 			c.edit(a)
-			deadline := acceptableUntil(a)
+			deadline := timeLimits{}.acceptableUntil(a)
 			assert.Check(t, is.DeepEqual(c.deadline, deadline))
 
 			lastAccepted, firstRefused := deadline, deadline.Add(time.Nanosecond)

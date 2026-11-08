@@ -118,7 +118,7 @@ func (sp *ServiceProvider) parseSOAPLogoutRequest(soapRequestXML []byte) (*Logou
 	if err := sp.validateLogoutRequestFields(&req); err != nil {
 		return nil, err
 	}
-	if err := consumeLogoutRequest(sp.ReplayCache, &req); err != nil {
+	if err := consumeLogoutRequest(sp.ReplayCache, &req, sp.limits()); err != nil {
 		return nil, err
 	}
 	return &req, nil
@@ -382,7 +382,7 @@ func (sp *ServiceProvider) validateSOAPLogoutResponse(resp *LogoutResponse, req 
 	if resp.InResponseTo != req.ID {
 		return classify(fmt.Errorf("`InResponseTo` %q does not match the logout request ID %q", resp.InResponseTo, req.ID), ErrRequestIDMismatch)
 	}
-	if err := checkIssueInstant("issueInstant", resp.IssueInstant, now); err != nil {
+	if err := sp.limits().checkIssueInstant("issueInstant", resp.IssueInstant, now); err != nil {
 		return err
 	}
 	if resp.Issuer == nil || resp.Issuer.Value != sp.IDPMetadata.EntityID {

@@ -35,6 +35,7 @@ import (
 	"github.com/beevik/etree"
 
 	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/internal/timelimit"
 	"github.com/crewjam/saml/x/samlsp"
 )
 
@@ -480,7 +481,7 @@ func (s *Service) ParseResponse(ctx context.Context, r *http.Request, requestIDs
 		return nil, errors.New("slo: the logout response has no ID")
 	}
 	if sp.ReplayCache != nil {
-		if err := sp.ReplayCache.Consume(logoutResponseReplayPrefix+resp.ID, resp.IssueInstant.Add(saml.MaxIssueDelay)); err != nil {
+		if err := sp.ReplayCache.Consume(logoutResponseReplayPrefix+resp.ID, resp.IssueInstant.Add(timelimit.SPIssueDelay(sp))); err != nil {
 			return nil, fmt.Errorf("slo: logout response %q: %w", resp.ID, err)
 		}
 	}

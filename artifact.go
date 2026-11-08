@@ -136,7 +136,7 @@ func (sp *ServiceProvider) checkArtifact(artifactID string) (*samlArtifact, erro
 // refusing it if it was recorded before. A type 0x0004 artifact is recorded
 // by its SourceID and MessageHandle, so that the same message cannot be
 // resolved again through another EndpointIndex; any other artifact by its
-// value. The record is kept for MaxIssueDelay, which bounds how long an
+// value. The record is kept for the issue delay (see maxIssueDelay), which bounds how long an
 // IdP should keep an artifact resolvable (saml-bindings-2.0-os §3.6.5.2).
 // It is called only once the artifact has resolved to a verified Response,
 // because anyone can make a SAMLart with the right SourceID.
@@ -148,7 +148,7 @@ func (sp *ServiceProvider) consumeArtifact(artifactID string, artifact *samlArti
 	if artifact != nil {
 		key = artifactReplayKeyPrefix + hex.EncodeToString(artifact.SourceID[:]) + ":" + hex.EncodeToString(artifact.MessageHandle[:])
 	}
-	if err := sp.ReplayCache.Consume(key, sp.now().Add(MaxIssueDelay)); err != nil {
+	if err := sp.ReplayCache.Consume(key, sp.now().Add(sp.maxIssueDelay())); err != nil {
 		return fmt.Errorf("artifact: %w", err)
 	}
 	return nil
