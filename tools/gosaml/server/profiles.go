@@ -15,20 +15,24 @@ import (
 
 // An idpProfile makes a test IdP issue assertions shaped like those of a
 // well-known IdP product: its entity ID, attribute names, NameID format,
-// IDs, validity window and encryption algorithms. SPs often depend on
+// IDs, validity window, which elements are signed, and encryption
+// algorithms. SPs often depend on
 // these, by accident or design, so testing against each shape catches
 // problems before a customer's real IdP does.
 //
 // The profiles imitate what these products send by default, as seen in
 // their responses; gosaml.dev is not affiliated with their makers.
-//
-// x/samlidp always signs both the Response and the assertion, so the
-// profiles cannot reproduce an IdP that signs only one of them (as Entra
-// ID does by default).
 type idpProfile struct {
 	Key         string
 	Name        string
 	Description string
+
+	// Signing is the IdPConfig.ResponseSigning the profile sets.
+	Signing string
+
+	// SessionIndexIsAssertionID makes each assertion's SessionIndex its
+	// own ID, as Entra ID does.
+	SessionIndexIsAssertionID bool
 
 	// Encryption is the IdPConfig.Encryption the profile sets.
 	Encryption string
@@ -47,29 +51,34 @@ type idpProfile struct {
 var idpProfiles = []idpProfile{
 	{
 		Key: "generic", Name: "Generic",
-		Description: "This library's own defaults: the entity ID is the metadata URL, attributes have both URN and simple names.",
+		Description: "This library's own defaults: the entity ID is the metadata URL, attributes have both URN and simple names, and both the Response and the assertion are signed.",
 		Encryption:  "auto",
+		Signing:     "both",
 	},
 	{
 		Key: "okta", Name: "Okta-like",
-		Description:     `Okta's shape: an entity ID like http://www.okta.com/exk…, IDs like id8495…, attributes named email, firstName, lastName and groups with the unspecified name format, an unspecified NameID holding the email address, and AES-256-CBC encryption.`,
+		Description:     `Okta's shape: an entity ID like http://www.okta.com/exk…, IDs like id8495…, attributes named email, firstName, lastName and groups with the unspecified name format, an unspecified NameID holding the email address, both the Response and the assertion signed, and AES-256-CBC encryption.`,
 		Encryption:      "cbc256",
+		Signing:         "both",
 		NewID:           func() string { return "id" + randomDigits(26) },
 		NewSessionIndex: func() string { return "id" + randomDigits(26) + "_" + randomDigits(8) },
 		NotBefore:       -5 * time.Minute, NotOnOrAfter: 5 * time.Minute,
 	},
 	{
 		Key: "entra", Name: "Entra ID-like",
-		Description:     `Microsoft Entra ID's shape: an entity ID like https://sts.windows.net/{tenant}/, assertion IDs and session indexes that are _ and a GUID, claims named by schemas.xmlsoap.org and schemas.microsoft.com URIs with no name format, an emailAddress NameID, a validity of 70 minutes, and AES-256-CBC encryption.`,
-		Encryption:      "cbc256",
-		NewID:           func() string { return "_" + newGUID() },
-		NewSessionIndex: func() string { return "_" + newGUID() },
-		NotBefore:       -5 * time.Minute, NotOnOrAfter: 70 * time.Minute,
+		Description:               `Microsoft Entra ID's shape: an entity ID like https://sts.windows.net/{tenant}/, assertion IDs that are _ and a GUID, each the session index of its assertion, claims named by schemas.xmlsoap.org and schemas.microsoft.com URIs with no name format, an emailAddress NameID, a validity of 70 minutes, only the assertion signed (not the Response), and AES-256-CBC encryption. That last pair is what SPs that refuse AES-CBC in an unsigned Response trip on.`,
+		Encryption:                "cbc256",
+		Signing:                   "assertion",
+		NewID:                     func() string { return "_" + newGUID() },
+		NewSessionIndex:           func() string { return "_" + newGUID() },
+		SessionIndexIsAssertionID: true,
+		NotBefore:                 -5 * time.Minute, NotOnOrAfter: 70 * time.Minute,
 	},
 	{
 		Key: "shibboleth", Name: "Shibboleth-like",
-		Description:     `Shibboleth IdP's shape: an entity ID ending in /idp/shibboleth, transient NameIDs, eduPerson and inetOrgPerson attributes named by urn:oid with the URI name format and friendly names, scoped eduPersonPrincipalName and pairwise-id, a shibmd:Scope in the metadata, and AES-128-GCM encryption.`,
+		Description:     `Shibboleth IdP's shape: an entity ID ending in /idp/shibboleth, transient NameIDs, eduPerson and inetOrgPerson attributes named by urn:oid with the URI name format and friendly names, scoped eduPersonPrincipalName and pairwise-id (different for each SP), a shibmd:Scope in the metadata, only the Response signed (not the assertion), and AES-128-GCM encryption.`,
 		Encryption:      "gcm128",
+		Signing:         "response",
 		NewID:           func() string { return "_" + randomHex(16) },
 		NewSessionIndex: func() string { return "_" + randomHex(16) },
 		NotOnOrAfter:    5 * time.Minute,
@@ -106,12 +115,18 @@ func shibbolethScope(id string) string { return id + ".gosaml.dev" }
 // assertionOption returns the WithAssertion that shapes an assertion as
 // the profile does, or nil.
 func (p idpProfile) assertionOption() samlidp.ResponseOption {
-	if p.NewID == nil && p.NotBefore == 0 && p.NotOnOrAfter == 0 {
+	if p.NewID == nil && !p.SessionIndexIsAssertionID && p.NotBefore == 0 && p.NotOnOrAfter == 0 {
 		return nil
 	}
 	return samlidp.WithAssertion(func(a *saml.Assertion) error {
 		if p.NewID != nil {
 			a.ID = p.NewID()
+		}
+		if p.SessionIndexIsAssertionID {
+			// Message.Participant follows, so single logout names it.
+			for i := range a.AuthnStatements {
+				a.AuthnStatements[i].SessionIndex = a.ID
+			}
 		}
 		if a.Conditions != nil {
 			if p.NotBefore != 0 {
@@ -224,6 +239,7 @@ func applyProfile(cfg *IdPConfig, id, profile string) {
 		cfg.ProfileKey = ""
 	}
 	cfg.Encryption = p.Encryption
+	cfg.ResponseSigning = p.Signing
 	cfg.SignatureMethod = "sha256"
 	cfg.Users = profileUsers(p.Key, cfg, id)
 }

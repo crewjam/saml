@@ -61,6 +61,10 @@ type IdPConfig struct {
 	// instead of a redirect.
 	ArtifactForm bool
 
+	// ResponseSigning is what the IdP signs in a Response: "both" (the
+	// Response and the assertion), "assertion" or "response".
+	ResponseSigning string
+
 	// Profile is the key of the idpProfile that shapes the IdP's
 	// assertions, and ProfileKey what it generated for this IdP (Okta's
 	// app ID, Entra's tenant ID).
@@ -248,6 +252,12 @@ func (s *Server) samlIdP(in *store.Instance, cfg *IdPConfig) (*samlidp.Config, e
 			enc.BlockCipher = cipher
 			idp.AssertionEncrypter = enc
 		}))
+	}
+	switch cfg.ResponseSigning {
+	case "assertion":
+		opts = append(opts, samlidp.WithIdentityProvider(func(idp *saml.IdentityProvider) { idp.ResponseSigning = saml.SignAssertionOnly }))
+	case "response":
+		opts = append(opts, samlidp.WithIdentityProvider(func(idp *saml.IdentityProvider) { idp.ResponseSigning = saml.SignResponseOnly }))
 	}
 	if cfg.Profile == "shibboleth" {
 		opts = append(opts, samlidp.WithIdentityProvider(func(idp *saml.IdentityProvider) {
@@ -532,6 +542,7 @@ func (s *Server) idpAction(w http.ResponseWriter, r *http.Request, in *store.Ins
 		cfg.RequireSignedRequests = r.FormValue("require_signed") != ""
 		cfg.SignatureMethod = oneOf(r.FormValue("signature_method"), "sha256", "sha384", "sha512")
 		cfg.Encryption = oneOf(r.FormValue("encryption"), "auto", "gcm", "gcm128", "cbc256", "cbc", "off")
+		cfg.ResponseSigning = oneOf(r.FormValue("response_signing"), "both", "assertion", "response")
 		cfg.RememberSessions = r.FormValue("remember_sessions") != ""
 		cfg.BackChannelLogout = r.FormValue("back_channel") != ""
 		cfg.ArtifactForm = r.FormValue("artifact_form") != ""

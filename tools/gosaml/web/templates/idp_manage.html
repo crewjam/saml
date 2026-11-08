@@ -34,7 +34,7 @@
     </label>
     <button class="secondary">Apply</button>
   </form>
-  <p class="hint">Profiles imitate the shape of these products' default responses, so you can test that your SP copes with each; gosaml.dev is not affiliated with their makers. The IdP always signs both the Response and the assertion, which not all of them do.</p>
+  <p class="hint">Profiles imitate the shape of these products' default responses, so you can test that your SP copes with each; gosaml.dev is not affiliated with their makers.</p>
 </section>
 
 <section class="card" id="sps">
@@ -151,6 +151,13 @@
         <option value="sha256" {{if eq .Config.SignatureMethod "sha256"}}selected{{end}}>RSA-SHA-256</option>
         <option value="sha384" {{if eq .Config.SignatureMethod "sha384"}}selected{{end}}>RSA-SHA-384</option>
         <option value="sha512" {{if eq .Config.SignatureMethod "sha512"}}selected{{end}}>RSA-SHA-512</option>
+      </select>
+    </label>
+    <label>Sign
+      <select name="response_signing">
+        <option value="both" {{if or (eq .Config.ResponseSigning "both") (eq .Config.ResponseSigning "")}}selected{{end}}>The Response and the assertion</option>
+        <option value="assertion" {{if eq .Config.ResponseSigning "assertion"}}selected{{end}}>Only the assertion (as Entra ID does)</option>
+        <option value="response" {{if eq .Config.ResponseSigning "response"}}selected{{end}}>Only the Response (as Shibboleth does)</option>
       </select>
     </label>
     <label>Assertion encryption <span class="meta">for SPs whose metadata has an encryption certificate</span>

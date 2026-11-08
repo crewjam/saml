@@ -59,6 +59,17 @@ func TestProfiles(t *testing.T) {
 				t.Errorf("the SP does not show the IdP's entity ID")
 			}
 
+			if tc.profile == "entra" {
+				// Like Entra ID with token encryption: an assertion
+				// encrypted with AES-CBC in an unsigned Response, which the
+				// test SP refuses until told otherwise.
+				_, body = h.do(http.MethodPost, "/sp/"+spID+"/login", nil)
+				_, body = h.loginAt(idpID, body, url.Values{"user": {"alice"}, "action": {"login"}})
+				body = h.follow(body)
+				mustContain(t, body, "Login failed", "AES-CBC")
+				h.do(http.MethodPost, "/manage/"+spSecret+"/settings", url.Values{
+					"name": {"SP"}, "sign_requests": {"on"}, "encryption_key": {"on"}, "allow_unsolicited": {"on"}, "allow_unsigned_cbc": {"on"}})
+			}
 			body = h.loginAs(idpID, spID, "alice")
 			mustContain(t, body, tc.want...)
 			if !tc.issuer.MatchString(body) {
@@ -66,6 +77,19 @@ func TestProfiles(t *testing.T) {
 			}
 			if !tc.id.MatchString(body) {
 				t.Errorf("no assertion ID like %s", tc.id)
+			}
+			if tc.profile == "entra" {
+				// The session index is the assertion's ID.
+				field := func(name string) string {
+					m := regexp.MustCompile(`<th>` + name + `</th><td><code class="wrap">([^<]+)</code>`).FindStringSubmatch(body)
+					if m == nil {
+						t.Fatalf("no %s on the result page", name)
+					}
+					return m[1]
+				}
+				if si, id := field("Session index"), field("Assertion ID"); si != id {
+					t.Errorf("session index %q, assertion ID %q", si, id)
+				}
 			}
 			// The Response as received is encrypted with the profile's cipher.
 			mustContain(t, body, tc.cipher)

@@ -12,11 +12,11 @@ of samltest.dev and samltool.io:
 - **Profiles.** A test IdP can imitate the shape of Okta's, Entra ID's or
   Shibboleth's default responses: entity ID, attribute names and name
   formats, NameID format, assertion IDs and session indexes, validity
-  window, encryption algorithms, and (Shibboleth) the `shibmd:Scope`
-  metadata extension. The shapes come from the products' real responses,
-  including the Okta and Entra fixtures in `../../testdata`. `x/samlidp`
-  always signs both the Response and the assertion, so an IdP that signs
-  only one (as Entra ID does by default) cannot be imitated yet.
+  window, which of the Response and the assertion are signed (only the
+  assertion for Entra ID, only the Response for Shibboleth), encryption
+  algorithms, and (Shibboleth) the `shibmd:Scope` metadata extension. The
+  shapes come from the products' real responses, including the Okta and
+  Entra fixtures in `../../testdata`.
 - **Test service providers.** Trust any IdP by its metadata, log in, and
   see what it asserted: NameID, attributes, authentication context, the
   decrypted assertion. When a Response is refused, see why: the full error
