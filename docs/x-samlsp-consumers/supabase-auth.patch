@@ -204,13 +204,16 @@ index 5eb762b..b133bcf 100644
  	}
  
 diff --git a/internal/api/samlacs.go b/internal/api/samlacs.go
-index 0fbd72a..3dc9f1c 100644
+index 0fbd72a..e75f6b6 100644
 --- a/internal/api/samlacs.go
 +++ b/internal/api/samlacs.go
-@@ -5,11 +5,13 @@ import (
- 	"encoding/base64"
+@@ -2,14 +2,14 @@ package api
+ 
+ import (
+ 	"context"
+-	"encoding/base64"
  	"encoding/json"
- 	"encoding/xml"
+-	"encoding/xml"
 +	"errors"
  	"net/http"
  	"net/url"
@@ -221,22 +224,57 @@ index 0fbd72a..3dc9f1c 100644
  	"github.com/fatih/structs"
  	"github.com/go-chi/chi/v5"
  	"github.com/gofrs/uuid"
-@@ -217,7 +219,10 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
+@@ -75,7 +75,6 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
+ 	entityId := ""
+ 	initiatedBy := ""
+ 	redirectTo := ""
+-	peekDestination := ""
+ 	var requestIds []string
+ 
+ 	var flowState *models.FlowState
+@@ -133,25 +132,15 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
+ 			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Artifact response can only be used with SP initiated flow")
+ 		}
+ 
+-		samlResponse := r.FormValue("SAMLResponse")
+-		if samlResponse == "" {
+-			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAMLResponse is missing")
+-		}
+-
+-		responseXML, err := base64.StdEncoding.DecodeString(samlResponse)
+-		if err != nil {
+-			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAMLResponse is not a valid Base64 string")
+-		}
+-
+-		var peekResponse saml.Response
+-		err = xml.Unmarshal(responseXML, &peekResponse) // #nosec G709
++		// The Response carries no state of ours, so its unverified Issuer
++		// chooses the SSO provider whose IdP then verifies it.
++		issuer, err := samlsp.PeekIssuer(r)
+ 		if err != nil {
+-			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAMLResponse is not a valid XML SAML assertion").WithInternalError(err)
++			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAMLResponse is missing or is not a SAML Response").WithInternalError(err)
+ 		}
+ 
+ 		initiatedBy = "idp"
+-		entityId = peekResponse.Issuer.Value
+-		peekDestination = peekResponse.Destination
++		entityId = issuer
+ 		redirectTo = relayStateValue
+ 	} else {
+ 		// RelayState can't be identified, so SAML flow can't continue
+@@ -217,53 +206,44 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
  		}
  	}
  
 -	serviceProvider := a.newSAMLServiceProvider(idpMetadata, initiatedBy == "idp", config.SAML.RSAPrivateKey, config.SAML.Certificate, dedicatedScopeID)
-+	samlConfig, err := a.samlConfig(dedicatedScopeID)
-+	if err != nil {
-+		return err
-+	}
- 
- 	// SECURITY: ACS confusion check. The SAML spec makes Destination
- 	// optional on a Response (many real IdPs omit it, especially for
-@@ -225,45 +230,39 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
- 	// violation and must not block the flow. But when an IdP does declare
- 	// one, it must name the exact ACS URL of the endpoint this request was
- 	// actually POSTed to -- whether that's the global, shared ACS URL or a
+-
+-	// SECURITY: ACS confusion check. The SAML spec makes Destination
+-	// optional on a Response (many real IdPs omit it, especially for
+-	// IdP-initiated flows), so an empty Destination is not itself a
+-	// violation and must not block the flow. But when an IdP does declare
+-	// one, it must name the exact ACS URL of the endpoint this request was
+-	// actually POSTed to -- whether that's the global, shared ACS URL or a
 -	// provider's dedicated-scope one. The global ACS endpoint is not a
 -	// catch-all for every provider's assertions: without this check, a
 -	// Response built for (or replayed against) one endpoint could otherwise
@@ -248,11 +286,10 @@ index 0fbd72a..3dc9f1c 100644
 -	// our own first-class defense, rather than depending entirely on a
 -	// third-party library's internal behavior.
 -	if initiatedBy == "idp" && peekDestination != "" && peekDestination != serviceProvider.AcsURL.String() {
-+	// provider's dedicated-scope one. ParseResponse checks Destination and
-+	// the SubjectConfirmationData.Recipient too; we assert the invariant
-+	// explicitly and up front here, as our own first-class defense.
-+	if initiatedBy == "idp" && peekDestination != "" && peekDestination != samlConfig.ACSURL() {
- 		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Response Destination does not match this SSO Provider's ACS URL")
+-		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Response Destination does not match this SSO Provider's ACS URL")
++	samlConfig, err := a.samlConfig(dedicatedScopeID)
++	if err != nil {
++		return err
  	}
  
 -	spAssertion, err := serviceProvider.ParseResponse(r, requestIds)
@@ -270,6 +307,13 @@ index 0fbd72a..3dc9f1c 100644
 -				spAssertion = spAssertion2
 -				err = nil
 -			}
++	// SECURITY: ACS confusion. samlConfig's ACS URL is that of the endpoint
++	// this request was posted to: the global, shared one, or the provider's
++	// dedicated-scope one. ParseResponse refuses a Response whose
++	// Destination, when the IdP declares one, names another URL, and an
++	// assertion whose SubjectConfirmationData Recipient is not this ACS
++	// URL, so a Response built for one endpoint is not accepted on another.
++
 +	// A Response to our AuthnRequest must answer it; an IdP-initiated
 +	// Response answers none. During a key-rotation window the IdP may have
 +	// encrypted the assertion to the next certificate, which samlConfig
@@ -293,11 +337,11 @@ index 0fbd72a..3dc9f1c 100644
 +	if err != nil {
 +		if errors.Is(err, saml.ErrAssertionReplayed) {
 +			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion has already been used")
-+		}
+ 		}
 +		var ire *saml.InvalidResponseError
 +		if errors.As(err, &ire) {
 +			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion is not valid %s", ire.Response).WithInternalError(ire.PrivateErr)
- 		}
++		}
 +
 +		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion is not valid").WithInternalError(err)
  	}
