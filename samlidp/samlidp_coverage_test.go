@@ -249,7 +249,7 @@ func TestCovGetSPMetadata(t *testing.T) {
 
 	// wrong root element
 	_, err = getSPMetadata(strings.NewReader(`<Foo xmlns="urn:oasis:names:tc:SAML:2.0:metadata"></Foo>`))
-	assert.Check(t, is.ErrorContains(err, "Foo is not an EntityDescriptor or EntitiesDescriptor"))
+	assert.Check(t, is.ErrorContains(err, "expected element type <EntityDescriptor> but have <Foo>"))
 
 	// EntitiesDescriptor containing an SP
 	spMetadata, err := getSPMetadata(strings.NewReader(`` +
@@ -265,7 +265,7 @@ func TestCovGetSPMetadata(t *testing.T) {
 		`<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata">` +
 		`<EntityDescriptor entityID="https://idp.example.com/"></EntityDescriptor>` +
 		`</EntitiesDescriptor>`))
-	assert.Check(t, is.Error(err, "saml: the metadata describes no service provider"))
+	assert.Check(t, is.Error(err, "metadata contained no service provider metadata"))
 
 	// EntitiesDescriptor that cannot be parsed
 	_, err = getSPMetadata(strings.NewReader(`` +

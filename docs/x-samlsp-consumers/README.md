@@ -210,9 +210,10 @@ The second round of ports, Zitadel, Octelium and KubePi, found these:
 7. **Two IdPs among the most popular consumers had nothing in `x/samlsp`.**
    Teleport (1st) and Authorizer (11th) use `samlsp` only for `ParseMetadata`,
    on the metadata of the SPs they serve, and `x/samlsp.ParseMetadata` accepts
-   IdP metadata only. **Addressed:** `saml.ParseServiceProviderMetadata`, in
-   the core package, parses SP metadata (`samlidp` uses it too); the Teleport
-   and Authorizer patches move to it. **Still stands:** Zitadel keeps its own
+   IdP metadata only. **Addressed** by `x/samlidp`, which landed on `main`
+   meanwhile: its `ParseMetadata` parses SP metadata, picks one SP out of an
+   aggregate, and can check the metadata's signature. The Teleport and
+   Authorizer patches move to it. **Still stands:** Zitadel keeps its own
    IdP-metadata parser, because `ParseMetadata` has no `CharsetReader` for
    metadata that declares a non-UTF-8 encoding, and refuses an aggregate with
    several IdPs instead of taking the first.
