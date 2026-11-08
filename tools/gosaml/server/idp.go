@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -378,7 +377,7 @@ type loginPage struct {
 // showLogin keeps req and shows the page where the visitor chooses who to
 // log in as.
 func (s *Server) showLogin(w http.ResponseWriter, r *http.Request, in *store.Instance, cfg *IdPConfig, req *samlidp.AuthnRequest) {
-	pid := rand.Text()
+	pid := newID()
 	if err := s.Store.PutPending(r.Context(), pid, in.ID, req, time.Hour); err != nil {
 		s.fail(w, r, http.StatusInternalServerError, "Cannot keep the login request.", err)
 		return

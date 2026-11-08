@@ -21,3 +21,18 @@ func TestInstanceNames(t *testing.T) {
 		t.Errorf("numbered id %q", n)
 	}
 }
+
+func TestNewID(t *testing.T) {
+	shape := regexp.MustCompile(`^[A-Za-z0-9]{10,}$`)
+	seen := map[string]bool{}
+	for range 1000 {
+		id := newID()
+		if !shape.MatchString(id) || seen[id] {
+			t.Fatalf("id %q (seen before: %v)", id, seen[id])
+		}
+		seen[id] = true
+		if n := idEncoder.Decode(id); len(n) != 1 {
+			t.Fatalf("%q decodes to %v", id, n)
+		}
+	}
+}

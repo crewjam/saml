@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -219,7 +218,7 @@ func (s *Server) spLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	relayState := strings.TrimSpace(r.Form.Get("relay_state"))
 	if relayState == "" {
-		relayState = rand.Text()
+		relayState = newID()
 	}
 	msg, err := c.AuthnRequest(ctx, relayState, opts...)
 	if err != nil {

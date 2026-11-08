@@ -60,7 +60,10 @@ in-memory hub, since one process holds all the state, with catch-up from
   [`golang-petname`](https://github.com/dustinkirkland/golang-petname): a
   two-word public ID in protocol URLs (`/idp/comic-krill/metadata`) and a
   three-word management page (`/manage/wholly-blessed-mammoth`). They are
-  easy to read and to guess; this is a testing service.
+  easy to read and to guess; this is a testing service. The other IDs the
+  service makes (logins and logouts in progress, sessions, default
+  RelayStates, session indexes, transient NameIDs) are
+  [Sqids](https://sqids.org/go) of random numbers, such as `86Rf07xd4z`.
 - There are no accounts. Each instance has a public ID (in its protocol
   URLs) and a secret management URL, `/manage/{secret}`, which is its only
   credential. A cookie remembers the instances a browser created, so the

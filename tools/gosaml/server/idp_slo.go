@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -197,7 +196,7 @@ func (s *Server) startIdPLogout(w http.ResponseWriter, r *http.Request, run *idp
 	}
 	s.logEvent(ctx, &store.Event{InstanceID: run.in.ID, OK: true, Title: "IdP-initiated logout of " + sess.Username,
 		Detail: participantList(sess.Participants)})
-	s.continueLogout(w, r, run, &logoutState{ID: rand.Text(), Username: sess.Username, Remaining: sess.Participants})
+	s.continueLogout(w, r, run, &logoutState{ID: newID(), Username: sess.Username, Remaining: sess.Participants})
 }
 
 func participantList(ps []saml.SessionParticipant) string {
@@ -266,7 +265,7 @@ func (s *Server) idpSLORequest(w http.ResponseWriter, r *http.Request, run *idpR
 		s.fail(w, r, http.StatusInternalServerError, "Cannot read the sessions.", err)
 		return
 	}
-	st := &logoutState{ID: rand.Text(), Request: req}
+	st := &logoutState{ID: newID(), Request: req}
 	ended := 0
 	for _, row := range rows {
 		var sess idpSession

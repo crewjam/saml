@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -59,7 +58,7 @@ func (s *Server) startSPSession(w http.ResponseWriter, r *http.Request, in *stor
 	if expires.After(in.ExpiresAt) {
 		expires = in.ExpiresAt
 	}
-	id := rand.Text()
+	id := newID()
 	if err := s.Store.PutSession(r.Context(), &store.Session{ID: id, InstanceID: in.ID, Data: b, ExpiresAt: expires}); err != nil {
 		return err
 	}
@@ -196,7 +195,7 @@ func (s *Server) startSPLogout(w http.ResponseWriter, r *http.Request, in *store
 		s.fail(w, r, http.StatusInternalServerError, "The SP is misconfigured.", err)
 		return
 	}
-	relayState := rand.Text()
+	relayState := newID()
 	msg, err := logout.Request(ctx, sess.NameID, relayState,
 		slo.WithSessionIndex(sess.SessionIndexes...), slo.WithReason(saml.LogoutReasonUser), samlsp.WithScriptNonce(nonce(r)))
 	if err != nil {

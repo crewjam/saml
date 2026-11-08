@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"net/http"
 	"slices"
@@ -177,7 +176,7 @@ func (s *Server) idpLogin(w http.ResponseWriter, r *http.Request) {
 	if authnContext == "" {
 		authnContext = saml.AuthnContextPasswordProtectedTransport
 	}
-	sessionIndex := rand.Text()
+	sessionIndex := newID()
 	if p := profileByKey(cfg.Profile); p.NewSessionIndex != nil {
 		sessionIndex = p.NewSessionIndex()
 	}
@@ -185,7 +184,7 @@ func (s *Server) idpLogin(w http.ResponseWriter, r *http.Request) {
 	subject := buildSubject(&req, user, r.FormValue("nameid_format"), sess.AuthnContext, sess.AuthnInstant, sess.SessionIndex, hours)
 	_ = s.Store.DeletePending(ctx, pid)
 	// A login, as opposed to single sign-on, starts a new IdP session.
-	s.respond(w, r, run, &req, subject, sess, rand.Text())
+	s.respond(w, r, run, &req, subject, sess, newID())
 }
 
 // buildSubject makes what the IdP asserts about user in answer to req.
@@ -214,7 +213,7 @@ func buildSubject(req *samlidp.AuthnRequest, user *User, format string, authnCon
 	}
 	if subject.NameIDFormat == saml.TransientNameIDFormat {
 		// A transient NameID is new at every login.
-		subject.NameID = "_" + strings.ToLower(rand.Text())
+		subject.NameID = "_" + newID()
 	}
 	if sessionHours > 0 && sessionHours <= 720 {
 		subject.SessionNotOnOrAfter = time.Now().Add(time.Duration(sessionHours) * time.Hour)
