@@ -161,7 +161,7 @@ func acs(w http.ResponseWriter, r *http.Request) {
 	startSession(w, assertion)
 
 	returnTo := pending.Get("to")
-	if !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") {
+	if !isLocalPath(returnTo) {
 		returnTo = "/hello"
 	}
 	http.Redirect(w, r, returnTo, http.StatusFound)
@@ -313,4 +313,11 @@ func setTempCookie(w http.ResponseWriter, name, path, value string) {
 
 func deleteCookie(w http.ResponseWriter, name, path string) {
 	http.SetCookie(w, &http.Cookie{Name: name, Path: path, MaxAge: -1, HttpOnly: true, Secure: secure()})
+}
+
+// isLocalPath reports whether p is a path on this site, safe to redirect
+// to: it starts with "/", but not with "//" or "/\", which browsers read as
+// another host.
+func isLocalPath(p string) bool {
+	return strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "//") && !strings.HasPrefix(p, "/\\")
 }
