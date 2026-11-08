@@ -359,6 +359,28 @@ type ServiceProvider struct {
 	// InResponseTo, passed as Response.InResponseTo.
 	ValidateRequestID func(response Response, possibleRequestIDs []string) error
 
+	// ClientAddress, if set, is the network address (an IPv4 or IPv6
+	// address, optionally with a port, as in http.Request.RemoteAddr) of
+	// the user agent presenting the Response being parsed. A bearer
+	// SubjectConfirmationData that has an Address (saml-core §2.4.1.2)
+	// then confirms the subject only if Address is the same IP address;
+	// one without an Address is not affected. IPv4 and IPv6 spellings of an
+	// address are compared as addresses, not as text.
+	//
+	// It is off (empty) by default, because the SP often cannot know the
+	// client's address: behind a proxy or load balancer, RemoteAddr is the
+	// proxy's, and the client address must come from a header that only a
+	// trusted proxy can be relied on to set. Clients also change address
+	// (between IPv4 and IPv6, or across a carrier-grade NAT) during a
+	// login. Set it only when the address is known to be the client's, and
+	// set it per call, on a copy of the ServiceProvider made for the
+	// request, since it describes one request:
+	//
+	//	reqSP := *sp
+	//	reqSP.ClientAddress = clientIP // as determined by the application
+	//	assertion, err := reqSP.ParseResponse(r, requestIDs)
+	ClientAddress string
+
 	// Clock, if non-nil, is the time source for everything this
 	// ServiceProvider does that depends on the current time: timestamps on
 	// the requests and metadata it issues, assertion and logout message time
@@ -2322,6 +2344,12 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if len(assertion.AuthnStatements) == 0 {
 		return classify(fmt.Errorf("assertion has no AuthnStatement"), ErrMissingElement)
 	}
+	// SessionNotOnOrAfter is when the session the assertion establishes
+	// must end (saml-core §2.7.2), so a session that has already ended
+	// must not be started.
+	if sessionEnd, ok := earliestSessionNotOnOrAfter(assertion); ok && sp.limits().pastDeadline(sessionEnd, now) {
+		return classify(fmt.Errorf("assertion AuthnStatement SessionNotOnOrAfter %s has passed", sessionEnd), ErrExpired)
+	}
 	if assertion.Conditions.NotBefore.Add(-sp.maxClockSkew()).After(now) {
 		return classify(fmt.Errorf("assertion Conditions is not yet valid"), ErrNotYetValid)
 	}
@@ -2505,7 +2533,26 @@ func (l timeLimits) acceptableUntil(assertion *Assertion) time.Time {
 	if !confirmationDeadline.IsZero() {
 		deadline = earliest(deadline, confirmationDeadline)
 	}
+	if sessionEnd, ok := earliestSessionNotOnOrAfter(assertion); ok {
+		deadline = earliest(deadline, l.skewedDeadline(sessionEnd))
+	}
 	return deadline
+}
+
+// earliestSessionNotOnOrAfter returns the earliest SessionNotOnOrAfter of
+// the AuthnStatements of assertion, and whether any has one.
+func earliestSessionNotOnOrAfter(assertion *Assertion) (time.Time, bool) {
+	var rv time.Time
+	found := false
+	for _, statement := range assertion.AuthnStatements {
+		if statement.SessionNotOnOrAfter == nil {
+			continue
+		}
+		if !found || statement.SessionNotOnOrAfter.Before(rv) {
+			rv, found = *statement.SessionNotOnOrAfter, true
+		}
+	}
+	return rv, found
 }
 
 func earliest(a, b time.Time) time.Time {
@@ -2620,6 +2667,9 @@ func (sp *ServiceProvider) validateBearerSubjectConfirmationData(data *SubjectCo
 	// has always passed.
 	if sp.limits().pastDeadline(data.NotOnOrAfter, now) {
 		return classify(fmt.Errorf("assertion SubjectConfirmationData is expired"), ErrExpired)
+	}
+	if sp.ClientAddress != "" && data.Address != "" && !subjectConfirmationAddressMatches(data.Address, sp.ClientAddress) {
+		return classify(fmt.Errorf("assertion SubjectConfirmationData Address %q is not the client address %q", data.Address, sp.ClientAddress), ErrDestinationMismatch)
 	}
 	return nil
 }
