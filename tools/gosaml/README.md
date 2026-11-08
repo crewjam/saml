@@ -117,8 +117,7 @@ fly certs add gosaml.dev    # then set DNS as `fly certs show gosaml.dev` says
 
 ### Deploying from GitHub Actions
 
-Each push to `main` that could change gosaml (any Go file, the root
-`go.mod`/`go.sum`, or `tools/gosaml/`) is deployed by
+Each push to `main` is deployed by
 `.github/workflows/gosaml-deploy.yml`. It can also be run by hand from the
 Actions tab (main only). A build job with no secrets vets, tests and builds
 (`./deploy.sh dist`); a deploy job then runs `flyctl deploy` on that

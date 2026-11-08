@@ -1,5 +1,4 @@
-# Deploys tools/gosaml to gosaml.dev (Fly.io) on every push to main that
-# could change it. See "Deploying from GitHub Actions" in
+# Deploys tools/gosaml to gosaml.dev (Fly.io) on every push to main. See "Deploying from GitHub Actions" in
 # tools/gosaml/README.md for the one-time setup of the FLY_API_TOKEN secret.
 #
 # How the token is kept safe:
@@ -22,14 +21,6 @@ name: gosaml deploy
 on:
   push:
     branches: [ 'main' ]
-    # gosaml builds the library from this checkout (the replace directive
-    # in tools/gosaml/go.mod), so a library change is a gosaml change.
-    paths:
-      - '**.go'
-      - 'go.mod'
-      - 'go.sum'
-      - 'tools/gosaml/**'
-      - '.github/workflows/gosaml-deploy.yml'
   # To redeploy by hand. Only main may deploy: the environment refuses
   # any other branch picked here.
   workflow_dispatch:
