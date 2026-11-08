@@ -189,7 +189,30 @@ legend { padding: 0; margin-bottom: 6px; font-size: 14px; font-weight: 600; }
 .validity-track { position: relative; height: 8px; background: var(--ok-bar); }
 .validity-mark { position: absolute; top: -5px; width: 2px; height: 18px; background: var(--ink); }
 .validity-late { position: absolute; top: 3px; border-top: 2px dashed var(--danger); }
-.validity-mark.late { background: var(--danger); }
+.validity-mark.late { background: var(--danger); left: calc(100% + 64px); }
+.validity-track.late { margin-right: 72px; }
+.validity-late { left: 100%; width: 64px; }
+.validity-mark.at-0 { left: calc(0% - 1px); }
+.validity-mark.at-5 { left: calc(5% - 1px); }
+.validity-mark.at-10 { left: calc(10% - 1px); }
+.validity-mark.at-15 { left: calc(15% - 1px); }
+.validity-mark.at-20 { left: calc(20% - 1px); }
+.validity-mark.at-25 { left: calc(25% - 1px); }
+.validity-mark.at-30 { left: calc(30% - 1px); }
+.validity-mark.at-35 { left: calc(35% - 1px); }
+.validity-mark.at-40 { left: calc(40% - 1px); }
+.validity-mark.at-45 { left: calc(45% - 1px); }
+.validity-mark.at-50 { left: calc(50% - 1px); }
+.validity-mark.at-55 { left: calc(55% - 1px); }
+.validity-mark.at-60 { left: calc(60% - 1px); }
+.validity-mark.at-65 { left: calc(65% - 1px); }
+.validity-mark.at-70 { left: calc(70% - 1px); }
+.validity-mark.at-75 { left: calc(75% - 1px); }
+.validity-mark.at-80 { left: calc(80% - 1px); }
+.validity-mark.at-85 { left: calc(85% - 1px); }
+.validity-mark.at-90 { left: calc(90% - 1px); }
+.validity-mark.at-95 { left: calc(95% - 1px); }
+.validity-mark.at-100 { left: calc(100% - 1px); }
 .validity-labels { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 8px; font-variant-numeric: tabular-nums; color: var(--ink-body); }
 
 /* Tables */
@@ -335,3 +358,13 @@ fieldset.relax .help { clear: both; max-width: 40em; margin-top: 0; padding-top:
 .entry-params { margin-top: 24px; }
 .entry-actions { margin-top: 16px; }
 .entry-sec h3 { font-size: 14px; font-weight: 700; }
+
+/* Result */
+.result-head { margin-bottom: 40px; align-items: flex-end; }
+.result-sec { margin-bottom: 48px; }
+.h2-note { font-size: 16px; font-weight: 600; letter-spacing: 0; }
+.hints { margin: 16px 0 0; padding-left: 20px; font-size: 14px; }
+.hints li + li { margin-top: 6px; }
+.relay { margin: 0 0 40px; }
+.attrs-sec + .relay { margin-top: -32px; }
+.result-links { gap: 8px 24px; font-size: 14px; }

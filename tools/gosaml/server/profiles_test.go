@@ -66,12 +66,17 @@ func TestProfiles(t *testing.T) {
 				_, body = h.do(http.MethodPost, "/sp/"+spID+"/login", nil)
 				_, body = h.loginAt(idpID, body, url.Values{"user": {"alice"}, "action": {"login"}})
 				body = h.follow(body)
-				mustContain(t, body, "Login failed", "AES-CBC")
+				mustContain(t, body, "Login refused", "AES-CBC", "not trusted", "<dt>NameID</dt>")
 				h.do(http.MethodPost, "/manage/"+spSecret+"/settings", url.Values{
 					"name": {"SP"}, "sign_requests": {"on"}, "encryption_key": {"on"}, "allow_unsolicited": {"on"}, "allow_unsigned_cbc": {"on"}})
 			}
 			body = h.loginAs(idpID, spID, "alice")
 			mustContain(t, body, tc.want...)
+			if tc.profile == "entra" {
+				mustContain(t, body, "Accepted only because Relax checks is on: the assertion is encrypted with AES-CBC in a Response that is not signed")
+			} else {
+				mustContain(t, body, "Response accepted: signature valid")
+			}
 			if !tc.issuer.MatchString(body) {
 				t.Errorf("issuer not like %s", tc.issuer)
 			}
@@ -81,7 +86,7 @@ func TestProfiles(t *testing.T) {
 			if tc.profile == "entra" {
 				// The session index is the assertion's ID.
 				field := func(name string) string {
-					m := regexp.MustCompile(`<th>` + name + `</th><td><code class="wrap">([^<]+)</code>`).FindStringSubmatch(body)
+					m := regexp.MustCompile(`<dt>` + name + `</dt><dd class="mono">([^<]+)</dd>`).FindStringSubmatch(body)
 					if m == nil {
 						t.Fatalf("no %s on the result page", name)
 					}

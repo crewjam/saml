@@ -12,8 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"io/fs"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"path"
@@ -185,7 +185,7 @@ type page struct {
 var navItems = map[string]string{
 	"home": "home", "inspect": "inspect", "about": "about",
 	"idp_manage": "idp", "idp_session": "idp", "idp_logout": "idp",
-	"sp_manage": "sp", "sp_session": "sp", "sp_logout": "sp",
+	"sp_manage": "sp", "sp_session": "sp", "sp_logout": "sp", "sp_result": "sp",
 }
 
 var funcs = template.FuncMap{
@@ -196,6 +196,13 @@ var funcs = template.FuncMap{
 		return roundDuration(time.Until(t))
 	},
 	"clock": func(t time.Time) string { return t.UTC().Format("15:04:05 UTC") },
+	// rel says how far a time is from now, for a time's tooltip.
+	"rel": func(t time.Time) string {
+		if d := time.Until(t); d > 0 {
+			return "in " + roundDuration(d)
+		}
+		return roundDuration(time.Since(t)) + " ago"
+	},
 	"join":  strings.Join,
 	"short": shortURN,
 	"dur":   roundDuration,

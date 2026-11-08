@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/beevik/etree"
 
@@ -255,6 +257,18 @@ type spResult struct {
 	Unsolicited  bool
 	Artifact     string
 	SignedIn     bool
+
+	// Verdict is the line under the heading, VerdictLevel "ok", "warn"
+	// (accepted because of a relaxed check) or "bad".
+	Verdict      string
+	VerdictLevel string
+	// Facts and Validity describe the assertion: the verified one, or,
+	// for a refused Response, what its unencrypted assertion claims.
+	Facts    []fact
+	Validity *validityView
+	// Received summarises how the Response came, e.g. "HTTP-POST · 6.2 KB".
+	Received    string
+	InspectHref string
 }
 
 func (s *Server) spACS(w http.ResponseWriter, r *http.Request) {
@@ -283,6 +297,13 @@ func (s *Server) spACS(w http.ResponseWriter, r *http.Request) {
 	}
 	res.ResponseXML = formMessageXML(r, "SAMLResponse")
 	res.Artifact = r.Form.Get("SAMLart")
+	arrived := time.Now()
+	if raw := r.Form.Get("SAMLResponse"); raw != "" {
+		res.Received = "HTTP-POST · " + byteSizeOf(len(raw))
+		res.InspectHref = "/inspect#m=" + strings.ReplaceAll(url.QueryEscape(raw), "+", "%20")
+	} else if res.Artifact != "" {
+		res.Received = "HTTP-Artifact, resolved at the IdP"
+	}
 
 	var opts []samlsp.ResponseOption
 	t, err := s.tracker(in, c)
@@ -310,6 +331,18 @@ func (s *Server) spACS(w http.ResponseWriter, r *http.Request) {
 		if res.Artifact != "" {
 			detail = "Artifact: " + res.Artifact + "\n" + detail
 		}
+		res.VerdictLevel = "bad"
+		res.Verdict = "✗ Response refused: " + lastCause(res.Error)
+		a := unverifiedAssertion(res.ResponseXML)
+		if a == nil && res.ManageURL != "" {
+			if key, _, err := parseKeyPair(in.KeyPEM, in.CertPEM); err == nil {
+				a = decryptedForDisplay(key, res.ResponseXML)
+			}
+		}
+		if a != nil {
+			res.Facts = assertionFacts(a, subjectInResponseTo(a), false)
+			res.Validity = validity(a, arrived, false)
+		}
 		s.logEvent(ctx, &store.Event{InstanceID: in.ID, Direction: "in", Title: "Response refused", Detail: detail, XML: res.ResponseXML})
 		s.renderStatus(w, r, http.StatusForbidden, "sp_result", cfg.Name, res)
 		return
@@ -320,6 +353,15 @@ func (s *Server) spACS(w http.ResponseWriter, r *http.Request) {
 		doc.SetRoot(assertion.Raw.Element())
 		doc.Indent(2)
 		res.AssertionXML, _ = doc.WriteToString()
+		res.Facts = assertionFacts(assertion.Raw, assertion.InResponseTo, true)
+		res.Validity = validity(assertion.Raw, arrived, true)
+	}
+	res.VerdictLevel = "ok"
+	res.Verdict = "✓ Response accepted: signature valid, conditions met, audience matches."
+	if reasons, sig := relaxedBy(cfg, res.ResponseXML, res.AssertionXML, arrived); len(reasons) > 0 {
+		res.VerdictLevel = "warn"
+		res.Verdict = "! Accepted only because Relax checks is on: " + strings.Join(reasons, ", and ") + ". With default checks this login fails."
+		res.Facts = append(res.Facts, fact{K: "Signature", V: sig})
 	}
 	detail := "Subject: " + assertion.Subject + " (" + shortURN(assertion.NameID.Format) + ")\nIssuer: " + assertion.Issuer
 	if assertion.InResponseTo == "" {

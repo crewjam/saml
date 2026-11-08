@@ -57,3 +57,15 @@
     </div>{{end}}
   </div>
 </section>{{end}}
+
+{{/* sp-top is the reduced header of the pages an SP shows the person
+     logging in (Result, session, logout): a link to manage the SP only
+     for the browser that made it. Takes the management URL or "". */}}
+{{define "sp-top"}}
+<header class="top">
+  <div class="top-inner narrow">
+    <a class="wordmark" href="/">gosaml.dev</a>
+    {{with .}}<a class="top-note" href="{{.}}">Manage this SP</a>{{end}}
+  </div>
+</header>
+{{end}}

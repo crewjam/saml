@@ -99,7 +99,7 @@
     const d = new Date(el.getAttribute("datetime"));
     if (isNaN(d)) return;
     el.textContent = el.dataset.date !== undefined ? d.toLocaleString() : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    el.title = d.toUTCString();
+    if (!el.title) el.title = d.toUTCString();
     el.dataset.local = "";
   });
   localTimes(document);

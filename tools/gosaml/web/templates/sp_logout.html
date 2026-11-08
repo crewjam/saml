@@ -1,13 +1,16 @@
+{{define "header"}}{{template "sp-top" .Data.ManageURL}}{{end}}
 {{define "content"}}{{with .Data}}
-<section class="card narrow">
-  <p class="eyebrow"><span class="badge sp">SP</span> {{.Name}}</p>
-  <h1 class="result {{if .OK}}ok{{else}}bad{{end}}">{{if .OK}}Logged out{{else}}Logged out, with a problem{{end}}</h1>
-  <p class="lead">{{.Message}}</p>
-  {{if .Subject}}<p class="meta">Session of <code>{{.Subject}}</code></p>{{end}}
-  {{if .Detail}}<pre class="detail">{{.Detail}}</pre>{{end}}
-  <div class="row">
-    <a class="button" hx-boost="false" href="/sp/{{.InstanceID}}/login">Log in again</a>
-    {{if .ManageURL}}<a class="button secondary" href="{{.ManageURL}}">Manage this SP</a>{{end}}
+<main class="narrow">
+  <p class="eyebrow"><span class="tag sp">{{.Name}}</span></p>
+  <div class="page-head result-head">
+    <div>
+      <h1 class="result-h1">{{if .OK}}Logged out{{else}}Logged out, with a problem{{end}}</h1>
+      <p class="verdict {{if .OK}}ok{{else}}warn{{end}}-text">{{if .OK}}✓{{else}}!{{end}} {{.Message}}</p>
+      {{with .Subject}}<p class="meta">Session of <span class="mono">{{.}}</span></p>{{end}}
+    </div>
+    <div class="actions"><a class="btn" hx-boost="false" href="/sp/{{.InstanceID}}/login">Log in again</a></div>
   </div>
-</section>
+  {{with .Detail}}<section class="result-sec"><h2 class="sec-h2">Detail</h2><pre class="pane entry-detail">{{.}}</pre></section>{{end}}
+  {{with .ManageURL}}<nav class="actions result-links" aria-label="More"><a href="{{.}}#log">See the log</a><a href="{{.}}">Manage this SP</a></nav>{{end}}
+</main>
 {{end}}{{end}}

@@ -1,30 +1,52 @@
+{{define "header"}}{{template "sp-top" .Data.ManageURL}}{{end}}
 {{define "content"}}{{with .Data}}
-<section class="card narrow">
-  <p class="eyebrow"><span class="badge sp">SP</span> {{.Name}}</p>
+<main class="narrow">
+  <p class="eyebrow"><span class="tag sp">{{.Name}}</span></p>
   {{with .Session}}
-  <h1 class="result ok">Logged in as <code>{{.Subject}}</code></h1>
-  <table class="kv">
-    <tr><th>NameID</th><td><code class="wrap">{{.NameID.Value}}</code> <span class="meta">{{short .NameID.Format}}</span></td></tr>
-    <tr><th>Identity provider</th><td><code class="wrap">{{.Issuer}}</code></td></tr>
-    <tr><th>Authenticated</th><td>{{since .AuthnInstant}}</td></tr>
-    {{if .SessionIndexes}}<tr><th>Session index</th><td><code class="wrap">{{join .SessionIndexes ", "}}</code></td></tr>{{end}}
-    <tr><th>Session ends</th><td>in {{until .ExpiresAt}}</td></tr>
-  </table>
-  {{if .Attributes}}
-  <details><summary>{{len .Attributes}} attributes</summary>
-    <table class="kv">{{range .Attributes}}<tr><th>{{if .FriendlyName}}{{.FriendlyName}}{{else}}{{.Name}}{{end}}</th><td>{{range .Values}}<code class="wrap">{{.}}</code> {{end}}</td></tr>{{end}}</table>
-  </details>
-  {{end}}
-  <div class="row">
-    <form hx-boost="false" method="post" action="/sp/{{$.Data.InstanceID}}/logout"><button>Log out everywhere</button></form>
-    <form hx-boost="false" method="post" action="/sp/{{$.Data.InstanceID}}/logout"><input type="hidden" name="mode" value="local"><button class="secondary">Log out of this SP only</button></form>
+  <div class="page-head result-head">
+    <div>
+      <h1 class="result-h1">Logged in as {{.Subject}}</h1>
+      <p class="meta">Session ends <time datetime="{{iso .ExpiresAt}}" title="{{rel .ExpiresAt}}">{{clock .ExpiresAt}}</time>.</p>
+    </div>
+    <div class="actions">
+      <form hx-boost="false" method="post" action="/sp/{{$.Data.InstanceID}}/logout" class="inline"><button class="btn">Log out everywhere</button></form>
+      <form hx-boost="false" method="post" action="/sp/{{$.Data.InstanceID}}/logout" class="inline"><input type="hidden" name="mode" value="local"><button class="btn secondary">Log out of this SP only</button></form>
+    </div>
   </div>
-  <p class="hint">"Everywhere" is single logout: the SP sends a LogoutRequest to the IdP, which ends its session and logs you out of the other service providers you used it for.</p>
+  <section class="result-sec">
+    <h2 class="sec-h2">Session</h2>
+    <dl class="facts">
+      <div><dt>NameID</dt><dd class="mono">{{.NameID.Value}}</dd></div>
+      {{with .NameID.Format}}<div><dt>NameID format</dt><dd class="mono">{{.}}</dd></div>{{end}}
+      <div><dt>Identity provider</dt><dd class="mono">{{.Issuer}}</dd></div>
+      <div><dt>Authenticated</dt><dd class="time"><time datetime="{{iso .AuthnInstant}}" title="{{rel .AuthnInstant}}">{{clock .AuthnInstant}}</time></dd></div>
+      {{if .SessionIndexes}}<div><dt>Session index</dt><dd class="mono">{{join .SessionIndexes ", "}}</dd></div>{{end}}
+    </dl>
+    <p class="help">"Everywhere" is single logout: the SP sends a LogoutRequest to the IdP, which ends its session and logs you out of the other service providers you used it for.</p>
+  </section>
+  <section class="result-sec">
+    <h2 class="sec-h2">Attributes <span class="count">{{len .Attributes}}</span></h2>
+    {{if .Attributes}}
+    <div class="table-scroll">
+      <table class="tbl attrs">
+        <thead><tr><th>Name</th><th>Friendly name</th><th>Values</th></tr></thead>
+        <tbody>
+        {{range .Attributes}}<tr><td class="mono">{{.Name}}</td><td>{{.FriendlyName}}</td><td class="mono">{{range $i, $v := .Values}}{{if $i}}<br>{{end}}{{$v}}{{end}}</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}<p class="empty">The IdP sent no attributes.</p>{{end}}
+  </section>
   {{else}}
-  <h1>Not logged in</h1>
-  <p>This browser has no session at this service provider.</p>
-  <div class="row"><a class="button" hx-boost="false" href="/sp/{{.InstanceID}}/login">Log in with the IdP</a></div>
+  <div class="page-head result-head">
+    <div>
+      <h1 class="result-h1">Not logged in</h1>
+      <p class="meta">This browser has no session at this service provider.</p>
+    </div>
+    <div class="actions"><a class="btn" hx-boost="false" href="/sp/{{.InstanceID}}/login">Log in with the IdP</a></div>
+  </div>
   {{end}}
-  {{if .ManageURL}}<p><a href="{{.ManageURL}}">Manage this SP</a></p>{{end}}
-</section>
+  {{with .ManageURL}}<nav class="actions result-links" aria-label="More"><a href="{{.}}#log">See the log</a><a href="{{.}}">Manage this SP</a></nav>{{end}}
+</main>
 {{end}}{{end}}

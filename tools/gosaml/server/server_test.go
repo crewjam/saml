@@ -162,7 +162,7 @@ func TestEndToEnd(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("replay: %d", resp.StatusCode)
 	}
-	mustContain(t, body, "Login failed", "already completed")
+	mustContain(t, body, "Login refused", "already completed")
 
 	// The IdP session answers the next login without asking (single
 	// sign-on), and so an IsPassive one.
@@ -174,14 +174,14 @@ func TestEndToEnd(t *testing.T) {
 	other := h.newBrowser()
 	_, body = other.do(http.MethodPost, "/sp/"+spID+"/login", url.Values{"is_passive": {"on"}})
 	_, body = other.submitAutoForm(body)
-	mustContain(t, body, "Login failed", "NoPassive")
+	mustContain(t, body, "Login refused", "NoPassive")
 
 	// An error Response. ForceAuthn shows the login page despite the
 	// session.
 	_, body = h.do(http.MethodPost, "/sp/"+spID+"/login", url.Values{"force_authn": {"on"}})
 	_, body = h.loginAt(idpID, body, url.Values{"action": {"error"}, "error_status": {"AuthnFailed"}})
 	_, body = h.submitAutoForm(body)
-	mustContain(t, body, "Login failed", "AuthnFailed")
+	mustContain(t, body, "Login refused", "AuthnFailed")
 
 	// A transient NameID, over HTTP-POST.
 	_, body = h.do(http.MethodPost, "/sp/"+spID+"/login", url.Values{"binding": {"post"}, "force_authn": {"on"}})
