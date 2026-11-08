@@ -82,6 +82,13 @@ type world struct {
 
 func newWorld(t *testing.T, configure func(*idpartifact.Binding)) *world {
 	t.Helper()
+	return newWorldWith(t, configure, nil, nil)
+}
+
+// newWorldWith is newWorld, with the SPs made with spOpts too, and the
+// IdP given their metadata as modify changes it.
+func newWorldWith(t *testing.T, configure func(*idpartifact.Binding), spOpts []samlsp.Option, modify func(*saml.EntityDescriptor)) *world {
+	t.Helper()
 	w := &world{store: idpartifact.NewMemoryStore()}
 	w.server = httptest.NewTLSServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		w.binding.ServeHTTP(rw, r)
@@ -93,13 +100,17 @@ func newWorld(t *testing.T, configure func(*idpartifact.Binding)) *world {
 	for i := range w.sps {
 		key, cert := keyPair(t, i+1)
 		base := "https://sp" + string(rune('1'+i)) + ".example.com"
-		sp, err := samlsp.New(base+"/saml/metadata", idpMetadata,
-			samlsp.WithSigningKey(key, cert), samlsp.WithHTTPClient(w.server.Client()))
+		opts := append([]samlsp.Option{samlsp.WithSigningKey(key, cert), samlsp.WithHTTPClient(w.server.Client())}, spOpts...)
+		sp, err := samlsp.New(base+"/saml/metadata", idpMetadata, opts...)
 		if err != nil {
 			t.Fatal(err)
 		}
 		w.sps[i] = sp
-		mds = append(mds, sp.Metadata(context.Background()))
+		md := sp.Metadata(context.Background())
+		if modify != nil {
+			modify(md)
+		}
+		mds = append(mds, md)
 	}
 	key, cert := keyPair(t, 0)
 	var err error
@@ -117,6 +128,7 @@ func newWorld(t *testing.T, configure func(*idpartifact.Binding)) *world {
 
 var subject = samlidp.Subject{
 	NameID:       "alice",
+	NameIDFormat: saml.TransientNameIDFormat,
 	AuthnInstant: time.Now(),
 	SessionIndex: "s1",
 	Attributes:   []samlidp.Attribute{{Name: "mail", Values: []string{"alice@example.com"}}},
@@ -200,17 +212,79 @@ func TestLogin(t *testing.T) {
 	}
 }
 
+// An error Response to a request that asks for the artifact binding is
+// posted to the SP's HTTP-POST assertion consumer service: anyone can
+// have the IdP make one for an SP that does not sign its requests, as
+// often as they like, and it must not fill the store.
 func TestErrorResponse(t *testing.T) {
 	w := newWorld(t, nil)
 	ctx := context.Background()
+	for range 3 {
+		msg, req := w.start(t, samlsp.IsPassive)
+		if req.Signed {
+			t.Fatal("an unsigned request is Signed")
+		}
+		resp, err := w.idp.ErrorResponse(ctx, req, &saml.StatusError{TopLevel: saml.StatusResponder, SecondLevel: saml.StatusNoPassive},
+			samlidp.WithCustomBinding(w.binding))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.Binding != saml.HTTPPostBinding || resp.FormValues()["SAMLResponse"] == "" || resp.Destination != w.sps[0].ACSURL() {
+			t.Fatalf("not posted: %s to %s", resp.Binding, resp.Destination)
+		}
+		if w.store.Len() != 0 {
+			t.Fatalf("%d stored", w.store.Len())
+		}
+		_, err = w.sps[0].ParseResponse(ctx, arrive(t, resp), samlsp.WithRequestID(msg.ID))
+		var bad saml.ErrBadStatus
+		if !errors.As(err, &bad) || bad.Status != saml.StatusResponder {
+			t.Fatalf("got %v", err)
+		}
+	}
+}
+
+// onlyArtifactACS removes from md every assertion consumer service but
+// those with the artifact binding.
+func onlyArtifactACS(md *saml.EntityDescriptor) {
+	for i := range md.SPSSODescriptors {
+		d := &md.SPSSODescriptors[i]
+		kept := d.AssertionConsumerServices[:0]
+		for _, ep := range d.AssertionConsumerServices {
+			if ep.Binding == saml.HTTPArtifactBinding {
+				kept = append(kept, ep)
+			}
+		}
+		d.AssertionConsumerServices = kept
+	}
+}
+
+// For an SP that lists only artifact assertion consumer services, an error
+// Response is stored only for a signed request, which is accepted only
+// once; for an unsigned one, ErrorResponse fails, before signing anything.
+func TestErrorResponseArtifactOnly(t *testing.T) {
+	ctx := context.Background()
+	status := &saml.StatusError{TopLevel: saml.StatusResponder, SecondLevel: saml.StatusNoPassive}
+
+	w := newWorldWith(t, nil, nil, onlyArtifactACS)
+	_, req := w.start(t, samlsp.IsPassive)
+	if _, err := w.idp.ErrorResponse(ctx, req, status, samlidp.WithCustomBinding(w.binding)); !errors.Is(err, saml.ErrUnknownAssertionConsumerService) {
+		t.Fatalf("unsigned request: got %v", err)
+	}
+	if w.store.Len() != 0 {
+		t.Fatalf("%d stored", w.store.Len())
+	}
+
+	w = newWorldWith(t, nil, []samlsp.Option{samlsp.SignAuthnRequests}, onlyArtifactACS)
 	msg, req := w.start(t, samlsp.IsPassive)
-	resp, err := w.idp.ErrorResponse(ctx, req, &saml.StatusError{TopLevel: saml.StatusResponder, SecondLevel: saml.StatusNoPassive},
-		samlidp.WithCustomBinding(w.binding))
+	if !req.Signed {
+		t.Fatal("a signed request is not Signed")
+	}
+	resp, err := w.idp.ErrorResponse(ctx, req, status, samlidp.WithCustomBinding(w.binding))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.RedirectURL() == nil {
-		t.Fatalf("not sent by artifact: %+v", resp)
+	if resp.Binding != saml.HTTPArtifactBinding || w.store.Len() != 1 {
+		t.Fatalf("sent with %s, %d stored", resp.Binding, w.store.Len())
 	}
 	_, err = w.sps[0].ParseResponse(ctx, arrive(t, resp), samlsp.WithRequestID(msg.ID))
 	var bad saml.ErrBadStatus

@@ -300,7 +300,8 @@ func TestMessage(t *testing.T) {
 	rec := httptest.NewRecorder()
 	msg.Write(rec)
 	h := rec.Header()
-	if !strings.Contains(h.Get("Content-Security-Policy"), "script-src 'sha256-") || h.Get("Cache-Control") != "no-cache, no-store" {
+	if !strings.Contains(h.Get("Content-Security-Policy"), "script-src 'sha256-") || h.Get("Cache-Control") != "no-cache, no-store" ||
+		h.Get("Referrer-Policy") != "no-referrer" {
 		t.Errorf("headers %v", h)
 	}
 	body := rec.Body.String()

@@ -135,6 +135,8 @@ type metadataOptions struct {
 	maxSize         int64
 	onFetchError    func(error)
 	maxCached       int
+	maxFetches      int
+	sha1IDs         bool
 }
 
 // WithServiceProviderEntityID selects the service provider with this

@@ -27,7 +27,11 @@
 // consumer service with the HTTP-Artifact binding, by index, or by URL
 // with ProtocolBinding HTTP-Artifact (as x/samlsp does with
 // samlsp.WithResponseBinding(saml.HTTPArtifactBinding)); other requests
-// are answered with HTTP-POST as before.
+// are answered with HTTP-POST as before. An error Response, which anyone
+// can have the IdP make for an SP that does not sign its requests, is
+// not stored: ErrorResponse posts it to the SP's HTTP-POST assertion
+// consumer service, and uses the artifact only for a signed request of an
+// SP that has none (see samlidp.Config.ErrorResponse).
 //
 // The browser takes the artifact to the SP with a redirect, or, with
 // Binding.Form, with a form it posts. The SP must sign its ArtifactResolve
@@ -74,6 +78,11 @@ type MemoryStore = artifact.MemoryStore
 
 // NewMemoryStore returns an empty MemoryStore.
 func NewMemoryStore() *MemoryStore { return artifact.NewMemoryStore() }
+
+// ErrStoreFull is the error of x/samlsp/artifact with which a MemoryStore
+// refuses a message it has no room for. The error of Encode, and so of
+// samlidp.Response, then matches it.
+var ErrStoreFull = artifact.ErrStoreFull
 
 // DefaultLifetime is how long a Response waits for its artifact to be
 // resolved, unless Binding.Lifetime says otherwise.

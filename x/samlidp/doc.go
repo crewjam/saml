@@ -76,13 +76,17 @@
 //
 //	func continueLogin(w http.ResponseWriter, r *http.Request, req *samlidp.AuthnRequest) {
 //		user := currentUser(r)
-//		if user == nil || req.ForceAuthn {
+//		// ForceAuthn asks for a login after the request was made: an
+//		// older one, as Response checks, will not do.
+//		stale := user != nil && req.ForceAuthn &&
+//			user.LoginTime.Before(req.IssueInstant.Add(-config.ClockSkew()))
+//		if user == nil || stale {
 //			if req.IsPassive {
 //				msg, err := config.ErrorResponse(r.Context(), req, &saml.StatusError{
 //					TopLevel: saml.StatusResponder, SecondLevel: saml.StatusNoPassive})
 //				...
 //			}
-//			showLogin(w, r, req) // and come back here once logged in
+//			showLogin(w, r, req) // which logs the user in again, and comes back here
 //			return
 //		}
 //		msg, err := config.Response(r.Context(), req, samlidp.Subject{
@@ -96,6 +100,15 @@
 //		...
 //		msg.Write(w)
 //	}
+//
+// Coming back from the login page, the user's LoginTime is newer than the
+// request, so the request is answered, rather than sent to the login page
+// again and again.
+//
+// NameIDFormat says what NameID is. Without it, the NameID is asserted
+// with the unspecified format, which promises the SP nothing; an SP that
+// asks for a particular format, such as transient, is then answered with
+// StatusInvalidNameIDPolicy (see Subject.NameIDFormat).
 //
 // Message.Write sends the Response to the SP's assertion consumer service
 // with the HTTP-POST (or HTTP-POST-SimpleSign) binding: an HTML form that
