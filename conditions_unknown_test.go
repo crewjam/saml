@@ -87,6 +87,9 @@ func TestParseXMLResponseUnknownConditions(t *testing.T) {
 			assert.Check(t, assertion != nil)
 
 			e.sp.RejectUnknownConditions = true
+			// With a ReplayCache, so that OneTimeUse can be enforced (see
+			// TestParseXMLResponseOneTimeUse).
+			e.sp.ReplayCache = memoryReplayCache{}
 			assertion, err = e.sp.ParseXMLResponse(buf, []string{spcovRequestID}, e.sp.AcsURL)
 			if tc.unknown == (xml.Name{}) {
 				assert.NilError(t, err)
@@ -100,6 +103,34 @@ func TestParseXMLResponseUnknownConditions(t *testing.T) {
 			assert.Check(t, is.ErrorContains(ire.PrivateErr, "{"+tc.unknown.Space+"}"+tc.unknown.Local))
 		})
 	}
+}
+
+// saml-core §2.5.1.5: an assertion with OneTimeUse may be used only once,
+// which the SP can enforce only with a ReplayCache. With
+// RejectUnknownConditions and no ReplayCache it is Indeterminate and
+// refused; with a ReplayCache it is accepted once.
+func TestParseXMLResponseOneTimeUse(t *testing.T) {
+	e := spcovSetup(t)
+	a := e.assertion()
+	a.Conditions.OneTimeUse = &OneTimeUse{}
+	buf := specCoreSignedResponse(t, e, a, nil)
+	parse := func() error {
+		_, err := e.sp.ParseXMLResponse(buf, []string{spcovRequestID}, e.sp.AcsURL)
+		return err
+	}
+
+	assert.Check(t, parse(), "accepted without RejectUnknownConditions, as before")
+
+	e.sp.RejectUnknownConditions = true
+	err := parse()
+	assert.Check(t, errors.Is(err, ErrUnsupported), "%v", err)
+	var ire *InvalidResponseError
+	assert.Assert(t, errors.As(err, &ire))
+	assert.Check(t, is.ErrorContains(ire.PrivateErr, "OneTimeUse"))
+
+	e.sp.ReplayCache = memoryReplayCache{}
+	assert.Check(t, parse(), "accepted once with a ReplayCache")
+	assert.Check(t, errors.Is(parse(), ErrAssertionReplayed), "and only once")
 }
 
 func TestParseXMLResponseValidateUnknownConditions(t *testing.T) {
