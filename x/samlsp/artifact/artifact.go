@@ -3,15 +3,15 @@
 // (saml-bindings §3.6): the browser carries only a short artifact, and the
 // IdP fetches the message itself from the SP's ArtifactResolutionService.
 //
-// It is an extension of github.com/crewjam/saml/x/samlsp, built only on
-// that package's extension points: a Binding is passed with
-// samlsp.WithCustomBinding to Config.AuthnRequest, or to the messages of
-// x/samlsp/slo, and serves the ArtifactResolutionService.
+// Advertise the ArtifactResolutionService with ResolutionService when
+// making the samlsp.Config, serve the Binding at its path, and pass the
+// Binding with samlsp.WithCustomBinding to Config.AuthnRequest, or to the
+// messages of github.com/crewjam/saml/x/samlsp/slo:
 //
 //	config, err := samlsp.New(idp, entityID, samlsp.WithSigningKey(key, cert),
 //		artifact.ResolutionService("https://sp.example.com/saml/artifact", 1))
 //	binding := artifact.New(config, artifact.NewMemoryStore(), 1)
-//	http.Handle("/saml/artifact", binding)
+//	http.Handle(binding.Path(), binding)
 //
 //	msg, err := config.AuthnRequest(ctx, relayState, samlsp.WithCustomBinding(binding))
 //	msg.Write(w)
@@ -19,7 +19,8 @@
 // The browser takes the artifact to the IdP with a redirect, or, with
 // Binding.Form, with a form it posts. The IdP must list an HTTP-Artifact
 // endpoint for the message in its metadata, and must sign its
-// ArtifactResolve requests.
+// ArtifactResolve requests. The SP signs its ArtifactResponses with the
+// key of samlsp.WithSigningKey, which ResolutionService requires.
 package artifact
 
 import (
@@ -74,21 +75,65 @@ var (
 
 // New returns a Binding for config that keeps messages in store until they
 // are resolved. index is the index of the SP's ArtifactResolutionService,
-// which New does not check; advertise it with ResolutionService.
+// as passed to ResolutionService.
 func New(config *samlsp.Config, store Store, index uint16) *Binding {
 	return &Binding{config: config, store: store, index: index}
 }
 
 // ResolutionService advertises, in the SP metadata, the SP's
-// ArtifactResolutionService at location, with the SOAP binding and index.
-// Serve the Binding there.
+// ArtifactResolutionService at location, an absolute URL, with the SOAP
+// binding and index. Serve the Binding at Binding.Path. samlsp.New refuses
+// it without a signing key (see samlsp.WithSigningKey), which signs the
+// ArtifactResponses.
 func ResolutionService(location string, index uint16) samlsp.Option {
-	return samlsp.WithMetadata(func(md *saml.EntityDescriptor) {
-		for i := range md.SPSSODescriptors {
-			md.SPSSODescriptors[i].ArtifactResolutionServices = append(md.SPSSODescriptors[i].ArtifactResolutionServices,
-				saml.IndexedEndpoint{Binding: saml.SOAPBinding, Location: location, Index: int(index)})
+	u, err := url.Parse(location)
+	if err == nil && (!u.IsAbs() || u.Host == "") {
+		err = fmt.Errorf("artifact: the ArtifactResolutionService URL must be an absolute URL, not %q", location)
+	}
+	if err != nil {
+		return samlsp.WithCheck(func(*saml.ServiceProvider) error { return err })
+	}
+	return samlsp.Options(
+		samlsp.WithMetadata(func(md *saml.EntityDescriptor) {
+			for i := range md.SPSSODescriptors {
+				md.SPSSODescriptors[i].ArtifactResolutionServices = append(md.SPSSODescriptors[i].ArtifactResolutionServices,
+					saml.IndexedEndpoint{Binding: saml.SOAPBinding, Location: location, Index: int(index)})
+			}
+		}),
+		samlsp.WithCheck(func(sp *saml.ServiceProvider) error {
+			if sp.LogoutSignatureMethod == "" {
+				return errors.New("artifact: ResolutionService needs an RSA or ECDSA key (see samlsp.WithSigningKey) to sign ArtifactResponses")
+			}
+			return nil
+		}),
+	)
+}
+
+// Path returns the path of the URL of the SP's ArtifactResolutionService
+// with the Binding's index, to serve the Binding at, so that it cannot
+// drift from the URL in the SP metadata:
+//
+//	http.Handle(binding.Path(), binding)
+//
+// It returns "" if the SP metadata has no such service (see
+// ResolutionService).
+func (b *Binding) Path() string {
+	for _, d := range b.config.Metadata(context.Background()).SPSSODescriptors {
+		for _, ars := range d.ArtifactResolutionServices {
+			if ars.Index != int(b.index) {
+				continue
+			}
+			u, err := url.Parse(ars.Location)
+			if err != nil {
+				return ""
+			}
+			if p := u.EscapedPath(); p != "" {
+				return p
+			}
+			return "/"
 		}
-	})
+	}
+	return ""
 }
 
 // URI implements samlsp.Binding.
