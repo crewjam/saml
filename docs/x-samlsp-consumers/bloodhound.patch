@@ -1,8 +1,8 @@
 diff --git a/cmd/api/src/api/v2/auth/saml.go b/cmd/api/src/api/v2/auth/saml.go
-index 7d87c7c..213f8f4 100644
+index 7d87c7c..63b7e7f 100644
 --- a/cmd/api/src/api/v2/auth/saml.go
 +++ b/cmd/api/src/api/v2/auth/saml.go
-@@ -18,7 +18,9 @@ package auth
+@@ -18,7 +18,10 @@ package auth
  
  import (
  	"context"
@@ -10,10 +10,11 @@ index 7d87c7c..213f8f4 100644
 +	"crypto/hmac"
 +	"crypto/rand"
 +	"crypto/sha256"
++	"encoding/hex"
  	"errors"
  	"fmt"
  	"io"
-@@ -27,9 +29,11 @@ import (
+@@ -27,9 +30,11 @@ import (
  	"net/http"
  	"strconv"
  	"strings"
@@ -26,7 +27,7 @@ index 7d87c7c..213f8f4 100644
  	"github.com/gorilla/mux"
  	"github.com/specterops/bloodhound/cmd/api/src/api"
  	v2 "github.com/specterops/bloodhound/cmd/api/src/api/v2"
-@@ -39,24 +43,14 @@ import (
+@@ -39,24 +44,14 @@ import (
  	"github.com/specterops/bloodhound/cmd/api/src/database/types/null"
  	"github.com/specterops/bloodhound/cmd/api/src/model"
  	"github.com/specterops/bloodhound/cmd/api/src/services/dogtags"
@@ -54,7 +55,7 @@ index 7d87c7c..213f8f4 100644
  
  var ErrSAMLProviderMissing = errors.New("saml provider missing")
  
-@@ -343,29 +337,38 @@ func (s ManagementResource) ServeMetadata(response http.ResponseWriter, request
+@@ -343,29 +338,39 @@ func (s ManagementResource) ServeMetadata(response http.ResponseWriter, request
  		api.HandleDatabaseError(request, response, err)
  	} else if ssoProvider.SAMLProvider == nil {
  		api.WriteErrorResponse(request.Context(), api.BuildErrorResponse(http.StatusNotFound, api.ErrorResponseDetailsResourceNotFound, request), response)
@@ -96,16 +97,17 @@ index 7d87c7c..213f8f4 100644
 +	return auth.NewSAMLConfig(*bhctx.Get(request.Context()).Host, s.config, replayState, ssoProvider)
 +}
 +
-+// consumedAssertions records the IDs of verified assertions in the
-+// saml_consumed_identifiers table, so that each is accepted once.
++// consumedAssertions records verified assertions in the
++// saml_consumed_identifiers table, under their replay keys (a hash of the
++// IdP's entity ID and the assertion ID), so that each is accepted once.
 +type consumedAssertions struct {
 +	db            database.SAMLConsumedData
 +	ssoProviderID int32
 +	issuer        string
 +}
 +
-+func (c consumedAssertions) Consume(ctx context.Context, assertionID string, expiresAt time.Time) error {
-+	err := c.db.ConsumeSAMLAssertionID(ctx, c.ssoProviderID, c.issuer, assertionID, expiresAt)
++func (c consumedAssertions) Consume(ctx context.Context, key []byte, expiresAt time.Time) error {
++	err := c.db.ConsumeSAMLAssertionID(ctx, c.ssoProviderID, c.issuer, hex.EncodeToString(key), expiresAt)
 +	if errors.Is(err, database.ErrSAMLIdentifierAlreadyConsumed) {
 +		return saml.ErrAssertionReplayed
  	}
@@ -113,7 +115,7 @@ index 7d87c7c..213f8f4 100644
  }
  
  // Provide the saml provider certificate
-@@ -391,12 +394,12 @@ func (s ManagementResource) ServeSigningCertificate(response http.ResponseWriter
+@@ -391,12 +396,12 @@ func (s ManagementResource) ServeSigningCertificate(response http.ResponseWriter
  	}
  }
  
@@ -128,7 +130,7 @@ index 7d87c7c..213f8f4 100644
  		slog.WarnContext(
  			request.Context(),
  			"[SAML] Service provider creation failed",
-@@ -404,68 +407,35 @@ func (s ManagementResource) SAMLLoginHandler(response http.ResponseWriter, reque
+@@ -404,68 +409,35 @@ func (s ManagementResource) SAMLLoginHandler(response http.ResponseWriter, reque
  		)
  		// Technical issues scenario
  		api.RedirectToLoginURL(response, request, "Your SSO connection failed due to misconfiguration, please contact your Administrator")
@@ -225,7 +227,7 @@ index 7d87c7c..213f8f4 100644
  	}
  }
  
-@@ -474,72 +444,36 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
+@@ -474,72 +446,36 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
  	if ssoProvider.SAMLProvider == nil {
  		// SAML misconfiguration
  		api.RedirectToLoginURL(response, request, "Your SSO connection failed due to misconfiguration, please contact your Administrator")
@@ -306,7 +308,7 @@ index 7d87c7c..213f8f4 100644
  		slog.WarnContext(
  			request.Context(),
  			"[SAML] Failed to lookup user for SAML provider",
-@@ -550,7 +484,7 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
+@@ -550,7 +486,7 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
  		api.RedirectToLoginURL(response, request, "Invalid assertion: no valid email address found")
  	} else {
  		if ssoProvider.Config.AutoProvision.Enabled {
@@ -315,7 +317,7 @@ index 7d87c7c..213f8f4 100644
  				// It is safe to let this request drop into the CreateSSOSession function below to ensure proper audit logging
  				slog.WarnContext(
  					request.Context(),
-@@ -564,6 +498,35 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
+@@ -564,6 +500,35 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
  	}
  }
  
@@ -451,7 +453,7 @@ index 739bf5e..6b656aa 100644
  func (m *MockDatabase) CreateSAMLIdentityProvider(ctx context.Context, samlProvider model.SAMLProvider, config model.SSOProviderConfig) (model.SAMLProvider, error) {
  	m.ctrl.T.Helper()
 diff --git a/cmd/api/src/database/samlconsumedidentifiers.go b/cmd/api/src/database/samlconsumedidentifiers.go
-index cbd1c82..1c708f4 100644
+index cbd1c82..3ab6cfc 100644
 --- a/cmd/api/src/database/samlconsumedidentifiers.go
 +++ b/cmd/api/src/database/samlconsumedidentifiers.go
 @@ -36,6 +36,7 @@ const (
@@ -462,15 +464,16 @@ index cbd1c82..1c708f4 100644
  	SweepSAMLConsumedIdentifiers(ctx context.Context) error
  }
  
-@@ -71,6 +72,33 @@ func (s *BloodhoundDB) CreateSAMLConsumedIdentifiers(ctx context.Context, ssoPro
+@@ -71,6 +72,34 @@ func (s *BloodhoundDB) CreateSAMLConsumedIdentifiers(ctx context.Context, ssoPro
  	})
  }
  
-+// ConsumeSAMLAssertionID records the ID of an assertion that the SAML
-+// library has verified, so that it cannot be replayed. It returns
-+// ErrSAMLIdentifierAlreadyConsumed if the ID is already recorded. A
-+// replayed SAMLResponse carries the same assertion, so the assertion ID
-+// alone is enough.
++// ConsumeSAMLAssertionID records an assertion that the SAML library has
++// verified, under assertionID, so that it cannot be replayed: the library
++// passes the assertion's replay key, a hash of the IdP and the assertion's
++// ID. It returns ErrSAMLIdentifierAlreadyConsumed if it is already
++// recorded. A replayed SAMLResponse carries the same assertion, so the
++// assertion alone is enough.
 +func (s *BloodhoundDB) ConsumeSAMLAssertionID(ctx context.Context, ssoProviderID int32, idpIssuer, assertionID string, expiresAt time.Time) error {
 +	result := s.db.WithContext(ctx).Exec(fmt.Sprintf(`INSERT INTO %s
 +		(sso_provider_id, idp_issuer, identifier_type, identifier, expires_at)

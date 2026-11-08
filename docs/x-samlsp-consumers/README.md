@@ -42,8 +42,9 @@ every tenant: each call names the SSO provider's IdP with
 `WithDecryptionKeys(next)` replaces the second `ParseResponse` that retried with
 the rotation key. `WithMetadata` replaces the after-the-fact metadata editing.
 The patch adds an assertion replay cache, which Supabase did not have, through a new
-`saml_consumed_ids` table with a migration and cleanup; each record is written
-with the request's context. Uploaded and stored metadata is checked with
+`saml_consumed_ids` table with a migration and cleanup. Each record is the
+32-byte `samlsp.ReplayKey` (a hash of the IdP's entity ID and the message ID),
+written with the request's context, so one table safely serves every tenant. Uploaded and stored metadata is checked with
 `samlsp.ParseMetadata`, so the old `samlsp` package is no longer imported.
 
 **BloodHound.** `NewServiceProvider` becomes `NewSAMLConfig`, and the `Service`
@@ -51,7 +52,7 @@ wrapper and its mock now wrap `*samlsp.Config`. The binding switch, the POST
 template and its hard-coded CSP hash are replaced by `Message.Write`. The
 hand-written replay check is replaced by `WithReplayState` on the existing
 `saml_consumed_identifiers` table, using a new `ConsumeSAMLAssertionID` with the
-request's context. Uploaded metadata is checked with `samlsp.ParseMetadata`. The
+request's context; it stores the hex-encoded replay key as the identifier. Uploaded metadata is checked with `samlsp.ParseMetadata`. The
 assertion count and expiry helpers go, because the library now does that work.
 The login now remembers its request ID with `x/samlsp/pending`, which closes
 the `BED-5071` TODO.

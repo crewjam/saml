@@ -1,5 +1,5 @@
 diff --git a/internal/api/saml.go b/internal/api/saml.go
-index 5eb762b..55b8c9f 100644
+index 5eb762b..b133bcf 100644
 --- a/internal/api/saml.go
 +++ b/internal/api/saml.go
 @@ -1,8 +1,7 @@
@@ -175,8 +175,8 @@ index 5eb762b..55b8c9f 100644
 +	db *storage.Connection
 +}
 +
-+func (s samlReplayState) Consume(ctx context.Context, id string, expiresAt time.Time) error {
-+	return models.ConsumeSAMLID(s.db.WithContext(ctx), id, expiresAt)
++func (s samlReplayState) Consume(ctx context.Context, key []byte, expiresAt time.Time) error {
++	return models.ConsumeSAMLID(s.db.WithContext(ctx), key, expiresAt)
 +}
 +
 +// SAMLMetadata serves GoTrue's SAML Service Provider metadata file.
@@ -630,10 +630,10 @@ index 27d52ad..dd62de1 100644
  		fmt.Sprintf("delete from %q where id in (select id from %q where created_at < now() - interval '24 hours' limit 100 for update skip locked);", tableMFAChallenges, tableMFAChallenges),
 diff --git a/internal/models/saml_consumed_id.go b/internal/models/saml_consumed_id.go
 new file mode 100644
-index 0000000..535ced2
+index 0000000..fcb871b
 --- /dev/null
 +++ b/internal/models/saml_consumed_id.go
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,38 @@
 +package models
 +
 +import (
@@ -644,10 +644,10 @@ index 0000000..535ced2
 +	"github.com/supabase/auth/internal/storage"
 +)
 +
-+// SAMLConsumedID is the ID of a SAML message that has been accepted, kept
-+// until the message could no longer be accepted anyway.
++// SAMLConsumedID is the replay key of a SAML message that has been
++// accepted, kept until the message could no longer be accepted anyway.
 +type SAMLConsumedID struct {
-+	ID        string    `db:"id"`
++	ID        []byte    `db:"id"`
 +	ExpiresAt time.Time `db:"expires_at"`
 +}
 +
@@ -655,9 +655,10 @@ index 0000000..535ced2
 +	return "saml_consumed_ids"
 +}
 +
-+// ConsumeSAMLID records id as accepted until expiresAt. It returns
-+// saml.ErrAssertionReplayed if id is already recorded and not expired.
-+func ConsumeSAMLID(tx *storage.Connection, id string, expiresAt time.Time) error {
++// ConsumeSAMLID records the message with replay key id as accepted until
++// expiresAt. It returns saml.ErrAssertionReplayed if id is already recorded
++// and not expired.
++func ConsumeSAMLID(tx *storage.Connection, id []byte, expiresAt time.Time) error {
 +	table := SAMLConsumedID{}.TableName()
 +	n, err := tx.RawQuery(fmt.Sprintf(`
 +		insert into %q (id, expires_at) values (?, ?)
@@ -686,15 +687,16 @@ index ea51533..04bc77d 100644
  	"github.com/supabase/auth/internal/storage"
 diff --git a/migrations/20261108120000_add_saml_consumed_ids.up.sql b/migrations/20261108120000_add_saml_consumed_ids.up.sql
 new file mode 100644
-index 0000000..774a6bf
+index 0000000..f7ddce1
 --- /dev/null
 +++ b/migrations/20261108120000_add_saml_consumed_ids.up.sql
-@@ -0,0 +1,10 @@
+@@ -0,0 +1,11 @@
 +/* auth_migration: 20261108120000 */
-+-- IDs of the SAML assertions and LogoutRequests accepted, so that each is
-+-- accepted once across every instance (see models.ConsumeSAMLID).
++-- Keys (samlsp.ReplayKey: a SHA-256 hash of the IdP's entity ID and the
++-- message ID) of the SAML messages accepted, so that each is accepted once
++-- across every instance (see models.ConsumeSAMLID).
 +create table if not exists {{ index .Options "Namespace" }}.saml_consumed_ids (
-+    id text not null primary key,
++    id bytea not null primary key,
 +    expires_at timestamptz not null
 +);
 +
