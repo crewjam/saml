@@ -354,7 +354,7 @@ index 7d87c7c..63b7e7f 100644
  	if roles, err := SanitizeAndGetRoles(ctx, ssoProvider.Config.AutoProvision, ssoProvider.SAMLProvider.GetSAMLUserRolesFromAssertion(assertion), u); err != nil {
  		return fmt.Errorf("sanitize roles: %v", err)
 diff --git a/cmd/api/src/auth/saml.go b/cmd/api/src/auth/saml.go
-index 2a8c361..da41003 100644
+index 2a8c361..000f5b4 100644
 --- a/cmd/api/src/auth/saml.go
 +++ b/cmd/api/src/auth/saml.go
 @@ -21,17 +21,13 @@ import (
@@ -715,7 +715,7 @@ index aaac075..852498e 100644
 +	return config.ParseResponse(ctx, req, opts...)
  }
 diff --git a/cmd/api/src/services/saml/saml_test.go b/cmd/api/src/services/saml/saml_test.go
-index 0990048..e56de73 100644
+index 0990048..fb0b1b7 100644
 --- a/cmd/api/src/services/saml/saml_test.go
 +++ b/cmd/api/src/services/saml/saml_test.go
 @@ -22,121 +22,12 @@ import (

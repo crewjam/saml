@@ -1,5 +1,5 @@
 diff --git a/internal/api/saml.go b/internal/api/saml.go
-index 5eb762b..b133bcf 100644
+index 5eb762b..949763e 100644
 --- a/internal/api/saml.go
 +++ b/internal/api/saml.go
 @@ -1,8 +1,7 @@
@@ -204,7 +204,7 @@ index 5eb762b..b133bcf 100644
  	}
  
 diff --git a/internal/api/samlacs.go b/internal/api/samlacs.go
-index 0fbd72a..e75f6b6 100644
+index 0fbd72a..42fd38e 100644
 --- a/internal/api/samlacs.go
 +++ b/internal/api/samlacs.go
 @@ -2,14 +2,14 @@ package api
