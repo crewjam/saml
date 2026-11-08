@@ -294,6 +294,12 @@ type IdentityProvider struct {
 	// NameID format (saml-core §3.4.1.1, §8.3.9).
 	AssertionEncrypter xmlenc.Encrypter
 
+	// ResponseSigning says which elements of a successful Response the IdP
+	// signs: by default, both the Response and the assertion in it (see
+	// ResponseSigning). Error Responses, which carry no assertion, are
+	// signed whatever it says.
+	ResponseSigning ResponseSigning
+
 	// SignMetadata, if true, causes ServeMetadata to publish metadata that
 	// carries an enveloped XML signature made with the IdP's key. See
 	// SignedMetadata.
@@ -1710,11 +1716,40 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 	return nil
 }
 
+// ResponseSigning says which elements of a Response an IdentityProvider
+// signs (see IdentityProvider.ResponseSigning). SAML requires an assertion
+// sent with the HTTP-POST binding to be signed, by its own signature or
+// that of the Response that carries it (saml-profiles §4.1.3.5), so one of
+// them is always signed.
+type ResponseSigning int
+
+const (
+	// SignResponseAndAssertion signs both the Response and the assertion
+	// in it. It is the default, and what service providers that check
+	// only one of the signatures accept.
+	SignResponseAndAssertion ResponseSigning = iota
+
+	// SignAssertionOnly signs the assertion, and not the Response that
+	// carries it, as Microsoft Entra ID does by default. A service
+	// provider then cannot rely on the Response's own fields, such as its
+	// Destination, being unchanged, and many refuse an encrypted assertion
+	// with AES-CBC in an unsigned Response (see
+	// ServiceProvider.RequireSignedResponseForCBC).
+	SignAssertionOnly
+
+	// SignResponseOnly signs the Response, and not the assertion in it,
+	// as some IdPs (and Active Directory Federation Services, as an
+	// option) do. The assertion is then protected only while it is in
+	// that Response: it cannot be passed on, or kept, verifiably.
+	SignResponseOnly
+)
+
 // The Canonicalizer prefix list MUST be empty. Various implementations
 // (maybe ours?) do not appear to support non-empty prefix lists in XML C14N.
 const canonicalizerPrefixList = ""
 
 // MakeAssertionEl sets `AssertionEl` to a signed, possibly encrypted, version of `Assertion`.
+// It is not signed if IDP.ResponseSigning is SignResponseOnly.
 //
 // When the request's NameIDPolicy Format is
 // urn:oasis:names:tc:SAML:2.0:nameid-format:encrypted and the service
@@ -1736,15 +1771,15 @@ func (req *IdpAuthnRequest) MakeAssertionEl() error {
 		return err
 	}
 
-	assertionEl := req.Assertion.Element()
-
-	signedAssertionEl, err := signingContext.SignEnveloped(assertionEl)
-	if err != nil {
-		return err
+	var signedAssertionEl *etree.Element
+	if req.IDP == nil || req.IDP.ResponseSigning != SignResponseOnly {
+		signedAssertionEl, err = signingContext.SignEnveloped(req.Assertion.Element())
+		if err != nil {
+			return err
+		}
+		sigEl := signedAssertionEl.Child[len(signedAssertionEl.Child)-1]
+		req.Assertion.Signature = sigEl.(*etree.Element)
 	}
-
-	sigEl := signedAssertionEl.Child[len(signedAssertionEl.Child)-1]
-	req.Assertion.Signature = sigEl.(*etree.Element)
 	signedAssertionEl = req.Assertion.Element()
 
 	certBuf, methods, err := encryptionKey(req.SPSSODescriptor.KeyDescriptors)
@@ -1968,7 +2003,7 @@ func unmarshalEtreeHack(el *etree.Element, v interface{}) error {
 
 // MakeResponse creates and assigns a new SAML response in ResponseEl. `Assertion` must
 // be non-nil. If MakeAssertionEl() has not been called, this function calls it for
-// you.
+// you. The Response is signed unless IDP.ResponseSigning is SignAssertionOnly.
 func (req *IdpAuthnRequest) MakeResponse() error {
 	if req.ACSEndpoint == nil {
 		return errNoACSEndpoint
@@ -1999,8 +2034,9 @@ func (req *IdpAuthnRequest) MakeResponse() error {
 	responseEl := response.Element()
 	responseEl.AddChild(req.AssertionEl) // AssertionEl either an EncryptedAssertion or Assertion element
 
-	// Sign the response element (we've already signed the Assertion element)
-	{
+	// Sign the response element (the Assertion element is signed already,
+	// unless ResponseSigning is SignResponseOnly).
+	if req.IDP.ResponseSigning != SignAssertionOnly {
 		signingContext, err := req.signingContext()
 		if err != nil {
 			return err
