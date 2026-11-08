@@ -73,19 +73,22 @@ const bearerMethod = "urn:oasis:names:tc:SAML:2.0:cm:bearer" //nolint:gosec // a
 
 // bearerCheck is what package saml checks of a bearer
 // SubjectConfirmationData besides its InResponseTo (saml-profiles
-// §4.1.4.3): its Recipient, and its validity period, allowing skew, at
-// the moment of the check, which was between start and end.
+// §4.1.4.3): its Recipient, its validity period, allowing skew, at the
+// moment of the check, which was between start and end, and its Address
+// (see saml.ServiceProvider.ClientAddress), with address.
 type bearerCheck struct {
 	recipient  string
 	skew       time.Duration
 	start, end time.Time
+	address    func(*saml.SubjectConfirmationData) bool
 }
 
 // passes reports whether d passes c.
 func (c bearerCheck) passes(d *saml.SubjectConfirmationData) bool {
 	return d.Recipient == c.recipient &&
 		!d.NotBefore.Add(-c.skew).After(c.end) &&
-		c.start.Before(d.NotOnOrAfter.Add(c.skew))
+		c.start.Before(d.NotOnOrAfter.Add(c.skew)) &&
+		(c.address == nil || c.address(d))
 }
 
 // newAssertion returns the Assertion for a, which package saml verified
