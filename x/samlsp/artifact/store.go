@@ -109,6 +109,15 @@ func (s *MemoryStore) maxEntries() int {
 	return DefaultMaxEntries
 }
 
+// defaultClock makes the store use clock if it has no Clock.
+func (s *MemoryStore) defaultClock(clock *dsig.Clock) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Clock == nil {
+		s.Clock = clock
+	}
+}
+
 // Take implements Store.
 func (s *MemoryStore) Take(_ context.Context, artifact, recipient string) (*StoredMessage, error) {
 	s.mu.Lock()

@@ -261,7 +261,7 @@ func setup(t *testing.T) (*fakeIDP, *samlsp.Config, *artifact.Binding, *artifact
 		t.Fatal(err)
 	}
 	store := artifact.NewMemoryStore()
-	return idp, cfg, artifact.New(cfg, store, 3), store, spCert
+	return idp, cfg, newBinding(t, cfg, store, 3), store, spCert
 }
 
 func TestAuthnRequestByArtifact(t *testing.T) {
@@ -536,7 +536,7 @@ func TestResolveFailures(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			idp, cfg, _, _, _ := setup(t)
-			b := artifact.New(cfg, store, 3)
+			b := newBinding(t, cfg, store, 3)
 			msg, err := cfg.AuthnRequest(t.Context(), "r", samlsp.WithCustomBinding(b))
 			if err != nil {
 				t.Fatal(err)
@@ -552,11 +552,11 @@ func TestResolveFailures(t *testing.T) {
 	spKey, spCert := keyPair(t)
 	down, err := samlsp.New(spEntityID, func(context.Context) (*saml.EntityDescriptor, error) {
 		return nil, errors.New("metadata unavailable")
-	}, samlsp.WithSigningKey(spKey, spCert))
+	}, samlsp.WithSigningKey(spKey, spCert), artifact.ResolutionService(arsURL, 3))
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := artifact.New(down, artifact.NewMemoryStore(), 3)
+	b := newBinding(t, down, artifact.NewMemoryStore(), 3)
 	if w := idp.resolve(t, b, "AAQAAA==", idpEntityID, idp.key, idp.cert); !isFault(w) {
 		t.Errorf("metadata unavailable: %d", w.Code)
 	}
@@ -575,7 +575,7 @@ func TestIdentityProviderPerCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := artifact.New(cfg, artifact.NewMemoryStore(), 3)
+	b := newBinding(t, cfg, artifact.NewMemoryStore(), 3)
 	idpMetadata := samlsp.StaticMetadata(idp.metadata())
 
 	msg, err := cfg.AuthnRequest(t.Context(), "relay-1",
@@ -593,13 +593,72 @@ func TestIdentityProviderPerCall(t *testing.T) {
 	}
 }
 
+// newBinding returns the Binding of New, failing t on an error.
+func newBinding(t *testing.T, cfg *samlsp.Config, store artifact.Store, index uint16) *artifact.Binding {
+	t.Helper()
+	b, err := artifact.New(cfg, store, index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 func TestPath(t *testing.T) {
 	_, cfg, b, _, _ := setup(t)
 	if got := b.Path(); got != "/saml/artifact" {
 		t.Errorf("Path = %q", got)
 	}
-	if got := artifact.New(cfg, artifact.NewMemoryStore(), 9).Path(); got != "" {
-		t.Errorf("Path for an index not advertised = %q", got)
+	// An index the metadata does not advertise is refused, rather than
+	// making artifacts that cannot be resolved and an empty Path.
+	if _, err := artifact.New(cfg, artifact.NewMemoryStore(), 9); err == nil || !strings.Contains(err.Error(), "index 9") {
+		t.Errorf("New with an index not advertised: %v", err)
+	}
+	// So is an SP with no ArtifactResolutionService at all.
+	key, cert := keyPair(t)
+	bare, err := samlsp.New(spEntityID, nil, samlsp.WithSigningKey(key, cert))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := artifact.New(bare, artifact.NewMemoryStore(), 3); err == nil {
+		t.Error("New without a ResolutionService: accepted")
+	}
+}
+
+// TestMemoryStoreClockFromConfig checks that New gives a MemoryStore with
+// no Clock the clock of samlsp.WithClock, by which the Binding sets
+// ExpiresAt: a message stored by a clock set in the past is kept for its
+// lifetime, not forgotten at once by the system clock.
+func TestMemoryStoreClockFromConfig(t *testing.T) {
+	past := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock := dsig.NewFakeClockAt(past)
+	idpKey, idpCert := keyPair(t)
+	idp := &fakeIDP{key: idpKey, cert: idpCert}
+	spKey, spCert := keyPair(t)
+	cfg, err := samlsp.New(spEntityID, samlsp.StaticMetadata(idp.metadata()),
+		samlsp.WithSigningKey(spKey, spCert), samlsp.WithClock(clock),
+		artifact.ResolutionService(arsURL, 3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := artifact.NewMemoryStore()
+	b := newBinding(t, cfg, store, 3)
+	if store.Clock != clock {
+		t.Fatal("New did not set the store's Clock")
+	}
+	if _, err := cfg.AuthnRequest(t.Context(), "r", samlsp.WithCustomBinding(b)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if store.Len() != 1 {
+		t.Error("the message expired by the system clock")
+	}
+
+	// A Clock already set is kept.
+	own := dsig.NewFakeClockAt(past)
+	mine := &artifact.MemoryStore{Clock: own}
+	newBinding(t, cfg, mine, 3)
+	if mine.Clock != own {
+		t.Error("New replaced the store's Clock")
 	}
 }
 

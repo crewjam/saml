@@ -14,7 +14,7 @@
 //
 //	config, err := samlidp.New(entityID, sps, samlidp.WithSigningKey(key, cert),
 //		idpartifact.ResolutionService("https://idp.example.com/saml/artifact", 1))
-//	binding := idpartifact.New(config, idpartifact.NewMemoryStore(), 1)
+//	binding, err := idpartifact.New(config, idpartifact.NewMemoryStore(), 1)
 //	http.Handle(binding.Path(), binding)
 //
 //	artifacts := samlidp.WithCustomBinding(binding)
@@ -105,9 +105,22 @@ var (
 // New returns a Binding for config that keeps Responses in store until
 // they are resolved. index is the index of the IdP's
 // ArtifactResolutionService, as passed to ResolutionService; the artifacts
-// name it, so that the SP knows where to resolve them.
-func New(config *samlidp.Config, store Store, index uint16) *Binding {
-	return &Binding{config: config, store: store, index: index}
+// name it, so that the SP knows where to resolve them. New returns an
+// error if the IdP metadata has no ArtifactResolutionService with the SOAP
+// binding and that index, since the SPs could then resolve none of the
+// Binding's artifacts.
+//
+// If store is a *MemoryStore with no Clock, New sets its Clock to that of
+// config (see samlidp.WithClock), by which the Binding's messages expire.
+func New(config *samlidp.Config, store Store, index uint16) (*Binding, error) {
+	b := &Binding{config: config, store: store, index: index}
+	if _, err := b.path(); err != nil {
+		return nil, err
+	}
+	if m, ok := store.(*MemoryStore); ok && m.Clock == nil {
+		m.Clock = config.IdentityProvider().Clock
+	}
+	return b, nil
 }
 
 // ResolutionService advertises, in the IdP metadata, the IdP's
@@ -136,9 +149,19 @@ func ResolutionService(location string, index uint16) samlidp.Option {
 //
 //	http.Handle(binding.Path(), binding)
 //
-// It returns "" if the IdP metadata has no such service (see
-// ResolutionService).
+// New has checked that the IdP metadata has such a service.
 func (b *Binding) Path() string {
+	p, err := b.path()
+	if err != nil {
+		// New checked the metadata, which a Config does not change.
+		panic(err)
+	}
+	return p
+}
+
+// path returns the path of the URL of the ArtifactResolutionService with
+// the SOAP binding and the Binding's index in the IdP metadata.
+func (b *Binding) path() (string, error) {
 	for _, d := range b.config.Metadata().IDPSSODescriptors {
 		for _, ars := range d.SSODescriptor.ArtifactResolutionServices {
 			if ars.Index != int(b.index) || ars.Binding != saml.SOAPBinding {
@@ -146,15 +169,15 @@ func (b *Binding) Path() string {
 			}
 			u, err := url.Parse(ars.Location)
 			if err != nil {
-				return ""
+				return "", fmt.Errorf("idpartifact: the ArtifactResolutionService URL %q: %w", ars.Location, err)
 			}
 			if p := u.EscapedPath(); p != "" {
-				return p
+				return p, nil
 			}
-			return "/"
+			return "/", nil
 		}
 	}
-	return ""
+	return "", fmt.Errorf("idpartifact: the IdP metadata has no ArtifactResolutionService with index %d (see ResolutionService)", b.index)
 }
 
 // URI implements samlidp.Binding.

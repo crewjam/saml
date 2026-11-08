@@ -10,7 +10,7 @@
 //
 //	config, err := samlsp.New(entityID, idp, samlsp.WithSigningKey(key, cert),
 //		artifact.ResolutionService("https://sp.example.com/saml/artifact", 1))
-//	binding := artifact.New(config, artifact.NewMemoryStore(), 1)
+//	binding, err := artifact.New(config, artifact.NewMemoryStore(), 1)
 //	http.Handle(binding.Path(), binding)
 //
 //	msg, err := config.AuthnRequest(ctx, relayState, samlsp.WithCustomBinding(binding))
@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
+	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/x/samlsp"
@@ -75,9 +76,23 @@ var (
 
 // New returns a Binding for config that keeps messages in store until they
 // are resolved. index is the index of the SP's ArtifactResolutionService,
-// as passed to ResolutionService.
-func New(config *samlsp.Config, store Store, index uint16) *Binding {
-	return &Binding{config: config, store: store, index: index}
+// as passed to ResolutionService. New returns an error if the SP metadata
+// has no ArtifactResolutionService with the SOAP binding and that index,
+// since the IdP could then resolve none of the Binding's artifacts.
+//
+// If store is a *MemoryStore with no Clock, New sets its Clock to that of
+// config (see samlsp.WithClock), by which the Binding's messages expire.
+func New(config *samlsp.Config, store Store, index uint16) (*Binding, error) {
+	var clock *dsig.Clock
+	md := config.Metadata(context.Background(), func(sp *saml.ServiceProvider) { clock = sp.Clock })
+	b := &Binding{config: config, store: store, index: index}
+	if _, err := b.path(md); err != nil {
+		return nil, err
+	}
+	if m, ok := store.(*MemoryStore); ok {
+		m.defaultClock(clock)
+	}
+	return b, nil
 }
 
 // ResolutionService advertises, in the SP metadata, the SP's
@@ -115,25 +130,35 @@ func ResolutionService(location string, index uint16) samlsp.Option {
 //
 //	http.Handle(binding.Path(), binding)
 //
-// It returns "" if the SP metadata has no such service (see
-// ResolutionService).
+// New has checked that the SP metadata has such a service.
 func (b *Binding) Path() string {
-	for _, d := range b.config.Metadata(context.Background()).SPSSODescriptors {
+	p, err := b.path(b.config.Metadata(context.Background()))
+	if err != nil {
+		// New checked the metadata, which a Config does not change.
+		panic(err)
+	}
+	return p
+}
+
+// path returns the path of the URL of the ArtifactResolutionService with
+// the SOAP binding and the Binding's index in md.
+func (b *Binding) path(md *saml.EntityDescriptor) (string, error) {
+	for _, d := range md.SPSSODescriptors {
 		for _, ars := range d.ArtifactResolutionServices {
-			if ars.Index != int(b.index) {
+			if ars.Index != int(b.index) || ars.Binding != saml.SOAPBinding {
 				continue
 			}
 			u, err := url.Parse(ars.Location)
 			if err != nil {
-				return ""
+				return "", fmt.Errorf("artifact: the ArtifactResolutionService URL %q: %w", ars.Location, err)
 			}
 			if p := u.EscapedPath(); p != "" {
-				return p
+				return p, nil
 			}
-			return "/"
+			return "/", nil
 		}
 	}
-	return ""
+	return "", fmt.Errorf("artifact: the SP metadata has no ArtifactResolutionService with index %d (see ResolutionService)", b.index)
 }
 
 // URI implements samlsp.Binding.
