@@ -115,10 +115,18 @@ func (idp *IdentityProvider) authnContextClassStrengths() map[string]int {
 //   - exact (or empty): achieved is one of the requested classes.
 //   - minimum: achieved is one of them, or at least as strong as one of them.
 //   - maximum: achieved is one of them, or no stronger than one of them.
-//   - better: achieved is stronger than one of them.
+//   - better: achieved is stronger than every one of them.
+//
+// saml-core §3.3.2.2.1 says that with "better" the class MUST be "stronger
+// than any one of the authentication contexts specified", which can be read
+// as "than some one" or "than each one". The stricter reading is taken: a
+// class stronger than only the weakest requested class is not better than
+// what the service provider asked for, and accepting it would let the
+// weakest class listed decide.
 //
 // Only identical class references are considered the same class; a ranked
-// comparison needs both classes to be ranked.
+// comparison needs both classes to be ranked, so "better" is never
+// satisfied when one of the requested classes is not ranked.
 func authnContextSatisfies(comparison string, requested []string, achieved string, strengths map[string]int) (ok, known bool) {
 	var match func(achieved, requested int) bool
 	switch comparison {
@@ -129,7 +137,7 @@ func authnContextSatisfies(comparison string, requested []string, achieved strin
 	case string(AuthnContextComparisonMaximum):
 		match = func(a, r int) bool { return a <= r }
 	case string(AuthnContextComparisonBetter):
-		return authnContextRankedMatch(requested, achieved, strengths, func(a, r int) bool { return a > r }), true
+		return authnContextStrongerThanAll(requested, achieved, strengths), true
 	default:
 		return false, false
 	}
@@ -150,6 +158,22 @@ func authnContextRankedMatch(requested []string, achieved string, strengths map[
 		}
 	}
 	return false
+}
+
+// authnContextStrongerThanAll reports whether achieved and every one of the
+// requested classes (of which there is at least one) are ranked in
+// strengths, and achieved is stronger than each of them.
+func authnContextStrongerThanAll(requested []string, achieved string, strengths map[string]int) bool {
+	a, ok := strengths[achieved]
+	if !ok || len(requested) == 0 {
+		return false
+	}
+	for _, class := range requested {
+		if r, ok := strengths[class]; !ok || a <= r {
+			return false
+		}
+	}
+	return true
 }
 
 // containsString reports whether values contains value.

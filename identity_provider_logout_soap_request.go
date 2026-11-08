@@ -151,7 +151,7 @@ func (idp *IdentityProvider) logoutParticipantsSOAP(r *http.Request, participant
 		metadata, err := idp.participantMetadata(r, participant)
 		var logout *soapLogout
 		if err == nil {
-			logout, err = idp.prepareSOAPLogout(metadata, participant)
+			logout, err = idp.prepareSOAPLogout(metadata, participant, nil)
 		}
 		if err != nil {
 			logFailure(participant, err)

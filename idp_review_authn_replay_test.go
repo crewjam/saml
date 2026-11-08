@@ -73,3 +73,47 @@ func TestIDPServeSSODoesNotRecordUnsignedAuthnRequests(t *testing.T) {
 	}
 	assert.Check(t, is.Len(cache, 0))
 }
+
+// An AuthnRequest with an enveloped signature, sent with the HTTP-POST
+// binding, is recorded too, although Validate reads Request again from what
+// the signature covers, without its Signature element; a replay of it is
+// refused.
+func TestIDPServeSSORefusesReplayedSignedPostAuthnRequest(t *testing.T) {
+	test := newSignedAuthnRequestTest(t)
+	cache := memoryReplayCache{}
+	test.IDP.ReplayCache = cache
+	test.IDP.SessionProvider = &mockSessionProvider{
+		GetSessionFunc: func(http.ResponseWriter, *http.Request, *IdpAuthnRequest) *Session {
+			return &Session{ID: "s", UserName: "alice"}
+		},
+	}
+	var lastErr error
+	test.IDP.OnError = func(w http.ResponseWriter, _ *http.Request, status int, err error) {
+		lastErr = err
+		http.Error(w, http.StatusText(status), status)
+	}
+
+	authReq, err := test.SP.MakeAuthenticationRequest(test.IDP.SSOURL.String(), HTTPPostBinding, HTTPPostBinding)
+	assert.NilError(t, err)
+	assert.Assert(t, authReq.Signature != nil)
+	form := authReq.Post("relay")
+
+	// After Validate the request is still known to be signed, so that the
+	// second check of its fields still requires a Destination.
+	req, err := validateAuthnRequest(t, test, postForm(t, form))
+	assert.NilError(t, err)
+	assert.Check(t, req.RequestSigned)
+	assert.Check(t, req.Request.Signature == nil)
+	assert.Check(t, req.isSigned())
+
+	serve := func() *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		test.IDP.ServeSSO(w, postForm(t, form))
+		return w
+	}
+	assert.Check(t, is.Equal(http.StatusOK, serve().Code))
+	assert.Check(t, is.Len(cache, 1))
+
+	assert.Check(t, is.Equal(http.StatusBadRequest, serve().Code))
+	assert.Check(t, errors.Is(lastErr, ErrAssertionReplayed), "%v", lastErr)
+}

@@ -55,8 +55,11 @@ func (idp *IdentityProvider) soapLogoutEndpoint(metadata *EntityDescriptor) *End
 // nil only if the service provider answered with a Success status. It
 // returns ErrNoSOAPLogoutEndpoint if metadata lists no SOAP endpoint, or
 // only ones that are not https (see AllowInsecureSOAPEndpoints).
-func (idp *IdentityProvider) logoutParticipantSOAP(ctx context.Context, metadata *EntityDescriptor, participant SessionParticipant) error {
-	logout, err := idp.prepareSOAPLogout(metadata, participant)
+//
+// encryptedID, if not nil, is the NameID of participant, already encrypted
+// (see participantLogoutRequest).
+func (idp *IdentityProvider) logoutParticipantSOAP(ctx context.Context, metadata *EntityDescriptor, participant SessionParticipant, encryptedID *etree.Element) error {
+	logout, err := idp.prepareSOAPLogout(metadata, participant, encryptedID)
 	if err != nil {
 		return err
 	}
@@ -77,12 +80,12 @@ type soapLogout struct {
 // prepareSOAPLogout makes and signs the LogoutRequest logoutParticipantSOAP
 // sends, changed by opts before it is signed. It reads the
 // IdentityProvider's Rand, so it is not run concurrently.
-func (idp *IdentityProvider) prepareSOAPLogout(metadata *EntityDescriptor, participant SessionParticipant, opts ...LogoutRequestOption) (*soapLogout, error) {
+func (idp *IdentityProvider) prepareSOAPLogout(metadata *EntityDescriptor, participant SessionParticipant, encryptedID *etree.Element, opts ...LogoutRequestOption) (*soapLogout, error) {
 	endpoint := idp.soapLogoutEndpoint(metadata)
 	if endpoint == nil {
 		return nil, ErrNoSOAPLogoutEndpoint
 	}
-	logoutRequest, err := idp.participantLogoutRequest(participant, endpoint.Location, metadata)
+	logoutRequest, err := idp.participantLogoutRequest(participant, encryptedID, endpoint.Location, metadata)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +152,7 @@ func (idp *IdentityProvider) SendSOAPLogoutRequest(ctx context.Context, metadata
 	if metadata == nil {
 		return nil, errors.New("no service provider metadata")
 	}
-	logout, err := idp.prepareSOAPLogout(metadata, participant, opts...)
+	logout, err := idp.prepareSOAPLogout(metadata, participant, nil, opts...)
 	if err != nil {
 		return nil, err
 	}

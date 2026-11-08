@@ -51,6 +51,7 @@ const (
 	// AuthnContextComparisonMaximum requires a class as strong as possible, but no
 	// stronger than one of the classes.
 	AuthnContextComparisonMaximum AuthnContextComparison = "maximum"
-	// AuthnContextComparisonBetter requires a class stronger than all of the classes.
+	// AuthnContextComparisonBetter requires a class stronger than every one
+	// of the classes.
 	AuthnContextComparisonBetter AuthnContextComparison = "better"
 )
