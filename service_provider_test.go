@@ -1873,8 +1873,10 @@ func TestServiceProviderCanHandleSignedAssertionsResponse(t *testing.T) {
 func TestSPResponseWithNoIssuer(t *testing.T) {
 	test := NewServiceProviderTest(t)
 
-	// This test case for the IdP response with no <Issuer> element. SAML standard says
-	// that the <Issuer> element MAY be omitted in the <Response> (but MUST present in the <Assertion>).
+	// This test case for the IdP response with no <Issuer> element. The
+	// Web Browser SSO profile lets the <Issuer> of a <Response> be omitted,
+	// but not when the Response is signed or, as here, an enclosed
+	// assertion is encrypted (saml-profiles §4.1.4.2).
 
 	s := ServiceProvider{
 		Key:         test.Key,
@@ -1892,7 +1894,7 @@ func TestSPResponseWithNoIssuer(t *testing.T) {
 	samlResponse := golden.Get(t, "TestSPResponseWithNoIssuer_response")
 	req.PostForm.Set("SAMLResponse", base64.StdEncoding.EncodeToString(samlResponse))
 	_, err = s.ParseResponse(&req, []string{"id-9e61753d64e928af5a7a341a97f420c9"})
-	assert.Check(t, err)
+	assert.Check(t, errors.Is(err, ErrMissingElement), "%v", err)
 }
 
 func TestGetArtifactBindingLocation(t *testing.T) {
