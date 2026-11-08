@@ -240,8 +240,8 @@ func urlPath(u *url.URL) string {
 
 // WithSigningKey sets the key that the SP signs with, and its certificate,
 // which the SP metadata publishes for signing, with any intermediates of
-// its chain. It signs logout messages, attribute queries and artifact
-// responses, AuthnRequests with SignAuthnRequests, and the metadata with
+// its chain. It signs logout messages, attribute queries, artifact
+// resolution requests and artifact responses, AuthnRequests with SignAuthnRequests, and the metadata with
 // SignMetadata. It is used only for signing: to accept encrypted
 // assertions, use WithEncryptionKey, which may be given the same RSA key.
 func WithSigningKey(key crypto.Signer, cert *x509.Certificate, intermediates ...*x509.Certificate) Option {
