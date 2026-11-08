@@ -112,9 +112,13 @@ func New(entityID string, identityProvider MetadataFunc, opts ...Option) (*Confi
 		}
 		c.acsURL = *u.ResolveReference(&url.URL{Path: "acs"})
 	}
-	if c.replayState == nil {
-		clock := c.clock
+	clock := c.clock
+	switch state := c.replayState.(type) {
+	case nil:
 		c.replayState = &replay.Memory{Now: func() time.Time { return clockNow(clock) }}
+	case *replay.Memory:
+		// Records expire by the clock the expiries are computed with.
+		state.DefaultNow(func() time.Time { return clockNow(clock) })
 	}
 	if err := c.checkKeys(); err != nil {
 		return nil, err
@@ -377,7 +381,8 @@ func (r replayCache) Consume(id string, expiresAt time.Time) error {
 // By default, each Config records them in its own replay.Memory, which
 // protects one process only: a Response replayed to another process, or
 // after a restart, is accepted. Pass a replay.NewMemory to share one
-// record between several Configs of a process. Applications served by
+// record between several Configs of a process: New sets its clock to the
+// Config's (see WithClock), unless it has one. Applications served by
 // several processes need state that the processes share, such as a table
 // with a unique key on the record's key (see ReplayState). Records need no size
 // limit (see replay.Memory).

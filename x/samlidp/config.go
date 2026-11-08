@@ -117,8 +117,12 @@ func New(entityID string, serviceProviders ServiceProviderFunc, opts ...Option) 
 			return nil, err
 		}
 	}
-	if c.replayState == nil {
+	switch state := c.replayState.(type) {
+	case nil:
 		c.replayState = &replay.Memory{Now: c.Now}
+	case *replay.Memory:
+		// Records expire by the clock the expiries are computed with.
+		state.DefaultNow(c.Now)
 	}
 	if err := c.encryption().checkConfigured(c.unrestrictedIdentityProvider(nil)); err != nil {
 		return nil, err
@@ -421,8 +425,9 @@ func ReplayKey(sp, id string) []byte {
 // repeated one would protect nothing.
 //
 // By default, each Config records them in its own replay.Memory, which
-// protects one process only. Applications served by several processes
-// need state that the processes share.
+// protects one process only. A replay.Memory passed here gets the
+// Config's clock (see WithClock), unless it has one. Applications served
+// by several processes need state that the processes share.
 func WithReplayState(state ReplayState) Option {
 	return optionFunc(func(c *Config, _ *configOptions) { c.replayState = state })
 }
