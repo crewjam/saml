@@ -403,7 +403,34 @@ type IdentityProvider struct {
 	// encrypted to the service provider's encryption certificate. As with
 	// assertions, a service provider whose metadata publishes no encryption
 	// certificate cannot decrypt, so it is sent the NameID in the clear.
+	//
+	// The IdP keeps the progress of a logout it propagates through the
+	// browser, including the NameIDs still to be sent, in a signed cookie.
+	// So that the cookie does not give the browser the NameIDs this keeps
+	// out of the LogoutRequests, set LogoutStateKey: the whole cookie is
+	// then encrypted. Without it, the cookie holds, for each service
+	// provider still to be logged out, the encrypted NameID that it will be
+	// sent instead of the NameID. An encrypted NameID takes much more room,
+	// so only a few service providers then fit in the cookie, rather than
+	// dozens; those that do not are not logged out, and the logout ends
+	// with StatusPartialLogout.
 	EncryptLogoutNameID bool
+
+	// LogoutStateKey, if set, is a 32-byte secret key with which the IdP
+	// encrypts (with AES-256-GCM) the cookie that holds the progress of a
+	// logout it propagates through the browser, as well as signing it. The
+	// cookie then holds no NameID in the clear, whether or not
+	// EncryptLogoutNameID is set, and has room for as many service
+	// providers as an unencrypted one. Every instance of the IdP that may
+	// receive a LogoutResponse must have the same key. Generate it with a
+	// cryptographic random number generator, and keep it secret. A key of
+	// another length makes logouts that go through the browser fail.
+	//
+	// The cookie records which key encrypted it, so a cookie encrypted with
+	// a previous key is refused once the key changes: change it when few
+	// logouts are in progress, as those are then abandoned. A cookie written
+	// while no key was set is still accepted, since it is signed.
+	LogoutStateKey []byte
 
 	// LogoutNameIDEncrypter, if set, encrypts the NameID of the
 	// LogoutRequests the IdP sends (see EncryptLogoutNameID). It is passed
@@ -548,8 +575,11 @@ type IdentityProvider struct {
 	// or PasswordProtectedTransport when that is empty) against the
 	// RequestedAuthnContext of the AuthnRequest, with the "exact" (or
 	// omitted), "minimum", "maximum" and "better" Comparisons of saml-core
-	// §3.3.2.2.1 as amended by errata E65. When it does not satisfy any of
-	// the requested classes, MakeAssertion returns a *StatusError, and
+	// §3.3.2.2.1 as amended by errata E65: "better" requires a class
+	// stronger than every requested class, and "minimum" and "maximum" one
+	// at least as strong as, or no stronger than, at least one of them.
+	// When it does not satisfy the request, MakeAssertion returns a
+	// *StatusError, and
 	// ServeSSO answers with a Response with the status Responder and the
 	// second-level status NoAuthnContext and no assertion. An unknown
 	// Comparison is answered with Requester. Only AuthnContextClassRefs are
@@ -1049,6 +1079,12 @@ type IdpAuthnRequest struct {
 	// HTTP-Redirect binding, or nil. Validate checks its query string
 	// signature, if it has one, once it knows the service provider.
 	redirectMessage *redirectBindingMessage
+
+	// envelopedSignature is set by Validate when the request as received
+	// has an enveloped ds:Signature element. It outlives Request.Signature,
+	// which is gone once Request is read again from what the signature
+	// covers (see verifyEnvelopedSignature).
+	envelopedSignature bool
 }
 
 // NewIdpAuthnRequest returns a new IdpAuthnRequest for the given HTTP request to the authorization
@@ -1116,10 +1152,14 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 const authnRequestReplayKeyPrefix = "AuthnRequest:"
 
 // consume records the ID of the validated request in the IdP's ReplayCache,
-// if it is set and the request is signed, and returns an error if it was
-// already recorded.
+// if it is set and Validate verified a signature of the request
+// (RequestSigned), and returns an error if it was already recorded.
+//
+// RequestSigned, not isSigned, decides: after an enveloped signature is
+// verified, Request no longer carries its Signature element, and only a
+// verified signature binds the ID to the service provider.
 func (req *IdpAuthnRequest) consume() error {
-	if req.IDP.ReplayCache == nil || !req.isSigned() {
+	if req.IDP.ReplayCache == nil || !req.RequestSigned {
 		return nil
 	}
 	issuer := ""
@@ -1134,11 +1174,12 @@ func (req *IdpAuthnRequest) consume() error {
 }
 
 // isSigned reports whether the request carries a signature: an enveloped
-// ds:Signature element, the SigAlg or Signature query parameter of the
+// ds:Signature element (as received, even once Request has been read again
+// from what it covers), the SigAlg or Signature query parameter of the
 // HTTP-Redirect binding, or the signature of the HTTP-POST-SimpleSign
 // binding. The signature itself is not checked here.
 func (req *IdpAuthnRequest) isSigned() bool {
-	if req.simpleSign != nil || req.Request.Signature != nil {
+	if req.simpleSign != nil || req.envelopedSignature || req.Request.Signature != nil {
 		return true
 	}
 	if req.redirectMessage != nil {
@@ -1180,6 +1221,7 @@ func (req *IdpAuthnRequest) isSigned() bool {
 // Destination.
 func (req *IdpAuthnRequest) Validate() error {
 	req.RequestSigned = false
+	req.envelopedSignature = false
 	if err := xmlroundtrip.Validate(req.RequestBuffer); err != nil {
 		return classify(err, ErrMalformedMessage)
 	}
@@ -1187,6 +1229,7 @@ func (req *IdpAuthnRequest) Validate() error {
 	if err := xml.Unmarshal(req.RequestBuffer, &req.Request); err != nil { //nolint:gosec // parsing the untrusted request is the point; it was checked by xmlroundtrip.Validate above
 		return classify(err, ErrMalformedMessage)
 	}
+	req.envelopedSignature = req.Request.Signature != nil
 
 	if err := req.validateFields(); err != nil {
 		return err
@@ -1664,25 +1707,25 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 		})
 	}
 
-	// allow for some clock skew in the validity period using the
-	// issuer's apparent clock, but never start the validity period after
-	// now: the request's IssueInstant comes from the service provider, and
-	// a later one would postdate the assertion.
+	// Allow for some clock skew at the start of the validity period using
+	// the issuer's apparent clock, but never start it after now: the
+	// request's IssueInstant comes from the service provider, and a later
+	// one would postdate the assertion.
+	//
+	// The end of the validity period, for the Conditions and the subject
+	// confirmation alike, is anchored to the IdP's own clock, never to the
+	// request's IssueInstant: a request issued shortly before it expired
+	// would otherwise yield an assertion that expires almost at once. The
+	// subject confirmation window then falls within the assertion's, as
+	// saml-core §2.4.1.2 says it SHOULD.
 	notBefore := req.Now.Add(-1 * req.IDP.maxClockSkew())
-	notOnOrAfterAfter := req.Now.Add(req.IDP.maxIssueDelay())
 	if notBefore.Before(req.Request.IssueInstant) {
 		notBefore = req.Request.IssueInstant
 		if notBefore.After(req.Now) {
 			notBefore = req.Now
 		}
-		notOnOrAfterAfter = notBefore.Add(req.IDP.maxIssueDelay())
 	}
-	// The subject confirmation window SHOULD fall within the assertion's
-	// (saml-core §2.4.1.2), so it ends no later than the Conditions.
-	confirmationNotOnOrAfter := req.Now.Add(req.IDP.maxIssueDelay())
-	if notOnOrAfterAfter.Before(confirmationNotOnOrAfter) {
-		confirmationNotOnOrAfter = notOnOrAfterAfter
-	}
+	notOnOrAfter := req.Now.Add(req.IDP.maxIssueDelay())
 
 	nameID, err := req.makeAssertionNameID(session)
 	if err != nil {
@@ -1707,7 +1750,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 					SubjectConfirmationData: &SubjectConfirmationData{
 						Address:      remoteAddress,
 						InResponseTo: req.Request.ID,
-						NotOnOrAfter: confirmationNotOnOrAfter,
+						NotOnOrAfter: notOnOrAfter,
 						Recipient:    req.ACSEndpoint.Location,
 					},
 				},
@@ -1715,7 +1758,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 		},
 		Conditions: &Conditions{
 			NotBefore:    notBefore,
-			NotOnOrAfter: notOnOrAfterAfter,
+			NotOnOrAfter: notOnOrAfter,
 			AudienceRestrictions: []AudienceRestriction{
 				{
 					Audience: Audience{Value: req.ServiceProviderMetadata.EntityID},
