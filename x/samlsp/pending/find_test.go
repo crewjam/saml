@@ -23,7 +23,7 @@ func TestFindForget(t *testing.T) {
 
 	// A site that knows the RelayState makes the browser post junk.
 	junk := browser.request("state-1")
-	login, err := tr.Find(junk)
+	login, err := tr.Find(httptest.NewRecorder(), junk)
 	if err != nil || login.ID != msg.ID || login.Data != "/next" {
 		t.Fatalf("Find = %+v, %v; want ID %q", login, err, msg.ID)
 	}
@@ -36,7 +36,7 @@ func TestFindForget(t *testing.T) {
 	ti.idp.ServeSSO(idpW, httptest.NewRequest(http.MethodGet, msg.RedirectURL().String(), nil))
 	form := formValues(idpW.Body.String())
 	r := acsRequest(form, w)
-	login, err = tr.Find(r)
+	login, err = tr.Find(httptest.NewRecorder(), r)
 	if err != nil {
 		t.Fatalf("Find after the junk Response: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestFindForget(t *testing.T) {
 		t.Errorf("Forget did not clear the slot: %+v", cleared)
 	}
 	browser.set(acsW)
-	if _, err := tr.Find(browser.request("state-1")); !errors.Is(err, pending.ErrNotFound) {
+	if _, err := tr.Find(httptest.NewRecorder(), browser.request("state-1")); !errors.Is(err, pending.ErrNotFound) {
 		t.Errorf("Find after Forget: err = %v, want ErrNotFound", err)
 	}
 
@@ -62,16 +62,50 @@ func TestFindForget(t *testing.T) {
 	}
 }
 
-// TestFindErrors checks that Find reports what Take does.
+// TestFindErrors checks the errors of Find.
 func TestFindErrors(t *testing.T) {
 	cfg, _ := newConfig(t)
 	tr := newTracker(t, cfg)
 	r := acsRequest(url.Values{"RelayState": {"s"}}, httptest.NewRecorder())
-	if _, err := tr.Find(r); !errors.Is(err, pending.ErrNotFound) {
+	if _, err := tr.Find(httptest.NewRecorder(), r); !errors.Is(err, pending.ErrNotFound) {
 		t.Errorf("no cookie: err = %v, want ErrNotFound", err)
 	}
 	browser := jar{slotName(t, cfg, tr, "s"): {Name: slotName(t, cfg, tr, "s"), Value: "x.y"}} //nolint:gosec // G124: a request cookie carries no attributes
-	if _, err := tr.Find(browser.request("s")); !errors.Is(err, pending.ErrInvalid) {
+	if _, err := tr.Find(httptest.NewRecorder(), browser.request("s")); !errors.Is(err, pending.ErrInvalid) {
 		t.Errorf("invalid cookie: err = %v, want ErrInvalid", err)
+	}
+}
+
+// TestFindClearsStaleOnly checks that Find clears the slots of expired and
+// invalid logins, but never the slot of the login it finds, even when the
+// browser also sends an invalid cookie of that name.
+func TestFindClearsStaleOnly(t *testing.T) {
+	cfg, _ := newConfig(t)
+	tr := newTracker(t, cfg)
+	msg, w := remember(t, cfg, tr, "live", "")
+	own := onlyCookie(t, w)
+	r := acsRequest(url.Values{"RelayState": {"live"}}, w)
+	// A tossed cookie of the same name, and an invalid one in another slot.
+	r.AddCookie(&http.Cookie{Name: own.Name, Value: "x.y"}) //nolint:gosec // G124: a request cookie carries no attributes
+	other := pending.DefaultCookiePrefix + "63"
+	if other == own.Name {
+		other = pending.DefaultCookiePrefix + "62"
+	}
+	r.AddCookie(&http.Cookie{Name: other, Value: "x.y"}) //nolint:gosec // G124: a request cookie carries no attributes
+
+	rec := httptest.NewRecorder()
+	login, err := tr.Find(rec, r)
+	if err != nil || login.ID != msg.ID {
+		t.Fatalf("Find = %+v, %v; want ID %q", login, err, msg.ID)
+	}
+	cleared := map[string]bool{}
+	for _, c := range rec.Result().Cookies() {
+		if c.MaxAge >= 0 {
+			t.Errorf("Find set %+v", c)
+		}
+		cleared[c.Name] = true
+	}
+	if cleared[own.Name] || !cleared[other] || len(cleared) != 1 {
+		t.Errorf("Find cleared %v, want only %s", cleared, other)
 	}
 }

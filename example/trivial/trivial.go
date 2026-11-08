@@ -154,7 +154,7 @@ func startLogin(w http.ResponseWriter, r *http.Request, returnTo string) {
 // acs is the assertion consumer service: it verifies the IdP's Response
 // and starts a session.
 func acs(w http.ResponseWriter, r *http.Request) {
-	login, err := tracker.Take(w, r)
+	login, err := tracker.Find(w, r)
 	if err != nil {
 		http.Error(w, "no login in progress", http.StatusForbidden)
 		return
@@ -166,6 +166,9 @@ func acs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "login failed", http.StatusForbidden)
 		return
 	}
+	// Forget the login only once its Response is verified, so that a junk
+	// Response posted with this browser's RelayState cannot cancel it.
+	tracker.Forget(w, login)
 	startSession(w, assertion)
 
 	returnTo := login.Data

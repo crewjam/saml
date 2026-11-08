@@ -339,7 +339,7 @@ index 7d87c7c..1f428b8 100644
  				// It is safe to let this request drop into the CreateSSOSession function below to ensure proper audit logging
  				slog.WarnContext(
  					request.Context(),
-@@ -564,6 +523,37 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
+@@ -564,6 +523,40 @@ func (s ManagementResource) SAMLCallbackHandler(response http.ResponseWriter, re
  	}
  }
  
@@ -366,7 +366,10 @@ index 7d87c7c..1f428b8 100644
 +		slog.WarnContext(request.Context(), "[SAML] Pending login tracker creation failed", attr.Error(err))
 +		return opts
 +	}
-+	if login, err := tracker.Take(response, request); err == nil {
++	// The login's slot is not forgotten after the Response is accepted:
++	// it expires with the login, and ParseResponse accepts each assertion
++	// only once.
++	if login, err := tracker.Find(response, request); err == nil {
 +		opts = append(opts, samlsp.WithRequestID(login.ID))
 +	} else if !errors.Is(err, pending.ErrNotFound) {
 +		slog.WarnContext(request.Context(), "[SAML] Invalid pending login cookie", attr.Error(err))
