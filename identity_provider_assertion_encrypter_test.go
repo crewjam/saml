@@ -1,6 +1,7 @@
 package saml
 
 import (
+	"errors"
 	"testing"
 
 	"gotest.tools/v3/assert"
@@ -40,6 +41,7 @@ func TestAssertionEncrypterBlockCipher(t *testing.T) {
 	enc, ok := assertionEncrypter(configured, methods(xmlenc.AES128GCM.Algorithm())).(xmlenc.RSA)
 	assert.Assert(t, ok)
 	assert.Check(t, is.Equal(xmlenc.AES192CBC.Algorithm(), enc.BlockCipher.Algorithm()), "a configured encrypter is used as is")
+
 }
 
 // spEncryptionMethods returns the EncryptionMethods the test SP lists for
@@ -112,4 +114,33 @@ func TestMakeAssertionElUsesConfiguredEncrypter(t *testing.T) {
 		test.IDP.AssertionEncrypter = cbcAssertionEncrypter()
 	})
 	assert.Check(t, is.Equal(xmlenc.AES128CBC.Algorithm(), alg))
+}
+
+// AssertionEncrypterFunc chooses the encrypter from what the SP lists, and
+// its error refuses the assertion.
+func TestMakeAssertionElAssertionEncrypterFunc(t *testing.T) {
+	var got []string
+	alg := encryptedAssertionAlgorithm(t, func(test *IdentityProviderTest, _ *IdpAuthnRequest) {
+		test.IDP.AssertionEncrypterFunc = func(methods []EncryptionMethod) (xmlenc.Encrypter, error) {
+			for _, m := range methods {
+				got = append(got, m.Algorithm)
+			}
+			enc := xmlenc.OAEP_SHA256()
+			enc.BlockCipher = xmlenc.AES128GCM
+			return enc, nil
+		}
+	})
+	assert.Check(t, is.Equal(xmlenc.AES128GCM.Algorithm(), alg))
+	assert.Check(t, len(got) > 0, "the SP's EncryptionMethods are passed")
+
+	test := NewIdentityProviderTest(t, applyKey)
+	refused := errors.New("refused")
+	test.IDP.AssertionEncrypterFunc = func([]EncryptionMethod) (xmlenc.Encrypter, error) { return nil, refused }
+	authReq, err := test.SP.MakeAuthenticationRequest(test.IDP.SSOURL.String(), HTTPPostBinding, HTTPPostBinding)
+	assert.NilError(t, err)
+	req, err := NewIdpAuthnRequest(&test.IDP, postForm(t, authReq.Post("")))
+	assert.NilError(t, err)
+	assert.NilError(t, req.Validate())
+	assert.NilError(t, DefaultAssertionMaker{}.MakeAssertion(req, &Session{ID: "s", UserName: "alice"}))
+	assert.Check(t, is.ErrorIs(req.MakeAssertionEl(), refused))
 }

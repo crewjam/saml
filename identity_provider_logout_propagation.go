@@ -435,7 +435,13 @@ func (idp *IdentityProvider) encryptLogoutNameID(logoutRequest *LogoutRequest, m
 	if err != nil {
 		return fmt.Errorf("service provider encryption certificate: %w", err)
 	}
-	encryptedID, err := encryptIdentifier(logoutRequest.NameID.Element(), cert, identifierEncrypter(idp.LogoutNameIDEncrypter, methods))
+	encrypter := identifierEncrypter(idp.LogoutNameIDEncrypter, methods)
+	if idp.LogoutNameIDEncrypter == nil && idp.LogoutNameIDEncrypterFunc != nil {
+		if encrypter, err = idp.LogoutNameIDEncrypterFunc(slices.Clone(methods)); err != nil {
+			return err
+		}
+	}
+	encryptedID, err := encryptIdentifier(logoutRequest.NameID.Element(), cert, encrypter)
 	if err != nil {
 		return fmt.Errorf("cannot encrypt NameID: %w", err)
 	}

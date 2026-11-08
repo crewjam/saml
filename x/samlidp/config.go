@@ -48,6 +48,8 @@ type Config struct {
 	issueDelay      time.Duration
 	metadataValid   time.Duration
 	affiliated      func(ctx context.Context, serviceProvider, affiliation string) (bool, error)
+	allowCBC        bool // EnableInsecureAESCBC
+	allowSHA1       bool // EnableInsecureRSAOAEPSHA1
 
 	idpOptions    []IdentityProviderOption
 	metadataHooks []func(*saml.EntityDescriptor)
@@ -115,6 +117,9 @@ func New(entityID string, serviceProviders ServiceProviderFunc, opts ...Option) 
 	}
 	if c.replayState == nil {
 		c.replayState = &replay.Memory{Now: c.Now}
+	}
+	if err := c.encryption().checkConfigured(c.unrestrictedIdentityProvider(nil)); err != nil {
+		return nil, err
 	}
 	if len(c.checks) > 0 {
 		idp := c.identityProvider(nil)
@@ -522,6 +527,14 @@ func checkSignatureMethod(method string, key crypto.Signer) error {
 // shares no slice with c, so that the options and the caller may change
 // it while other calls use c.
 func (c *Config) identityProvider(opts []IdentityProviderOption) *saml.IdentityProvider {
+	idp := c.unrestrictedIdentityProvider(opts)
+	c.encryption().apply(idp)
+	return idp
+}
+
+// unrestrictedIdentityProvider is identityProvider without the encryption
+// policy of EnableInsecureAESCBC and EnableInsecureRSAOAEPSHA1 applied.
+func (c *Config) unrestrictedIdentityProvider(opts []IdentityProviderOption) *saml.IdentityProvider {
 	method := c.signatureMethod
 	if method == "" {
 		method = signatureMethod(c.key)
@@ -567,6 +580,12 @@ func (c *Config) identityProvider(opts []IdentityProviderOption) *saml.IdentityP
 // does not, such as single logout; the result is a new value, which may be
 // changed. Its ServiceProviderProvider calls the ServiceProviderFunc of New
 // with the context of the http.Request it is given.
+//
+// Its AssertionEncrypterFunc and LogoutNameIDEncrypterFunc enforce the
+// encryption policy of New (see EnableInsecureAESCBC and
+// EnableInsecureRSAOAEPSHA1): an AssertionEncrypter or
+// LogoutNameIDEncrypter set by opts is moved into them, and checked when
+// it is used. One set on the result afterwards is not checked.
 func (c *Config) IdentityProvider(opts ...IdentityProviderOption) *saml.IdentityProvider {
 	return c.identityProvider(opts)
 }
