@@ -43,8 +43,8 @@ const (
 // let two of them share an entity ID.
 //
 // It reads the message as package saml does: from the query string of a
-// GET (HTTP-Redirect, deflated), from the form of a POST (HTTP-POST and
-// HTTP-POST-SimpleSign), or from the body of a POST with Content-Type
+// GET (HTTP-Redirect, deflated), from the urlencoded form of a POST
+// (HTTP-POST and HTTP-POST-SimpleSign), or from the body of a POST with Content-Type
 // text/xml (SOAP), which it restores so that the message can then be
 // verified. A message is a SAMLRequest or a SAMLResponse. Its Issuer is
 // that of the message, or, for a Response that names none, that of its
@@ -121,7 +121,13 @@ func peekMessage(r *http.Request) ([]byte, error) {
 		query := r.URL.Query()
 		get = query.Get
 	case http.MethodPost:
-		get = r.PostFormValue
+		// ParseForm reads only a urlencoded body, as ParseResponse does,
+		// and at most 10 MB of it; a multipart body, whose files could be
+		// spooled to disk, is not read.
+		if err := r.ParseForm(); err != nil {
+			return nil, fmt.Errorf("samlsp: cannot read the form: %w", err)
+		}
+		get = r.PostForm.Get
 	default:
 		return nil, ErrNoIssuer
 	}
