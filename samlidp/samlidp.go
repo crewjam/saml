@@ -101,6 +101,8 @@ type Options struct {
 //	                service provider it was used for (IdP-initiated logout)
 //	/login        - prompt for a username and password if no session established
 //	/login/:shortcut - kick off an IDP-initiated authentication flow
+//	/login/:shortcut/:suffix... - the same, with the rest of the path as
+//	                RelayState (see Shortcut.URISuffixAsRelayState)
 //	/services     - RESTful interface to Service objects
 //	/users        - RESTful interface to User objects
 //	/sessions     - RESTful interface to Session objects
@@ -235,7 +237,7 @@ func (s *Server) InitializeHTTP() {
 
 	mux.HandleFunc("/login", s.HandleLogin)
 	mux.HandleFunc("/login/{shortcut}", s.HandleIDPInitiated)
-	mux.HandleFunc("/login/{shortcut}/{suffix}", s.HandleIDPInitiated)
+	mux.HandleFunc("/login/{shortcut}/{suffix...}", s.HandleIDPInitiated)
 
 	// The administrative endpoints are wrapped by AdminMiddleware, if set.
 	admin := func(pattern string, handler http.HandlerFunc) {

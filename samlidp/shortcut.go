@@ -21,9 +21,12 @@ type Shortcut struct {
 	// If specified then the relay state is the fixed string provided
 	RelayState *string `json:"relay_state,omitempty"`
 
-	// If true then the URL suffix is used as the relayState. So for example, a user
-	// requesting https://idp.example.com/login/myservice/foo will get redirected
-	// to the myservice endpoint with a RelayState of "foo".
+	// If true then the URL path after the shortcut name is used as the
+	// RelayState, with its leading slash. So for example, a user requesting
+	// https://idp.example.com/login/myservice/foo will get redirected to the
+	// myservice endpoint with a RelayState of "/foo", and one requesting
+	// https://idp.example.com/login/myservice/foo/bar with "/foo/bar". With
+	// no suffix, the RelayState is empty. RelayState takes precedence.
 	URISuffixAsRelayState bool `json:"url_suffix_as_relay_state,omitempty"`
 }
 
