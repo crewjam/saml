@@ -148,7 +148,8 @@
 // ParseResponse returns a verified Assertion. Its NameID (and Subject, the NameID's value) identifies the user, and its Attributes are what the IDP says about them:
 //
 //	// The first value of an attribute, or "" if it is missing.
-//	email := assertion.Attributes.Get("urn:oid:0.9.2342.19200300.100.1.3")
+//	// Common attribute names are constants in github.com/crewjam/saml/attrname.
+//	email := assertion.Attributes.Get(attrname.Mail)
 //
 //	// Every attribute, with all of its values.
 //	for _, attribute := range assertion.Attributes {
@@ -210,11 +211,11 @@
 //	// The NameID the IDP issued for the user, as received at login, so that its
 //	// Format and qualifiers match what the IDP knows the user by.
 //	attributes, err := config.QueryAttributes(ctx, assertion.NameID,
-//		samlsp.WithQueriedAttributes("urn:oid:0.9.2342.19200300.100.1.3"))
+//		samlsp.WithQueriedAttributes(attrname.Mail))
 //	if err != nil {
 //		return err
 //	}
-//	fmt.Println(attributes.Get("urn:oid:0.9.2342.19200300.100.1.3"))
+//	fmt.Println(attributes.Get(attrname.Mail))
 //
 // Leave out WithQueriedAttributes to ask for everything the IDP releases to you. The query is signed with the service provider's key, and the answer is verified as a login is. The result describes the user but does not authenticate them: never start a session from it.
 //

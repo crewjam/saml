@@ -23,6 +23,7 @@ import (
 	"github.com/beevik/etree"
 	dsig "github.com/russellhaering/goxmldsig"
 
+	"github.com/crewjam/saml/attrname"
 	"github.com/crewjam/saml/internal/xmlroundtrip"
 
 	"github.com/crewjam/saml/internal/signerutil"
@@ -1393,7 +1394,7 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 		// urn:oasis:names:tc:SAML:2.0:attrname-format:unspecified ... is in
 		// effect" (saml-core §2.7.3.1).
 		switch requestedAttribute.NameFormat {
-		case "", "urn:oasis:names:tc:SAML:2.0:attrname-format:basic", "urn:oasis:names:tc:SAML:2.0:attrname-format:unspecified":
+		case "", attrname.FormatBasic, attrname.FormatUnspecified:
 			// The name is compared case-sensitively: string values "MUST be
 			// compared using an exact binary comparison" and implementations
 			// "MUST NOT depend on case-insensitive string comparisons"
@@ -1459,8 +1460,8 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 	if session.UserName != "" {
 		attributes = append(attributes, Attribute{
 			FriendlyName: "uid",
-			Name:         "urn:oid:0.9.2342.19200300.100.1.1",
-			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Name:         attrname.UID,
+			NameFormat:   attrname.FormatURI,
 			Values: []AttributeValue{{
 				Type:  "xs:string",
 				Value: session.UserName,
@@ -1471,8 +1472,8 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 	if session.UserEmail != "" {
 		attributes = append(attributes, Attribute{
 			FriendlyName: "mail",
-			Name:         "urn:oid:0.9.2342.19200300.100.1.3",
-			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Name:         attrname.Mail,
+			NameFormat:   attrname.FormatURI,
 			Values: []AttributeValue{{
 				Type:  "xs:string",
 				Value: session.UserEmail,
@@ -1491,8 +1492,8 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 
 		attributes = append(attributes, Attribute{
 			FriendlyName: "eduPersonPrincipalName",
-			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.6",
-			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Name:         attrname.EduPersonPrincipalName,
+			NameFormat:   attrname.FormatURI,
 			Values: []AttributeValue{{
 				Type:  "xs:string",
 				Value: value,
@@ -1502,8 +1503,8 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 	if session.UserSurname != "" {
 		attributes = append(attributes, Attribute{
 			FriendlyName: "sn",
-			Name:         "urn:oid:2.5.4.4",
-			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Name:         attrname.Surname,
+			NameFormat:   attrname.FormatURI,
 			Values: []AttributeValue{{
 				Type:  "xs:string",
 				Value: session.UserSurname,
@@ -1513,8 +1514,8 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 	if session.UserGivenName != "" {
 		attributes = append(attributes, Attribute{
 			FriendlyName: "givenName",
-			Name:         "urn:oid:2.5.4.42",
-			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Name:         attrname.GivenName,
+			NameFormat:   attrname.FormatURI,
 			Values: []AttributeValue{{
 				Type:  "xs:string",
 				Value: session.UserGivenName,
@@ -1525,8 +1526,8 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 	if session.UserCommonName != "" {
 		attributes = append(attributes, Attribute{
 			FriendlyName: "cn",
-			Name:         "urn:oid:2.5.4.3",
-			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Name:         attrname.CommonName,
+			NameFormat:   attrname.FormatURI,
 			Values: []AttributeValue{{
 				Type:  "xs:string",
 				Value: session.UserCommonName,
@@ -1537,8 +1538,8 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 	if session.UserScopedAffiliation != "" {
 		attributes = append(attributes, Attribute{
 			FriendlyName: "eduPersonScopedAffiliation",
-			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.9",
-			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Name:         attrname.EduPersonScopedAffiliation,
+			NameFormat:   attrname.FormatURI,
 			Values: []AttributeValue{{
 				Type:  "xs:string",
 				Value: session.UserScopedAffiliation,
@@ -1558,16 +1559,16 @@ func (DefaultAssertionMaker) MakeAssertion(req *IdpAuthnRequest, session *Sessio
 		}
 		attributes = append(attributes, Attribute{
 			FriendlyName: "eduPersonAffiliation",
-			Name:         "urn:oid:1.3.6.1.4.1.5923.1.1.1.1",
-			NameFormat:   "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Name:         attrname.EduPersonAffiliation,
+			NameFormat:   attrname.FormatURI,
 			Values:       groupMemberAttributeValues,
 		})
 	}
 
 	if session.SubjectID != "" {
 		attributes = append(attributes, Attribute{
-			Name:       "urn:oasis:names:tc:SAML:attribute:subject-id",
-			NameFormat: "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+			Name:       attrname.SubjectID,
+			NameFormat: attrname.FormatURI,
 			Values: []AttributeValue{
 				{
 					Type:  "xs:string",
