@@ -378,18 +378,11 @@ func TestKeptRequest(t *testing.T) {
 }
 
 func TestSimpleSignResponse(t *testing.T) {
-	p := newPair(t, nil, nil)
+	// The SP lists an ACS with the HTTP-POST-SimpleSign binding.
+	p := newPair(t, nil, []samlsp.Option{samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
+		sp.AssertionConsumerServiceBindings = []string{saml.HTTPPostBinding, saml.HTTPArtifactBinding, saml.HTTPPostSimpleSignBinding}
+	})})
 	ctx := context.Background()
-	md := p.sp.Metadata(ctx)
-	d := &md.SPSSODescriptors[0]
-	d.AssertionConsumerServices = append(d.AssertionConsumerServices, saml.IndexedEndpoint{
-		Binding: saml.HTTPPostSimpleSignBinding, Location: p.sp.ACSURL(), Index: 7,
-	})
-	var err error
-	p.idp, err = samlidp.New(idpEntityID, samlidp.StaticServiceProviders(md), samlidp.WithSigningKey(idpKey, idpCert))
-	if err != nil {
-		t.Fatal(err)
-	}
 	msg, req, err := p.parse(t, samlsp.WithResponseBinding(saml.HTTPPostSimpleSignBinding))
 	if err != nil {
 		t.Fatal(err)

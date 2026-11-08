@@ -666,6 +666,17 @@ func signatureMethod(key crypto.Signer) string {
 // with the identity provider. It does not call the identity provider's
 // MetadataFunc. It is not signed, whatever SignMetadata says: for the
 // signed document, use MetadataXML.
+//
+// The metadata says it is valid until 48 hours from now
+// (saml.DefaultValidDuration), which suits an IdP that fetches it from
+// ServeMetadata again before then. An IdP that is given a copy instead,
+// uploaded by an administrator, and enforces validUntil (as Shibboleth
+// does) stops accepting the SP when that time passes. For such a copy,
+// omit validUntil, or make it later:
+//
+//	samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
+//		sp.MetadataOmitValidUntil = true // or sp.MetadataValidDuration = ...
+//	})
 func (c *Config) Metadata(_ context.Context, opts ...ServiceProviderOption) *saml.EntityDescriptor {
 	md := c.spForMetadata(opts).Metadata()
 	c.decorateMetadata(md)
