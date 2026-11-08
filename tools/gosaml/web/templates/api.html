@@ -3,7 +3,7 @@
   <div class="about-intro">
     <h1>API</h1>
     <p>A JSON API for creating and configuring test IdPs and SPs from scripts and test suites: everything the management pages do except logging in, which still happens in a browser.</p>
-    <p>There are no accounts or API keys. Creating an instance returns its <span class="mono">secret</span>, the same one that is in its management page's URL, and every other call names the instance by it: <span class="mono">/api/v1/manage/{secret}</span>. Keep it to yourself.</p>
+    <p>There are no accounts or API keys. Creating an instance returns its <span class="mono">secret</span>, the same one that is in its management page's URL, and every other call names the instance by it: <span class="mono">/api/manage/{secret}</span>. Keep it to yourself.</p>
     <p>Instances made with the API are ordinary instances: they expire {{.Lifetime}} after they are created, and their <span class="mono">manage_url</span> opens them in a browser.</p>
     <nav class="api-toc" aria-label="On this page">
       <a href="#quick-start">Quick start</a>
@@ -21,12 +21,12 @@
     <section id="quick-start">
       <h2 class="sec-h2">Quick start</h2>
       <p class="about-p">Make an IdP, then an SP that trusts it. The IdP accepts the SP without registering it, by fetching its metadata from its entity ID.</p>
-      <pre class="pane nowrap">curl -s -X POST {{$.BaseURL}}/api/v1/idps \
+      <pre class="pane nowrap">curl -s -X POST {{$.BaseURL}}/api/idps \
   -d '{"profile": "okta"}' | tee idp.json
 
 IDP_METADATA=$(jq -r .metadata_url idp.json)
 
-curl -s -X POST {{$.BaseURL}}/api/v1/sps \
+curl -s -X POST {{$.BaseURL}}/api/sps \
   -d "{\"idp\": {\"metadata_url\": \"$IDP_METADATA\"}}" | tee sp.json
 
 # Open the SP's login URL in a browser and log in as alice:
@@ -43,19 +43,19 @@ curl -s "$(jq -r .api_url sp.json)/events" | jq '.[].title'</pre>
       <table class="tbl api-endpoints">
         <thead><tr><th>Method</th><th>Path</th><th>For</th><th>Does</th></tr></thead>
         <tbody>
-          <tr><td class="mono">POST</td><td class="mono">/api/v1/idps</td><td></td><td>Create an IdP</td></tr>
-          <tr><td class="mono">POST</td><td class="mono">/api/v1/sps</td><td></td><td>Create an SP</td></tr>
-          <tr><td class="mono">GET</td><td class="mono">/api/v1/manage/{secret}</td><td>both</td><td>Read an instance</td></tr>
-          <tr><td class="mono">PATCH</td><td class="mono">/api/v1/manage/{secret}</td><td>both</td><td>Change settings</td></tr>
-          <tr><td class="mono">DELETE</td><td class="mono">/api/v1/manage/{secret}</td><td>both</td><td>Delete an instance</td></tr>
-          <tr><td class="mono">POST</td><td class="mono">/api/v1/manage/{secret}/profile</td><td>IdP</td><td>Apply a profile</td></tr>
-          <tr><td class="mono">PUT</td><td class="mono">/api/v1/manage/{secret}/users/{username}</td><td>IdP</td><td>Add or replace a user</td></tr>
-          <tr><td class="mono">DELETE</td><td class="mono">/api/v1/manage/{secret}/users/{username}</td><td>IdP</td><td>Remove a user</td></tr>
-          <tr><td class="mono">POST</td><td class="mono">/api/v1/manage/{secret}/service-providers</td><td>IdP</td><td>Register an SP by metadata</td></tr>
-          <tr><td class="mono">DELETE</td><td class="mono">/api/v1/manage/{secret}/service-providers?entity_id=…</td><td>IdP</td><td>Remove an SP</td></tr>
-          <tr><td class="mono">PUT</td><td class="mono">/api/v1/manage/{secret}/idp</td><td>SP</td><td>Set the IdP the SP trusts</td></tr>
-          <tr><td class="mono">GET</td><td class="mono">/api/v1/manage/{secret}/events</td><td>both</td><td>Read the log</td></tr>
-          <tr><td class="mono">DELETE</td><td class="mono">/api/v1/manage/{secret}/events</td><td>both</td><td>Clear the log</td></tr>
+          <tr><td class="mono">POST</td><td class="mono">/api/idps</td><td></td><td>Create an IdP</td></tr>
+          <tr><td class="mono">POST</td><td class="mono">/api/sps</td><td></td><td>Create an SP</td></tr>
+          <tr><td class="mono">GET</td><td class="mono">/api/manage/{secret}</td><td>both</td><td>Read an instance</td></tr>
+          <tr><td class="mono">PATCH</td><td class="mono">/api/manage/{secret}</td><td>both</td><td>Change settings</td></tr>
+          <tr><td class="mono">DELETE</td><td class="mono">/api/manage/{secret}</td><td>both</td><td>Delete an instance</td></tr>
+          <tr><td class="mono">POST</td><td class="mono">/api/manage/{secret}/profile</td><td>IdP</td><td>Apply a profile</td></tr>
+          <tr><td class="mono">PUT</td><td class="mono">/api/manage/{secret}/users/{username}</td><td>IdP</td><td>Add or replace a user</td></tr>
+          <tr><td class="mono">DELETE</td><td class="mono">/api/manage/{secret}/users/{username}</td><td>IdP</td><td>Remove a user</td></tr>
+          <tr><td class="mono">POST</td><td class="mono">/api/manage/{secret}/service-providers</td><td>IdP</td><td>Register an SP by metadata</td></tr>
+          <tr><td class="mono">DELETE</td><td class="mono">/api/manage/{secret}/service-providers?entity_id=…</td><td>IdP</td><td>Remove an SP</td></tr>
+          <tr><td class="mono">PUT</td><td class="mono">/api/manage/{secret}/idp</td><td>SP</td><td>Set the IdP the SP trusts</td></tr>
+          <tr><td class="mono">GET</td><td class="mono">/api/manage/{secret}/events</td><td>both</td><td>Read the log</td></tr>
+          <tr><td class="mono">DELETE</td><td class="mono">/api/manage/{secret}/events</td><td>both</td><td>Clear the log</td></tr>
         </tbody>
       </table>
       </div>
@@ -63,21 +63,21 @@ curl -s "$(jq -r .api_url sp.json)/events" | jq '.[].title'</pre>
 
     <section id="instances">
       <h2 class="sec-h2">Instances</h2>
-      <h3 class="api-h3"><span class="mono">POST /api/v1/idps</span></h3>
+      <h3 class="api-h3"><span class="mono">POST /api/idps</span></h3>
       <p class="about-p">Creates an IdP with three users, alice, bob and carol. Optional: <span class="mono">profile</span>, one of {{range $i, $p := .Profiles}}{{if $i}}, {{end}}<span class="mono">{{$p.Key}}</span>{{end}} (the default is <span class="mono">generic</span>), and any <a href="#idp-settings">IdP setting</a>, applied after the profile.</p>
       <pre class="pane nowrap">{"profile": "entra", "name": "CI IdP", "remember_sessions": false}</pre>
 
-      <h3 class="api-h3"><span class="mono">POST /api/v1/sps</span></h3>
+      <h3 class="api-h3"><span class="mono">POST /api/sps</span></h3>
       <p class="about-p">Creates an SP. Optional: <span class="mono">idp</span>, the IdP to trust, as <span class="mono">{"metadata_url": …}</span> or <span class="mono">{"metadata_xml": …}</span>, and any <a href="#sp-settings">SP setting</a>.</p>
       <pre class="pane nowrap">{"idp": {"metadata_url": "https://idp.example.com/metadata"}, "binding": "post"}</pre>
 
-      <p class="about-p">Both answer <span class="mono">201 Created</span> with the instance, as <span class="mono">GET /api/v1/manage/{secret}</span> does, and its <span class="mono">api_url</span> in <span class="mono">Location</span>:</p>
+      <p class="about-p">Both answer <span class="mono">201 Created</span> with the instance, as <span class="mono">GET /api/manage/{secret}</span> does, and its <span class="mono">api_url</span> in <span class="mono">Location</span>:</p>
       <pre class="pane nowrap">{
   "kind": "idp",
   "id": "comic-krill",
   "secret": "wholly-blessed-mammoth",
   "manage_url": "{{$.BaseURL}}/manage/wholly-blessed-mammoth",
-  "api_url": "{{$.BaseURL}}/api/v1/manage/wholly-blessed-mammoth",
+  "api_url": "{{$.BaseURL}}/api/manage/wholly-blessed-mammoth",
   "entity_id": "{{$.BaseURL}}/idp/comic-krill/metadata",
   "metadata_url": "{{$.BaseURL}}/idp/comic-krill/metadata",
   "certificate_url": "{{$.BaseURL}}/idp/comic-krill/certificate.pem",
@@ -96,14 +96,14 @@ curl -s "$(jq -r .api_url sp.json)/events" | jq '.[].title'</pre>
 }</pre>
       <p class="about-p">An SP has <span class="mono">sp</span> instead of <span class="mono">idp</span>: <span class="mono">acs_url</span>, <span class="mono">login_url</span>, <span class="mono">slo_url</span>, <span class="mono">artifact_resolution_url</span>, <span class="mono">settings</span>, and <span class="mono">idp</span> (<span class="mono">entity_id</span>, <span class="mono">metadata_url</span>, <span class="mono">metadata</span>), which is <span class="mono">null</span> until it trusts one. A profile's entity ID is shaped like its product's, so an IdP's <span class="mono">entity_id</span> is not always its <span class="mono">metadata_url</span>.</p>
 
-      <h3 class="api-h3"><span class="mono">PATCH /api/v1/manage/{secret}</span></h3>
+      <h3 class="api-h3"><span class="mono">PATCH /api/manage/{secret}</span></h3>
       <p class="about-p">Changes the <a href="#idp-settings">IdP settings</a> or <a href="#sp-settings">SP settings</a> in the body, and leaves the rest as they are. Answers with the instance.</p>
-      <pre class="pane nowrap">curl -s -X PATCH {{$.BaseURL}}/api/v1/manage/$SECRET -d '{"allow_sha1": true}'</pre>
+      <pre class="pane nowrap">curl -s -X PATCH {{$.BaseURL}}/api/manage/$SECRET -d '{"allow_sha1": true}'</pre>
 
-      <h3 class="api-h3"><span class="mono">POST /api/v1/manage/{secret}/profile</span></h3>
+      <h3 class="api-h3"><span class="mono">POST /api/manage/{secret}/profile</span></h3>
       <p class="about-p">Applies a profile to an IdP, <span class="mono">{"profile": "shibboleth"}</span>. Like "Behave like" on its page, this replaces its entity ID, users, signing and encryption settings: give its SPs the new metadata.</p>
 
-      <h3 class="api-h3"><span class="mono">DELETE /api/v1/manage/{secret}</span></h3>
+      <h3 class="api-h3"><span class="mono">DELETE /api/manage/{secret}</span></h3>
       <p class="about-p">Deletes the instance, its sessions and its log now, rather than in {{.Lifetime}}. Answers <span class="mono">204 No Content</span>.</p>
     </section>
 
@@ -129,9 +129,9 @@ curl -s "$(jq -r .api_url sp.json)/events" | jq '.[].title'</pre>
 
     <section id="users">
       <h2 class="sec-h2">Users</h2>
-      <h3 class="api-h3"><span class="mono">PUT /api/v1/manage/{secret}/users/{username}</span></h3>
+      <h3 class="api-h3"><span class="mono">PUT /api/manage/{secret}/users/{username}</span></h3>
       <p class="about-p">Adds the user, or replaces the one with that username. <span class="mono">nameid</span> defaults to the username and <span class="mono">nameid_format</span> to unspecified. An attribute's <span class="mono">name_format</span> and <span class="mono">friendly_name</span> are optional. Answers with the user. An IdP has at most {{.MaxUsers}} users.</p>
-      <pre class="pane nowrap">curl -s -X PUT {{$.BaseURL}}/api/v1/manage/$SECRET/users/dave -d '{
+      <pre class="pane nowrap">curl -s -X PUT {{$.BaseURL}}/api/manage/$SECRET/users/dave -d '{
   "nameid": "dave@example.com",
   "nameid_format": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
   "attributes": [
@@ -142,17 +142,17 @@ curl -s "$(jq -r .api_url sp.json)/events" | jq '.[].title'</pre>
   ]
 }'</pre>
       <p class="about-p">NameID formats offered on the login page: {{range $i, $f := .Formats}}{{if $i}}, {{end}}<span class="mono">{{$f}}</span>{{end}}.</p>
-      <h3 class="api-h3"><span class="mono">DELETE /api/v1/manage/{secret}/users/{username}</span></h3>
+      <h3 class="api-h3"><span class="mono">DELETE /api/manage/{secret}/users/{username}</span></h3>
       <p class="about-p">Removes the user. Answers with the instance, or <span class="mono">404</span> if there is no such user.</p>
     </section>
 
     <section id="service-providers">
       <h2 class="sec-h2">Service providers and IdPs</h2>
-      <h3 class="api-h3"><span class="mono">POST /api/v1/manage/{secret}/service-providers</span></h3>
+      <h3 class="api-h3"><span class="mono">POST /api/manage/{secret}/service-providers</span></h3>
       <p class="about-p">Registers an SP with an IdP by its metadata, <span class="mono">{"metadata_url": …}</span> or <span class="mono">{"metadata_xml": …}</span>. An SP with the same entity ID is replaced. Answers with the registered SP. An IdP has at most {{.MaxSPs}}.</p>
-      <h3 class="api-h3"><span class="mono">DELETE /api/v1/manage/{secret}/service-providers?entity_id=…</span></h3>
+      <h3 class="api-h3"><span class="mono">DELETE /api/manage/{secret}/service-providers?entity_id=…</span></h3>
       <p class="about-p">Removes a registered SP. Answers with the instance.</p>
-      <h3 class="api-h3"><span class="mono">PUT /api/v1/manage/{secret}/idp</span></h3>
+      <h3 class="api-h3"><span class="mono">PUT /api/manage/{secret}/idp</span></h3>
       <p class="about-p">Sets the IdP an SP trusts, with the same body. Answers with the instance.</p>
       <p class="about-p">Metadata URLs of this server's own instances are read directly; others are fetched from public addresses only, on ports 80, 443, 8080 and 8443.</p>
     </section>
@@ -182,7 +182,7 @@ curl -s "$(jq -r .api_url sp.json)/events" | jq '.[].title'</pre>
 
     <section id="events">
       <h2 class="sec-h2">Log</h2>
-      <h3 class="api-h3"><span class="mono">GET /api/v1/manage/{secret}/events</span></h3>
+      <h3 class="api-h3"><span class="mono">GET /api/manage/{secret}/events</span></h3>
       <p class="about-p">The messages the instance exchanged, newest first: the last {{.MaxEvents}}. With <span class="mono">?after={id}</span>, only those newer than that event, to poll for what a test just did. <span class="mono">direction</span> is <span class="mono">in</span>, <span class="mono">out</span> or empty; <span class="mono">xml</span> is the decoded message; <span class="mono">url</span> is its log entry page.</p>
       <pre class="pane nowrap">[
   {
@@ -197,7 +197,7 @@ curl -s "$(jq -r .api_url sp.json)/events" | jq '.[].title'</pre>
   }
 ]</pre>
       <p class="about-p">For a live feed, the management page's Server-Sent Events stream is at <span class="mono">/manage/{secret}/live</span>; it sends HTML fragments for the page.</p>
-      <h3 class="api-h3"><span class="mono">DELETE /api/v1/manage/{secret}/events</span></h3>
+      <h3 class="api-h3"><span class="mono">DELETE /api/manage/{secret}/events</span></h3>
       <p class="about-p">Clears the log. Answers <span class="mono">204 No Content</span>.</p>
     </section>
 

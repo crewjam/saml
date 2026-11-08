@@ -18,7 +18,7 @@ import (
 // The JSON API, documented at /api (web/templates/api.html). It does
 // what the management pages do, for scripts and tests: an instance's
 // management secret is its credential here too, so the routes under
-// /api/v1/manage/{secret} mirror /manage/{secret}.
+// /api/manage/{secret} mirror /manage/{secret}.
 
 func (s *Server) apiRoutes() {
 	m := s.mux
@@ -28,19 +28,19 @@ func (s *Server) apiRoutes() {
 			MaxEvents: store.MaxEventsPerInstance, Lifetime: roundDuration(s.TTL),
 		})
 	})
-	m.HandleFunc("POST /api/v1/idps", s.apiNewIdP)
-	m.HandleFunc("POST /api/v1/sps", s.apiNewSP)
-	m.HandleFunc("GET /api/v1/manage/{secret}", s.apiInstance(s.apiGet))
-	m.HandleFunc("PATCH /api/v1/manage/{secret}", s.apiInstance(s.apiPatch))
-	m.HandleFunc("DELETE /api/v1/manage/{secret}", s.apiInstance(s.apiDelete))
-	m.HandleFunc("POST /api/v1/manage/{secret}/profile", s.apiIdP(s.apiSetProfile))
-	m.HandleFunc("PUT /api/v1/manage/{secret}/users/{username}", s.apiIdP(s.apiPutUser))
-	m.HandleFunc("DELETE /api/v1/manage/{secret}/users/{username}", s.apiIdP(s.apiDeleteUser))
-	m.HandleFunc("POST /api/v1/manage/{secret}/service-providers", s.apiIdP(s.apiAddSP))
-	m.HandleFunc("DELETE /api/v1/manage/{secret}/service-providers", s.apiIdP(s.apiDeleteSP))
-	m.HandleFunc("PUT /api/v1/manage/{secret}/idp", s.apiSP(s.apiSetIdP))
-	m.HandleFunc("GET /api/v1/manage/{secret}/events", s.apiInstance(s.apiEvents))
-	m.HandleFunc("DELETE /api/v1/manage/{secret}/events", s.apiInstance(s.apiClearEvents))
+	m.HandleFunc("POST /api/idps", s.apiNewIdP)
+	m.HandleFunc("POST /api/sps", s.apiNewSP)
+	m.HandleFunc("GET /api/manage/{secret}", s.apiInstance(s.apiGet))
+	m.HandleFunc("PATCH /api/manage/{secret}", s.apiInstance(s.apiPatch))
+	m.HandleFunc("DELETE /api/manage/{secret}", s.apiInstance(s.apiDelete))
+	m.HandleFunc("POST /api/manage/{secret}/profile", s.apiIdP(s.apiSetProfile))
+	m.HandleFunc("PUT /api/manage/{secret}/users/{username}", s.apiIdP(s.apiPutUser))
+	m.HandleFunc("DELETE /api/manage/{secret}/users/{username}", s.apiIdP(s.apiDeleteUser))
+	m.HandleFunc("POST /api/manage/{secret}/service-providers", s.apiIdP(s.apiAddSP))
+	m.HandleFunc("DELETE /api/manage/{secret}/service-providers", s.apiIdP(s.apiDeleteSP))
+	m.HandleFunc("PUT /api/manage/{secret}/idp", s.apiSP(s.apiSetIdP))
+	m.HandleFunc("GET /api/manage/{secret}/events", s.apiInstance(s.apiEvents))
+	m.HandleFunc("DELETE /api/manage/{secret}/events", s.apiInstance(s.apiClearEvents))
 	m.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusNotFound, "no such API endpoint: "+r.Method+" "+r.URL.Path+"; see "+s.BaseURL+"/api", nil)
 	})
@@ -306,7 +306,7 @@ func (s *Server) apiView(in *store.Instance) (*APIInstance, error) {
 	v := &APIInstance{
 		Kind: in.Kind, ID: in.ID, Secret: in.Secret,
 		ManageURL:   s.BaseURL + "/manage/" + in.Secret,
-		APIURL:      s.BaseURL + "/api/v1/manage/" + in.Secret,
+		APIURL:      s.BaseURL + "/api/manage/" + in.Secret,
 		MetadataURL: base + "/metadata",
 		CertURL:     base + "/certificate.pem",
 		Certificate: in.CertPEM,
@@ -405,7 +405,7 @@ func apiUser(u User) APIUser {
 	return out
 }
 
-// apiNewIdPRequest is the body of POST /api/v1/idps.
+// apiNewIdPRequest is the body of POST /api/idps.
 type apiNewIdPRequest struct {
 	Profile string `json:"profile"`
 	APIIdPSettings
@@ -433,7 +433,7 @@ func (s *Server) apiNewIdP(w http.ResponseWriter, r *http.Request) {
 	s.apiCreated(w, in, err)
 }
 
-// apiNewSPRequest is the body of POST /api/v1/sps.
+// apiNewSPRequest is the body of POST /api/sps.
 type apiNewSPRequest struct {
 	IdP *APIMetadata `json:"idp"`
 	APISPSettings

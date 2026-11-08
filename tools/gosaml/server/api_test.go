@@ -55,26 +55,26 @@ func TestAPI(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("/api: %d", resp.StatusCode)
 	}
-	mustContain(t, body, "<h1>API</h1>", h.base+"/api/v1/idps", `aria-current="page">API`)
+	mustContain(t, body, "<h1>API</h1>", h.base+"/api/idps", `aria-current="page">API`)
 
 	var idp APIInstance
-	h.apiOK(http.StatusCreated, http.MethodPost, "/api/v1/idps", `{"name": "CI IdP", "remember_sessions": false}`, &idp)
+	h.apiOK(http.StatusCreated, http.MethodPost, "/api/idps", `{"name": "CI IdP", "remember_sessions": false}`, &idp)
 	if idp.Kind != "idp" || idp.IdP == nil || *idp.IdP.Settings.Name != "CI IdP" || *idp.IdP.Settings.RememberSessions ||
 		len(idp.IdP.Users) != 3 || idp.EntityID != h.base+"/idp/"+idp.ID+"/metadata" || idp.SP != nil {
 		t.Fatalf("new IdP: %+v", idp)
 	}
-	idpAPI := "/api/v1/manage/" + idp.Secret
+	idpAPI := "/api/manage/" + idp.Secret
 
 	// The management page shows what the API made.
 	_, body = h.do(http.MethodGet, "/manage/"+idp.Secret, nil)
 	mustContain(t, body, "CI IdP")
 
 	var sp APIInstance
-	h.apiOK(http.StatusCreated, http.MethodPost, "/api/v1/sps", `{"idp": {"metadata_url": "`+idp.MetadataURL+`"}, "binding": "post"}`, &sp)
+	h.apiOK(http.StatusCreated, http.MethodPost, "/api/sps", `{"idp": {"metadata_url": "`+idp.MetadataURL+`"}, "binding": "post"}`, &sp)
 	if sp.SP == nil || sp.SP.IdP == nil || sp.SP.IdP.EntityID != idp.EntityID || *sp.SP.Settings.Binding != "post" {
 		t.Fatalf("new SP: %+v", sp)
 	}
-	spAPI := "/api/v1/manage/" + sp.Secret
+	spAPI := "/api/manage/" + sp.Secret
 
 	// Settings: a partial change, and refusals that change nothing.
 	var got APIInstance
@@ -91,11 +91,11 @@ func TestAPI(t *testing.T) {
 	if *got.IdP.Settings.RememberSessions {
 		t.Fatal("a refused PATCH changed a setting")
 	}
-	h.apiOK(http.StatusBadRequest, http.MethodPost, "/api/v1/idps", `{"profile": "ping"}`, &apiErr)
+	h.apiOK(http.StatusBadRequest, http.MethodPost, "/api/idps", `{"profile": "ping"}`, &apiErr)
 	h.apiOK(http.StatusConflict, http.MethodPut, spAPI+"/users/dave", `{}`, &apiErr)
 	h.apiOK(http.StatusConflict, http.MethodPut, idpAPI+"/idp", `{}`, &apiErr)
-	h.apiOK(http.StatusNotFound, http.MethodGet, "/api/v1/manage/no-such-secret", "", &apiErr)
-	h.apiOK(http.StatusNotFound, http.MethodGet, "/api/v1/nothing", "", &apiErr)
+	h.apiOK(http.StatusNotFound, http.MethodGet, "/api/manage/no-such-secret", "", &apiErr)
+	h.apiOK(http.StatusNotFound, http.MethodGet, "/api/nothing", "", &apiErr)
 
 	// Users.
 	var user APIUser
