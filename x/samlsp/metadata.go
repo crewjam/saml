@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -92,17 +93,24 @@ func (h HTTPClientOption) applyConfig(c *Config, _ *configOptions) { c.httpClien
 // WithRefreshInterval sets how long RemoteMetadata keeps metadata before it
 // fetches it again. The default is DefaultMetadataRefreshInterval. A
 // shorter cacheDuration or an earlier validUntil in the metadata takes
-// precedence.
+// precedence. A d that is not positive means the default.
 func WithRefreshInterval(d time.Duration) MetadataOption {
-	return metadataOptionFunc(func(o *metadataOptions) { o.refreshInterval = d })
+	return metadataOptionFunc(func(o *metadataOptions) {
+		if d <= 0 {
+			d = DefaultMetadataRefreshInterval
+		}
+		o.refreshInterval = d
+	})
 }
 
 // DefaultMetadataRefreshInterval is how long RemoteMetadata keeps metadata
 // by default.
 const DefaultMetadataRefreshInterval = time.Hour
 
-// metadataRetryInterval is how long RemoteMetadata keeps serving metadata
-// it could not refresh before it tries again.
+// metadataRetryInterval is the least time RemoteMetadata waits between
+// fetches: before it retries a fetch that failed, and before it fetches
+// again metadata whose cacheDuration or validUntil would make it due at
+// once.
 const metadataRetryInterval = time.Minute
 
 // StaticMetadataBytes returns a MetadataFunc that always returns the
@@ -173,7 +181,10 @@ func fetchMetadata(ctx context.Context, metadataURL url.URL, o metadataOptions) 
 // single refresh runs in the background; callers wait only when there is
 // no valid metadata, and then share one fetch. If a refresh fails, the
 // cached metadata is kept until its validUntil, and the fetch is retried a
-// minute later.
+// minute later. Fetches are at least a minute apart: when a fetch fails and
+// there is no valid metadata, calls in the next minute get its error
+// without fetching again, and metadata whose validUntil or cacheDuration
+// has (nearly) run out when it arrives is kept for a minute.
 //
 // Fetches are not cancelled with the context of the call that started
 // them, since other calls may be waiting for them, but time out after two
@@ -193,7 +204,7 @@ func RemoteMetadata(metadataURL string, opts ...MetadataOption) MetadataFunc {
 // with the federation's certificate.
 func MDQMetadata(baseURL, entityID string, opts ...MetadataOption) MetadataFunc {
 	u := strings.TrimSuffix(baseURL, "/") + "/entities/" + url.PathEscape(entityID)
-	o := newMetadataOptions(append(opts, WithIdentityProviderEntityID(entityID)))
+	o := newMetadataOptions(append(slices.Clip(opts), WithIdentityProviderEntityID(entityID)))
 	o.accept = "application/samlmetadata+xml"
 	r := &remoteMetadata{url: u, opts: o, now: o.clock.Now}
 	return r.get
@@ -212,6 +223,11 @@ type remoteMetadata struct {
 	md        *saml.EntityDescriptor
 	refreshAt time.Time
 	inflight  *metadataFetch // the fetch in progress, or nil
+
+	// lastErr is the error of the last fetch, if it failed and there was
+	// no valid metadata to fall back on; calls get it until retryAt.
+	lastErr error
+	retryAt time.Time
 }
 
 // metadataFetch is a fetch in progress; done is closed when it ends.
@@ -228,6 +244,11 @@ func (r *remoteMetadata) get(ctx context.Context) (*saml.EntityDescriptor, error
 		md := r.md
 		r.mu.Unlock()
 		return md, nil
+	}
+	if r.lastErr != nil && now.Before(r.retryAt) && r.inflight == nil {
+		err := r.lastErr
+		r.mu.Unlock()
+		return nil, err
 	}
 	f := r.startFetch(ctx)
 	if r.md != nil && r.usable(now) {
@@ -267,14 +288,19 @@ func (r *remoteMetadata) startFetch(ctx context.Context) *metadataFetch {
 
 		r.mu.Lock()
 		now := r.now()
+		r.lastErr = nil
 		switch {
 		case err == nil:
 			r.md = md
 			r.refreshAt = r.nextRefresh(md, now)
 		case r.md != nil && r.usable(now):
 			// Keep the cached metadata and retry later.
-			r.refreshAt = now.Add(min(r.opts.refreshInterval, metadataRetryInterval))
+			r.refreshAt = now.Add(r.retryInterval())
 			md, err = r.md, nil
+		default:
+			// Nothing to fall back on: give this error until the retry.
+			r.lastErr = err
+			r.retryAt = now.Add(r.retryInterval())
 		}
 		r.inflight = nil
 		r.mu.Unlock()
@@ -309,7 +335,21 @@ func (r *remoteMetadata) nextRefresh(md *saml.EntityDescriptor, now time.Time) t
 	if !md.ValidUntil.IsZero() && md.ValidUntil.Before(next) {
 		next = md.ValidUntil
 	}
-	return next
+	// Metadata that is already (or nearly) expired or stale when it
+	// arrives must not make every call fetch it again.
+	return later(next, now.Add(r.retryInterval()))
+}
+
+// retryInterval is the least time between fetches.
+func (r *remoteMetadata) retryInterval() time.Duration {
+	return min(r.opts.refreshInterval, metadataRetryInterval)
+}
+
+func later(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
 }
 
 // checkIDPMetadata returns an error if md does not describe an identity
