@@ -322,6 +322,11 @@ type ServiceProvider struct {
 	// because some IdPs send extension conditions (delegation restrictions,
 	// for example) that refusing would break. ValidateUnknownConditions, if
 	// set, decides instead.
+	//
+	// With RejectUnknownConditions, an assertion with a OneTimeUse
+	// condition (saml-core §2.5.1.5) is also refused, with an error that
+	// matches ErrUnsupported, when ReplayCache is nil: without a record of
+	// the assertions already used, its validity cannot be determined.
 	RejectUnknownConditions bool
 
 	// RequireSignedResponseForCBC, if true, refuses to decrypt an
@@ -2513,6 +2518,9 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 	if err := sp.validateUnknownConditions(assertion); err != nil {
 		return err
 	}
+	if err := sp.validateOneTimeUse(assertion); err != nil {
+		return err
+	}
 
 	if err := sp.validateAudienceRestriction(assertion); err != nil {
 		return err
@@ -2545,6 +2553,20 @@ func (sp *ServiceProvider) validateUnknownConditions(assertion *Assertion) error
 		names[i] = "{" + name.Space + "}" + name.Local
 	}
 	return classify(fmt.Errorf("assertion Conditions has unrecognised conditions %q: the assertion is Indeterminate", names), ErrUnsupported)
+}
+
+// validateOneTimeUse decides an assertion with a OneTimeUse condition
+// (saml-core §2.5.1.5), which may be used only once. ReplayCache, which
+// consumeAssertion records the assertion in, enforces that; without one,
+// the condition cannot be evaluated and the assertion is Indeterminate,
+// which saml-core §2.5.1.1 says MUST be rejected. As for other conditions
+// this package cannot evaluate, it is refused only with
+// RejectUnknownConditions.
+func (sp *ServiceProvider) validateOneTimeUse(assertion *Assertion) error {
+	if assertion.Conditions.OneTimeUse == nil || sp.ReplayCache != nil || !sp.RejectUnknownConditions {
+		return nil
+	}
+	return classify(errors.New("assertion Conditions has OneTimeUse, which cannot be enforced without a ReplayCache: the assertion is Indeterminate"), ErrUnsupported)
 }
 
 // validateAuthnContextClassRef checks, if ValidateAuthnContextClassRef is
