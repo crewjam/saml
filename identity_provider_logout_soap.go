@@ -13,9 +13,10 @@ import (
 // SOAP binding (saml-bindings §3.2) for the LogoutRequests the IdP sends to
 // session participants (saml-profiles §4.4.3.3 and §4.4.4.2).
 
-// errNoSOAPLogoutEndpoint is returned by logoutParticipantSOAP when the
-// service provider's metadata lists no SOAP SingleLogoutService.
-var errNoSOAPLogoutEndpoint = errors.New("the service provider metadata has no SOAP SingleLogoutService endpoint")
+// ErrNoSOAPLogoutEndpoint is returned by SendSOAPLogoutRequest when the
+// service provider's metadata lists no SOAP SingleLogoutService (or only
+// ones that are not https; see AllowInsecureSOAPEndpoints).
+var ErrNoSOAPLogoutEndpoint = errors.New("the service provider metadata has no SOAP SingleLogoutService endpoint")
 
 // httpClient returns the client the IdP sends SOAP messages with.
 func (idp *IdentityProvider) httpClient() *http.Client {
@@ -53,7 +54,7 @@ func (idp *IdentityProvider) soapLogoutEndpoint(metadata *EntityDescriptor) *End
 // metadata of the participant's service provider, lists, and checks the
 // LogoutResponse that comes back (see parseSOAPLogoutResponse). It returns
 // nil only if the service provider answered with a Success status. It
-// returns errNoSOAPLogoutEndpoint if metadata lists no SOAP endpoint, or
+// returns ErrNoSOAPLogoutEndpoint if metadata lists no SOAP endpoint, or
 // only ones that are not https (see AllowInsecureSOAPEndpoints).
 func (idp *IdentityProvider) logoutParticipantSOAP(ctx context.Context, metadata *EntityDescriptor, participant SessionParticipant) error {
 	logout, err := idp.prepareSOAPLogout(metadata, participant)
@@ -79,7 +80,7 @@ type soapLogout struct {
 func (idp *IdentityProvider) prepareSOAPLogout(metadata *EntityDescriptor, participant SessionParticipant) (*soapLogout, error) {
 	endpoint := idp.soapLogoutEndpoint(metadata)
 	if endpoint == nil {
-		return nil, errNoSOAPLogoutEndpoint
+		return nil, ErrNoSOAPLogoutEndpoint
 	}
 	logoutRequest, err := idp.participantLogoutRequest(participant, endpoint.Location, metadata)
 	if err != nil {
@@ -105,18 +106,48 @@ func (idp *IdentityProvider) prepareSOAPLogout(metadata *EntityDescriptor, parti
 
 // send sends the LogoutRequest and checks the LogoutResponse.
 func (l *soapLogout) send(ctx context.Context) error {
+	_, err := l.exchange(ctx)
+	return err
+}
+
+// exchange sends the LogoutRequest and returns the checked LogoutResponse.
+// The error matches ErrBadStatus if its status is not Success.
+func (l *soapLogout) exchange(ctx context.Context) (*LogoutResponse, error) {
 	body, err := postSOAPMessage(ctx, l.idp.httpClient(), l.location, soapEnvelope(l.signed), MaxSOAPLogoutMessageSize)
 	if err != nil {
-		return fmt.Errorf("logout request to %s: %w", l.location, err)
+		return nil, fmt.Errorf("logout request to %s: %w", l.location, err)
 	}
 	resp, err := l.idp.parseSOAPLogoutResponse(body, l.participant.ServiceProviderID, l.metadata, l.requestID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := statusError(resp.Status); err != nil {
-		return fmt.Errorf("logout response from %s: %w", l.participant.ServiceProviderID, err)
+		return resp, fmt.Errorf("logout response from %s: %w", l.participant.ServiceProviderID, err)
 	}
-	return nil
+	return resp, nil
+}
+
+// SendSOAPLogoutRequest logs participant out server to server, without the
+// browser: it sends a signed LogoutRequest (see MakeLogoutRequest) to the
+// SOAP SingleLogoutService that metadata, the metadata of the
+// participant's service provider, lists, with HTTPClient, and returns the
+// LogoutResponse that comes back, once it has checked its signature,
+// Issuer, InResponseTo and IssueInstant. It is what StartLogout and
+// ServeSLO do for participants that offer the SOAP binding.
+//
+// It returns an error matching ErrNoSOAPLogoutEndpoint if metadata lists
+// no SOAP endpoint (or only ones that are not https; see
+// AllowInsecureSOAPEndpoints), and one matching ErrBadStatus, with the
+// response, if the service provider did not answer with a Success status.
+func (idp *IdentityProvider) SendSOAPLogoutRequest(ctx context.Context, metadata *EntityDescriptor, participant SessionParticipant) (*LogoutResponse, error) {
+	if metadata == nil {
+		return nil, errors.New("no service provider metadata")
+	}
+	logout, err := idp.prepareSOAPLogout(metadata, participant)
+	if err != nil {
+		return nil, err
+	}
+	return logout.exchange(ctx)
 }
 
 // parseSOAPLogoutResponse reads the LogoutResponse in body, the SOAP
@@ -179,4 +210,34 @@ func (idp *IdentityProvider) parseSOAPLogoutResponse(body []byte, serviceProvide
 		return nil, fmt.Errorf("logout response destination %q is not this IdP", resp.Destination)
 	}
 	return &resp, nil
+}
+
+// ValidateSPSignedElement verifies the enveloped XML signature of el, a
+// message from the service provider whose metadata is metadata, against
+// the signing certificates of that metadata, with an algorithm
+// RejectSHA1Signatures allows, and returns what the signature covers: el
+// without its Signature, which the caller reads the message from. el must
+// be signed; the error then matches ErrInvalidSignature. As is usual for
+// keys distributed in metadata, the certificates' validity periods are not
+// checked. Use it for messages the IdP receives with the SOAP binding, such
+// as an ArtifactResolve.
+func (idp *IdentityProvider) ValidateSPSignedElement(el *etree.Element, metadata *EntityDescriptor) (*etree.Element, error) {
+	if el == nil || metadata == nil {
+		return nil, errors.New("no element or no service provider metadata")
+	}
+	certs, err := spSigningCerts(metadata)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkEnvelopedSignatureNotSHA1(idp.RejectSHA1Signatures, el); err != nil {
+		return nil, err
+	}
+	signed, err := verifiedEnvelopedElement(el, certs, idp.dsigClock())
+	if errors.Is(err, errSignatureElementNotPresent) {
+		return nil, classify(fmt.Errorf("the %s is not signed", el.Tag), ErrInvalidSignature)
+	}
+	if err != nil {
+		return nil, classify(err, ErrInvalidSignature)
+	}
+	return signed, nil
 }

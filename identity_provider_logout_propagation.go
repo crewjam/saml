@@ -16,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -315,7 +316,7 @@ func (idp *IdentityProvider) logoutParticipant(w http.ResponseWriter, r *http.Re
 	switch {
 	case err == nil:
 		return false
-	case errors.Is(err, errNoSOAPLogoutEndpoint):
+	case errors.Is(err, ErrNoSOAPLogoutEndpoint):
 	default:
 		idp.Logger.Printf("back-channel logout of %s failed: %s", participant.ServiceProviderID, err)
 	}
@@ -342,6 +343,23 @@ func (idp *IdentityProvider) participantMetadata(r *http.Request, participant Se
 		return nil, errors.New("no metadata")
 	}
 	return metadata, nil
+}
+
+// MakeLogoutRequest returns an unsigned LogoutRequest that asks the
+// service provider of participant, whose metadata is metadata, to end the
+// session participant describes: it carries participant's NameID and
+// SessionIndex, and is addressed to destination, a SingleLogoutService of
+// metadata. If EncryptLogoutNameID is set, the NameID is encrypted to the
+// encryption certificate of metadata, if it has one. Sign it, and send it
+// with the binding of destination; check the answer with
+// ValidateLogoutResponse. It is what StartLogout and ServeSLO send to
+// session participants, for an application that sends LogoutRequests
+// itself.
+func (idp *IdentityProvider) MakeLogoutRequest(metadata *EntityDescriptor, participant SessionParticipant, destination string) (*LogoutRequest, error) {
+	if metadata == nil {
+		return nil, errors.New("no service provider metadata")
+	}
+	return idp.participantLogoutRequest(participant, destination, metadata)
 }
 
 // participantLogoutRequest returns an unsigned LogoutRequest for the
@@ -643,6 +661,27 @@ func (idp *IdentityProvider) validateLogoutResponse(r *http.Request, state *logo
 	if state.Current == nil || state.RequestID == "" {
 		return nil, errors.New("no logout request is outstanding")
 	}
+	return idp.ValidateLogoutResponse(r, state.Current.ServiceProviderID, []string{state.RequestID})
+}
+
+// ValidateLogoutResponse checks the LogoutResponse that r carries to the
+// single logout service, with the HTTP-Redirect, HTTP-POST or
+// HTTP-POST-SimpleSign binding, from the service provider
+// serviceProviderID, in answer to a LogoutRequest the IdP sent it through
+// the browser (see MakeLogoutRequest). It is what ServeSLO does with the
+// LogoutResponses of a logout it propagates, for an application that sends
+// LogoutRequests itself.
+//
+// The response must be signed by the service provider, with a key of its
+// metadata (looked up with ServiceProviderProvider) and an algorithm that
+// RejectSHA1Signatures allows, and is read again from what an enveloped
+// signature covers. Its Issuer must be serviceProviderID, its InResponseTo
+// one of requestIDs, its Destination LogoutURL, and it must be recently
+// issued. Its status is not checked.
+func (idp *IdentityProvider) ValidateLogoutResponse(r *http.Request, serviceProviderID string, requestIDs []string) (*LogoutResponse, error) {
+	if len(requestIDs) == 0 {
+		return nil, errors.New("no logout request is outstanding")
+	}
 	buf, redirectMessage, simpleSign, err := readLogoutResponseMessage(r)
 	if err != nil {
 		return nil, err
@@ -662,9 +701,11 @@ func (idp *IdentityProvider) validateLogoutResponse(r *http.Request, state *logo
 		return nil, fmt.Errorf("cannot parse logout response: %w", err)
 	}
 
-	serviceProviderID := state.Current.ServiceProviderID
 	if resp.Issuer == nil || resp.Issuer.Value != serviceProviderID {
 		return nil, fmt.Errorf("expected logout response issuer to be %q", serviceProviderID)
+	}
+	if idp.ServiceProviderProvider == nil {
+		return nil, errors.New("IdentityProvider.ServiceProviderProvider is not set")
 	}
 	metadata, err := idp.ServiceProviderProvider.GetServiceProvider(r, serviceProviderID)
 	if err != nil || metadata == nil {
@@ -708,14 +749,17 @@ func (idp *IdentityProvider) validateLogoutResponse(r *http.Request, state *logo
 			return nil, fmt.Errorf("signed logout response is not from %s", serviceProviderID)
 		}
 	}
-	return &resp, idp.validateLogoutResponseFields(&resp, state.RequestID)
+	return &resp, idp.validateLogoutResponseFields(&resp, requestIDs)
 }
 
 // validateLogoutResponseFields checks the fields of an authenticated
-// LogoutResponse that answers the LogoutRequest requestID, which was sent
-// through the browser: its Destination must be LogoutURL.
-func (idp *IdentityProvider) validateLogoutResponseFields(resp *LogoutResponse, requestID string) error {
-	if err := validateLogoutResponseAnswer(resp, requestID, idp.now()); err != nil {
+// LogoutResponse that answers one of the LogoutRequests requestIDs, which
+// were sent through the browser: its Destination must be LogoutURL.
+func (idp *IdentityProvider) validateLogoutResponseFields(resp *LogoutResponse, requestIDs []string) error {
+	if resp.InResponseTo == "" || !slices.Contains(requestIDs, resp.InResponseTo) {
+		return fmt.Errorf("logout response InResponseTo %q does not match the outstanding request", resp.InResponseTo)
+	}
+	if err := validateLogoutResponseAnswer(resp, resp.InResponseTo, idp.now()); err != nil {
 		return err
 	}
 	if resp.Destination != idp.LogoutURL.String() {

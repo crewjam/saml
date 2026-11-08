@@ -378,6 +378,10 @@ func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...Res
 	if err := r.ParseForm(); err != nil {
 		return nil, err
 	}
+	// Sign the ArtifactResolve of an HTTP-Artifact response, which package
+	// saml does only with SignatureMethod: the IdP must authenticate the
+	// SP before it hands over the Response (saml-bindings §3.6.3).
+	signWithLogoutMethod(sp)
 	a, err := sp.ParseResponse(r.WithContext(ctx), o.requestIDs)
 	if err != nil {
 		return nil, err

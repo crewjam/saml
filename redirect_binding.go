@@ -420,6 +420,29 @@ func (sp *ServiceProvider) RedirectBindingURL(destination, messageParam string, 
 	return sp.redirectBindingURL(destination, messageParam, encoded, relayState, signatureMethod)
 }
 
+// RedirectBindingURL returns the URL that sends el, a protocol message of
+// the IdP, to destination with the HTTP-Redirect binding, as the query
+// parameter messageParam ("SAMLRequest" or "SAMLResponse"), with
+// relayState, and a query string signature made with the IdP's key and
+// SignatureMethod (saml-bindings-2.0-os section 3.4.4.1). Any Signature
+// child of el is left out of the message. The length of relayState is not
+// checked.
+func (idp *IdentityProvider) RedirectBindingURL(destination, messageParam string, el *etree.Element, relayState string) (*url.URL, error) {
+	encoded, err := deflateAndEncode(withoutSignature(el))
+	if err != nil {
+		return nil, err
+	}
+	signingContext, err := idp.signingContext()
+	if err != nil {
+		return nil, err
+	}
+	sigAlg := signingContext.GetSignatureMethodIdentifier()
+	if sigAlg == "" {
+		return nil, errors.New("cannot determine the signature algorithm")
+	}
+	return signedRedirectBindingURL(destination, messageParam, encoded, relayState, sigAlg, signingContext)
+}
+
 // withoutSignature returns a copy of el without its Signature children.
 func withoutSignature(el *etree.Element) *etree.Element {
 	unsigned := el.Copy()
