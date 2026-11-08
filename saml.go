@@ -5,7 +5,7 @@
 //
 // In SAML parlance an Identity Provider (IDP) is a service that knows how to authenticate users. A Service Provider (SP) is a service that delegates authentication to an IDP. If you are building a service where users log in with someone else's credentials, then you are a Service Provider. This package supports implementing both service providers and identity providers.
 //
-// The core package contains the implementation of SAML. Service providers should use the package x/samlsp, with x/samlsp/slo for single logout (see Getting Started as a Service Provider). The older package samlsp provides middleware that also keeps sessions; it remains for existing applications. The package samlidp provides a rudimentary IDP service that is useful for testing or as a starting point for other integrations.
+// The core package contains the implementation of SAML. Service providers should use the package x/samlsp, with x/samlsp/slo for single logout (see Getting Started as a Service Provider). The older package samlsp provides middleware that also keeps sessions; it remains for existing applications. Identity providers built into an existing application can use the experimental package x/samlidp, which verifies AuthnRequests and makes signed Responses while the application keeps its own users, sessions and login pages, with x/samlidp/idpslo for single logout and x/samlidp/idpartifact for the HTTP-Artifact binding. The package samlidp provides a rudimentary IDP service that is useful for testing or as a starting point for other integrations.
 //
 // # Getting Started as a Service Provider
 //
