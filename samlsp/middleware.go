@@ -151,7 +151,7 @@ func (m *Middleware) withCurrentIDPMetadata(ctx context.Context) (*Middleware, e
 	if metadata == nil {
 		return nil, errors.New("samlsp: metadata provider returned nil IdP metadata")
 	}
-	if err := metadata.ValidateMetadataAt(saml.TimeNow()); err != nil {
+	if err := metadata.ValidateMetadataAt(clockNow(m.ServiceProvider.Clock)); err != nil {
 		return nil, fmt.Errorf("samlsp: IdP metadata is not current: %w", err)
 	}
 	current := *m

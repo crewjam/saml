@@ -11,8 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/crewjam/saml"
 	"gotest.tools/v3/assert"
+
+	"github.com/crewjam/saml"
 )
 
 type metadataProviderResult struct {
