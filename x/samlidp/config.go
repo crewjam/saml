@@ -25,6 +25,7 @@ import (
 	"github.com/crewjam/saml/internal/signerutil"
 	"github.com/crewjam/saml/internal/timelimit"
 	"github.com/crewjam/saml/x/samlsp/replay"
+	"github.com/crewjam/saml/xmlenc"
 )
 
 // Config is a SAML identity provider (IdP) and the service providers (SPs)
@@ -162,6 +163,9 @@ func harden(idp *saml.IdentityProvider) {
 	// Keep the RelayState of IdP-initiated logins within 80 bytes
 	// (saml-bindings §3.5.3).
 	idp.LimitRelayStateLength = true
+	// Encrypt assertions with AES-256-GCM for SPs whose metadata lists no
+	// block cipher, rather than AES-CBC, which has no integrity protection.
+	idp.DefaultAssertionBlockCipher = xmlenc.AES256GCM
 }
 
 // absoluteURL parses s, which must be an absolute URL with a host.

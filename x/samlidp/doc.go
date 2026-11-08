@@ -36,8 +36,17 @@
 //	config, err := samlidp.New(entityID, sps, samlidp.WithSigningKey(key, cert),
 //		samlidp.SignMetadata,
 //		samlidp.WithIdentityProvider(func(idp *saml.IdentityProvider) {
-//			idp.AssertionEncrypter = xmlenc.OAEP()
+//			enc := xmlenc.OAEP_SHA256()
+//			enc.BlockCipher = xmlenc.AES256GCM
+//			idp.AssertionEncrypter = enc
 //		}))
+//
+// Assertions are encrypted for SPs whose metadata publishes an encryption
+// certificate, with the strongest block cipher the metadata lists, or
+// AES-256-GCM if it lists none. An SP that cannot decrypt AES-GCM and does
+// not say so needs saml.IdentityProvider's DefaultAssertionBlockCipher, or
+// AssertionEncrypter, set to an AES-CBC cipher; CBC has no integrity
+// protection, so keep the Response signed for it.
 //
 // # Web Browser SSO
 //

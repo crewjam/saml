@@ -285,14 +285,26 @@ type IdentityProvider struct {
 	// digest and the strongest block cipher that the service provider's
 	// metadata lists in the EncryptionMethods of its encryption key: AES-GCM
 	// (256, 128 then 192 bit keys) before AES-CBC. If it lists none of
-	// them, AES-128-CBC is used, for compatibility with existing service
-	// providers. CBC has no integrity protection; set AssertionEncrypter to
-	// use AES-GCM with service providers that support it but do not say so.
+	// them, DefaultAssertionBlockCipher is used. CBC has no integrity
+	// protection; set AssertionEncrypter to use AES-GCM with service
+	// providers that support it but list only AES-CBC.
 	//
 	// It also encrypts the EncryptedID that MakeAssertionEl issues in place
 	// of the Subject's NameID when the AuthnRequest asks for the encrypted
 	// NameID format (saml-core §3.4.1.1, §8.3.9).
 	AssertionEncrypter xmlenc.Encrypter
+
+	// DefaultAssertionBlockCipher, if set, is the block cipher that
+	// assertions (and EncryptedIDs in them) are encrypted with when
+	// AssertionEncrypter is nil and the service provider's metadata lists
+	// none of the block ciphers this package knows. When nil, AES-128-CBC
+	// is used, for compatibility with existing service providers that do
+	// not list their algorithms and cannot decrypt AES-GCM. CBC has no
+	// integrity protection: a service provider that decrypts an assertion
+	// before checking a signature over it can be made to reveal its
+	// plaintext. Set it to xmlenc.AES256GCM where every service provider
+	// supports AES-GCM.
+	DefaultAssertionBlockCipher xmlenc.BlockCipher
 
 	// ResponseSigning says which elements of a successful Response the IdP
 	// signs: by default, both the Response and the assertion in it (see
@@ -1801,10 +1813,12 @@ func (req *IdpAuthnRequest) MakeAssertionEl() error {
 	}
 
 	var configured xmlenc.Encrypter
+	var fallback xmlenc.BlockCipher
 	if req.IDP != nil {
 		configured = req.IDP.AssertionEncrypter
+		fallback = req.IDP.DefaultAssertionBlockCipher
 	}
-	encryptor := assertionEncrypter(configured, methods)
+	encryptor := assertionEncrypter(configured, methods, fallback)
 	encryptedDataEl, err := encryptor.Encrypt(certBuf, signedAssertionBuf, nil)
 	if err != nil {
 		return err
@@ -1840,10 +1854,12 @@ func (req *IdpAuthnRequest) encryptSubjectNameID() error {
 		return err
 	}
 	var configured xmlenc.Encrypter
+	var fallback xmlenc.BlockCipher
 	if req.IDP != nil {
 		configured = req.IDP.AssertionEncrypter
+		fallback = req.IDP.DefaultAssertionBlockCipher
 	}
-	encryptedID, err := encryptIdentifier(subject.NameID.Element(), cert, assertionEncrypter(configured, methods))
+	encryptedID, err := encryptIdentifier(subject.NameID.Element(), cert, assertionEncrypter(configured, methods, fallback))
 	if err != nil {
 		return fmt.Errorf("cannot encrypt NameID: %w", err)
 	}
@@ -1863,16 +1879,19 @@ var errNoACSEndpoint = errors.New("the request has no assertion consumer service
 // EncryptionMethods the service provider's metadata lists for its
 // encryption key: the first of AES-256-GCM, AES-128-GCM, AES-192-GCM,
 // AES-256-CBC, AES-128-CBC and AES-192-CBC that it lists. A service
-// provider that lists none of them gets AES-128-CBC, as before, since
-// many service providers that do not list their algorithms cannot decrypt
-// AES-GCM.
-func assertionEncrypter(configured xmlenc.Encrypter, methods []EncryptionMethod) xmlenc.Encrypter {
+// provider that lists none of them gets fallback, or AES-128-CBC if
+// fallback is nil, as before, since many service providers that do not
+// list their algorithms cannot decrypt AES-GCM.
+func assertionEncrypter(configured xmlenc.Encrypter, methods []EncryptionMethod, fallback xmlenc.BlockCipher) xmlenc.Encrypter {
 	if configured != nil {
 		return configured
 	}
 	encrypter := xmlenc.OAEP()
 	encrypter.DigestMethod = &xmlenc.SHA1
 	encrypter.BlockCipher = xmlenc.AES128CBC
+	if fallback != nil {
+		encrypter.BlockCipher = fallback
+	}
 	listed := make(map[string]bool, len(methods))
 	for _, method := range methods {
 		listed[method.Algorithm] = true

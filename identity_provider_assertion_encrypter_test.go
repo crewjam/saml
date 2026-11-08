@@ -29,7 +29,7 @@ func TestAssertionEncrypterBlockCipher(t *testing.T) {
 		{"this package's SP", spEncryptionMethods(t), xmlenc.AES256GCM.Algorithm()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			enc, ok := assertionEncrypter(nil, tc.methods).(xmlenc.RSA)
+			enc, ok := assertionEncrypter(nil, tc.methods, nil).(xmlenc.RSA)
 			assert.Assert(t, ok)
 			assert.Check(t, is.Equal(tc.want, enc.BlockCipher.Algorithm()))
 		})
@@ -37,9 +37,16 @@ func TestAssertionEncrypterBlockCipher(t *testing.T) {
 
 	configured := xmlenc.OAEP()
 	configured.BlockCipher = xmlenc.AES192CBC
-	enc, ok := assertionEncrypter(configured, methods(xmlenc.AES128GCM.Algorithm())).(xmlenc.RSA)
+	enc, ok := assertionEncrypter(configured, methods(xmlenc.AES128GCM.Algorithm()), xmlenc.AES256GCM).(xmlenc.RSA)
 	assert.Assert(t, ok)
 	assert.Check(t, is.Equal(xmlenc.AES192CBC.Algorithm(), enc.BlockCipher.Algorithm()), "a configured encrypter is used as is")
+
+	enc, ok = assertionEncrypter(nil, nil, xmlenc.AES256GCM).(xmlenc.RSA)
+	assert.Assert(t, ok)
+	assert.Check(t, is.Equal(xmlenc.AES256GCM.Algorithm(), enc.BlockCipher.Algorithm()), "the fallback is used when none is listed")
+	enc, ok = assertionEncrypter(nil, methods(xmlenc.AES128CBC.Algorithm()), xmlenc.AES256GCM).(xmlenc.RSA)
+	assert.Assert(t, ok)
+	assert.Check(t, is.Equal(xmlenc.AES128CBC.Algorithm(), enc.BlockCipher.Algorithm()), "a listed block cipher is preferred to the fallback")
 }
 
 // spEncryptionMethods returns the EncryptionMethods the test SP lists for
@@ -112,4 +119,16 @@ func TestMakeAssertionElUsesConfiguredEncrypter(t *testing.T) {
 		test.IDP.AssertionEncrypter = cbcAssertionEncrypter()
 	})
 	assert.Check(t, is.Equal(xmlenc.AES128CBC.Algorithm(), alg))
+}
+
+// DefaultAssertionBlockCipher replaces AES-128-CBC for an SP whose metadata
+// lists no block cipher.
+func TestMakeAssertionElDefaultAssertionBlockCipher(t *testing.T) {
+	alg := encryptedAssertionAlgorithm(t, func(test *IdentityProviderTest, req *IdpAuthnRequest) {
+		test.IDP.DefaultAssertionBlockCipher = xmlenc.AES256GCM
+		for i := range req.SPSSODescriptor.KeyDescriptors {
+			req.SPSSODescriptor.KeyDescriptors[i].EncryptionMethods = nil
+		}
+	})
+	assert.Check(t, is.Equal(xmlenc.AES256GCM.Algorithm(), alg))
 }

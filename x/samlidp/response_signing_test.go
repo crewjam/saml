@@ -130,3 +130,32 @@ func TestParticipantSessionIndexFromAssertion(t *testing.T) {
 		t.Fatalf("Participant %+v, SP got %v", resp.Participant, a.SessionIndexes)
 	}
 }
+
+// An SP whose metadata lists no block cipher gets AES-256-GCM, not
+// AES-CBC, which has no integrity protection.
+func TestEncryptionDefaultsToGCM(t *testing.T) {
+	keys(t)
+	p := newPair(t, nil, []samlsp.Option{samlsp.WithEncryptionKey(spKey, spCert)})
+	md := p.sp.Metadata(context.Background())
+	for i := range md.SPSSODescriptors {
+		for j := range md.SPSSODescriptors[i].KeyDescriptors {
+			md.SPSSODescriptors[i].KeyDescriptors[j].EncryptionMethods = nil
+		}
+	}
+	var err error
+	p.idp, err = samlidp.New(idpEntityID, samlidp.StaticServiceProviders(md), samlidp.WithSigningKey(idpKey, idpCert))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, root, _, err := p.respond(t, testSubject)
+	if err != nil {
+		t.Fatalf("the SP refused the Response: %v", errors.Unwrap(err))
+	}
+	method := root.FindElement("./EncryptedAssertion/EncryptedData/EncryptionMethod")
+	if method == nil {
+		t.Fatal("the assertion is not encrypted")
+	}
+	if got := method.SelectAttrValue("Algorithm", ""); got != xmlenc.AES256GCM.Algorithm() {
+		t.Errorf("block cipher %q, want AES-256-GCM", got)
+	}
+}
