@@ -1,9 +1,10 @@
 name: lint
 
+# Pushes to main run this through gosamldev-production.yml, which deploys
+# only once it and the other checks pass.
 on:
-  push:
-    branches: [ 'main' ]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read

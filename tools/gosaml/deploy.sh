@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Builds gosaml and deploys it to Fly.io.
 #
-#   ./deploy.sh            test, build for linux/amd64 and deploy to Fly.io
+#   ./deploy.sh            build for linux/amd64 and deploy to Fly.io
 #   ./deploy.sh build      build for this machine, into build/gosaml
 #   ./deploy.sh run        build for this machine and run it at http://localhost:8080
-#   ./deploy.sh dist       test and build for linux/amd64, without deploying
-#                          (the GitHub Actions workflow deploys what this builds)
 #
 # Extra arguments after "deploy" are passed to `fly deploy`.
+#
+# It does not run the tests: CI does, and the GitHub Actions workflow runs
+# this only after they pass. Run `go vet ./... && go test ./...` yourself
+# before deploying by hand.
 #
 # The inspector is cross-compiled to WebAssembly (web/static/parser.wasm),
 # with the wasm_exec.js of the same Go toolchain, and both are embedded in
@@ -48,12 +50,6 @@ build_server() {
 		-o build/gosaml .
 }
 
-test_all() {
-	echo "==> testing"
-	go vet ./...
-	go test ./...
-}
-
 case "$cmd" in
 build)
 	build_wasm
@@ -64,18 +60,12 @@ run)
 	build_server "$(go env GOOS)" "$(go env GOARCH)"
 	exec ./build/gosaml
 	;;
-dist)
-	test_all
-	build_wasm
-	build_server linux amd64
-	;;
 deploy)
 	fly="$(command -v fly || command -v flyctl || true)"
 	if [ -z "$fly" ]; then
 		echo "flyctl is not installed: https://fly.io/docs/flyctl/install/" >&2
 		exit 1
 	fi
-	test_all
 	build_wasm
 	build_server linux amd64
 	echo "==> deploying"
@@ -85,7 +75,7 @@ deploy)
 	"$fly" deploy --ha=false "$@"
 	;;
 *)
-	echo "usage: $0 [deploy|build|run|dist] [fly deploy flags...]" >&2
+	echo "usage: $0 [deploy|build|run] [fly deploy flags...]" >&2
 	exit 2
 	;;
 esac
