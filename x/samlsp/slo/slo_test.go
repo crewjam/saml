@@ -405,6 +405,19 @@ func TestNoEndpoint(t *testing.T) {
 	}
 }
 
+// A LogoutRequest must name the user (saml-core §3.7.1), as
+// MakeSOAPLogoutRequest, behind SendRequest, already requires.
+func TestRequestEmptyNameID(t *testing.T) {
+	ti := newTestIDP(t)
+	_, s := newService(t, ti, nil)
+	if msg, err := s.Request(t.Context(), saml.NameID{}, "s"); err == nil {
+		t.Fatalf("Request made a LogoutRequest with no NameID: %s", inflateParam(t, msg.RedirectURL(), "SAMLRequest"))
+	}
+	if msg, err := s.Request(t.Context(), saml.NameID{Format: string(saml.EmailAddressNameIDFormat)}, "s"); err == nil {
+		t.Fatalf("Request made a LogoutRequest with an empty NameID: %s", inflateParam(t, msg.RedirectURL(), "SAMLRequest"))
+	}
+}
+
 func TestConfiguration(t *testing.T) {
 	ti := newTestIDP(t)
 	idp := samlsp.StaticMetadata(ti.idp.Metadata())

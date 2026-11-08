@@ -304,7 +304,13 @@ func (s *Server) spSLORequest(w http.ResponseWriter, r *http.Request, in *store.
 		slo.WriteRequestError(w, r)
 		return
 	}
+	// The session of the browser that delivered the request, if any.
+	var own string
+	if c, err := r.Cookie(spCookieName(in)); err == nil && !soap {
+		own = c.Value
+	}
 	var ended []string
+	endedOwn := false
 	for _, sess := range sessions {
 		if sess.NameID.Value != req.NameID.Value {
 			continue
@@ -316,8 +322,14 @@ func (s *Server) spSLORequest(w http.ResponseWriter, r *http.Request, in *store.
 		}
 		_ = s.Store.DeleteSession(ctx, sess.ID, in.ID)
 		ended = append(ended, sess.Subject)
+		endedOwn = endedOwn || (own != "" && sess.ID == own)
 	}
-	if !soap {
+	// Clear the browser's session cookie only if its session is one of
+	// those ended. Anyone can make a browser deliver a LogoutRequest: a
+	// user who starts a logout of their own account at the IdP can send
+	// another user's browser the request instead, which must not log that
+	// user out.
+	if endedOwn {
 		s.clearSPSessionCookie(w, in)
 	}
 	detail := "NameID: " + req.NameID.Value + "\nSessionIndexes: " + strings.Join(req.SessionIndexes, ", ") + "\nBinding: " + shortURN(req.Binding)

@@ -24,10 +24,11 @@
 //	}
 //
 //	func acs(w http.ResponseWriter, r *http.Request) {
-//		login, err := tracker.Take(w, r)
+//		login, err := tracker.Find(r)
 //		if err != nil { ... } // no login in progress in this browser
 //		assertion, err := config.ParseResponse(r.Context(), r, samlsp.WithRequestID(login.ID))
 //		if err != nil { ... }
+//		tracker.Forget(w, login)
 //		startSession(w, assertion)
 //		http.Redirect(w, r, safeLocalPath(login.Data), http.StatusFound)
 //	}
@@ -52,8 +53,9 @@
 // the cookie prefix followed by the slot's number. Remember picks the slot
 // from a hash of the RelayState and sets that cookie only: it does not
 // read or rewrite the others, which the browser sends to the ACS only.
-// Take finds the login whose RelayState is that of the Response among the
-// slots, and clears its slot.
+// Find finds the login whose RelayState is that of the Response among the
+// slots, and Forget clears its slot once the Response is verified; Take
+// does both at once.
 //
 // However many logins a browser starts and abandons, it sends the ACS at
 // most one cookie per slot: with a 26-character RelayState, such as
@@ -98,9 +100,11 @@
 // slot of the RelayState it is given before the Response is verified, so
 // a site that knows a user's RelayState can make the browser post a junk
 // Response with it to the ACS, and so cancel the user's login in
-// progress. The RelayState travels in the URL of the AuthnRequest, which
-// the IdP sees, and may log; a RelayState that says where to return, or
-// counts logins, gives it away to anyone.
+// progress. Find and Forget, as above, clear the slot only after
+// ParseResponse accepts the Response, and so leave the login in progress
+// until the real one arrives. Either way, the RelayState travels in the
+// URL of the AuthnRequest, which the IdP sees, and may log; a RelayState
+// that says where to return, or counts logins, gives it away to anyone.
 //
 // An SP that trusts several IdPs should record in the data passed to
 // Remember which IdP it sent the AuthnRequest to, and check after
@@ -162,20 +166,20 @@ const browserCookieLimit = 3800
 // otherwise: each takes at most this divided by the number of slots.
 const DefaultMaxCookiesSize = 6 << 10
 
-// ErrNotFound is returned by Take when the request carries no cookie for
-// its RelayState, or when the cookie has expired: no login is in progress
-// in this browser for the Response. This is the case of an IdP-initiated
+// ErrNotFound is returned by Find and Take when the request carries no
+// cookie for its RelayState, or when the cookie has expired: no login is
+// in progress in this browser for the Response. This is the case of an IdP-initiated
 // login, of a Response sent twice, of a user who took longer than MaxAge,
 // and of a login replaced by a later one in the same slot.
 var ErrNotFound = errors.New("pending: no login in progress for this RelayState")
 
-// ErrInvalid is returned by Take when no slot holds a login for the
-// RelayState and the cookie of the RelayState's slot was not made by
-// Remember with this Tracker's key: it was changed, made with another key,
-// or made for another slot.
+// ErrInvalid is returned by Find and Take when no slot holds a login for
+// the RelayState and the cookie of the RelayState's slot was not made by
+// Remember with this Tracker's key: it was changed, made with another
+// key, or made for another slot.
 var ErrInvalid = errors.New("pending: the login cookie is not valid")
 
-// Login is a login in progress that Take found.
+// Login is a login in progress that Find or Take found.
 type Login struct {
 	// ID is the ID of the AuthnRequest. Pass it to ParseResponse with
 	// samlsp.WithRequestID.
@@ -193,6 +197,10 @@ type Login struct {
 
 	// Expires is when the login would have stopped being accepted.
 	Expires time.Time
+
+	// slot is the name of the slot cookie the login was found in, which
+	// Forget clears.
+	slot string
 }
 
 // Tracker keeps logins in progress in cookies. Create one with New. It is
@@ -231,6 +239,13 @@ func WithMaxCookiesSize(n int) Option { return func(t *Tracker) { t.maxCookiesSi
 
 // WithCookiePrefix sets what the name of each slot cookie begins with,
 // before the slot's number. The default is DefaultCookiePrefix.
+//
+// Browsers reject a cookie whose name begins with __Secure- unless it is
+// Secure, and one whose name begins with __Host- unless it is also
+// host-only, with Path "/" (RFC 6265bis §4.1.3), whatever the case of the
+// prefix. New returns an error for such a prefix unless the ACS URL uses
+// https and, for __Host-, WithPath sets "/" and WithDomain is not used:
+// otherwise browsers would reject every slot cookie, and every login fail.
 func WithCookiePrefix(prefix string) Option { return func(t *Tracker) { t.prefix = prefix } }
 
 // WithDomain sets the Domain attribute of the cookies, so that hosts below
@@ -319,6 +334,13 @@ func New(config *samlsp.Config, key []byte, opts ...Option) (*Tracker, error) {
 	if t.prefix == "" || strings.ContainsAny(t.prefix, "()<>@,;:\\\"/[]?={} \t") {
 		return nil, fmt.Errorf("pending: invalid cookie prefix %q", t.prefix)
 	}
+	// Browsers match the prefixes case-insensitively (RFC 6265bis §4.1.3).
+	switch prefix := strings.ToLower(t.prefix); {
+	case strings.HasPrefix(prefix, "__host-") && (!t.secure || t.path != "/" || t.domain != ""):
+		return nil, fmt.Errorf("pending: browsers reject cookies whose names begin with %q unless the ACS URL uses https, its Path is \"/\" (WithPath) and it has no Domain", t.prefix)
+	case strings.HasPrefix(prefix, "__secure-") && !t.secure:
+		return nil, fmt.Errorf("pending: browsers reject cookies whose names begin with %q unless the ACS URL uses https", t.prefix)
+	}
 	return t, nil
 }
 
@@ -341,7 +363,7 @@ type payload struct {
 }
 
 // Remember sets the slot cookie that remembers msg, an AuthnRequest made
-// by Config.AuthnRequest, until Take finds it, with data for the
+// by Config.AuthnRequest, until Find or Take finds it, with data for the
 // application, such as where to send the user after login. Call it before
 // msg.Write. It replaces the login in progress in the same slot, if any,
 // and leaves the other slots alone.
@@ -374,11 +396,49 @@ func (t *Tracker) Remember(w http.ResponseWriter, msg *samlsp.Message, data stri
 	return nil
 }
 
+// Find returns the login in progress that the Response in r answers,
+// found by the Response's RelayState among the slots, without clearing
+// its slot. Call it in the ACS handler, before Config.ParseResponse, and
+// call Forget once ParseResponse has accepted the Response: a Response
+// that fails, such as a junk one that a site made the browser post with
+// the user's RelayState, then leaves the login in progress for the real
+// one. Unlike Take, it clears no slots, not even those of expired or
+// invalid logins, which the browser keeps until they expire or Remember
+// replaces them.
+//
+// It returns ErrNotFound and ErrInvalid as Take does.
+func (t *Tracker) Find(r *http.Request) (*Login, error) {
+	return t.find(r, func(string) {})
+}
+
+// Forget clears the slot of login, a login that Find returned, so that it
+// is found no more. Call it once Config.ParseResponse has accepted the
+// Response that login answers. It does nothing if login is nil.
+//
+// As with Take, a browser that ignores the clearing can present the cookie
+// again until it expires; ParseResponse still accepts each assertion only
+// once (see samlsp.WithReplayState).
+func (t *Tracker) Forget(w http.ResponseWriter, login *Login) {
+	if login == nil {
+		return
+	}
+	name := login.slot
+	if name == "" {
+		name = t.cookieName(t.slot(login.RelayState))
+	}
+	http.SetCookie(w, t.cookie(name, "", -1))
+}
+
 // Take returns the login in progress that the Response in r answers, found
 // by the Response's RelayState among the slots, and clears its slot. Call
 // it in the ACS handler, before Config.ParseResponse. It also clears the
 // slots that hold expired or invalid logins, but not those of other logins
 // in progress.
+//
+// Since it clears the slot before the Response is verified, a junk
+// Response posted with the user's RelayState cancels the user's login in
+// progress (see Security in the package documentation). Find and Forget
+// clear it only after.
 //
 // A browser that ignores the clearing can present the cookie again until
 // it expires, so a login may be found more than once; ParseResponse still
@@ -390,20 +450,26 @@ func (t *Tracker) Remember(w http.ResponseWriter, msg *samlsp.Message, data stri
 // IdP-initiated logins with samlsp.AllowUnsolicited passes
 // samlsp.WithRequestID only when Take succeeds.
 func (t *Tracker) Take(w http.ResponseWriter, r *http.Request) (*Login, error) {
+	cleared := map[string]bool{}
+	return t.find(r, func(name string) {
+		if !cleared[name] {
+			cleared[name] = true
+			http.SetCookie(w, t.cookie(name, "", -1))
+		}
+	})
+}
+
+// find returns the login in progress that the Response in r answers, as
+// Take does, and calls drop with the name of each slot cookie that Take
+// clears: the login's own, and those of expired or invalid logins.
+func (t *Tracker) find(r *http.Request, drop func(name string)) (*Login, error) {
 	relayState := r.FormValue("RelayState")
 	own := t.cookieName(t.slot(relayState))
 	now := t.clock.Now().Unix()
 	var (
 		login            *Login
 		expired, invalid bool
-		cleared          = map[string]bool{}
 	)
-	drop := func(name string) {
-		if !cleared[name] {
-			cleared[name] = true
-			http.SetCookie(w, t.cookie(name, "", -1))
-		}
-	}
 	for _, c := range r.Cookies() {
 		if !t.isSlot(c.Name) {
 			continue
@@ -418,7 +484,7 @@ func (t *Tracker) Take(w http.ResponseWriter, r *http.Request) (*Login, error) {
 			if now >= p.Expires {
 				expired = true
 			} else if login == nil {
-				login = &Login{ID: p.ID, RelayState: p.RelayState, Data: p.Data, Expires: time.Unix(p.Expires, 0)}
+				login = &Login{ID: p.ID, RelayState: p.RelayState, Data: p.Data, Expires: time.Unix(p.Expires, 0), slot: c.Name}
 			}
 		case now >= p.Expires:
 			drop(c.Name)

@@ -235,10 +235,15 @@ func unsigned(sp *saml.ServiceProvider) error {
 //
 // End the local session first, so that the user is logged out of this SP
 // even if the IdP never replies. If the IdP does not support single
-// logout, Request returns an error matching samlsp.ErrNoEndpoint.
+// logout, Request returns an error matching samlsp.ErrNoEndpoint. It
+// returns an error if nameID's value is empty: a LogoutRequest must name
+// the user (saml-core §3.7.1).
 //
 // The request is signed with the key of samlsp.WithSigningKey.
 func (s *Service) Request(ctx context.Context, nameID saml.NameID, relayState string, opts ...samlsp.MessageOption) (*samlsp.Message, error) {
+	if nameID.Value == "" {
+		return nil, errors.New("slo: the NameID is empty")
+	}
 	return s.config.Send(ctx, samlsp.OutgoingMessage{
 		Service:    samlsp.SingleLogoutService,
 		Param:      "SAMLRequest",
