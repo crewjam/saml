@@ -2,6 +2,7 @@ package samlsp_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/crewjam/saml"
@@ -135,5 +136,24 @@ func TestNilOptionsSkipped(t *testing.T) {
 	// QueryAttributes fails for want of an AttributeService, not a nil option.
 	if _, err := cfg.QueryAttributes(t.Context(), saml.NameID{Value: "alice"}, nil); !errors.Is(err, samlsp.ErrNoEndpoint) {
 		t.Fatalf("QueryAttributes: %v", err)
+	}
+}
+
+// WithResponseBinding asks only for an ACS binding that the SP metadata
+// lists, which an IdP may otherwise refuse (saml-profiles §4.1.4.1).
+func TestResponseBindingListedInMetadata(t *testing.T) {
+	ti := newTestIDP(t)
+	cfg := newTestConfig(t, ti)
+	if _, err := cfg.AuthnRequest(t.Context(), "s", samlsp.WithResponseBinding(saml.HTTPPostSimpleSignBinding)); err == nil || !strings.Contains(err.Error(), "AssertionConsumerServiceBindings") {
+		t.Errorf("SimpleSign, not in the metadata: %v", err)
+	}
+	if _, err := cfg.AuthnRequest(t.Context(), "s", samlsp.WithResponseBinding(saml.HTTPArtifactBinding)); err != nil {
+		t.Errorf("Artifact, in the metadata by default: %v", err)
+	}
+	listed := newTestConfig(t, ti, samlsp.WithServiceProvider(func(sp *saml.ServiceProvider) {
+		sp.AssertionConsumerServiceBindings = []string{saml.HTTPPostBinding, saml.HTTPPostSimpleSignBinding}
+	}))
+	if _, err := listed.AuthnRequest(t.Context(), "s", samlsp.WithResponseBinding(saml.HTTPPostSimpleSignBinding)); err != nil {
+		t.Errorf("SimpleSign, in the metadata: %v", err)
 	}
 }

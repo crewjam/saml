@@ -204,6 +204,11 @@ func WithACSIndex(index int) AuthnOption {
 // WithResponseBinding asks the IdP to send its response with binding:
 // saml.HTTPPostBinding (the default), saml.HTTPArtifactBinding or
 // saml.HTTPPostSimpleSignBinding. ParseResponse accepts all three either way.
+// The SP metadata must list the ACS with any binding other than
+// HTTP-POST, as it lists HTTP-Artifact by default, or AuthnRequest
+// returns an error:
+// for HTTP-POST-SimpleSign, add it to the saml.ServiceProvider's
+// AssertionConsumerServiceBindings with WithServiceProvider.
 func WithResponseBinding(binding string) AuthnOption {
 	return authnOptionFunc(func(o *authnOptions) { o.responseBinding = binding })
 }
@@ -309,6 +314,12 @@ func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...Au
 					return nil, fmt.Errorf("samlsp: the SP metadata has no AssertionConsumerService with index %d", *o.acsIndex)
 				}
 				sp.AcsIndex = o.acsIndex
+			} else if acsURL := sp.AcsURL.String(); o.responseBinding != saml.HTTPPostBinding && !hasACS(c.Metadata(ctx), acsURL, o.responseBinding) {
+				// An IdP may refuse a request for an ACS, by URL and
+				// binding, that the SP metadata does not list
+				// (saml-profiles §4.1.4.1). HTTP-POST, the default, is
+				// not checked, to spare building the metadata.
+				return nil, fmt.Errorf("samlsp: the SP metadata has no AssertionConsumerService at %s with the binding %s; list it in the saml.ServiceProvider's AssertionConsumerServiceBindings", acsURL, o.responseBinding)
 			}
 			// The binding argument "" makes no signature; Send signs.
 			req, err := sp.MakeAuthenticationRequest(destination, "", o.responseBinding)
@@ -450,6 +461,19 @@ func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...Res
 }
 
 // hasACSIndex reports whether md has an AssertionConsumerService with index.
+// hasACS reports whether md, SP metadata, lists an
+// AssertionConsumerService at location with binding.
+func hasACS(md *saml.EntityDescriptor, location, binding string) bool {
+	for _, d := range md.SPSSODescriptors {
+		for _, acs := range d.AssertionConsumerServices {
+			if acs.Location == location && acs.Binding == binding {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func hasACSIndex(md *saml.EntityDescriptor, index int) bool {
 	for _, d := range md.SPSSODescriptors {
 		for _, acs := range d.AssertionConsumerServices {
