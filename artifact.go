@@ -138,6 +138,8 @@ func (sp *ServiceProvider) checkArtifact(artifactID string) (*samlArtifact, erro
 // resolved again through another EndpointIndex; any other artifact by its
 // value. The record is kept for MaxIssueDelay, which bounds how long an
 // IdP should keep an artifact resolvable (saml-bindings-2.0-os §3.6.5.2).
+// It is called only once the artifact has resolved to a verified Response,
+// because anyone can make a SAMLart with the right SourceID.
 func (sp *ServiceProvider) consumeArtifact(artifactID string, artifact *samlArtifact) error {
 	if sp.ReplayCache == nil {
 		return nil

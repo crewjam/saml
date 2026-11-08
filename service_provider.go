@@ -425,9 +425,10 @@ type ServiceProvider struct {
 	// collide with assertion IDs, which are recorded as is and, being
 	// xs:ID values, contain no colon.
 	//
-	// It also records each artifact ParseResponse resolves, before
-	// resolving it, and refuses an artifact it has already recorded
-	// (saml-bindings-2.0-os §3.6.5.2: an artifact is resolved only once). A
+	// It also records each artifact ParseResponse resolves, once the IdP
+	// has resolved it to a verified Response, and refuses an artifact it has
+	// already recorded (saml-bindings-2.0-os §3.6.5.2: an artifact is
+	// resolved only once). A
 	// type 0x0004 artifact is recorded under "Artifact:" followed by the hex
 	// SourceID, a colon and the hex MessageHandle; any other artifact under
 	// "Artifact:raw:" followed by its value.
@@ -1350,11 +1351,6 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 		retErr.PrivateErr = classify(fmt.Errorf("invalid artifact: %w", err), ErrArtifactResolution)
 		return nil, retErr
 	}
-	if err := sp.consumeArtifact(artifactID, artifact); err != nil {
-		retErr.PrivateErr = classify(err, ErrArtifactResolution)
-		return nil, retErr
-	}
-
 	artifactResolveRequest, err := sp.MakeArtifactResolveRequest(artifactID)
 	if err != nil {
 		retErr.PrivateErr = classify(fmt.Errorf("cannot generate artifact resolution request: %w", err), ErrArtifactResolution)
@@ -1415,6 +1411,16 @@ func (sp *ServiceProvider) handleArtifactRequest(ctx context.Context, artifactID
 	assertion, err := sp.ParseXMLArtifactResponse(responseBody, possibleRequestIDs, artifactResolveRequest.ID, sp.AcsURL)
 	if err != nil {
 		return nil, err
+	}
+	// The artifact is recorded only now that the IdP has resolved it to a
+	// verified Response, so that a SAMLart the IdP never issued leaves no
+	// record. A second resolution of the same artifact, even concurrent
+	// with this one, is still refused: by the IdP, which returns the message
+	// only once (saml-bindings-2.0-os §3.6.5.2), by the ReplayCache record
+	// of the assertion, and by this record.
+	if err := sp.consumeArtifact(artifactID, artifact); err != nil {
+		retErr.PrivateErr = classify(err, ErrArtifactResolution)
+		return nil, retErr
 	}
 	return assertion, nil
 }
