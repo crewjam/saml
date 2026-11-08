@@ -1,11 +1,10 @@
 // Package samlsp is an experimental, minimal API for implementing a SAML 2.0
-// service provider (SP) with the Web Browser SSO and Single Logout profiles.
+// service provider (SP) with the Web Browser SSO profile.
 //
-// It is a thin layer over saml.ServiceProvider. It deals with the SAML
-// protocol only: building AuthnRequests, verifying Responses, single logout,
-// and SP metadata. It does not manage sessions, cookies, JWTs or pending
-// requests. Those belong to the application. For a ready-made middleware
-// that does all of that, see github.com/crewjam/saml/samlsp.
+// It is a thin layer over saml.ServiceProvider that builds AuthnRequests,
+// verifies Responses, and serves the SP metadata. Single logout is in
+// github.com/crewjam/saml/x/samlsp/slo. For a ready-made middleware with
+// sessions, see github.com/crewjam/saml/samlsp.
 //
 // The shape of the API follows golang.org/x/oauth2 and
 // github.com/coreos/go-oidc: a plain Config struct, a function that

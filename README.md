@@ -239,7 +239,7 @@ With the `samlsp` middleware, `samlSP.QueryAttributes(r, attributes...)` queries
 
 ## A protocol-only service provider: x/samlsp
 
-The experimental package `github.com/crewjam/saml/x/samlsp` is a thin layer over `saml.ServiceProvider` shaped after `golang.org/x/oauth2` and `go-oidc`. It deals with the SAML protocol only: it builds requests, verifies responses and serves the SP metadata, and leaves sessions, cookies and the storage of pending requests to the application. Its API may change.
+The experimental package `github.com/crewjam/saml/x/samlsp` is a thin layer over `saml.ServiceProvider` shaped after `golang.org/x/oauth2` and `go-oidc`. It builds requests, verifies responses and serves the SP metadata. Its API may change.
 
 ```golang
 config, err := samlsp.New(
