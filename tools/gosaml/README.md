@@ -109,7 +109,7 @@ into the binary itself. A binary built without `deploy.sh` says `dev`.
 First deploy:
 
 ```sh
-fly apps create gosamldev
+fly apps create gosaml
 fly volumes create gosaml_data --region iad --size 1 --yes
 fly certs add gosaml.dev    # then set DNS as `fly certs show gosaml.dev` says
 ./deploy.sh
@@ -118,23 +118,23 @@ fly certs add gosaml.dev    # then set DNS as `fly certs show gosaml.dev` says
 ### Deploying from GitHub Actions
 
 Each push to `main` is deployed by
-`.github/workflows/gosaml-deploy.yml`. It can also be run by hand from the
-Actions tab (main only). A build job with no secrets vets, tests and builds
-(`./deploy.sh dist`); a deploy job then runs `flyctl deploy` on that
-binary. The deploy job is the only place the Fly token is available.
+`.github/workflows/gosamldev-production.yml`. It can also be run by hand
+from the Actions tab (main only). A build job with no secrets vets, tests
+and builds (`./deploy.sh dist`); a deploy job then runs `flyctl deploy` on
+that binary. The deploy job is the only place the Fly token is available.
 
 One-time setup, by a repository admin:
 
 1. Make a deploy token for this one app, not an organization token:
 
    ```sh
-   fly tokens create deploy --app gosamldev --name github-actions --expiry 8760h
+   fly tokens create deploy --app gosaml --name github-actions --expiry 8760h
    ```
 
    It prints `FlyV1 fm2_…`; copy the whole line, `FlyV1 ` included. Do not
    save it anywhere else.
 2. In GitHub, *Settings → Environments → New environment*, name it
-   `gosaml-production` (the workflow names it; it must match).
+   `gosamldev-production` (the workflow names it; it must match).
 3. Under *Deployment branches and tags*, choose *Selected branches and
    tags* and add the rule `main`. Leave *Allow administrators to bypass*
    unchecked if offered.
@@ -146,7 +146,7 @@ One-time setup, by a repository admin:
    each deploy.
 
 To rotate the token, make a new one, replace the secret, then revoke the
-old one: `fly tokens list --app gosamldev`, then `fly tokens revoke <id>`.
+old one: `fly tokens list --app gosaml`, then `fly tokens revoke <id>`.
 Revoke it right away if it may have leaked.
 
 Environment variables: `GOSAML_BASE_URL` (default

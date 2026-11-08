@@ -3,12 +3,12 @@
 # one-time setup of the FLY_API_TOKEN secret.
 #
 # How the token is kept safe:
-#   - It is an *environment* secret of the "gosaml-production" environment,
-#     not a repository secret, and that environment only lets the main
-#     branch deploy. A workflow run on any other branch, or for a pull
-#     request (from a fork or not), cannot read it, even if it edits this
-#     file.
-#   - It is a Fly deploy token for the gosamldev app alone, not an
+#   - It is an *environment* secret of the "gosamldev-production"
+#     environment, not a repository secret, and that environment only lets
+#     the main branch deploy. A workflow run on any other branch, or for
+#     a pull request (from a fork or not), cannot read it, even if it
+#     edits this file.
+#   - It is a Fly deploy token for the gosaml app alone, not an
 #     organization or personal token.
 #   - Only the deploy job uses the environment. All of the Go code (the
 #     tests, go vet, the build, and the modules they download) runs in the
@@ -17,7 +17,7 @@
 #   - There is no pull_request_target or workflow_run trigger, every
 #     action is pinned to a commit, and the GITHUB_TOKEN is read-only and
 #     is not left in the checkout.
-name: gosaml deploy
+name: gosamldev-production
 
 on:
   push:
@@ -31,7 +31,7 @@ permissions:
 
 # One deploy at a time, in order; never cancel one halfway.
 concurrency:
-  group: gosaml-deploy
+  group: gosamldev-production
   cancel-in-progress: false
 
 jobs:
@@ -65,7 +65,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
-      name: gosaml-production
+      name: gosamldev-production
       url: https://gosaml.dev
     defaults:
       run:
