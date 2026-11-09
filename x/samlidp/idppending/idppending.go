@@ -412,6 +412,12 @@ func (t *Tracker) Remember(w http.ResponseWriter, r *http.Request, req *samlidp.
 	if err != nil {
 		return "", err
 	}
+	// The sealed body is longer than body, and its base64 longer still, so
+	// a body longer than the cookie budget cannot fit: refuse it before
+	// allocating and sealing.
+	if len(body) > t.maxCookieSize() {
+		return "", fmt.Errorf("idppending: the request takes %d bytes, more than the %d a request cookie may (see WithMaxCookiesSize)", len(body), t.maxCookieSize())
+	}
 	name := t.cookieName(slot)
 	nonce := make([]byte, t.aead.NonceSize(), t.aead.NonceSize()+len(body)+t.aead.Overhead())
 	if _, err := io.ReadFull(t.config.Rand(), nonce); err != nil {
