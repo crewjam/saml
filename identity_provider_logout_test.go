@@ -388,6 +388,11 @@ func TestIDPServeSLORejectsInvalidRequests(t *testing.T) {
 			req.Issuer = nil
 			return test.signedPostRequest(t, req)
 		}},
+		{"issuer Format not entity", func(t *testing.T, test *sloTest) *http.Request {
+			req := test.logoutRequest()
+			req.Issuer.Format = string(PersistentNameIDFormat)
+			return test.redirectRequest(t, req)
+		}},
 		{"wrong destination", func(t *testing.T, test *sloTest) *http.Request {
 			req := test.logoutRequest()
 			req.Destination = "https://other-idp.example.com/saml/slo"

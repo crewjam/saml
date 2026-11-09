@@ -962,9 +962,16 @@ func (idp *IdentityProvider) validateLogoutResponseFields(resp *LogoutResponse, 
 }
 
 // validateLogoutResponseAnswer checks the fields of an authenticated
-// LogoutResponse, other than its Issuer and Destination, as an answer to the
-// LogoutRequest requestID, at the time now, allowing the time limits l.
+// LogoutResponse, other than its Destination and the value of its Issuer, as
+// an answer to the LogoutRequest requestID, at the time now, allowing the
+// time limits l. The Issuer Format must be omitted or entity (saml-profiles
+// §4.4.4.2).
 func validateLogoutResponseAnswer(resp *LogoutResponse, requestID string, now time.Time, l timeLimits) error {
+	if resp.Issuer != nil {
+		if err := checkIssuerFormat("LogoutResponse", resp.Issuer, "saml-profiles §4.4.4.2"); err != nil {
+			return err
+		}
+	}
 	switch {
 	case resp.InResponseTo != requestID:
 		return fmt.Errorf("logout response InResponseTo %q does not match the outstanding request", resp.InResponseTo)

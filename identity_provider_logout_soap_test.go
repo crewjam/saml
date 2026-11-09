@@ -286,6 +286,11 @@ func TestIDPRejectsBadSOAPLogoutResponses(t *testing.T) {
 				resp.Issuer.Value = "https://sp1.example.com/metadata"
 			})
 		}, nil},
+		{"issuer Format not entity", func(_ *testing.T, sp *ServiceProvider, req *LogoutRequest) []byte {
+			return soapLogoutResponseBody(sp, req.ID, StatusSuccess, func(resp *LogoutResponse) {
+				resp.Issuer.Format = string(PersistentNameIDFormat)
+			})
+		}, nil},
 		{"wrong InResponseTo (replayed response)", func(_ *testing.T, sp *ServiceProvider, _ *LogoutRequest) []byte {
 			return soapLogoutResponseBody(sp, "id-an-earlier-request", StatusSuccess, nil)
 		}, nil},
