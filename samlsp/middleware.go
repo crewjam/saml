@@ -154,7 +154,7 @@ func (m *Middleware) ServeMetadata(w http.ResponseWriter, _ *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/samlmetadata+xml")
 	if _, err := w.Write(buf); err != nil { //nolint:gosec // buf is our own XML metadata, served as application/samlmetadata+xml
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalServerError(w, err)
 		return
 	}
 }
@@ -225,6 +225,15 @@ func (m *Middleware) RequireAccount(handler http.Handler) http.Handler {
 	})
 }
 
+// internalServerError logs err and answers 500 Internal Server Error. The
+// client gets only the status text: err may describe the service provider's
+// keys, signing configuration, IdP metadata or session store, which is for
+// the operator, not for whoever sent the request.
+func internalServerError(w http.ResponseWriter, err error) {
+	log.Printf("ERROR: %s", err)
+	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+}
+
 // HandleStartAuthFlow is called to start the SAML authentication process.
 func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request) {
 	// If we try to redirect when the original request is the ACS URL we'll
@@ -250,7 +259,7 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 
 	authReq, err := m.ServiceProvider.MakeAuthenticationRequest(bindingLocation, binding, m.ResponseBinding)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalServerError(w, err)
 		return
 	}
 
@@ -260,7 +269,7 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 	// against the SAML response when we get it.
 	relayState, err := m.RequestTracker.TrackRequest(w, r, authReq.ID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalServerError(w, err)
 		return
 	}
 
@@ -274,7 +283,7 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 	if binding == saml.HTTPRedirectBinding {
 		redirectURL, err := authReq.Redirect(relayState, &m.ServiceProvider)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalServerError(w, err)
 			return
 		}
 		setNoCacheHeaders(w.Header())
@@ -289,7 +298,7 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 	if binding == saml.HTTPPostSimpleSignBinding {
 		form, err := authReq.SimpleSignWithNonce(relayState, m.scriptNonce(r), &m.ServiceProvider)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalServerError(w, err)
 			return
 		}
 		// The SimpleSign form uses the same auto-submit script as the
@@ -346,7 +355,7 @@ func (m *Middleware) writePostForm(w http.ResponseWriter, scriptHash string, for
 	buf.Write(form)
 	buf.WriteString(`</body></html>`)
 	if _, err := w.Write(buf.Bytes()); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalServerError(w, err)
 		return
 	}
 }
