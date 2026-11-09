@@ -298,10 +298,11 @@ func chooseBinding(preferred string, locate func(string) string) (string, string
 // browser to the identity provider with, by calling Message.Write.
 //
 // relayState comes back with the response. Use it to find the pending
-// login, which must hold the returned Message.ID, and the
-// Message.RequestedAuthnContext, until ParseResponse is called with
-// WithRequest. x/samlsp/pending keeps both in a cookie. relayState should
-// be unpredictable and at most 80 bytes long.
+// login, which must hold the returned Message.ID, the
+// Message.RequestedAuthnContext and the Message.IdentityProvider, until
+// ParseResponse is called with WithRequest and WithExpectedIssuer.
+// x/samlsp/pending keeps all three in a cookie. relayState should be
+// unpredictable and at most 80 bytes long.
 func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...AuthnOption) (*Message, error) {
 	o := authnOptions{responseBinding: saml.HTTPPostBinding}
 	for _, opt := range opts {
@@ -318,12 +319,14 @@ func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...Au
 		return nil, err
 	}
 	ctx = IdentityProviderContext(ctx, o.idp)
+	var idpEntityID string
 	msg, err := c.send(ctx, OutgoingMessage{
 		Service:    SingleSignOnService,
 		Param:      "SAMLRequest",
 		RelayState: relayState,
 		Sign:       c.signRequests,
 		Build: func(sp *saml.ServiceProvider, destination string, modify func(any) error) (*etree.Element, error) {
+			idpEntityID = sp.IDPMetadata.EntityID
 			if o.forceAuthn {
 				t := true
 				sp.ForceAuthn = &t
@@ -374,6 +377,7 @@ func (c *Config) AuthnRequest(ctx context.Context, relayState string, opts ...Au
 		return nil, err
 	}
 	msg.authnContext = cloneRequestedAuthnContext(o.authnContext)
+	msg.idp = idpEntityID
 	return msg, nil
 }
 
@@ -389,6 +393,9 @@ type responseOptions struct {
 	authnContext *saml.RequestedAuthnContext
 	sp           []ServiceProviderOption
 	idp          MetadataFunc
+
+	// expectedIssuers are the entity IDs of WithExpectedIssuer.
+	expectedIssuers []string
 
 	// requested is the authentication context that each request of
 	// WithRequest asked for, by ID; nil for one that asked for none.
@@ -531,6 +538,14 @@ func checkAuthnAge(a *saml.Assertion, maxAge, skew time.Duration, now time.Time)
 // AllowIDPInitiated set with WithServiceProvider). Otherwise ParseResponse
 // returns ErrNoRequestID.
 //
+// The Response is verified against the identity provider of
+// WithIdentityProvider (or of the context, or of New). An SP that trusts
+// several IdPs passes WithExpectedIssuer too, with the IdP the request was
+// sent to (Message.IdentityProvider), as x/samlsp/pending.Login.ResponseOption
+// does, so that a Response from another of its IdPs is refused even when
+// the application chose the IdP to verify it with from the Response
+// itself (PeekUnverifiedIssuer).
+//
 // AllowUnsolicited and an AuthnContextOption passed to ParseResponse, or
 // the authentication context of a WithRequest, take precedence over the
 // corresponding settings made with WithServiceProvider; without them,
@@ -554,6 +569,10 @@ func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...Res
 	if err := checkAuthnContext(o.authnContext); err != nil {
 		return nil, err
 	}
+	wantIssuer, err := o.expectedIssuer()
+	if err != nil {
+		return nil, err
+	}
 	ctx = IdentityProviderContext(ctx, o.idp)
 	sp, err := c.serviceProvider(ctx, o.sp)
 	if err != nil {
@@ -561,6 +580,14 @@ func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...Res
 	}
 	if err := checkIDPSSO(sp.IDPMetadata); err != nil {
 		return nil, err
+	}
+	// Package saml requires the Issuer of the Response and of the
+	// assertion to be the entity ID of the metadata, so metadata of
+	// another IdP than the expected one cannot verify an acceptable
+	// Response: refuse it before reading the request, or resolving an
+	// artifact with that IdP.
+	if wantIssuer != "" && sp.IDPMetadata.EntityID != wantIssuer {
+		return nil, unexpectedIssuer(sp.IDPMetadata.EntityID, wantIssuer, clockNow(sp.Clock))
 	}
 	if o.unsolicited {
 		sp.AllowIDPInitiated = true
@@ -596,6 +623,11 @@ func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...Res
 		return nil, err
 	}
 	now := clockNow(sp.Clock)
+	if wantIssuer != "" && a.Issuer.Value != wantIssuer {
+		// Unreachable unless package saml stops checking it; kept so
+		// that the guarantee does not rest on that alone.
+		return nil, unexpectedIssuer(a.Issuer.Value, wantIssuer, now)
+	}
 	skew := timelimit.SPClockSkew(sp)
 	if o.maxAuthnAge > 0 {
 		if err := checkAuthnAge(a, o.maxAuthnAge, skew, now); err != nil {

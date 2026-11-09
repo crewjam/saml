@@ -65,12 +65,14 @@
 //
 // However many logins a browser starts and abandons, it sends the ACS at
 // most one cookie per slot: with a 26-character RelayState, such as
-// rand.Text, and a 20-byte return path as data, a slot cookie takes about
-// 210 bytes of the Cookie header, so all 16 default slots take about
-// 3.3 KB, well within the 8 KB of headers that proxies often allow.
-// Larger data makes each slot larger, so Remember refuses a cookie larger
-// than its share of DefaultMaxCookiesSize (WithMaxCookiesSize): 384 bytes
-// with 16 slots, which leaves room for about 150 bytes of data. Without
+// rand.Text, a 20-byte return path as data and an IdP whose entity ID is
+// a 32-byte https URL, a slot cookie takes about 250 bytes of the Cookie
+// header, so all 16 default slots take about 4 KB, well within the 8 KB of
+// headers that proxies often allow. Larger data, or a longer entity ID,
+// makes each slot larger, so Remember refuses a cookie larger than its
+// share of DefaultMaxCookiesSize (WithMaxCookiesSize): 384 bytes with 16
+// slots, which leaves room for about 150 bytes of data and entity ID
+// together. Without
 // that bound, a site that can send the user's browser to the login URL,
 // with data such as a long return path taken from the URL, could fill
 // every slot with a large cookie, and the proxy would refuse the requests
@@ -110,11 +112,22 @@
 // and one that says where to return, or counts logins, gives away more
 // than it need.
 //
-// An SP that trusts several IdPs should record in the data passed to
-// Remember which IdP it sent the AuthnRequest to, and check after
-// ParseResponse that the assertion's Issuer is that IdP: the pending
-// login says which request a Response answers, not which IdP must answer
-// it.
+// The cookie also keeps the entity ID of the IdP the AuthnRequest was sent
+// to (samlsp.Message.IdentityProvider), and Login.ResponseOption makes
+// ParseResponse refuse a Response from any other IdP, with an error
+// matching samlsp.ErrUnexpectedIssuer. An SP that trusts several IdPs, one
+// per tenant, needs this: a Response is verified against the IdP that
+// ParseResponse is given, and the request ID alone does not say which one
+// that must be, so one tenant's IdP could otherwise answer a login started
+// for another tenant's user. Pass ParseResponse the IdP of
+// Login.IdentityProvider (samlsp.WithIdentityProvider) rather than one
+// chosen from the Response.
+//
+// A cookie set before Remember kept the IdP has none: Login.IdentityProvider
+// is then "" and Login.ResponseOption does not check the Issuer. Such
+// cookies expire within the max age of the Tracker that set them
+// (DefaultMaxAge), and the MAC stops anyone from removing the IdP from a
+// newer cookie.
 //
 // This package is built only on the public API of x/samlsp, which itself
 // leaves sessions and cookies to the application. Applications that keep
@@ -187,8 +200,16 @@ var ErrInvalid = errors.New("pending: the login cookie is not valid")
 // Login is a login in progress that Find found.
 type Login struct {
 	// ID is the ID of the AuthnRequest. Pass it to ParseResponse with
-	// ResponseOption, which also carries AuthnContext.
+	// ResponseOption, which also carries AuthnContext and
+	// IdentityProvider.
 	ID string
+
+	// IdentityProvider is the entity ID of the identity provider the
+	// AuthnRequest was sent to (samlsp.Message.IdentityProvider): the
+	// only one whose Response ResponseOption accepts. Pass ParseResponse
+	// that IdP's metadata. It is "" for a login remembered before the
+	// cookie kept it, or for a Message that names no IdP.
+	IdentityProvider string
 
 	// AuthnContext is the authentication context that the AuthnRequest
 	// asked for with samlsp.WithAuthnContext, or nil.
@@ -214,15 +235,21 @@ type Login struct {
 }
 
 // ResponseOption returns the option that makes ParseResponse accept only
-// a Response to this login's AuthnRequest and enforce the authentication
-// context it asked for: samlsp.WithRequest with ID and AuthnContext. Pass
-// it rather than samlsp.WithRequestID(login.ID), which would not enforce
-// the context. It returns nil, which ParseResponse ignores, if l is nil.
+// a Response to this login's AuthnRequest, from the IdP it was sent to,
+// and enforce the authentication context it asked for: samlsp.WithRequest
+// with ID and AuthnContext, and samlsp.WithExpectedIssuer with
+// IdentityProvider, if not "". Pass it rather than
+// samlsp.WithRequestID(login.ID), which would enforce neither the context
+// nor the IdP. It returns nil, which ParseResponse ignores, if l is nil.
 func (l *Login) ResponseOption() samlsp.ResponseOption {
 	if l == nil {
 		return nil
 	}
-	return samlsp.WithRequest(l.ID, l.AuthnContext)
+	req := samlsp.WithRequest(l.ID, l.AuthnContext)
+	if l.IdentityProvider == "" {
+		return req
+	}
+	return samlsp.ResponseOptions(req, samlsp.WithExpectedIssuer(l.IdentityProvider))
 }
 
 // Tracker keeps logins in progress in cookies. Create one with New. It is
@@ -367,7 +394,8 @@ func New(config *samlsp.Config, key []byte, opts ...Option) (*Tracker, error) {
 }
 
 // minCookieSize is the least room for a slot cookie that New accepts:
-// enough for a 26-character RelayState and a short return path.
+// enough for a 26-character RelayState, a short return path and the
+// entity ID of a typical IdP.
 const minCookieSize = 256
 
 // maxCookieSize returns how many bytes of the Cookie header one slot
@@ -383,6 +411,40 @@ type payload struct {
 	Expires      int64         `json:"e"`
 	Data         string        `json:"d,omitempty"`
 	AuthnContext *authnContext `json:"a,omitempty"`
+
+	// IDP is the entity ID of the IdP, kept small: one that begins
+	// with "https://" as "~" and the rest, and any other as "=" and the
+	// whole. Cookies set before it was kept have none.
+	IDP string `json:"p,omitempty"`
+}
+
+// httpsPrefix begins most entity IDs.
+const httpsPrefix = "https://"
+
+// compactEntityID returns id as payload.IDP keeps it, or "" if id is "".
+func compactEntityID(id string) string {
+	if id == "" {
+		return ""
+	}
+	if rest, ok := strings.CutPrefix(id, httpsPrefix); ok {
+		return "~" + rest
+	}
+	return "=" + id
+}
+
+// expandEntityID returns the entity ID that compactEntityID made c from,
+// and false if c is malformed.
+func expandEntityID(c string) (string, bool) {
+	switch {
+	case c == "":
+		return "", true
+	case strings.HasPrefix(c, "~"):
+		return httpsPrefix + c[1:], true
+	case strings.HasPrefix(c, "=") && len(c) > 1:
+		return c[1:], true
+	default:
+		return "", false
+	}
 }
 
 // authnContext is a saml.RequestedAuthnContext, kept small: the
@@ -443,7 +505,13 @@ func (c *authnContext) expand() (*saml.RequestedAuthnContext, bool) {
 // context it asked for (msg.RequestedAuthnContext) and data for the
 // application, such as where to send the user after login. Call it before
 // msg.Write. It replaces the login in progress in the same slot, if any,
-// and leaves the other slots alone.
+// and leaves the other slots alone. It also keeps the entity ID of the IdP
+// that msg is sent to (msg.IdentityProvider), so that Login.ResponseOption
+// accepts a Response from that IdP only.
+//
+// The entity ID takes room in the cookie: 4/3 of its length for one that
+// begins with "https://", and 4/3 of 8 bytes more than its length for any
+// other.
 //
 // A requested authentication context takes room in the cookie: 56 bytes
 // for PasswordProtectedTransport alone, and 4/3 of 4 bytes more than its
@@ -463,6 +531,7 @@ func (t *Tracker) Remember(w http.ResponseWriter, msg *samlsp.Message, data stri
 		Expires:      t.clock.Now().Add(t.maxAge).Unix(),
 		Data:         data,
 		AuthnContext: compactAuthnContext(msg.RequestedAuthnContext()),
+		IDP:          compactEntityID(msg.IdentityProvider()),
 	}
 	body, err := json.Marshal(p)
 	if err != nil {
@@ -521,8 +590,12 @@ func (t *Tracker) Find(w http.ResponseWriter, r *http.Request) (*Login, error) {
 			expired = expired || subtle.ConstantTimeCompare([]byte(p.RelayState), []byte(relayState)) == 1
 			stale = append(stale, c.Name)
 		case login == nil && subtle.ConstantTimeCompare([]byte(p.RelayState), []byte(relayState)) == 1:
-			rac, _ := p.AuthnContext.expand() // open checked it
-			login = &Login{ID: p.ID, RelayState: p.RelayState, AuthnContext: rac, Data: p.Data, Expires: time.Unix(p.Expires, 0), slot: c.Name}
+			rac, _ := p.AuthnContext.expand() // open checked both
+			idp, _ := expandEntityID(p.IDP)
+			login = &Login{
+				ID: p.ID, RelayState: p.RelayState, AuthnContext: rac, IdentityProvider: idp,
+				Data: p.Data, Expires: time.Unix(p.Expires, 0), slot: c.Name,
+			}
 		}
 	}
 	// A browser may send two cookies of one name, such as one tossed by
@@ -582,6 +655,9 @@ func (t *Tracker) open(name, value string) (payload, bool) {
 		return p, false
 	}
 	if _, ok := p.AuthnContext.expand(); !ok {
+		return p, false
+	}
+	if _, ok := expandEntityID(p.IDP); !ok {
 		return p, false
 	}
 	return p, true
