@@ -26,13 +26,13 @@ Less important but in scope:
 - Metadata generation and marshalling round-trips.
 
 Out of scope:
-- `example/` programs and `tools/gosaml` (a demo/test site) except where they reveal a library bug.
+- `example/` programs and `tools/gosamldev` (the gosaml.dev demo and inspector site) except where they reveal a library bug.
 - `samlidp` is documented as a rudimentary test IdP; report issues in it, but rate missing production hardening (e.g., no rate limiting, weak default password storage choices made explicit by the caller) as low.
 - Vulnerabilities in third-party dependencies unless this library uses them in an unsafe way.
 
 ## How to exercise it
 - `go test ./...` at the repository root runs the full suite; tests are self-contained and use fixtures in `testdata/` directories (signed responses, metadata, keys).
-- `tools/gosaml` is a separate Go module (with a replace directive pointing at the root) — `cd tools/gosaml && go test ./...`.
+- `tools/gosamldev` is a separate Go module (with a replace directive pointing at the root) — `cd tools/gosamldev && go test ./...`.
 - Good proof of a finding is a Go test in the relevant package that builds or mutates a fixture (e.g. a signed Response from `testdata/`) and shows `ParseResponse` / middleware accepting it when it should not.
 
 ## How you rate severity
