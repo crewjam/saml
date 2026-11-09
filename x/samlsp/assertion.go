@@ -21,7 +21,10 @@ type Assertion struct {
 
 	// NameID identifies the user. Keep it, with its Format and
 	// qualifiers, for single logout (x/samlsp/slo). It is zero if the
-	// assertion identifies the user with a BaseID (see Raw).
+	// assertion identifies the user with a BaseID (see Raw), or not at
+	// all: the identifier is optional (saml-core §2.4.1), and AD FS, for
+	// one, sends none unless a claim rule issues a Name ID. Identify the
+	// user by an attribute then.
 	NameID saml.NameID
 
 	// BaseID is the saml:BaseID element that identifies the user instead
@@ -30,7 +33,8 @@ type Assertion struct {
 	BaseID *etree.Element
 
 	// Subject is NameID.Value. Its meaning depends on NameID.Format: a
-	// transient NameID changes with every login.
+	// transient NameID changes with every login. It is empty if the
+	// assertion has no NameID, or one with an empty value.
 	Subject string
 
 	// InResponseTo is the ID of the AuthnRequest that the assertion
