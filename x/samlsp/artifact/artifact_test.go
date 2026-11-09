@@ -210,6 +210,13 @@ func TestResolveRefusesBadRequests(t *testing.T) {
 		t.Errorf("no ID: %d", w.Code)
 	}
 
+	// An Issuer whose Format is not entity (saml-profiles §5.4.1).
+	persistentIssuer := (&saml.ArtifactResolve{ID: "id-z", Version: "2.0", IssueInstant: time.Now().UTC(),
+		Issuer: &saml.Issuer{Value: idpEntityID, Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"}, Artifact: art}).Element()
+	if w := postSOAP(b, soapStart+signedElement(t, persistentIssuer, idp.key, idp.cert)+soapEnd); !isFault(w) {
+		t.Errorf("Issuer Format not entity: %d", w.Code)
+	}
+
 	// None of these used up the artifact.
 	if store.Len() != 1 {
 		t.Fatalf("%d messages stored, want 1", store.Len())
