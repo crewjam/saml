@@ -31,7 +31,7 @@ func TestNewAssertionInResponseToChecksAddress(t *testing.T) {
 		recipient: "https://sp.example.com/acs", start: now, end: now,
 		address: func(d *saml.SubjectConfirmationData) bool { return d.Address == "192.0.2.1" },
 	}
-	if got := newAssertion(a, []string{"id-other", "id-mine"}, check).InResponseTo; got != "id-mine" {
+	if got := newAssertion(a, "", []string{"id-other", "id-mine"}, check).InResponseTo; got != "id-mine" {
 		t.Errorf("InResponseTo = %q, want id-mine", got)
 	}
 }

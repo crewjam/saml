@@ -116,6 +116,17 @@
 //		startSession(w, assertion.NameID, assertion.SessionIndexes, assertion.Attributes)
 //	}
 //
+// To find the user's account, use Assertion.SubjectKey, not Subject. The
+// NameID's value alone does not identify a user: a transient NameID, which
+// this package requests unless WithNameIDFormat says otherwise, changes
+// with every login, and even a persistent one is unique only together with
+// the IdP that issued it and its qualifiers (saml-core §8.3.7), so two
+// IdPs can give two users the same value. SubjectKey combines them in a
+// fixed encoding that can be stored, and refuses a transient NameID. An
+// application that keys accounts by an attribute instead, such as an
+// employee number, must likewise qualify it with Assertion.Issuer. Keep the NameID itself, as above,
+// for single logout.
+//
 // An application can keep the ID elsewhere instead, such as in a
 // server-side session, with the Message's RequestedAuthnContext, and pass
 // both to ParseResponse with WithRequest. A cookie for them must reach the

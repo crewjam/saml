@@ -1,7 +1,11 @@
 package samlsp
 
 import (
+	"errors"
+	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/beevik/etree"
@@ -19,6 +23,12 @@ type Assertion struct {
 	// Issuer is the entityID of the identity provider.
 	Issuer string
 
+	// SPEntityID is the entityID of the service provider that accepted
+	// the assertion: the entity ID given to New, or the EntityID a
+	// ServiceProviderOption set. SubjectKey uses it in place of an omitted
+	// SPNameQualifier.
+	SPEntityID string
+
 	// NameID identifies the user. Keep it, with its Format and
 	// qualifiers, for single logout (x/samlsp/slo). It is zero if the
 	// assertion identifies the user with a BaseID (see Raw).
@@ -30,7 +40,11 @@ type Assertion struct {
 	BaseID *etree.Element
 
 	// Subject is NameID.Value. Its meaning depends on NameID.Format: a
-	// transient NameID changes with every login.
+	// transient NameID, which this package requests by default, changes
+	// with every login, and even a persistent one is unique only together
+	// with the IdP that issued it and its qualifiers (saml-core §8.3.7).
+	// Show it to people if it suits, but do not key accounts by it: use
+	// SubjectKey.
 	Subject string
 
 	// InResponseTo is the ID of the AuthnRequest that the assertion
@@ -92,13 +106,14 @@ func (c bearerCheck) passes(d *saml.SubjectConfirmationData) bool {
 }
 
 // newAssertion returns the Assertion for a, which package saml verified
-// as answering one of requestIDs, or as unsolicited, by a bearer
-// confirmation that passes check.
-func newAssertion(a *saml.Assertion, requestIDs []string, check bearerCheck) *Assertion {
+// for the service provider spEntityID as answering one of requestIDs, or
+// as unsolicited, by a bearer confirmation that passes check.
+func newAssertion(a *saml.Assertion, spEntityID string, requestIDs []string, check bearerCheck) *Assertion {
 	out := &Assertion{
-		ID:     a.ID,
-		Issuer: a.Issuer.Value,
-		Raw:    a,
+		ID:         a.ID,
+		Issuer:     a.Issuer.Value,
+		SPEntityID: spEntityID,
+		Raw:        a,
 	}
 	if a.Subject != nil {
 		if a.Subject.NameID != nil {
@@ -140,6 +155,148 @@ func newAssertion(a *saml.Assertion, requestIDs []string, check bearerCheck) *As
 		out.Attributes = append(out.Attributes, convertAttributes(st.Attributes)...)
 	}
 	return out
+}
+
+// ErrNoSubjectKey is returned, wrapped, by SubjectKey and SubjectKeyParts
+// when the assertion does not identify the user in a way that is stable
+// across logins, such as with a transient NameID.
+var ErrNoSubjectKey = errors.New("samlsp: the assertion has no stable subject key")
+
+// SubjectKeyParts are the parts of a NameID that together identify a user
+// across logins (saml-core §2.2.2, §8.3.7), with the defaults for omitted
+// qualifiers filled in. Two SubjectKeyParts identify the same user exactly
+// when they are equal (==). The strings are compared byte for byte, without
+// any normalization of case or of URLs.
+type SubjectKeyParts struct {
+	// Issuer is the entityID of the identity provider that issued the
+	// assertion.
+	Issuer string
+
+	// NameQualifier is the NameID's NameQualifier, or Issuer if it is
+	// omitted.
+	NameQualifier string
+
+	// SPNameQualifier is the NameID's SPNameQualifier, or the entityID of
+	// the service provider (Assertion.SPEntityID) if it is omitted.
+	SPNameQualifier string
+
+	// Format is the NameID's Format, or
+	// "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified" if it is
+	// omitted (saml-core §8.3.1).
+	Format string
+
+	// Value is the NameID's value.
+	Value string
+}
+
+// subjectKeyPrefix begins every key that Key returns. It would get a new
+// version if the encoding ever changed, so that keys of one encoding never
+// equal keys of another.
+const subjectKeyPrefix = "samlsp-subject-v1"
+
+// Key returns p encoded as one string, to store and compare as the key of
+// a user's account. The encoding is fixed, so that stored keys stay valid:
+//
+//	samlsp-subject-v1:<n>:<Issuer>:<n>:<NameQualifier>:<n>:<SPNameQualifier>:<n>:<Format>:<n>:<Value>
+//
+// where each <n> is the length in bytes of the field that follows, in
+// decimal without leading zeros, and each field is written as is. The
+// lengths make the encoding unambiguous whatever the fields contain,
+// colons included. For example, the persistent NameID "abc", with no
+// qualifiers, that https://idp.example.com/ issued to
+// https://sp.example.com/ has the key
+//
+//	samlsp-subject-v1:24:https://idp.example.com/:24:https://idp.example.com/:23:https://sp.example.com/:52:urn:oasis:names:tc:SAML:2.0:nameid-format:persistent:3:abc
+//
+// The key is valid UTF-8 if the fields are, as the text of an XML document
+// is. It has no length limit: for a fixed-length column, store a hash of it
+// (SHA-256, say).
+func (p SubjectKeyParts) Key() string {
+	var b strings.Builder
+	b.WriteString(subjectKeyPrefix)
+	for _, f := range []string{p.Issuer, p.NameQualifier, p.SPNameQualifier, p.Format, p.Value} {
+		b.WriteByte(':')
+		b.WriteString(strconv.Itoa(len(f)))
+		b.WriteByte(':')
+		b.WriteString(f)
+	}
+	return b.String()
+}
+
+// SubjectKeyParts returns the parts of the assertion's NameID that
+// identify the user across logins, with the defaults of saml-core §8.3.7
+// for omitted qualifiers: NameQualifier defaults to Issuer, and
+// SPNameQualifier to SPEntityID. The defaults apply whatever the Format,
+// so that an IdP that writes a qualifier out and one that omits it give
+// the same parts. SPProvidedID is left out: it is an alias that the SP set
+// with the Name Identifier Management protocol, not part of the name
+// (saml-core §2.2.2, §3.6).
+//
+// Issuer is always a part, even when NameQualifier is given: a
+// NameQualifier is only the IdP's claim, and one IdP must not be able to
+// name the users of another.
+//
+// It returns an error that matches ErrNoSubjectKey if the NameID is
+// transient (saml-core §8.3.8), and so changes with every login; if the
+// user is identified by a BaseID, whose meaning depends on an xsi:type
+// that this package does not interpret, or by nothing; if the NameID's
+// value or the Issuer is empty; or if SPNameQualifier is omitted and
+// SPEntityID is empty, as it may be in an Assertion that ParseResponse did
+// not make.
+//
+// Other formats are accepted, but are only as stable as the IdP keeps
+// them: an email address (saml-core §8.3.2) or an unspecified NameID may
+// change when the user's does, or be reassigned to another person. Prefer
+// the persistent format (saml.PersistentNameIDFormat, with
+// WithNameIDFormat) where the IdP offers it.
+func (a *Assertion) SubjectKeyParts() (SubjectKeyParts, error) {
+	switch {
+	case a.BaseID != nil:
+		return SubjectKeyParts{}, fmt.Errorf("%w: the user is identified by a BaseID; derive a key from Assertion.BaseID", ErrNoSubjectKey)
+	case a.NameID.Value == "":
+		return SubjectKeyParts{}, fmt.Errorf("%w: the assertion has no NameID value", ErrNoSubjectKey)
+	case a.NameID.Format == string(saml.TransientNameIDFormat):
+		return SubjectKeyParts{}, fmt.Errorf("%w: the NameID is transient, so it changes with every login; request another format with WithNameIDFormat", ErrNoSubjectKey)
+	case a.Issuer == "":
+		return SubjectKeyParts{}, fmt.Errorf("%w: the assertion has no Issuer", ErrNoSubjectKey)
+	}
+	p := SubjectKeyParts{
+		Issuer:          a.Issuer,
+		NameQualifier:   a.NameID.NameQualifier,
+		SPNameQualifier: a.NameID.SPNameQualifier,
+		Format:          a.NameID.Format,
+		Value:           a.NameID.Value,
+	}
+	if p.NameQualifier == "" {
+		p.NameQualifier = a.Issuer
+	}
+	if p.SPNameQualifier == "" {
+		if a.SPEntityID == "" {
+			return SubjectKeyParts{}, fmt.Errorf("%w: the NameID has no SPNameQualifier, and the Assertion no SPEntityID", ErrNoSubjectKey)
+		}
+		p.SPNameQualifier = a.SPEntityID
+	}
+	if p.Format == "" {
+		p.Format = string(saml.UnspecifiedNameIDFormat)
+	}
+	return p, nil
+}
+
+// SubjectKey returns a string that identifies the user across logins, to
+// key the user's account by: SubjectKeyParts, encoded by
+// SubjectKeyParts.Key, whose encoding is fixed. Unlike Subject, it tells
+// apart users of different IdPs, or of different qualifiers of one IdP,
+// who share a NameID value.
+//
+// It returns an error that matches ErrNoSubjectKey if the assertion has no
+// stable identifier, such as when its NameID is transient, which is what
+// this package requests unless WithNameIDFormat says otherwise.
+func (a *Assertion) SubjectKey() (string, error) {
+	p, err := a.SubjectKeyParts()
+	if err != nil {
+		return "", err
+	}
+	return p.Key(), nil
 }
 
 // convertAttributes returns attrs as Attributes.
