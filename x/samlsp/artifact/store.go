@@ -26,7 +26,8 @@ type StoredMessage struct {
 
 // Store keeps messages until their artifacts are resolved. A Binding
 // served by several processes needs a Store that they share, since the
-// IdP's request may reach any of them.
+// IdP's request may reach any of them: SQLStore, or another
+// implementation with the same semantics.
 type Store interface {
 	// Save keeps m under artifact.
 	Save(ctx context.Context, artifact string, m StoredMessage) error
@@ -50,7 +51,8 @@ const DefaultMaxEntries = 10000
 // it forgets its oldest message instead.
 var ErrStoreFull = errors.New("artifact: the store is full")
 
-// MemoryStore is a Store in memory, for a single process. Each message is
+// MemoryStore is a Store in memory, for a single process (see SQLStore
+// for several). Each message is
 // forgotten when it expires by Now. It is safe for concurrent use. The
 // zero value is ready to use.
 //

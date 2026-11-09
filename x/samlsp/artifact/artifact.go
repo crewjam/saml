@@ -29,6 +29,21 @@
 // Binding's Encode. The IdP's ArtifactResolve carries no such option: set
 // Binding.IdentityProvider to find the IdP by the request's Issuer, or name
 // it with samlsp.IdentityProviderContext in a handler around the Binding.
+//
+// The Binding keeps each message in a Store until the IdP resolves its
+// artifact. A MemoryStore serves a single process: if the SP runs as
+// several, the IdP's ArtifactResolve may reach one that never saw the
+// message, and finds nothing. Share a SQLStore between them instead, in
+// a table of a database reached through database/sql (PostgreSQL, MySQL
+// or SQLite):
+//
+//	store, err := artifact.NewSQLStore(db, artifact.PostgreSQL, "")
+//	err = store.CreateTable(ctx) // or run artifact.SQLSchema with your migrations
+//	binding, err := artifact.New(config, store, 1)
+//
+// It gives each message out once, however many processes take it at the
+// same time. The processes compare expiries with their own clocks, so
+// keep them close together (see SQLStore.ClockSkew).
 package artifact
 
 import (
