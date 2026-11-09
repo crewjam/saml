@@ -110,7 +110,7 @@ func newBrowser() *browser { return &browser{cookies: map[string]string{}} }
 func (b *browser) request() *http.Request {
 	r := httptest.NewRequest(http.MethodPost, "https://idp.example.com/login", nil)
 	for name, value := range b.cookies {
-		r.AddCookie(&http.Cookie{Name: name, Value: value})
+		r.AddCookie(&http.Cookie{Name: name, Value: value}) //nolint:gosec // G124: a request cookie carries no attributes
 	}
 	return r
 }
