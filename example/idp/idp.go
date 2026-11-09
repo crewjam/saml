@@ -21,6 +21,7 @@ import (
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/x/samlidp"
+	"github.com/crewjam/saml/x/samlidp/idppending"
 	"github.com/crewjam/saml/x/samlidp/idpslo"
 )
 
@@ -29,15 +30,15 @@ import (
 // application: users, sessions, logins waiting for the user to log in,
 // and logouts in progress.
 type identityProvider struct {
-	config *samlidp.Config
-	logout *idpslo.Service
-	users  map[string]*user
-	sps    []string // the trusted SPs, for the portal
-	secure bool     // the IdP is served over https
+	config  *samlidp.Config
+	logout  *idpslo.Service
+	pending *idppending.Tracker // AuthnRequests waiting for the user to log in, by the p parameter of /login
+	users   map[string]*user
+	sps     []string // the trusted SPs, for the portal
+	secure  bool     // the IdP is served over https
 
 	mu       sync.Mutex
 	sessions map[string]*session        // by the value of the session cookie
-	pending  map[string]pendingLogin    // by the p parameter of /login
 	logouts  map[string]*logoutProgress // by RelayState
 }
 
@@ -57,12 +58,6 @@ type session struct {
 	index        string // the SessionIndex given to SPs
 	expires      time.Time
 	participants []saml.SessionParticipant
-}
-
-// pendingLogin is an AuthnRequest waiting for the user to log in.
-type pendingLogin struct {
-	req     *samlidp.AuthnRequest
-	expires time.Time
 }
 
 const (
@@ -87,14 +82,29 @@ func newIdentityProvider(baseURL string, key *rsa.PrivateKey, cert *x509.Certifi
 	if err != nil {
 		return nil, err
 	}
+	// The cookies of pending logins are encrypted with a key derived from
+	// the IdP's own; an IdP served by several processes needs the same key
+	// in each.
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return nil, err
+	}
+	cookieKey, err := idppending.DeriveKey(der, "example IdP pending login")
+	if err != nil {
+		return nil, err
+	}
+	pending, err := idppending.New(config, cookieKey)
+	if err != nil {
+		return nil, err
+	}
 	return &identityProvider{
 		config:   config,
 		logout:   logout,
+		pending:  pending,
 		users:    users,
 		sps:      sps.trusted,
 		secure:   strings.HasPrefix(base, "https:"),
 		sessions: map[string]*session{},
-		pending:  map[string]pendingLogin{},
 		logouts:  map[string]*logoutProgress{},
 	}, nil
 }
@@ -168,11 +178,13 @@ func (p *identityProvider) continueLogin(w http.ResponseWriter, r *http.Request,
 		p.sendError(w, r, req, &saml.StatusError{TopLevel: saml.StatusResponder, SecondLevel: saml.StatusNoPassive})
 		return
 	}
-	key := rand.Text()
-	p.mu.Lock()
-	p.pending[key] = pendingLogin{req: req, expires: time.Now().Add(loginLifetime)}
-	p.mu.Unlock()
-	http.Redirect(w, r, "/login?"+url.Values{"p": {key}}.Encode(), http.StatusFound)
+	handle, err := p.pending.Remember(w, r, req)
+	if err != nil {
+		log.Printf("cannot keep an AuthnRequest: %v", err)
+		http.Error(w, "cannot log in to this service", http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/login?"+url.Values{"p": {handle}}.Encode(), http.StatusFound)
 }
 
 // answer sends the Response to req for the user of s, and records the SP
@@ -294,18 +306,23 @@ var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("dummy"), bcrypt.DefaultCo
 // login checks the username and password, starts a session, and goes on
 // with the pending login, if there is one.
 func (p *identityProvider) login(w http.ResponseWriter, r *http.Request) {
+	// ParseForm, unlike PostFormValue, does not read multipart bodies.
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
 	c, err := r.Cookie(loginCSRFCookie)
-	if err != nil || subtle.ConstantTimeCompare([]byte(c.Value), []byte(r.PostFormValue("csrf"))) != 1 {
+	if err != nil || subtle.ConstantTimeCompare([]byte(c.Value), []byte(r.PostForm.Get("csrf"))) != 1 {
 		http.Error(w, "the login form has expired; go back and try again", http.StatusForbidden)
 		return
 	}
-	pendingKey := r.PostFormValue("p")
-	u, ok := p.users[r.PostFormValue("user")]
+	pendingKey := r.PostForm.Get("p")
+	u, ok := p.users[r.PostForm.Get("user")]
 	hash := dummyHash
 	if ok {
 		hash = u.passwordHash
 	}
-	if bcrypt.CompareHashAndPassword(hash, []byte(r.PostFormValue("password"))) != nil || !ok {
+	if bcrypt.CompareHashAndPassword(hash, []byte(r.PostForm.Get("password"))) != nil || !ok {
 		p.renderLogin(w, pendingKey, "Wrong username or password.")
 		return
 	}
@@ -316,15 +333,13 @@ func (p *identityProvider) login(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
-	p.mu.Lock()
-	pending, ok := p.pending[pendingKey]
-	delete(p.pending, pendingKey)
-	p.mu.Unlock()
-	if !ok || time.Now().After(pending.expires) {
+	// Take clears the request, so that it is answered once.
+	req, err := p.pending.Take(w, r, pendingKey)
+	if err != nil {
 		http.Error(w, "the login request has expired; go back to the service and try again", http.StatusBadRequest)
 		return
 	}
-	p.answer(w, r, pending.req, s)
+	p.answer(w, r, req, s)
 }
 
 // startSession starts a session for u, or, if the browser already has one

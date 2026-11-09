@@ -6,7 +6,8 @@
 //
 // x/samlidp handles only the SAML protocol. Everything else here is the
 // application's, kept as simple as an example allows: users are a fixed
-// list, sessions and pending logins are kept in memory, and the service
+// list, sessions are kept in memory, logins waiting for the user to log in
+// in an encrypted cookie (with x/samlidp/idppending), and the service
 // providers it trusts are those named with -sp, whose metadata it fetches
 // from their entity IDs.
 //
