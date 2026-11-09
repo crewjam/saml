@@ -294,7 +294,7 @@ func TestTamperedCookie(t *testing.T) {
 		"other key":    otherJar[name].Value,
 	} {
 		t.Run(desc, func(t *testing.T) {
-			r := jar{name: {Name: name, Value: v}}.request("state-1")
+			r := jar{name: {Name: name, Value: v}}.request("state-1") //nolint:gosec // G124: a request cookie carries no attributes
 			w := httptest.NewRecorder()
 			if _, err := tr.Find(w, r); !errors.Is(err, pendinglogout.ErrInvalid) {
 				t.Errorf("Find: %v, want ErrInvalid", err)
@@ -310,7 +310,7 @@ func TestTamperedCookie(t *testing.T) {
 	if moved == name {
 		moved = name[:len(name)-1] + "8"
 	}
-	r := jar{moved: {Name: moved, Value: value}}.request("state-1")
+	r := jar{moved: {Name: moved, Value: value}}.request("state-1") //nolint:gosec // G124: a request cookie carries no attributes
 	if _, err := tr.Find(httptest.NewRecorder(), r); err == nil {
 		t.Error("a cookie moved to another slot was accepted")
 	}
