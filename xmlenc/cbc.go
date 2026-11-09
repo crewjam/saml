@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/des" // nolint: gosec
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -210,12 +211,23 @@ var ErrDecryptionFailed = errors.New("xmlenc: decryption failed")
 // XML Encryption lets them take any value, and common senders (Apache
 // Santuario, .NET's EncryptedXml) use ISO 10126 padding, whose other bytes
 // are random. Every failure returns ErrDecryptionFailed.
+//
+// The last byte is secret, so the check does not branch on it: it computes
+// whether the byte is in range with constant-time comparisons and branches
+// only on that one-bit result, which the returned error reveals anyway.
+// This keeps the padding check from adding a timing signal that separates
+// bad padding from bad XML. It does not make unauthenticated CBC safe; see
+// ErrDecryptionFailed and ServiceProvider.RequireSignedResponseForCBC.
 func stripPadding(buf []byte, blockSize int) ([]byte, error) {
+	// len(buf) and blockSize are public, so branching on them is fine.
 	if len(buf) < 1 {
 		return nil, ErrDecryptionFailed
 	}
+	limit := min(blockSize, len(buf))
 	paddingBytes := int(buf[len(buf)-1])
-	if paddingBytes < 1 || paddingBytes > len(buf) || paddingBytes > blockSize {
+	ok := subtle.ConstantTimeLessOrEq(1, paddingBytes) &
+		subtle.ConstantTimeLessOrEq(paddingBytes, limit)
+	if ok != 1 {
 		return nil, ErrDecryptionFailed
 	}
 	return buf[:len(buf)-paddingBytes], nil

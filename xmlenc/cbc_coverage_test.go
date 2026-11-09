@@ -143,6 +143,7 @@ func TestCovStripPadding(t *testing.T) {
 		{buf: []byte{'a', 0}, err: "xmlenc: decryption failed"},
 		{buf: append(make([]byte, 31), 17), err: "xmlenc: decryption failed"},
 		{buf: append(make([]byte, 15), 16), want: []byte{}},
+		{buf: append(make([]byte, 15), 0xff), err: "xmlenc: decryption failed"},
 		{buf: []byte{'a', 'b', 'c', 2}, want: []byte{'a', 'b'}},
 	}
 	for i, c := range cases {
