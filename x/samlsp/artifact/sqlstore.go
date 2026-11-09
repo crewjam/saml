@@ -264,14 +264,14 @@ func (s *SQLStore) Save(ctx context.Context, artifact string, m StoredMessage) e
 		return err
 	}
 	token := hex.EncodeToString(t[:])
-	if _, err := s.db.ExecContext(ctx, s.deleteArtifactQuery, artifact); err != nil { //nolint:gosec // G701: the statement is built at NewSQLStore from a table name CheckTable allows; values are parameters
+	if _, err := s.db.ExecContext(ctx, s.deleteArtifactQuery, artifact); err != nil { //nolint:gosec // G701: the statement is built at New from a table name CheckTable allows; values are parameters
 		return fmt.Errorf("artifact: cannot save the message: %w", err)
 	}
 	msg := m.XML
 	if msg == nil {
 		msg = []byte{} // the column is NOT NULL
 	}
-	if _, err := s.db.ExecContext(ctx, s.insertQuery, artifact, m.Recipient, msg, m.ExpiresAt.UnixNano(), token); err != nil { //nolint:gosec // G701: the statement is built at NewSQLStore from a table name CheckTable allows; values are parameters
+	if _, err := s.db.ExecContext(ctx, s.insertQuery, artifact, m.Recipient, msg, m.ExpiresAt.UnixNano(), token); err != nil { //nolint:gosec // G701: the statement is built at New from a table name CheckTable allows; values are parameters
 		return fmt.Errorf("artifact: cannot save the message: %w", err)
 	}
 	interval := s.PurgeInterval
@@ -296,7 +296,7 @@ func (s *SQLStore) Take(ctx context.Context, artifact, recipient string) (*Store
 		ns    int64
 		token string
 	)
-	err := s.db.QueryRowContext(ctx, s.selectQuery, artifact, recipient).Scan(&msg, &ns, &token) //nolint:gosec // G701: the statement is built at NewSQLStore from a table name CheckTable allows; values are parameters
+	err := s.db.QueryRowContext(ctx, s.selectQuery, artifact, recipient).Scan(&msg, &ns, &token) //nolint:gosec // G701: the statement is built at New from a table name CheckTable allows; values are parameters
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -304,7 +304,7 @@ func (s *SQLStore) Take(ctx context.Context, artifact, recipient string) (*Store
 		return nil, fmt.Errorf("artifact: cannot read the message: %w", err)
 	}
 	// Only the Take whose DELETE removes the row gives the message out.
-	res, err := s.db.ExecContext(ctx, s.deleteTokenQuery, artifact, token)
+	res, err := s.db.ExecContext(ctx, s.deleteTokenQuery, artifact, token) //nolint:gosec // G701: the statement is built at New from a table name CheckTable allows; values are parameters
 	if err != nil {
 		return nil, fmt.Errorf("artifact: cannot take the message: %w", err)
 	}
@@ -321,7 +321,7 @@ func (s *SQLStore) Take(ctx context.Context, artifact, recipient string) (*Store
 // Purge removes the messages that expired more than ClockSkew ago by Now,
 // and returns how many it removed.
 func (s *SQLStore) Purge(ctx context.Context) (int64, error) {
-	res, err := s.db.ExecContext(ctx, s.purgeQuery, s.now().Add(-s.clockSkew()).UnixNano())
+	res, err := s.db.ExecContext(ctx, s.purgeQuery, s.now().Add(-s.clockSkew()).UnixNano()) //nolint:gosec // G701: the statement is built at New from a table name CheckTable allows; values are parameters
 	if err != nil {
 		return 0, fmt.Errorf("artifact: cannot remove the expired messages: %w", err)
 	}

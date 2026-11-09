@@ -235,7 +235,7 @@ func (s *SQL) Consume(ctx context.Context, key []byte, expiresAt time.Time) erro
 	k := hex.EncodeToString(key)
 	var insertErr error
 	for range consumeAttempts {
-		_, insertErr = s.db.ExecContext(ctx, s.insertQuery, k, expiresAt.UnixNano())
+		_, insertErr = s.db.ExecContext(ctx, s.insertQuery, k, expiresAt.UnixNano()) //nolint:gosec // G701: the statement is built at New from a table name CheckTable allows; values are parameters
 		if insertErr == nil {
 			s.purgeIfDue(ctx, now)
 			return nil
@@ -244,7 +244,7 @@ func (s *SQL) Consume(ctx context.Context, key []byte, expiresAt time.Time) erro
 		// SELECT tells apart from other failures without depending on the
 		// error codes of each driver.
 		var exp int64
-		err := s.db.QueryRowContext(ctx, s.selectQuery, k).Scan(&exp)
+		err := s.db.QueryRowContext(ctx, s.selectQuery, k).Scan(&exp) //nolint:gosec // G701: the statement is built at New from a table name CheckTable allows; values are parameters
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			// Not there (any more): it was removed in the meantime, or the
@@ -258,7 +258,7 @@ func (s *SQL) Consume(ctx context.Context, key []byte, expiresAt time.Time) erro
 		}
 		// An expired row under the key. Remove it, unless another process
 		// has replaced it in the meantime, and try again.
-		if _, err := s.db.ExecContext(ctx, s.deleteQuery, k, exp); err != nil {
+		if _, err := s.db.ExecContext(ctx, s.deleteQuery, k, exp); err != nil { //nolint:gosec // G701: the statement is built at New from a table name CheckTable allows; values are parameters
 			return fmt.Errorf("replay: cannot remove an expired record: %w", err)
 		}
 	}
@@ -281,7 +281,7 @@ func (s *SQL) Purge(ctx context.Context) (int64, error) {
 }
 
 func (s *SQL) purge(ctx context.Context, now time.Time) (int64, error) {
-	res, err := s.db.ExecContext(ctx, s.purgeQuery, now.Add(-s.clockSkew()).UnixNano())
+	res, err := s.db.ExecContext(ctx, s.purgeQuery, now.Add(-s.clockSkew()).UnixNano()) //nolint:gosec // G701: the statement is built at New from a table name CheckTable allows; values are parameters
 	if err != nil {
 		return 0, fmt.Errorf("replay: cannot remove the expired records: %w", err)
 	}
