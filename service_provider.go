@@ -562,7 +562,10 @@ type ServiceProvider struct {
 	// the BaseID itself: samlsp, for one, takes the session subject from
 	// the NameID only. If false, such an assertion is refused with an error
 	// matching ErrUnsupported. An assertion whose Subject has none of
-	// BaseID, NameID and EncryptedID is always refused (ErrMissingElement).
+	// BaseID, NameID and EncryptedID is accepted whatever this is, since
+	// the identifier is optional (saml-core §2.4.1): its Subject.NameID and
+	// Subject.BaseID are then both nil, and the caller must identify the
+	// principal some other way, for example by an attribute.
 	AcceptAssertionBaseID bool
 }
 
@@ -2309,26 +2312,24 @@ func (sp *ServiceProvider) decryptEncryptedID(nameID *NameID, encryptedID *etree
 	return decryptNameID(encryptedID, sp.decryptElement)
 }
 
-// validateSubjectIdentifier makes sure subject identifies the principal.
-// The Subject of a login assertion is the principal the SP establishes a
-// session for (saml-core §2.4.1, saml-profiles §4.1.4.2), so one with no
-// identifier is refused rather than accepted with a nil NameID. (A NameID
-// with an empty value is still accepted: this package's own IdP issues one
-// for a Session with no NameID.) A BaseID is accepted only if AcceptAssertionBaseID is
-// set, since its content is defined by an extension this package does not
-// interpret. It expects decryptEncryptedIDs to have replaced an EncryptedID
-// by what it holds.
+// validateSubjectIdentifier checks the identifier of subject, if it has
+// one. The identifier is optional (saml-core §2.4.1: "<BaseID>, <NameID>,
+// or <EncryptedID> [Optional]"), and the Web Browser SSO profile requires
+// only a bearer SubjectConfirmation (saml-profiles §4.1.4.2), so a Subject
+// with none is accepted with a nil NameID: AD FS, for one, sends no NameID
+// unless a claim rule issues one, and the principal is then named by an
+// attribute (issue #989). A BaseID is accepted only if
+// AcceptAssertionBaseID is set, since its content is defined by an
+// extension this package does not interpret. It expects
+// decryptEncryptedIDs to have replaced an EncryptedID by what it holds.
 func (sp *ServiceProvider) validateSubjectIdentifier(subject *Subject) error {
 	switch {
 	case subject.BaseID != nil:
 		if !sp.AcceptAssertionBaseID {
 			return classify(errors.New("assertion Subject identifies the principal with a BaseID, which is not accepted"), ErrUnsupported)
 		}
-		return nil
 	case subject.EncryptedID != nil:
 		return classify(errors.New("assertion Subject EncryptedID has not been decrypted"), ErrMalformedMessage)
-	case subject.NameID == nil:
-		return classify(errors.New("assertion Subject has no BaseID, NameID or EncryptedID"), ErrMissingElement)
 	}
 	return nil
 }
