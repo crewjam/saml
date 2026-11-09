@@ -289,7 +289,14 @@ func TestInvalid(t *testing.T) {
 			return take(t, tr, "s", with(body+"x."+mac))
 		}},
 		{"changed mac", pending.ErrInvalid, func(t *testing.T) error {
-			return take(t, tr, "s", with(body+"."+mac[:len(mac)-2]+"AA"))
+			// Change the first character: all 6 of its bits decode, whereas the
+			// last character of an unpadded MAC carries bits that decoding
+			// ignores. The replacement always differs from the original.
+			flipped := "A"
+			if mac[0] == 'A' {
+				flipped = "B"
+			}
+			return take(t, tr, "s", with(body+"."+flipped+mac[1:]))
 		}},
 		{"no mac", pending.ErrInvalid, func(t *testing.T) error { return take(t, tr, "s", with(body)) }},
 		{"garbage", pending.ErrInvalid, func(t *testing.T) error { return take(t, tr, "s", with("!!.!!")) }},
