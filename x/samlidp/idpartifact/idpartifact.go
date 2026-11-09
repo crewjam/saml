@@ -92,6 +92,11 @@ const DefaultLifetime = 2 * time.Minute
 // maxResolveSize is the largest ArtifactResolve request read.
 const maxResolveSize = 64 << 10
 
+// entityNameIDFormat is the NameID Format of an entity identifier, the
+// only Format the Issuer of an ArtifactResolve may have (saml-profiles
+// §5.4.1).
+const entityNameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:entity"
+
 // Binding sends Responses with the HTTP-Artifact binding, and serves the
 // ArtifactResolutionService from which the SPs fetch them. It is a
 // samlidp.Binding and an http.Handler.
@@ -392,8 +397,8 @@ func (b *Binding) resolve(r *http.Request) (*etree.Element, error) {
 			return nil, fmt.Errorf("idpartifact: the ArtifactResolve is addressed to %q, not %q: %w", req.Destination, location, saml.ErrDestinationMismatch)
 		}
 	}
-	if req.Issuer == nil || req.Issuer.Value != md.EntityID {
-		return nil, fmt.Errorf("idpartifact: the ArtifactResolve is not issued by the SP %s", md.EntityID)
+	if err := checkResolveIssuer(req.Issuer, md.EntityID); err != nil {
+		return nil, err
 	}
 	t := b.config.Now()
 	if req.IssueInstant.After(t.Add(b.config.ClockSkew())) || t.After(req.IssueInstant.Add(b.config.MaxIssueDelay())) {
@@ -508,4 +513,19 @@ func unmarshal(el *etree.Element, v any) error {
 		return err
 	}
 	return xml.Unmarshal(buf, v) //nolint:gosec // el is what a verified signature covers
+}
+
+// checkResolveIssuer checks issuer, the Issuer of an ArtifactResolve, which
+// must name the SP entityID. saml-profiles §5.4.1: it "MUST be present and
+// MUST contain the unique identifier of the requesting entity; the Format
+// attribute MUST be omitted or have a value of
+// urn:oasis:names:tc:SAML:2.0:nameid-format:entity".
+func checkResolveIssuer(issuer *saml.Issuer, entityID string) error {
+	if issuer == nil || issuer.Value != entityID {
+		return fmt.Errorf("idpartifact: the ArtifactResolve is not issued by the SP %s", entityID)
+	}
+	if issuer.Format != "" && issuer.Format != entityNameIDFormat {
+		return fmt.Errorf("idpartifact: the ArtifactResolve Issuer Format %q is not %s (saml-profiles §5.4.1): %w", issuer.Format, entityNameIDFormat, saml.ErrIssuerMismatch)
+	}
+	return nil
 }

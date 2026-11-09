@@ -154,7 +154,8 @@ func TestResolveKeepsMessageWhenSigningFails(t *testing.T) {
 	}
 }
 
-// An ArtifactResolve must be SAML 2.0 and, if it has a Destination,
+// An ArtifactResolve must be SAML 2.0, have an Issuer with no Format or
+// the entity Format (saml-profiles §5.4.1) and, if it has a Destination, be
 // addressed to this ArtifactResolutionService (saml-core §3.2.1, §3.2.2).
 func TestResolveChecksVersionAndDestination(t *testing.T) {
 	w := newWorld(t, nil)
@@ -162,12 +163,18 @@ func TestResolveChecksVersionAndDestination(t *testing.T) {
 	for name, modify := range map[string]func(*saml.ArtifactResolve){
 		"SAML 1.1":          func(r *saml.ArtifactResolve) { r.Version = "1.1" },
 		"other Destination": func(r *saml.ArtifactResolve) { r.Destination = "https://other.example.com/saml/artifact" },
+		"Issuer Format not entity": func(r *saml.ArtifactResolve) {
+			r.Issuer.Format = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
+		},
 	} {
 		if rec := post(w.binding, soapStart+w.signedResolveWith(t, art, modify)+soapEnd); rec.Code != http.StatusInternalServerError {
 			t.Errorf("%s: %d %s", name, rec.Code, rec.Body.String())
 		}
 	}
-	right := w.signedResolveWith(t, art, func(r *saml.ArtifactResolve) { r.Destination = w.server.URL + "/saml/artifact" })
+	right := w.signedResolveWith(t, art, func(r *saml.ArtifactResolve) {
+		r.Destination = w.server.URL + "/saml/artifact"
+		r.Issuer.Format = "urn:oasis:names:tc:SAML:2.0:nameid-format:entity"
+	})
 	if !carriesResponse(t, post(w.binding, soapStart+right+soapEnd)) {
 		t.Error("the right Destination: no Response")
 	}

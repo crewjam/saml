@@ -65,6 +65,11 @@ const DefaultLifetime = 2 * time.Minute
 // maxResolveSize is the largest ArtifactResolve request read.
 const maxResolveSize = 64 << 10
 
+// entityNameIDFormat is the NameID Format of an entity identifier, the
+// only Format the Issuer of an ArtifactResolve may have (saml-profiles
+// §5.4.1).
+const entityNameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:entity"
+
 // Binding sends messages with the HTTP-Artifact binding, and serves the
 // ArtifactResolutionService from which the IdP fetches them. It is a
 // samlsp.Binding and an http.Handler.
@@ -414,8 +419,8 @@ func (b *Binding) resolve(r *http.Request) (*etree.Element, error) {
 			return nil, fmt.Errorf("artifact: the ArtifactResolve is addressed to %q, not %q: %w", req.Destination, location, saml.ErrDestinationMismatch)
 		}
 	}
-	if req.Issuer == nil || req.Issuer.Value != sp.IDPMetadata.EntityID {
-		return nil, fmt.Errorf("artifact: the ArtifactResolve is not issued by the IdP %s", sp.IDPMetadata.EntityID)
+	if err := checkResolveIssuer(req.Issuer, sp.IDPMetadata.EntityID); err != nil {
+		return nil, err
 	}
 	t := now(sp)
 	if req.IssueInstant.After(t.Add(timelimit.SPClockSkew(sp))) || t.After(req.IssueInstant.Add(timelimit.SPIssueDelay(sp))) {
@@ -541,4 +546,19 @@ func (b *Binding) artifactResponse(sp *saml.ServiceProvider, inResponseTo string
 	// SignElement puts the Signature right after the Issuer, as the schema
 	// requires.
 	return b.config.SignElement(el)
+}
+
+// checkResolveIssuer checks issuer, the Issuer of an ArtifactResolve, which
+// must name the IdP entityID. saml-profiles §5.4.1: it "MUST be present and
+// MUST contain the unique identifier of the requesting entity; the Format
+// attribute MUST be omitted or have a value of
+// urn:oasis:names:tc:SAML:2.0:nameid-format:entity".
+func checkResolveIssuer(issuer *saml.Issuer, entityID string) error {
+	if issuer == nil || issuer.Value != entityID {
+		return fmt.Errorf("artifact: the ArtifactResolve is not issued by the IdP %s", entityID)
+	}
+	if issuer.Format != "" && issuer.Format != entityNameIDFormat {
+		return fmt.Errorf("artifact: the ArtifactResolve Issuer Format %q is not %s (saml-profiles §5.4.1): %w", issuer.Format, entityNameIDFormat, saml.ErrIssuerMismatch)
+	}
+	return nil
 }
