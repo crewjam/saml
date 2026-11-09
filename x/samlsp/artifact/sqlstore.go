@@ -264,14 +264,14 @@ func (s *SQLStore) Save(ctx context.Context, artifact string, m StoredMessage) e
 		return err
 	}
 	token := hex.EncodeToString(t[:])
-	if _, err := s.db.ExecContext(ctx, s.deleteArtifactQuery, artifact); err != nil {
+	if _, err := s.db.ExecContext(ctx, s.deleteArtifactQuery, artifact); err != nil { //nolint:gosec // G701: the statement is built at NewSQLStore from a table name CheckTable allows; values are parameters
 		return fmt.Errorf("artifact: cannot save the message: %w", err)
 	}
 	msg := m.XML
 	if msg == nil {
 		msg = []byte{} // the column is NOT NULL
 	}
-	if _, err := s.db.ExecContext(ctx, s.insertQuery, artifact, m.Recipient, msg, m.ExpiresAt.UnixNano(), token); err != nil {
+	if _, err := s.db.ExecContext(ctx, s.insertQuery, artifact, m.Recipient, msg, m.ExpiresAt.UnixNano(), token); err != nil { //nolint:gosec // G701: the statement is built at NewSQLStore from a table name CheckTable allows; values are parameters
 		return fmt.Errorf("artifact: cannot save the message: %w", err)
 	}
 	interval := s.PurgeInterval
@@ -296,7 +296,7 @@ func (s *SQLStore) Take(ctx context.Context, artifact, recipient string) (*Store
 		ns    int64
 		token string
 	)
-	err := s.db.QueryRowContext(ctx, s.selectQuery, artifact, recipient).Scan(&msg, &ns, &token)
+	err := s.db.QueryRowContext(ctx, s.selectQuery, artifact, recipient).Scan(&msg, &ns, &token) //nolint:gosec // G701: the statement is built at NewSQLStore from a table name CheckTable allows; values are parameters
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
