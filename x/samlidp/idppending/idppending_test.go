@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -474,7 +475,7 @@ func TestMultipleTabs(t *testing.T) {
 	b := newBrowser()
 	handles := make([]string, 0, idppending.DefaultSlots)
 	for i := range idppending.DefaultSlots {
-		handles = append(handles, b.remember(t, tr, simpleRequest("id-"+string(rune('a'+i)), "s")))
+		handles = append(handles, b.remember(t, tr, simpleRequest("id-"+strconv.Itoa(i), "s")))
 	}
 	if len(b.cookies) != idppending.DefaultSlots {
 		t.Fatalf("%d cookies, want %d: Remember did not pick free slots", len(b.cookies), idppending.DefaultSlots)
@@ -484,7 +485,7 @@ func TestMultipleTabs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Take of tab %d: %v", i, err)
 		}
-		if want := "id-" + string(rune('a'+i)); got.ID != want {
+		if want := "id-" + strconv.Itoa(i); got.ID != want {
 			t.Errorf("tab %d took %s, want %s", i, got.ID, want)
 		}
 	}
@@ -493,7 +494,7 @@ func TestMultipleTabs(t *testing.T) {
 	// then fails rather than taking the new request.
 	handles = handles[:0]
 	for i := range idppending.DefaultSlots {
-		handles = append(handles, b.remember(t, tr, simpleRequest("id-"+string(rune('a'+i)), "s")))
+		handles = append(handles, b.remember(t, tr, simpleRequest("id-"+strconv.Itoa(i), "s")))
 	}
 	later := newTracker(t, newConfig(t, t0.Add(time.Second)))
 	extra := b.remember(t, later, simpleRequest("id-extra", "s"))
