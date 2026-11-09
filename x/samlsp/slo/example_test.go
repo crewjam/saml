@@ -127,7 +127,7 @@ func ExampleService_Request() {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		// remember msg.ID, to pass to ParseResponse
+		// remember msg.ID, to pass to ParseResponse (see x/samlsp/slo/pendinglogout)
 		msg.Write(w)
 	})
 }
