@@ -110,6 +110,13 @@
 // asks for a particular format, such as transient, is then answered with
 // StatusInvalidNameIDPolicy (see Subject.NameIDFormat).
 //
+// The same user ID sent to every SP lets the SPs correlate the user.
+// Config.SetNameID sets a NameID that does not: a new
+// Config.TransientNameID for an SP that asks for the transient format,
+// and otherwise a persistent PairwiseNameID, an HMAC of the user's ID
+// and of the SP's entity ID (or of the affiliation it asks for), under a
+// secret key that must never change.
+//
 // Message.Write sends the Response to the SP's assertion consumer service
 // with the HTTP-POST (or HTTP-POST-SimpleSign) binding: an HTML form that
 // submits itself. For SPs that ask for the HTTP-Artifact binding, see
