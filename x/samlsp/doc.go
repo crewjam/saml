@@ -52,6 +52,54 @@
 //		sp.ValidateAudienceRestriction = func(*saml.Assertion) error { return nil }
 //	}))
 //
+// # Key rotation
+//
+// The IdP trusts the SP's signatures, and encrypts to the SP, with the
+// certificates of the SP metadata, which it fetches again only from time
+// to time (or which its administrator uploads). To replace a key without a
+// moment when the IdP and the SP disagree on it, publish the new
+// certificate first:
+//
+//  1. Publish the next certificates with WithNextSigningCertificates and
+//     WithNextEncryptionCertificates, and pass the next encryption key to
+//     WithDecryptionKeys at the same time, since an IdP may encrypt to any
+//     certificate the metadata lists (New refuses a next encryption
+//     certificate without its key).
+//  2. Wait until every IdP has the new metadata: at least the
+//     cacheDuration or validUntil the SP metadata states, or as long as
+//     its IdPs take to refresh it; an IdP given an uploaded copy needs
+//     the new copy uploaded.
+//  3. Switch: pass the next keys to WithSigningKey and WithEncryptionKey,
+//     move the previous encryption key to WithDecryptionKeys, for
+//     assertions already encrypted to it, and pass the previous
+//     certificates to WithNextSigningCertificates and
+//     WithNextEncryptionCertificates, so that IdPs that have not yet
+//     refreshed keep working.
+//  4. Once every IdP has refreshed again, and assertions encrypted to the
+//     previous key have expired, drop the previous key and certificates.
+//
+// For example, in step 1, with the key pair (signKey, signCert) in use and
+// (nextKey, nextCert) to replace it, for both signing and encryption:
+//
+//	samlsp.New(entityID, idp,
+//		samlsp.WithSigningKey(signKey, signCert),
+//		samlsp.WithEncryptionKey(signKey, signCert),
+//		samlsp.WithNextSigningCertificates(nextCert),
+//		samlsp.WithNextEncryptionCertificates(nextCert),
+//		samlsp.WithDecryptionKeys(nextKey))
+//
+// and in step 3:
+//
+//	samlsp.New(entityID, idp,
+//		samlsp.WithSigningKey(nextKey, nextCert),
+//		samlsp.WithEncryptionKey(nextKey, nextCert),
+//		samlsp.WithNextSigningCertificates(signCert),
+//		samlsp.WithNextEncryptionCertificates(signCert),
+//		samlsp.WithDecryptionKeys(signKey))
+//
+// The IdP's own keys rotate the same way, in the IdP metadata (see
+// RemoteMetadata).
+//
 // # Hardening
 //
 // The saml.ServiceProvider that each method builds turns on checks that

@@ -31,7 +31,10 @@ type Assertion struct {
 
 	// NameID identifies the user. Keep it, with its Format and
 	// qualifiers, for single logout (x/samlsp/slo). It is zero if the
-	// assertion identifies the user with a BaseID (see Raw).
+	// assertion identifies the user with a BaseID (see Raw), or not at
+	// all: the identifier is optional (saml-core §2.4.1), and AD FS, for
+	// one, sends none unless a claim rule issues a Name ID. Identify the
+	// user by an attribute then.
 	NameID saml.NameID
 
 	// BaseID is the saml:BaseID element that identifies the user instead
@@ -43,8 +46,9 @@ type Assertion struct {
 	// transient NameID, which this package requests by default, changes
 	// with every login, and even a persistent one is unique only together
 	// with the IdP that issued it and its qualifiers (saml-core §8.3.7).
-	// Show it to people if it suits, but do not key accounts by it: use
-	// SubjectKey.
+	// It is empty if the assertion has no NameID, or one with an empty
+	// value. Show it to people if it suits, but do not key accounts by it:
+	// use SubjectKey.
 	Subject string
 
 	// InResponseTo is the ID of the AuthnRequest that the assertion
