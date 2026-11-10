@@ -181,9 +181,9 @@ type Options struct {
 	// saml.ServiceProvider.IgnoreCertificateExpiry.
 	IgnoreCertificateExpiry bool
 
-	// RejectExpiredIDPMetadata, if true, refuses messages from the IDP once
-	// the validUntil of IDPMetadata has passed. It is off by default. See
-	// saml.ServiceProvider.RejectExpiredIDPMetadata.
+	// RejectExpiredIDPMetadata, if true, refuses to use signing certificates
+	// from expired IDP metadata when verifying SAML signatures. It is off by
+	// default. See saml.ServiceProvider.RejectExpiredIDPMetadata.
 	RejectExpiredIDPMetadata bool
 
 	// SignMetadata, if true, makes the metadata endpoint serve metadata
