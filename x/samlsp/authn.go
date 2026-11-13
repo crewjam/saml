@@ -634,7 +634,7 @@ func (c *Config) ParseResponse(ctx context.Context, r *http.Request, opts ...Res
 			return nil, &saml.InvalidResponseError{PrivateErr: err, Now: now}
 		}
 	}
-	return newAssertion(a, o.requestIDs, bearerCheck{
+	return newAssertion(a, sp.EntityID, o.requestIDs, bearerCheck{
 		recipient: sp.AcsURL.String(), skew: skew, start: start, end: now,
 		address: func(d *saml.SubjectConfirmationData) bool { return sp.ConfirmsClientAddress(d, r) },
 	}), nil
