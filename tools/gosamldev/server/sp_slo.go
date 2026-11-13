@@ -253,19 +253,28 @@ func (s *Server) spSLO(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, r, http.StatusBadRequest, "No logout is in progress for this LogoutResponse: it may have been answered already, or taken more than ten minutes.", nil)
 			return
 		}
-		_ = s.Store.DeletePending(ctx, r.Form.Get("RelayState"))
 		page := spLogoutPage{InstanceID: in.ID, Name: cfg.Name, Subject: p.Subject, ManageURL: s.manageURLFor(r, in)}
 		resp, err := logout.ParseResponse(ctx, r, p.RequestID)
-		if err != nil {
-			page.Message = "Logged out of this SP, but the IdP's LogoutResponse was refused or reports a failure."
-			page.Detail = errorChain(err)
-		} else {
+		// Forget the logout in progress only once the IdP's answer is
+		// verified, whatever its status: anyone can make a browser post a
+		// junk LogoutResponse with its RelayState, which must not cancel
+		// the logout before the IdP's real answer arrives.
+		var badStatus saml.ErrBadStatus
+		if err == nil || errors.Is(err, slo.ErrPartialLogout) || errors.As(err, &badStatus) {
+			_ = s.Store.DeletePending(ctx, r.Form.Get("RelayState"))
+		}
+		switch {
+		case err == nil:
 			page.OK = true
 			page.Message = "Logged out everywhere: the IdP ended its session and logged you out of its other service providers."
 			page.Detail = "Status: " + describeStatus(resp.Status)
-			if resp.Status.StatusCode.StatusCode != nil && resp.Status.StatusCode.StatusCode.Value == saml.StatusPartialLogout {
-				page.Message = "Logged out, but only partly: the IdP could not log you out of every service provider (PartialLogout)."
-			}
+		case errors.Is(err, slo.ErrPartialLogout):
+			page.OK = true
+			page.Message = "Logged out, but only partly: the IdP could not log you out of every service provider (PartialLogout)."
+			page.Detail = "Status: " + describeStatus(resp.Status)
+		default:
+			page.Message = "Logged out of this SP, but the IdP's LogoutResponse was refused or reports a failure."
+			page.Detail = errorChain(err)
 		}
 		s.logEvent(ctx, &store.Event{InstanceID: in.ID, Direction: "in", OK: page.OK, Title: "LogoutResponse from the IdP", Detail: page.Detail, XML: respXML})
 		s.renderStatus(w, r, http.StatusOK, "sp_logout", cfg.Name, page)
