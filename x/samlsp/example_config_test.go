@@ -270,7 +270,8 @@ func ExampleNew_perRequest() {
 
 // When only the IdP differs per tenant, one Config serves them all: each
 // call names the tenant's IdP. The pending login remembers the tenant, so
-// the ACS knows which IdP the Response must come from.
+// the ACS knows which IdP the Response must come from, and
+// Login.ResponseOption refuses a Response from any other IdP.
 func ExampleWithIdentityProvider() {
 	entityID := "https://sp.example.com/saml/metadata"
 	config, err := samlsp.New(entityID, nil)

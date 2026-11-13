@@ -387,15 +387,15 @@ func relayStates(t *testing.T, cfg *samlsp.Config, tr *pending.Tracker, same boo
 
 // TestCookieSize measures the slot cookie of a typical login, as the
 // browser sends it in the Cookie header, for the figures in the package
-// documentation.
+// documentation: the IdP of newConfig has a 32-byte https entity ID.
 func TestCookieSize(t *testing.T) {
 	cfg, _ := newConfig(t)
 	_, w := remember(t, cfg, newTracker(t, cfg), rand.Text(), "/reports/2026?id=123")
 	c := onlyCookie(t, w)
 	size := len(c.Name) + len("=") + len(c.Value) + len("; ")
 	t.Logf("slot cookie: %d bytes; %d slots: %d bytes", size, pending.DefaultSlots, pending.DefaultSlots*size)
-	if total := pending.DefaultSlots * size; total > 3500 {
-		t.Errorf("%d slots of %d bytes take %d bytes, more than 3500", pending.DefaultSlots, size, total)
+	if total := pending.DefaultSlots * size; total > 4200 {
+		t.Errorf("%d slots of %d bytes take %d bytes, more than 4200", pending.DefaultSlots, size, total)
 	}
 }
 

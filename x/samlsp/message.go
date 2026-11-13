@@ -30,6 +30,7 @@ type Message struct {
 	RelayState string
 
 	authnContext *saml.RequestedAuthnContext // of an AuthnRequest
+	idp          string                      // the entity ID of the IdP an AuthnRequest is sent to
 
 	redirectURL *url.URL
 	formFields  url.Values
@@ -46,6 +47,20 @@ type Message struct {
 func (m *Message) RequestedAuthnContext() *saml.RequestedAuthnContext {
 	return cloneRequestedAuthnContext(m.authnContext)
 }
+
+// IdentityProvider returns the entity ID of the identity provider that an
+// AuthnRequest made by Config.AuthnRequest is sent to: that of the
+// metadata the call used, whether named with WithIdentityProvider,
+// IdentityProviderContext or the MetadataFunc passed to New. It returns ""
+// for any other message.
+//
+// Only that IdP should answer the request. Keep it with Message.ID and
+// pass it to ParseResponse with WithExpectedIssuer, which then refuses a
+// Response from any other IdP (x/samlsp/pending does this for you). This
+// matters to an SP that trusts several IdPs: a Response is verified
+// against the IdP that ParseResponse is given, and the request ID alone
+// does not say which one that must be.
+func (m *Message) IdentityProvider() string { return m.idp }
 
 // cloneRequestedAuthnContext returns a copy of rac that shares nothing
 // with it, or nil.

@@ -26,7 +26,10 @@ type IdentityProviderOption struct{ idp MetadataFunc }
 //
 // The call's methods see the IdP through its context (see
 // IdentityProviderContext), so a custom Binding that the call uses gets it
-// too. Pass the same IdP to ParseResponse as to AuthnRequest.
+// too. Pass the same IdP to ParseResponse as to AuthnRequest, with
+// WithExpectedIssuer (Message.IdentityProvider), so that a Response from
+// another of the SP's IdPs is refused (x/samlsp/pending.Login.ResponseOption
+// includes it).
 func WithIdentityProvider(idp MetadataFunc) IdentityProviderOption {
 	return IdentityProviderOption{idp}
 }
