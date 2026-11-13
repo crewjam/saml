@@ -127,6 +127,9 @@ func New(entityID string, identityProvider MetadataFunc, opts ...Option) (*Confi
 	if err := c.spMetadata.check(); err != nil {
 		return nil, err
 	}
+	if err := c.spMetadata.checkNextCertificates(c.encryptionKey, c.decryptionKeys); err != nil {
+		return nil, err
+	}
 	if c.signatureMethod != "" {
 		if err := checkSignatureMethod(c.signatureMethod, c.key); err != nil {
 			return nil, err
@@ -318,8 +321,10 @@ func WithEncryptionKey(key *rsa.PrivateKey, cert *x509.Certificate) Option {
 }
 
 // WithDecryptionKeys adds keys that can decrypt encrypted assertions, after
-// that of WithEncryptionKey, for key rotation. They are not published in
-// the SP metadata.
+// that of WithEncryptionKey, for key rotation: the next key, from before
+// its certificate is published with WithNextEncryptionCertificates, and
+// the previous key, for assertions still encrypted to it after the switch.
+// They are not published in the SP metadata.
 func WithDecryptionKeys(keys ...*rsa.PrivateKey) Option {
 	return optionFunc(func(c *Config, _ *configOptions) {
 		c.decryptionKeys = append(c.decryptionKeys, keys...)

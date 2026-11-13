@@ -3,7 +3,9 @@ package saml
 import (
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/beevik/etree"
 	"gotest.tools/v3/assert"
@@ -109,19 +111,87 @@ func TestSPAssertionSubjectBaseID(t *testing.T) {
 	}
 }
 
-// saml-core §2.4.1 and saml-profiles §4.1.4.2: the Subject of a login
-// assertion identifies the principal. One with no BaseID, NameID or
-// EncryptedID used to be accepted with a nil NameID (issue #803).
-func TestSPAssertionSubjectWithoutIdentifierRefused(t *testing.T) {
+// adfsSubjectWithoutNameID is the Subject and AttributeStatement of an
+// assertion from AD FS 3.0 whose relying party trust has no claim rule
+// issuing a Name ID (issue #989): the Subject has only a bearer
+// SubjectConfirmation, and the user is named by the emailaddress claim.
+// The elements are in the default namespace, as AD FS writes them. %s are
+// the InResponseTo, NotOnOrAfter and Recipient of the confirmation.
+const adfsSubjectWithoutNameID = `<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
+      <Subject>
+         <SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">
+            <SubjectConfirmationData InResponseTo="%s" NotOnOrAfter="%s" Recipient="%s" />
+         </SubjectConfirmation>
+      </Subject>
+      <AttributeStatement>
+         <Attribute Name="http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress">
+            <AttributeValue>foo@bar.com</AttributeValue>
+         </Attribute>
+      </AttributeStatement>
+</Assertion>`
+
+// saml-core §2.4.1: the identifier of a Subject is optional ("<BaseID>,
+// <NameID>, or <EncryptedID> [Optional]"), and the Web Browser SSO profile
+// requires only a bearer SubjectConfirmation (saml-profiles §4.1.4.2). So
+// an assertion whose Subject has none, as AD FS sends without a Name ID
+// claim rule, is accepted with a nil NameID, and the caller names the
+// principal by an attribute (issue #989).
+func TestSPAssertionSubjectWithoutIdentifier(t *testing.T) {
 	for _, acceptBaseID := range []bool{false, true} {
-		e := spcovSetup(t)
-		e.sp.AcceptAssertionBaseID = acceptBaseID
-		a := e.assertion()
-		a.Subject.NameID = nil
-		_, err := sidParse(t, e, a, nil)
-		assert.Check(t, errors.Is(err, ErrMissingElement), "AcceptAssertionBaseID=%v: got %v", acceptBaseID, spcovPrivateErr(t, err))
-		assert.Check(t, is.ErrorContains(spcovPrivateErr(t, err), "assertion Subject has no BaseID, NameID or EncryptedID"))
+		t.Run(fmt.Sprintf("AcceptAssertionBaseID=%v", acceptBaseID), func(t *testing.T) {
+			e := spcovSetup(t)
+			e.sp.AcceptAssertionBaseID = acceptBaseID
+			a := e.assertion()
+			a.Subject = nil
+			adfs := etree.NewDocument()
+			assert.NilError(t, adfs.ReadFromString(fmt.Sprintf(adfsSubjectWithoutNameID,
+				spcovRequestID, spcovNow.Add(5*time.Minute).Format(timeFormat), e.sp.AcsURL.String())))
+
+			assertion, err := sidParse(t, e, a, func(assertionEl *etree.Element) {
+				// Put AD FS's Subject where the schema has it, after the
+				// Issuer, and its AttributeStatement after the
+				// AuthnStatement, each declaring the default namespace
+				// that its AD FS parent declared.
+				adfsChild := func(tag string) *etree.Element {
+					el := adfs.Root().SelectElement(tag)
+					assert.Assert(t, el != nil, tag)
+					el = el.Copy()
+					el.CreateAttr("xmlns", samlAssertionNamespace)
+					return el
+				}
+				issuer := assertionEl.FindElement("./Issuer")
+				assert.Assert(t, issuer != nil)
+				assertionEl.InsertChildAt(issuer.Index()+1, adfsChild("Subject"))
+				assertionEl.AddChild(adfsChild("AttributeStatement"))
+			})
+			if err != nil {
+				t.Fatalf("ParseXMLResponse: %v", spcovPrivateErr(t, err))
+			}
+			assert.Assert(t, assertion.Subject != nil)
+			assert.Check(t, assertion.Subject.NameID == nil)
+			assert.Check(t, assertion.Subject.BaseID == nil)
+			assert.Check(t, assertion.Subject.EncryptedID == nil)
+			assert.Check(t, is.Len(assertion.Subject.SubjectConfirmations, 1))
+			assert.Assert(t, is.Len(assertion.AttributeStatements, 1))
+			attrs := assertion.AttributeStatements[0].Attributes
+			assert.Assert(t, is.Len(attrs, 1))
+			assert.Check(t, is.Equal("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress", attrs[0].Name))
+			assert.Assert(t, is.Len(attrs[0].Values, 1))
+			assert.Check(t, is.Equal("foo@bar.com", attrs[0].Values[0].Value))
+		})
 	}
+}
+
+// An assertion still needs a Subject, with a bearer SubjectConfirmation
+// (saml-profiles §4.1.4.2), even though the Subject's identifier is
+// optional.
+func TestSPAssertionWithoutSubjectRefused(t *testing.T) {
+	e := spcovSetup(t)
+	a := e.assertion()
+	a.Subject = nil
+	_, err := sidParse(t, e, a, nil)
+	assert.Check(t, errors.Is(err, ErrMissingElement), "got %v", spcovPrivateErr(t, err))
+	assert.Check(t, is.ErrorContains(spcovPrivateErr(t, err), "assertion has no Subject"))
 }
 
 // saml-core §2.4.1: BaseID, NameID and EncryptedID are alternatives.

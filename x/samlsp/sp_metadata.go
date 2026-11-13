@@ -1,6 +1,10 @@
 package samlsp
 
 import (
+	"crypto/ecdsa"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"slices"
@@ -14,6 +18,12 @@ type spMetadataOptions struct {
 	organization      *saml.Organization
 	contacts          []saml.ContactPerson
 	nameIDFormats     []saml.NameIDFormat
+
+	// nextSigningCerts and nextEncryptionCerts are published after the
+	// current certificates (see WithNextSigningCertificates and
+	// WithNextEncryptionCertificates).
+	nextSigningCerts    []*x509.Certificate
+	nextEncryptionCerts []*x509.Certificate
 }
 
 // RequestedAttribute is an attribute the SP asks the IdP to send, listed in
@@ -125,6 +135,81 @@ func WithNameIDFormats(formats ...saml.NameIDFormat) Option {
 	})
 }
 
+// WithNextSigningCertificates publishes certs in the SP metadata as
+// signing keys too, after that of WithSigningKey, without signing with
+// them: each is a KeyDescriptor with use="signing" (saml-metadata §2.4.1.1).
+// An IdP that has the metadata accepts the SP's signatures, such as those
+// of signed AuthnRequests and logout messages, by any of the keys it
+// lists. Use it to announce a new signing certificate before switching
+// WithSigningKey to it, so that IdPs that refresh the SP metadata already
+// trust it when the rollover happens, or to keep publishing the old one
+// for a while afterwards. Signed metadata (SignMetadata) is still signed
+// by the key of WithSigningKey only.
+//
+// Each certificate must be for an RSA or ECDSA key, the keys that XML
+// signatures are made with; New returns an error otherwise. A certificate
+// that the metadata already publishes for signing, such as that of
+// WithSigningKey, is not listed twice. See the package documentation for
+// the whole rotation procedure.
+func WithNextSigningCertificates(certs ...*x509.Certificate) Option {
+	return optionFunc(func(c *Config, _ *configOptions) {
+		c.spMetadata.nextSigningCerts = append(c.spMetadata.nextSigningCerts, certs...)
+	})
+}
+
+// WithNextEncryptionCertificates publishes certs in the SP metadata as
+// encryption keys too, after that of WithEncryptionKey: each is a
+// KeyDescriptor with use="encryption" (saml-metadata §2.4.1.1), offering
+// the same encryption methods. Use it to announce a new encryption key
+// before switching WithEncryptionKey to it, or to keep publishing the old
+// one for a while afterwards.
+//
+// The metadata gives an IdP no way to tell which encryption key is the
+// current one, and IdPs differ in which they use: package saml's uses the
+// first, others the last or any. So from the moment the metadata lists a
+// certificate, the SP must be able to decrypt with its key: New returns an
+// error unless each certificate is for the RSA key of WithEncryptionKey or
+// of WithDecryptionKeys. Pass the next key to WithDecryptionKeys as soon
+// as its certificate is published here. A certificate that the metadata
+// already publishes for encryption, such as that of WithEncryptionKey, is
+// not listed twice. See the package documentation for the whole rotation
+// procedure.
+func WithNextEncryptionCertificates(certs ...*x509.Certificate) Option {
+	return optionFunc(func(c *Config, _ *configOptions) {
+		c.spMetadata.nextEncryptionCerts = append(c.spMetadata.nextEncryptionCerts, certs...)
+	})
+}
+
+// checkNextCertificates returns an error if a certificate of
+// WithNextSigningCertificates cannot verify XML signatures, or one of
+// WithNextEncryptionCertificates is not for a key the SP decrypts with.
+func (o *spMetadataOptions) checkNextCertificates(encryptionKey *rsa.PrivateKey, decryptionKeys []*rsa.PrivateKey) error {
+	for _, cert := range o.nextSigningCerts {
+		if cert == nil {
+			return errors.New("samlsp: WithNextSigningCertificates was given a nil certificate")
+		}
+		switch cert.PublicKey.(type) {
+		case *rsa.PublicKey, *ecdsa.PublicKey:
+		default:
+			return fmt.Errorf("samlsp: the certificate %q of WithNextSigningCertificates is not for an RSA or ECDSA key", cert.Subject)
+		}
+	}
+	for _, cert := range o.nextEncryptionCerts {
+		if cert == nil {
+			return errors.New("samlsp: WithNextEncryptionCertificates was given a nil certificate")
+		}
+		pub, ok := cert.PublicKey.(*rsa.PublicKey)
+		if !ok {
+			return fmt.Errorf("samlsp: the certificate %q of WithNextEncryptionCertificates is not for an RSA key", cert.Subject)
+		}
+		matches := func(key *rsa.PrivateKey) bool { return key != nil && pub.Equal(&key.PublicKey) }
+		if !matches(encryptionKey) && !slices.ContainsFunc(decryptionKeys, matches) {
+			return fmt.Errorf("samlsp: the certificate %q of WithNextEncryptionCertificates is not for the key of WithEncryptionKey or of WithDecryptionKeys; the SP could not decrypt assertions encrypted to it", cert.Subject)
+		}
+	}
+	return nil
+}
+
 // check returns an error if the additions would make invalid metadata.
 func (o *spMetadataOptions) check() error {
 	indexes := map[int]bool{}
@@ -181,4 +266,40 @@ func (o *spMetadataOptions) apply(md *saml.EntityDescriptor) {
 	}
 	md.Organization = o.organization
 	md.ContactPersons = append(md.ContactPersons, o.contacts...)
+	for _, cert := range o.nextSigningCerts {
+		addKeyDescriptor(sp, saml.KeyDescriptor{
+			Use: "signing",
+			KeyInfo: saml.KeyInfo{X509Data: saml.X509Data{
+				X509Certificates: []saml.X509Certificate{{Data: base64.StdEncoding.EncodeToString(cert.Raw)}},
+			}},
+		})
+	}
+	for _, cert := range o.nextEncryptionCerts {
+		// Let package saml describe the key, so that it offers the same
+		// encryption methods as that of WithEncryptionKey.
+		desc := (&saml.ServiceProvider{EncryptionCertificate: cert, KeyOnlySigns: true}).Metadata()
+		for _, kd := range desc.SPSSODescriptors[0].KeyDescriptors {
+			if kd.Use == "encryption" {
+				addKeyDescriptor(sp, kd)
+			}
+		}
+	}
+}
+
+// addKeyDescriptor appends kd, which holds one certificate, to the
+// KeyDescriptors of sp, unless one with the same use already holds the
+// same certificate.
+func addKeyDescriptor(sp *saml.SPSSODescriptor, kd saml.KeyDescriptor) {
+	data := kd.KeyInfo.X509Data.X509Certificates[0].Data
+	for _, have := range sp.KeyDescriptors {
+		if have.Use != kd.Use {
+			continue
+		}
+		for _, c := range have.KeyInfo.X509Data.X509Certificates {
+			if c.Data == data {
+				return
+			}
+		}
+	}
+	sp.KeyDescriptors = append(sp.KeyDescriptors, kd)
 }
