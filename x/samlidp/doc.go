@@ -110,6 +110,13 @@
 // asks for a particular format, such as transient, is then answered with
 // StatusInvalidNameIDPolicy (see Subject.NameIDFormat).
 //
+// The same user ID sent to every SP lets the SPs correlate the user.
+// Config.SetNameID sets a NameID that does not: a new
+// Config.TransientNameID for an SP that asks for the transient format,
+// and otherwise a persistent PairwiseNameID, an HMAC of the user's ID
+// and of the SP's entity ID (or of the affiliation it asks for), under a
+// secret key that must never change.
+//
 // Response sends every attribute of the Subject, to whichever SP asked.
 // To send an SP only the attributes that its metadata asks for (its
 // AttributeConsumingService, chosen by the request's
