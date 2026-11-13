@@ -229,7 +229,9 @@ func unsigned(sp *saml.ServiceProvider) error {
 // Request returns a LogoutRequest that starts single logout at the IdP for
 // the user identified by nameID, the samlsp.Assertion.NameID of the user's
 // login. Send it with Message.Write, and keep Message.ID to pass to
-// ParseResponse when the IdP replies. opts are WithSessionIndex, WithReason,
+// ParseResponse when the IdP replies (package
+// github.com/crewjam/saml/x/samlsp/slo/pendinglogout keeps it in a cookie
+// for you). opts are WithSessionIndex, WithReason,
 // WithNotOnOrAfter and the samlsp.MessageOptions, such as
 // samlsp.WithBinding.
 //
@@ -533,7 +535,7 @@ func (s *Service) Response(ctx context.Context, req *Request, opts ...samlsp.Mes
 // logout requests that are still pending; the response must answer one of
 // them. Each response is accepted only once (see samlsp.WithReplayState),
 // but the application should still remove the request it answers, its
-// InResponseTo, from those pending.
+// InResponseTo, from those pending (see pendinglogout.Tracker.Forget).
 //
 // It returns an error matching saml.ErrBadStatus if the IdP could not log
 // the user out, and the response with an error matching ErrPartialLogout

@@ -36,12 +36,14 @@ import (
 	"github.com/crewjam/saml/x/samlsp"
 	"github.com/crewjam/saml/x/samlsp/pending"
 	"github.com/crewjam/saml/x/samlsp/slo"
+	"github.com/crewjam/saml/x/samlsp/slo/pendinglogout"
 )
 
 var (
 	config  *samlsp.Config
 	logout  *slo.Service
 	tracker *pending.Tracker
+	logouts *pendinglogout.Tracker
 )
 
 func main() {
@@ -81,10 +83,14 @@ func main() {
 	if logout, err = slo.New(config); err != nil {
 		log.Fatal(err)
 	}
-	// The key authenticates the cookies of logins in progress. A real
-	// deployment loads it from its secrets, so that every server shares
-	// it and logins in progress survive a restart.
-	if tracker, err = pending.New(config, []byte(rand.Text()+rand.Text())); err != nil {
+	// The key authenticates the cookies of logins and logouts in
+	// progress. A real deployment loads it from its secrets, so that every
+	// server shares it and logins in progress survive a restart.
+	cookieKey := []byte(rand.Text() + rand.Text())
+	if tracker, err = pending.New(config, cookieKey); err != nil {
+		log.Fatal(err)
+	}
+	if logouts, err = pendinglogout.New(logout, cookieKey); err != nil {
 		log.Fatal(err)
 	}
 
@@ -179,7 +185,8 @@ func acs(w http.ResponseWriter, r *http.Request) {
 }
 
 // startLogout ends the local session, then sends the browser to the IdP to
-// log out there too.
+// log out there too. The LogoutRequest's ID waits in a cookie (see
+// x/samlsp/slo/pendinglogout) for the IdP's answer.
 func startLogout(w http.ResponseWriter, r *http.Request) {
 	s := sessionFrom(r)
 	endSession(w, r)
@@ -189,12 +196,14 @@ func startLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	msg, err := logout.Request(r.Context(), s.assertion.NameID, rand.Text(),
 		slo.WithSessionIndex(s.assertion.SessionIndexes...))
+	if err == nil {
+		err = logouts.Remember(w, msg, "")
+	}
 	if err != nil {
 		// For example samlsp.ErrNoEndpoint: the IdP has no single logout.
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
-	setTempCookie(w, "saml_logout", logout.Path(), msg.ID)
 	msg.Write(w)
 }
 
@@ -217,12 +226,15 @@ func sloHandler(w http.ResponseWriter, r *http.Request) {
 		msg.Write(w)
 
 	case slo.IsResponse(r):
-		var requestID string
-		if c, err := r.Cookie("saml_logout"); err == nil {
-			requestID = c.Value
+		l, err := logouts.Find(w, r)
+		if err == nil {
+			_, err = logout.ParseResponse(r.Context(), r, l.RequestIDs()...)
+			// Forget the logout only once its response is verified.
+			if pendinglogout.Answered(err) {
+				logouts.Forget(w, l)
+			}
 		}
-		deleteCookie(w, "saml_logout", logout.Path())
-		if _, err := logout.ParseResponse(r.Context(), r, requestID); err != nil {
+		if err != nil {
 			log.Printf("single logout: %v", err)
 		}
 		// The local session ended when logout started.
@@ -309,18 +321,6 @@ func overlap(a, b []string) bool {
 // secure reports whether the SP is served over https, so that its cookies
 // can be Secure.
 func secure() bool { return strings.HasPrefix(config.ACSURL(), "https:") }
-
-// setTempCookie sets a cookie that lasts for one exchange with the IdP. The
-// IdP's answer is a cross-site request, so over https the cookie is
-// SameSite=None; over plain http, which is for development, browsers send
-// a cookie without SameSite on a cross-site POST shortly after it was set.
-func setTempCookie(w http.ResponseWriter, name, path, value string) {
-	c := &http.Cookie{Name: name, Value: value, Path: path, MaxAge: 300, HttpOnly: true} //nolint:gosec // G124: Secure and SameSite=None over https, below
-	if secure() {
-		c.Secure, c.SameSite = true, http.SameSiteNoneMode
-	}
-	http.SetCookie(w, c)
-}
 
 func deleteCookie(w http.ResponseWriter, name, path string) {
 	http.SetCookie(w, &http.Cookie{Name: name, Path: path, MaxAge: -1, HttpOnly: true, Secure: secure()}) //nolint:gosec // G124: deletes the cookie
