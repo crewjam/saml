@@ -65,8 +65,11 @@ type AuthnRequest struct {
 
 	// AttributeConsumingServiceIndex, if not empty, is the index of the
 	// AttributeConsumingService of the SP's metadata that lists the
-	// attributes it asks for (saml-core §3.4.1). Which attributes to send
-	// is the application's to decide.
+	// attributes it asks for (saml-core §3.4.1). RequestedAttributes
+	// returns them, or those of the SP's default AttributeConsumingService
+	// if it is empty. Which attributes to send is the application's to
+	// decide: Response sends all of the Subject's, unless
+	// ReleaseRequestedAttributesOnly is given.
 	AttributeConsumingServiceIndex string
 
 	// Scoping, if not nil, is the Scoping of the request (saml-core

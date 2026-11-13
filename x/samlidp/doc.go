@@ -110,6 +110,13 @@
 // asks for a particular format, such as transient, is then answered with
 // StatusInvalidNameIDPolicy (see Subject.NameIDFormat).
 //
+// Response sends every attribute of the Subject, to whichever SP asked.
+// To send an SP only the attributes that its metadata asks for (its
+// AttributeConsumingService, chosen by the request's
+// AttributeConsumingServiceIndex), pass ReleaseRequestedAttributesOnly;
+// RequestedAttributes and MissingRequiredAttributes tell the application
+// what the SP asks for and needs, before it answers.
+//
 // Message.Write sends the Response to the SP's assertion consumer service
 // with the HTTP-POST (or HTTP-POST-SimpleSign) binding: an HTML form that
 // submits itself. For SPs that ask for the HTTP-Artifact binding, see

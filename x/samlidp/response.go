@@ -61,7 +61,10 @@ type Subject struct {
 	// session it creates from the assertion.
 	SessionNotOnOrAfter time.Time
 
-	// Attributes are the attributes the IdP sends about the user.
+	// Attributes are the attributes the IdP sends about the user. Response
+	// sends them all, to whichever SP the request is from: choose them for
+	// the SP, or let ReleaseRequestedAttributesOnly keep only those that
+	// its metadata asks for.
 	Attributes []Attribute
 }
 
@@ -98,6 +101,9 @@ type responseOptions struct {
 	address string
 	modify  []func(*saml.Assertion) error
 	nonce   string
+
+	// requestedOnly is set by ReleaseRequestedAttributesOnly.
+	requestedOnly bool
 }
 
 type responseOptionFunc func(*responseOptions)
@@ -195,8 +201,16 @@ func (c *Config) Response(ctx context.Context, req *AuthnRequest, subject Subjec
 	// DefaultAssertionMaker makes attributes of its own from the fields of
 	// the Session, which are left empty: the subject's are the only ones.
 	a.AttributeStatements = nil
-	if len(subject.Attributes) > 0 {
-		a.AttributeStatements = []saml.AttributeStatement{{Attributes: samlAttributes(subject.Attributes)}}
+	attrs := subject.Attributes
+	if o.requestedOnly {
+		requested, err := requestedAttributes(ireq.SPSSODescriptor, req.ServiceProvider, req.AttributeConsumingServiceIndex)
+		if err != nil {
+			return nil, err
+		}
+		attrs = FilterAttributes(requested, attrs)
+	}
+	if len(attrs) > 0 {
+		a.AttributeStatements = []saml.AttributeStatement{{Attributes: samlAttributes(attrs)}}
 	}
 	if !subject.SessionNotOnOrAfter.IsZero() {
 		t := subject.SessionNotOnOrAfter
