@@ -7,6 +7,18 @@
 // samlsp.WithReplayState), and of github.com/crewjam/saml/x/samlidp, which
 // records signed AuthnRequests, LogoutRequests and LogoutResponses (see
 // samlidp.ReplayKey and samlidp.WithReplayState).
+//
+// Memory keeps the record in memory, which protects a single process: a
+// message replayed to another process of the same provider is accepted
+// there. A provider served by several processes, behind a load balancer
+// or across a restart, needs a record that they share. SQL keeps it in a
+// table of a database reached through database/sql (PostgreSQL, MySQL or
+// SQLite), whose primary key makes only one of the processes that record
+// a message succeed; any other shared store can implement
+// samlsp.ReplayState and samlidp.ReplayState the same way. A shared
+// record compares each expiry with the clock of the process that reads
+// it, so keep the clocks of the processes close together: see SQL for
+// the one replay that clocks further apart than SQL.ClockSkew allow.
 package replay
 
 import (
@@ -20,7 +32,7 @@ import (
 
 // Memory records message keys in memory, which protects a single process.
 // Applications served by several processes need a record that they share,
-// such as a database table with a unique key on the ID.
+// such as SQL.
 //
 // It has no size limit, because it does not need one. An ID is recorded
 // only after the message is fully verified: signed by the peer, addressed

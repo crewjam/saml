@@ -68,7 +68,9 @@ import (
 // Store keeps messages until their artifacts are resolved. It is the
 // Store of x/samlsp/artifact: a message's Recipient is the entity ID of
 // the SP the Response is for. A Binding served by several processes needs
-// a Store that they share, since the SP's request may reach any of them.
+// a Store that they share, since the SP's request may reach any of them,
+// such as artifact.SQLStore, a table of a database reached through
+// database/sql.
 type Store = artifact.Store
 
 // StoredMessage is a message waiting for its artifact to be resolved.
