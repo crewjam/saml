@@ -75,6 +75,12 @@ func (m *Middleware) HandleStartLogout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return
 	}
+	current, err := m.withCurrentIDPMetadata(r.Context())
+	if err != nil {
+		m.OnError(w, r, err)
+		return
+	}
+	m = current
 	session, err := m.Session.GetSession(r)
 	if errors.Is(err, ErrNoSession) {
 		http.Redirect(w, r, "/", http.StatusFound)
@@ -273,6 +279,13 @@ func (m *Middleware) sloBinding() string {
 //
 // Invalid messages are passed to OnError.
 func (m *Middleware) ServeSLO(w http.ResponseWriter, r *http.Request) {
+	current, err := m.withCurrentIDPMetadata(r.Context())
+	if err != nil {
+		m.OnError(w, r, err)
+		return
+	}
+	m = current
+
 	if saml.IsSOAPRequest(r) {
 		m.serveSOAPLogoutRequest(w, r)
 		return

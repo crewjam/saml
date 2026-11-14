@@ -338,9 +338,13 @@ func (sp *ServiceProvider) attributeAuthoritySigningCerts() ([]*x509.Certificate
 		return nil, err
 	}
 	var keyDescriptors []KeyDescriptor
+	var expiredRoleErr error
 	for i, attributeAuthority := range sp.IDPMetadata.AttributeAuthorityDescriptors {
 		if err := sp.checkRoleNotExpired(&sp.IDPMetadata.AttributeAuthorityDescriptors[i].RoleDescriptor, "AttributeAuthorityDescriptor"); err != nil {
-			return nil, err
+			if len(attributeAuthority.KeyDescriptors) > 0 && expiredRoleErr == nil {
+				expiredRoleErr = err
+			}
+			continue
 		}
 		keyDescriptors = append(keyDescriptors, attributeAuthority.KeyDescriptors...)
 	}
@@ -350,6 +354,9 @@ func (sp *ServiceProvider) attributeAuthoritySigningCerts() ([]*x509.Certificate
 	}
 	if len(certs) > 0 {
 		return certs, nil
+	}
+	if expiredRoleErr != nil {
+		return nil, expiredRoleErr
 	}
 	return sp.getIDPSigningCerts()
 }

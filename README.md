@@ -224,6 +224,31 @@ The service provider trusts whatever signing certificates the IDP metadata names
 
 `RemoteMetadata` caches the metadata and refreshes it in the background, at least hourly (`WithRefreshInterval`) and sooner if its `cacheDuration` or `validUntil` says so, which picks up rotated keys. Federation metadata (an `<EntitiesDescriptor>` such as eduGAIN or InCommon publishes) holds many IDPs: choose one with `WithIdentityProviderEntityID`, or fetch only its entry from the federation's Metadata Query service with `samlsp.MDQMetadata`. Any function of your own works too, for example one that picks the IDP of the tenant named in the request's context.
 
+### Metadata validity and refresh
+
+The metadata parsing functions record when the document was retrieved. When an entity is selected from nested federation metadata, the parser also applies every enclosing `<EntitiesDescriptor>` policy. `validUntil` is a hard validity bound; `cacheDuration` schedules refresh and does not by itself invalidate a cached copy after a refresh failure, as clarified by [OASIS SAML v2.0 Errata 05](https://docs.oasis-open.org/security/saml/v2.0/errata05/csd01/saml-v2.0-errata05-csd01.html). `MetadataProvider` rejects metadata whose effective `validUntil` has passed.
+
+Use `MetadataProvider` when metadata comes from a URL and the application needs to refresh it over time:
+
+```go
+metadataProvider := samlsp.NewMetadataProvider(http.DefaultClient, metadataURL, idpEntityID)
+middleware, err := samlsp.New(samlsp.Options{
+	URL:                 *rootURL,
+	Key:                 keyPair.PrivateKey.(*rsa.PrivateKey),
+	Certificate:         keyPair.Leaf,
+	IDPMetadataProvider: metadataProvider,
+})
+if err != nil {
+	return err
+}
+```
+
+For a feed that signs its metadata, use `NewSignedMetadataProvider` and provide the metadata-signing certificates from a trusted source.
+
+`Metadata` fetches on first use and checks for refresh when called again. It refreshes before the current entity's effective `cacheDuration` or `validUntil` deadline. `samlsp.Middleware` calls the provider before each authentication, ACS and SLO operation and uses a request-local service-provider copy, so a refresh does not change configuration seen by concurrent requests. The provider does not start a background goroutine. If a fetch fails, it returns the last document while its `validUntil` bound remains valid; a `cacheDuration` deadline alone does not invalidate cached metadata. After hard expiry, the error is returned and the service provider must not continue using the old keys or endpoints. The returned metadata is shared and must be treated as read-only.
+
+Applications that obtain metadata through a custom `ServiceProviderProvider` can calculate a refresh deadline with `EntityDescriptor.MetadataRefreshAt(retrievedAt)`, passing the time they retrieved the document. `cacheDuration` deadlines are relative to that time.
+
 ### Querying attributes from the IDP
 
 An IDP that is also a SAML attribute authority (for example Shibboleth) can be asked for a user's attributes outside of a login, with an `AttributeQuery` sent over the SOAP back channel (the Assertion Query/Request profile). This needs an `AttributeAuthorityDescriptor` with a SOAP `AttributeService` in the IDP metadata, and the IDP must be willing to answer this service provider:

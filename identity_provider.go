@@ -397,6 +397,13 @@ type IdentityProvider struct {
 	// an error matching ErrUnsupported.
 	AcceptLogoutRequestBaseID bool
 
+	// RejectExpiredSPMetadata, if true, refuses authentication and logout
+	// requests from service providers whose metadata validUntil has passed.
+	// cacheDuration is a refresh target and does not by itself expire metadata.
+	// It is off by default for compatibility with applications that keep
+	// registered metadata after its validUntil date.
+	RejectExpiredSPMetadata bool
+
 	// EncryptLogoutNameID, if true, makes the LogoutRequests the IdP sends
 	// to service providers (see StartLogout and SessionParticipantTracker)
 	// identify the principal with a saml:EncryptedID instead of a NameID,
@@ -1027,6 +1034,14 @@ func (idp *IdentityProvider) NewIdpInitiatedRequest(r *http.Request, serviceProv
 	} else if err != nil {
 		return nil, fmt.Errorf("cannot find service provider %s: %w", serviceProviderID, err)
 	}
+	if req.ServiceProviderMetadata == nil {
+		return nil, fmt.Errorf("cannot find service provider %s: provider returned nil metadata", serviceProviderID)
+	}
+	if idp.RejectExpiredSPMetadata {
+		if err := req.ServiceProviderMetadata.ValidateMetadataAt(req.Now); err != nil {
+			return nil, fmt.Errorf("service provider %s metadata is not current: %w", serviceProviderID, err)
+		}
+	}
 
 	// An unsolicited Response "SHOULD be delivered to the
 	// <md:AssertionConsumerService> endpoint of the service provider
@@ -1301,10 +1316,12 @@ func (req *IdpAuthnRequest) resolveServiceProvider() error {
 	} else if err != nil {
 		return fmt.Errorf("cannot find service provider %s: %w", serviceProviderID, err)
 	}
-	if serviceProvider == nil {
-		return classify(fmt.Errorf("cannot find service provider %s", serviceProviderID), ErrUnknownServiceProvider)
-	}
 	req.ServiceProviderMetadata = serviceProvider
+	if req.IDP.RejectExpiredSPMetadata {
+		if err := serviceProvider.ValidateMetadataAt(req.Now); err != nil {
+			return fmt.Errorf("service provider %s metadata is not current: %w", serviceProviderID, err)
+		}
+	}
 
 	if err := req.verifySignature(); err != nil {
 		return err

@@ -29,15 +29,18 @@ import (
 
 // Options represents the parameters for creating a new middleware
 type Options struct {
-	EntityID              string
-	URL                   url.URL
-	Key                   crypto.Signer
-	Certificate           *x509.Certificate
-	Intermediates         []*x509.Certificate
-	HTTPClient            *http.Client
-	AllowIDPInitiated     bool
-	DefaultRedirectURI    string
-	IDPMetadata           *saml.EntityDescriptor
+	EntityID           string
+	URL                url.URL
+	Key                crypto.Signer
+	Certificate        *x509.Certificate
+	Intermediates      []*x509.Certificate
+	HTTPClient         *http.Client
+	AllowIDPInitiated  bool
+	DefaultRedirectURI string
+	IDPMetadata        *saml.EntityDescriptor
+	// IDPMetadataProvider supplies metadata on demand and can refresh it over
+	// time. When set, its value takes precedence over IDPMetadata.
+	IDPMetadataProvider   IDPMetadataProvider
 	SignRequest           bool
 	UseArtifactResponse   bool
 	ForceAuthn            bool // TODO(ross): this should be *bool
@@ -178,9 +181,9 @@ type Options struct {
 	// saml.ServiceProvider.IgnoreCertificateExpiry.
 	IgnoreCertificateExpiry bool
 
-	// RejectExpiredIDPMetadata, if true, refuses messages from the IDP once
-	// the validUntil of IDPMetadata has passed. It is off by default. See
-	// saml.ServiceProvider.RejectExpiredIDPMetadata.
+	// RejectExpiredIDPMetadata, if true, refuses to use signing certificates
+	// from expired IDP metadata when verifying SAML signatures. It is off by
+	// default. See saml.ServiceProvider.RejectExpiredIDPMetadata.
 	RejectExpiredIDPMetadata bool
 
 	// SignMetadata, if true, makes the metadata endpoint serve metadata
@@ -557,12 +560,13 @@ func New(opts Options) (*Middleware, error) {
 		return nil, err
 	}
 	m := &Middleware{
-		ServiceProvider:  DefaultServiceProvider(opts),
-		Binding:          "",
-		ResponseBinding:  saml.HTTPPostBinding,
-		OnError:          DefaultOnError,
-		Session:          DefaultSessionProvider(opts),
-		AssertionHandler: DefaultAssertionHandler(opts),
+		ServiceProvider:     DefaultServiceProvider(opts),
+		IDPMetadataProvider: opts.IDPMetadataProvider,
+		Binding:             "",
+		ResponseBinding:     saml.HTTPPostBinding,
+		OnError:             DefaultOnError,
+		Session:             DefaultSessionProvider(opts),
+		AssertionHandler:    DefaultAssertionHandler(opts),
 	}
 	m.RequestTracker = DefaultRequestTracker(opts, &m.ServiceProvider)
 	m.LogoutRequestTracker = DefaultLogoutRequestTracker(opts, &m.ServiceProvider)
